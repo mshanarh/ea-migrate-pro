@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BuilderRouteImport } from './routes/builder'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
 
@@ -22,6 +23,11 @@ const IndexRoute = IndexRouteImport.update({
 const BuilderRoute = BuilderRouteImport.update({
   id: '/builder',
   path: '/builder',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -38,12 +44,14 @@ const SignupRoute = SignupRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
+  '/dashboard': typeof DashboardRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
+  '/dashboard': typeof DashboardRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
 }
@@ -51,20 +59,22 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
+  '/dashboard': typeof DashboardRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/builder' | '/signin' | '/signup'
+  fullPaths: '/' | '/builder' | '/dashboard' | '/signin' | '/signup'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/builder' | '/signin' | '/signup'
-  id: '__root__' | '/' | '/builder' | '/signin' | '/signup'
+  to: '/' | '/builder' | '/dashboard' | '/signin' | '/signup'
+  id: '__root__' | '/' | '/builder' | '/dashboard' | '/signin' | '/signup'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BuilderRoute: typeof BuilderRoute
+  DashboardRoute: typeof DashboardRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
 }
@@ -83,6 +93,13 @@ declare module '@tanstack/react-router' {
       path: '/builder'
       fullPath: '/builder'
       preLoaderRoute: typeof BuilderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -105,6 +122,7 @@ declare module '@tanstack/react-router' {
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BuilderRoute: BuilderRoute,
+  DashboardRoute: DashboardRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
 }
