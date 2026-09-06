@@ -15,6 +15,7 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -46,6 +47,11 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
   path: '/',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardEasRoute = DashboardEasRouteImport.update({
+  id: '/eas',
+  path: '/eas',
+  getParentRoute: () => DashboardRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -53,6 +59,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRoutesByTo {
@@ -60,6 +67,7 @@ export interface FileRoutesByTo {
   '/builder': typeof BuilderRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard': typeof DashboardIndexRoute
 }
 export interface FileRoutesById {
@@ -69,14 +77,21 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/builder' | '/dashboard' | '/signin' | '/signup' | '/dashboard/'
+    | '/'
+    | '/builder'
+    | '/dashboard'
+    | '/signin'
+    | '/signup'
+    | '/dashboard/eas'
+    | '/dashboard/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/builder' | '/signin' | '/signup' | '/dashboard'
+  to: '/' | '/builder' | '/signin' | '/signup' | '/dashboard/eas' | '/dashboard'
   id:
     | '__root__'
     | '/'
@@ -84,6 +99,7 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/signin'
     | '/signup'
+    | '/dashboard/eas'
     | '/dashboard/'
   fileRoutesById: FileRoutesById
 }
@@ -139,14 +155,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/eas': {
+      id: '/dashboard/eas'
+      path: '/eas'
+      fullPath: '/dashboard/eas'
+      preLoaderRoute: typeof DashboardEasRouteImport
+      parentRoute: typeof DashboardRoute
+    }
   }
 }
 
 interface DashboardRouteChildren {
+  DashboardEasRoute: typeof DashboardEasRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardEasRoute: DashboardEasRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
