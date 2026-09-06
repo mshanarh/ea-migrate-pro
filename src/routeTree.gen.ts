@@ -11,8 +11,14 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as BuilderRouteImport } from './routes/builder'
+import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
+import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
+import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
+import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -22,6 +28,11 @@ const IndexRoute = IndexRouteImport.update({
 const BuilderRoute = BuilderRouteImport.update({
   id: '/builder',
   path: '/builder',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DashboardRoute = DashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -34,37 +45,110 @@ const SignupRoute = SignupRouteImport.update({
   path: '/signup',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DashboardIndexRoute = DashboardIndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardEasRoute = DashboardEasRouteImport.update({
+  id: '/eas',
+  path: '/eas',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardLicensesRoute = DashboardLicensesRouteImport.update({
+  id: '/licenses',
+  path: '/licenses',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardSignalsRoute = DashboardSignalsRouteImport.update({
+  id: '/signals',
+  path: '/signals',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardStatsRoute = DashboardStatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => DashboardRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
+  '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard': typeof DashboardIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
+  '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/builder' | '/signin' | '/signup'
+  fullPaths:
+    | '/'
+    | '/builder'
+    | '/dashboard'
+    | '/signin'
+    | '/signup'
+    | '/dashboard/eas'
+    | '/dashboard/licenses'
+    | '/dashboard/signals'
+    | '/dashboard/stats'
+    | '/dashboard/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/builder' | '/signin' | '/signup'
-  id: '__root__' | '/' | '/builder' | '/signin' | '/signup'
+  to:
+    | '/'
+    | '/builder'
+    | '/signin'
+    | '/signup'
+    | '/dashboard/eas'
+    | '/dashboard/licenses'
+    | '/dashboard/signals'
+    | '/dashboard/stats'
+    | '/dashboard'
+  id:
+    | '__root__'
+    | '/'
+    | '/builder'
+    | '/dashboard'
+    | '/signin'
+    | '/signup'
+    | '/dashboard/eas'
+    | '/dashboard/licenses'
+    | '/dashboard/signals'
+    | '/dashboard/stats'
+    | '/dashboard/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   BuilderRoute: typeof BuilderRoute
+  DashboardRoute: typeof DashboardRouteWithChildren
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
 }
@@ -85,6 +169,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BuilderRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard': {
+      id: '/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/signin': {
       id: '/signin'
       path: '/signin'
@@ -99,12 +190,68 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SignupRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/dashboard/': {
+      id: '/dashboard/'
+      path: '/'
+      fullPath: '/dashboard/'
+      preLoaderRoute: typeof DashboardIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/eas': {
+      id: '/dashboard/eas'
+      path: '/eas'
+      fullPath: '/dashboard/eas'
+      preLoaderRoute: typeof DashboardEasRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/licenses': {
+      id: '/dashboard/licenses'
+      path: '/licenses'
+      fullPath: '/dashboard/licenses'
+      preLoaderRoute: typeof DashboardLicensesRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/signals': {
+      id: '/dashboard/signals'
+      path: '/signals'
+      fullPath: '/dashboard/signals'
+      preLoaderRoute: typeof DashboardSignalsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/stats': {
+      id: '/dashboard/stats'
+      path: '/stats'
+      fullPath: '/dashboard/stats'
+      preLoaderRoute: typeof DashboardStatsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
   }
 }
+
+interface DashboardRouteChildren {
+  DashboardEasRoute: typeof DashboardEasRoute
+  DashboardLicensesRoute: typeof DashboardLicensesRoute
+  DashboardSignalsRoute: typeof DashboardSignalsRoute
+  DashboardStatsRoute: typeof DashboardStatsRoute
+  DashboardIndexRoute: typeof DashboardIndexRoute
+}
+
+const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardEasRoute: DashboardEasRoute,
+  DashboardLicensesRoute: DashboardLicensesRoute,
+  DashboardSignalsRoute: DashboardSignalsRoute,
+  DashboardStatsRoute: DashboardStatsRoute,
+  DashboardIndexRoute: DashboardIndexRoute,
+}
+
+const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
+  DashboardRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   BuilderRoute: BuilderRoute,
+  DashboardRoute: DashboardRouteWithChildren,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
 }

@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { SiteHeader } from "@/components/SiteHeader";
+import { AuthShell, Field } from "@/components/AuthShell";
+import { signIn, useStore } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/signin")({
   head: () => ({
@@ -27,46 +28,66 @@ export const Route = createFileRoute("/signin")({
 });
 
 function SignIn() {
-  const [notice, setNotice] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const navigate = useNavigate();
+  const store = useStore();
 
   return (
-    <div className="min-h-screen">
-      <SiteHeader />
-      <main className="mx-auto max-w-md px-5 py-14">
-        <h1 className="text-3xl font-bold">
-          Mentor <span className="text-primary">Sign In</span>
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Welcome back. Enter your details to reach your EA dashboard.
-        </p>
+    <AuthShell active="signin">
+      <form
+        className="mt-8 space-y-6"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const res = signIn(email, password);
+          if (res.error) return setError(res.error);
+          const account = store.accounts.find(
+            (a) => a.email.toLowerCase() === email.trim().toLowerCase() || a.username === email.trim(),
+          );
+          navigate({ to: account?.role === "admin" ? "/admin" : "/dashboard" });
+        }}
+      >
+        <Field label="Email">
+          <Input
+            type="text"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="Enter your email"
+            className="h-14 rounded-full border-primary/25 bg-card/70 px-5"
+          />
+        </Field>
 
-        <form
-          className="panel mt-8 space-y-5 p-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setNotice("Accounts aren't switched on yet — tell me when to enable logins.");
-          }}
+        <Field
+          label="Password"
+          right={<span className="text-xs text-muted-foreground">Forgot password?</span>}
         >
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required placeholder="you@email.com" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" required placeholder="••••••••" />
-          </div>
-          <Button type="submit" size="lg" className="h-12 w-full rounded-full">
-            Sign in
-          </Button>
-          {notice && <p className="text-center text-sm text-primary">{notice}</p>}
-          <p className="text-center text-sm text-muted-foreground">
-            No account yet?{" "}
-            <Link to="/signup" className="text-primary">
-              Sign up
-            </Link>
-          </p>
-        </form>
-      </main>
-    </div>
+          <Input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="Enter your password"
+            className="h-14 rounded-full border-primary/25 bg-card/70 px-5"
+          />
+        </Field>
+
+        {error && <p className="text-center text-sm text-destructive">{error}</p>}
+
+        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          <LogIn className="size-5" /> Sign in
+        </Button>
+
+        <div className="flex justify-center gap-6 text-sm text-muted-foreground">
+          <Link to="/admin" className="hover:text-primary">
+            Admin login
+          </Link>
+          <Link to="/" className="hover:text-primary">
+            Back home
+          </Link>
+        </div>
+      </form>
+    </AuthShell>
   );
 }

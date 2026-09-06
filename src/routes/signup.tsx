@@ -1,23 +1,25 @@
 import { useState } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { UserPlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { SiteHeader } from "@/components/SiteHeader";
+import { Checkbox } from "@/components/ui/checkbox";
+import { AuthShell, Field } from "@/components/AuthShell";
+import { register } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: "Sign Up — EA Migrate Pro" },
+      { title: "Create your mentor portal — EA Migrate Pro" },
       {
         name: "description",
         content:
-          "Create your EA Migrate Pro account to build, host and run custom MT4/MT5 Expert Advisors 24/7.",
+          "Register a mentor portal on EA Migrate Pro to build, licence and host custom MT4/MT5 Expert Advisors.",
       },
-      { property: "og:title", content: "Sign Up — EA Migrate Pro" },
+      { property: "og:title", content: "Create your mentor portal — EA Migrate Pro" },
       {
         property: "og:description",
-        content: "Create an account and start building custom Expert Advisors in minutes.",
+        content: "Register a mentor portal and start issuing Expert Advisor licences.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -26,51 +28,88 @@ export const Route = createFileRoute("/signup")({
   component: SignUp,
 });
 
+const inputClass = "h-14 rounded-full border-primary/25 bg-card/70 px-5";
+
 function SignUp() {
-  const [notice, setNotice] = useState("");
+  const navigate = useNavigate();
+  const [form, setForm] = useState({
+    firstName: "",
+    displayName: "",
+    email: "",
+    username: "",
+    password: "",
+    confirm: "",
+    whatsapp: "",
+  });
+  const [agree, setAgree] = useState(false);
+  const [error, setError] = useState("");
+
+  const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }));
 
   return (
-    <div className="min-h-screen">
-      <SiteHeader />
-      <main className="mx-auto max-w-md px-5 py-14">
-        <h1 className="text-3xl font-bold">
-          Create your <span className="text-primary">account</span>
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Set up in under a minute and start building your first robot.
-        </p>
+    <AuthShell active="signup">
+      <form
+        className="mt-8 space-y-5"
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (form.password !== form.confirm) return setError("Passwords do not match.");
+          if (!agree) return setError("Please accept the terms to continue.");
+          const res = register({
+            firstName: form.firstName,
+            displayName: form.displayName,
+            email: form.email,
+            username: form.username,
+            password: form.password,
+            whatsapp: form.whatsapp,
+          });
+          if (res.error) return setError(res.error);
+          navigate({ to: "/dashboard" });
+        }}
+      >
+        <Field label="First name">
+          <Input required value={form.firstName} onChange={set("firstName")} placeholder="Enter your first name" className={inputClass} />
+        </Field>
+        <Field label="Display name">
+          <Input required value={form.displayName} onChange={set("displayName")} placeholder="Name shown on the robot app" className={inputClass} />
+        </Field>
+        <Field label="Email">
+          <Input type="email" required value={form.email} onChange={set("email")} placeholder="Enter your email address" className={inputClass} />
+        </Field>
+        <Field label="Username">
+          <Input required value={form.username} onChange={set("username")} placeholder="Choose a username" className={inputClass} />
+        </Field>
+        <Field label="Password">
+          <Input type="password" required value={form.password} onChange={set("password")} placeholder="Create a password" className={inputClass} />
+        </Field>
+        <Field label="Confirm password">
+          <Input type="password" required value={form.confirm} onChange={set("confirm")} placeholder="Confirm your password" className={inputClass} />
+        </Field>
+        <Field label="WhatsApp number">
+          <Input required value={form.whatsapp} onChange={set("whatsapp")} placeholder="e.g. +27 71 234 5678" className={inputClass} />
+        </Field>
 
-        <form
-          className="panel mt-8 space-y-5 p-6"
-          onSubmit={(e) => {
-            e.preventDefault();
-            setNotice("Accounts aren't switched on yet — tell me when to enable sign-ups.");
-          }}
-        >
-          <div className="space-y-2">
-            <Label htmlFor="name">Full name</Label>
-            <Input id="name" required placeholder="Your name" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
-            <Input id="email" type="email" required placeholder="you@email.com" />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="password">Password</Label>
-            <Input id="password" type="password" required placeholder="••••••••" />
-          </div>
-          <Button type="submit" size="lg" className="h-12 w-full rounded-full">
-            Sign up
-          </Button>
-          {notice && <p className="text-center text-sm text-primary">{notice}</p>}
-          <p className="text-center text-sm text-muted-foreground">
-            Already registered?{" "}
-            <Link to="/signin" className="text-primary">
-              Sign in
-            </Link>
-          </p>
-        </form>
-      </main>
-    </div>
+        <label className="flex items-center gap-3 pt-1 text-sm">
+          <Checkbox checked={agree} onCheckedChange={(v) => setAgree(v === true)} />
+          <span>
+            I agree to the <span className="text-primary">Terms</span> and{" "}
+            <span className="text-primary">Privacy Policy</span>
+          </span>
+        </label>
+
+        {error && <p className="text-center text-sm text-destructive">{error}</p>}
+
+        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          <UserPlus className="size-5" /> Create account
+        </Button>
+
+        <p className="text-center text-sm text-muted-foreground">
+          Already registered?{" "}
+          <Link to="/signin" className="text-primary">
+            Sign in
+          </Link>
+        </p>
+      </form>
+    </AuthShell>
   );
 }
