@@ -18,6 +18,7 @@ import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
+import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -64,6 +65,11 @@ const DashboardSignalsRoute = DashboardSignalsRouteImport.update({
   path: '/signals',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardStatsRoute = DashboardStatsRouteImport.update({
+  id: '/stats',
+  path: '/stats',
+  getParentRoute: () => DashboardRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -74,6 +80,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRoutesByTo {
@@ -84,6 +91,7 @@ export interface FileRoutesByTo {
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard': typeof DashboardIndexRoute
 }
 export interface FileRoutesById {
@@ -96,6 +104,7 @@ export interface FileRoutesById {
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
+  '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRouteTypes {
@@ -109,6 +118,7 @@ export interface FileRouteTypes {
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/signals'
+    | '/dashboard/stats'
     | '/dashboard/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -119,6 +129,7 @@ export interface FileRouteTypes {
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/signals'
+    | '/dashboard/stats'
     | '/dashboard'
   id:
     | '__root__'
@@ -130,6 +141,7 @@ export interface FileRouteTypes {
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/signals'
+    | '/dashboard/stats'
     | '/dashboard/'
   fileRoutesById: FileRoutesById
 }
@@ -206,6 +218,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardSignalsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/stats': {
+      id: '/dashboard/stats'
+      path: '/stats'
+      fullPath: '/dashboard/stats'
+      preLoaderRoute: typeof DashboardStatsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
   }
 }
 
@@ -213,6 +232,7 @@ interface DashboardRouteChildren {
   DashboardEasRoute: typeof DashboardEasRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
+  DashboardStatsRoute: typeof DashboardStatsRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
@@ -220,6 +240,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardEasRoute: DashboardEasRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
+  DashboardStatsRoute: DashboardStatsRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
