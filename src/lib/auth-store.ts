@@ -1,0 +1,188 @@
+import { useSyncExternalStore } from "react";
+
+export type PortalStatus = "pending" | "approved" | "rejected";
+
+export type License = {
+  id: string;
+  key: string;
+  plan: string;
+  issuedAt: string;
+  active: boolean;
+};
+
+export type Account = {
+  id: string;
+  firstName: string;
+  displayName: string;
+  email: string;
+  username: string;
+  password: string;
+  whatsapp: string;
+  role: "mentor" | "admin";
+  status: PortalStatus;
+  createdAt: string;
+  licenses: License[];
+};
+
+type Store = {
+  accounts: Account[];
+  currentId: string | null;
+};
+
+const KEY = "eamp.store.v1";
+
+const seedAdmin: Account = {
+  id: "admin",
+  firstName: "Platform",
+  displayName: "EA Migrate Admin",
+  email: "admin@eamigrate.pro",
+  username: "admin",
+  password: "admin123",
+  whatsapp: "",
+  role: "admin",
+  status: "approved",
+  createdAt: new Date().toISOString(),
+  licenses: [],
+};
+
+const seedMentor: Account = {
+  id: "mentor-demo",
+  firstName: "Skuva",
+  displayName: "Skuva FX",
+  email: "mentor@example.com",
+  username: "skuva",
+  password: "mentor123",
+  whatsapp: "+27 71 234 5678",
+  role: "mentor",
+  status: "pending",
+  createdAt: new Date().toISOString(),
+  licenses: [],
+};
+
+let state: Store = { accounts: [seedAdmin, seedMentor], currentId: null };
+let loaded = false;
+const listeners = new Set<() => void>();
+
+function load() {
+  if (loaded || typeof window === "undefined") return;
+  loaded = true;
+  try {
+    const raw = window.localStorage.getItem(KEY);
+    if (raw) state = JSON.parse(raw) as Store;
+  } catch {
+    /* ignore */
+  }
+}
+
+function persist() {
+  if (typeof window !== "undefined") {
+    window.localStorage.setItem(KEY, JSON.stringify(state));
+  }
+  listeners.forEach((l) => l());
+}
+
+function subscribe(l: () => void) {
+  load();
+  listeners.add(l);
+  return () => listeners.delete(l);
+}
+
+const serverSnapshot: Store = { accounts: [], currentId: null };
+
+function getSnapshot() {
+  load();
+  return state;
+}
+
+export function useStore() {
+  return useSyncExternalStore(subscribe, getSnapshot, () => serverSnapshot);
+}
+
+export function useCurrentAccount() {
+  const s = useStore();
+  return s.accounts.find((a) => a.id === s.currentId) ?? null;
+}
+
+export function signIn(email: string, password: string): { error?: string } {
+  load();
+  const account = state.accounts.find(
+    (a) => a.email.toLowerCase() === email.trim().toLowerCase() || a.username === email.trim(),
+  );
+  if (!account || account.password !== password) return { error: "Wrong email or password." };
+  state = { ...state, currentId: account.id };
+  persist();
+  return {};
+}
+
+export function signOut() {
+  load();
+  state = { ...state, currentId: null };
+  persist();
+}
+
+export function register(
+  data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenses">,
+): { error?: string } {
+  load();
+  if (state.accounts.some((a) => a.email.toLowerCase() === data.email.toLowerCase())) {
+    return { error: "That email is already registered." };
+  }
+  const account: Account = {
+    ...data,
+    id: `m-${Date.now()}`,
+    role: "mentor",
+    status: "pending",
+    createdAt: new Date().toISOString(),
+    licenses: [],
+  };
+  state = { ...state, accounts: [...state.accounts, account], currentId: account.id };
+  persist();
+  return {};
+}
+
+function update(id: string, fn: (a: Account) => Account) {
+  load();
+  state = {
+    ...state,
+    accounts: state.accounts.map((a) => (a.id === id ? fn(a) : a)),
+  };
+  persist();
+}
+
+export function setStatus(id: string, status: PortalStatus) {
+  update(id, (a) => ({ ...a, status }));
+}
+
+export function addLicense(id: string, plan: string, key: string) {
+  update(id, (a) => ({
+    ...a,
+    licenses: [
+      ...a.licenses,
+      { id: `l-${Date.now()}`, key, plan, issuedAt: new Date().toISOString(), active: true },
+    ],
+  }));
+}
+
+export function toggleLicense(accountId: string, licenseId: string) {
+  update(accountId, (a) => ({
+    ...a,
+    licenses: a.licenses.map((l) => (l.id === licenseId ? { ...l, active: !l.active } : l)),
+  }));
+}
+
+export function removeLicense(accountId: string, licenseId: string) {
+  update(accountId, (a) => ({
+    ...a,
+    licenses: a.licenses.filter((l) => l.id !== licenseId),
+  }));
+}
+
+export function generateKey() {
+  const block = () =>
+    Math.random().toString(36).replace(/[^a-z0-9]/g, "").slice(0, 4).toUpperCase().padEnd(4, "X");
+  return `EAMP-${block()}-${block()}-${block()}`;
+}
+
+export function updateProfile(id: string, patch: Partial<Account>) {
+  update(id, (a) => ({ ...a, ...patch }));
+}
