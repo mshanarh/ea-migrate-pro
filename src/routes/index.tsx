@@ -216,16 +216,21 @@ function Home() {
               </Button>
             </div>
 
-            <div className="relative mx-auto mt-14 max-w-2xl">
-              <div className="panel overflow-hidden glow-ring">
-                <img
-                  src={heroBot}
-                  alt="EA Migrate Pro automated trading robot beside a live forex chart"
-                  width={1280}
-                  height={1280}
-                  className="w-full object-cover"
-                />
-              </div>
+            <div
+              className="relative mx-auto mt-14 w-[260px] sm:w-[300px] md:w-[400px]"
+              style={{ perspective: 1200 }}
+            >
+              <motion.img
+                src={heroApp.url}
+                alt="EA Migrate Pro app running the EA Migrate tester bot on a phone"
+                className="w-full object-contain"
+                style={{
+                  borderRadius: 40,
+                  boxShadow: "0 0 60px rgba(37,99,235,0.6)",
+                }}
+                animate={{ y: [0, -15, 0], rotateY: [0, 15, 0, -15, 0] }}
+                transition={{ duration: 5, repeat: Infinity, ease: "easeInOut" }}
+              />
             </div>
 
             <dl className="mx-auto mt-12 grid max-w-2xl grid-cols-3 gap-4 text-left">
