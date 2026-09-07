@@ -201,7 +201,7 @@ function Home() {
 
             <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
               <Button asChild size="lg" className="w-full rounded-full sm:w-auto">
-                <Link to="/builder">Open the EA builder</Link>
+                <Link to="/signup">Create your portal</Link>
               </Button>
               <Button
                 asChild
@@ -209,6 +209,7 @@ function Home() {
                 variant="outline"
                 className="w-full rounded-full sm:w-auto"
               >
+
                 <a href="#how">
                   <Download className="size-4" /> See how it works
                 </a>
