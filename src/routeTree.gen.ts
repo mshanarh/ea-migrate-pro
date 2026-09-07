@@ -16,6 +16,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
+import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
@@ -55,6 +56,11 @@ const DashboardLicensesRoute = DashboardLicensesRouteImport.update({
   path: '/licenses',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardProfileRoute = DashboardProfileRouteImport.update({
+  id: '/profile',
+  path: '/profile',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardSignalsRoute = DashboardSignalsRouteImport.update({
   id: '/signals',
   path: '/signals',
@@ -78,6 +84,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -89,6 +96,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -102,6 +110,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -116,6 +125,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -127,6 +137,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -139,6 +150,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -203,6 +215,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardLicensesRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/profile': {
+      id: '/dashboard/profile'
+      path: '/profile'
+      fullPath: '/dashboard/profile'
+      preLoaderRoute: typeof DashboardProfileRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/signals': {
       id: '/dashboard/signals'
       path: '/signals'
@@ -230,6 +249,7 @@ declare module '@tanstack/react-router' {
 interface DashboardRouteChildren {
   DashboardEasRoute: typeof DashboardEasRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
+  DashboardProfileRoute: typeof DashboardProfileRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
   DashboardWalletRoute: typeof DashboardWalletRoute
@@ -239,6 +259,7 @@ interface DashboardRouteChildren {
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardEasRoute: DashboardEasRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
+  DashboardProfileRoute: DashboardProfileRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
   DashboardWalletRoute: DashboardWalletRoute,
