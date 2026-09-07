@@ -59,6 +59,19 @@ const seedMentor: Account = {
   licenses: [],
 };
 
+const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
+
+function normalise(store: Store): Store {
+  return {
+    ...store,
+    accounts: store.accounts.map((a) =>
+      OWNER_EMAILS.includes(a.email.trim().toLowerCase())
+        ? { ...a, role: "admin", status: "approved" }
+        : a,
+    ),
+  };
+}
+
 let state: Store = { accounts: [seedAdmin, seedMentor], currentId: null };
 let loaded = false;
 const listeners = new Set<() => void>();
@@ -68,11 +81,12 @@ function load() {
   loaded = true;
   try {
     const raw = window.localStorage.getItem(KEY);
-    if (raw) state = JSON.parse(raw) as Store;
+    if (raw) state = normalise(JSON.parse(raw) as Store);
   } catch {
     /* ignore */
   }
 }
+
 
 function persist() {
   if (typeof window !== "undefined") {
@@ -135,7 +149,7 @@ export function register(
     createdAt: new Date().toISOString(),
     licenses: [],
   };
-  state = { ...state, accounts: [...state.accounts, account], currentId: account.id };
+  state = normalise({ ...state, accounts: [...state.accounts, account], currentId: account.id });
   persist();
   return {};
 }

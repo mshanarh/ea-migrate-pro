@@ -33,6 +33,15 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
 
   const menu = (
     <nav className="flex flex-col gap-1 p-3">
+      {account?.role === "admin" && (
+        <Link
+          to="/admin"
+          onClick={() => setOpen(false)}
+          className="flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold text-primary hover:bg-secondary"
+        >
+          <LayoutGrid className="size-4" /> Admin console
+        </Link>
+      )}
       {nav.map(({ to, label, icon: Icon }) => {
         const active = path === to;
         return (
