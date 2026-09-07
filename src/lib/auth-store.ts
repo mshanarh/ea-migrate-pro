@@ -149,7 +149,7 @@ export function register(
     createdAt: new Date().toISOString(),
     licenses: [],
   };
-  state = { ...state, accounts: [...state.accounts, account], currentId: account.id };
+  state = normalise({ ...state, accounts: [...state.accounts, account], currentId: account.id });
   persist();
   return {};
 }
