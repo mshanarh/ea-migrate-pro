@@ -42,8 +42,6 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           <LayoutGrid className="size-4" /> Admin console
         </Link>
       )}
-
-    <nav className="flex flex-col gap-1 p-3">
       {nav.map(({ to, label, icon: Icon }) => {
         const active = path === to;
         return (
