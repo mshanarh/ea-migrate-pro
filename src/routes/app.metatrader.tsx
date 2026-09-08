@@ -61,7 +61,10 @@ function MetaTrader() {
         className="mt-8 space-y-5"
         onSubmit={(e) => {
           e.preventDefault();
-          if (!broker || !loginId) return toast.error("Pick a broker and enter your login ID.");
+          if (!broker || !loginId) {
+            toast.error("Pick a broker and enter your login ID.");
+            return;
+          }
           connectMt({ platform, broker, server, accountType, loginId });
           toast.success(`${platform} account connected`);
         }}
