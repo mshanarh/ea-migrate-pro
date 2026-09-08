@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 
 export type Robot = {
   id: string;
@@ -91,10 +92,27 @@ export function useAppState() {
   );
 }
 
-export function appSignIn(email: string) {
+function getDeviceId() {
+  if (typeof window === "undefined") return "server";
+  const key = "eamp.device.id";
+  const saved = window.localStorage.getItem(key);
+  if (saved) return saved;
+  const generated = "device-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 10);
+  window.localStorage.setItem(key, generated);
+  return generated;
+}
+
+export function appSignIn(email: string): { error?: string } {
   load();
-  state = { ...state, email: email.trim() };
+  const clean = email.trim().toLowerCase();
+  if (!clean) return { error: "Enter your email address." };
+  const deviceId = getDeviceId();
+  const binding = getEmailDeviceBinding(clean);
+  if (binding && binding.deviceId !== deviceId) return { error: "This email is already activated on another device." };
+  if (paymentStatusForEmail(clean) === "admin") markEmailPaid(clean);
+  state = { ...state, email: clean };
   persist();
+  return {};
 }
 
 export function appSignOut() {
@@ -125,6 +143,10 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
   const clean = key.trim().toUpperCase();
   if (!clean.startsWith("EMP-") || clean.length !== 16) return { error: "That license key is invalid." };
   if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
+  if (!state.email) return { error: "Sign in with your email before activating a key." };
+  if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
+  const deviceResult = bindEmailToDevice(state.email, getDeviceId());
+  if (deviceResult.error) return { error: deviceResult.error };
   const savedEa = findSavedEaForLicense(clean);
   const robot: Robot = {
     id: "r-" + Date.now(),
