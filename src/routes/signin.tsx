@@ -43,18 +43,19 @@ function SignIn() {
           const res = signIn(email, password);
           if (res.error) return setError(res.error);
           const account = store.accounts.find(
-            (a) => a.email.toLowerCase() === email.trim().toLowerCase() || a.username === email.trim(),
+            (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
           );
           navigate({ to: account?.role === "admin" ? "/admin" : "/dashboard" });
         }}
       >
-        <Field label="Email">
+        <Field label="Email address">
           <Input
-            type="text"
+            type="email"
             required
+            autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="Enter your email"
+            placeholder="Enter your email address"
             className="h-14 rounded-full border-primary/25 bg-card/70 px-5"
           />
         </Field>
