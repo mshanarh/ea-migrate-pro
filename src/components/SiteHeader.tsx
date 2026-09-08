@@ -20,7 +20,7 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Link to="/" className="flex items-center gap-2">
           <img
-            src="/botlogic-mascot.jpg?v=2"
+            src="/ea-migrate-platform-robot.png"
             alt="EA Migrate Pro"
             className="size-10 object-contain"
           />
