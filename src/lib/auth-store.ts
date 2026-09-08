@@ -241,6 +241,7 @@ export function addLicense(
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
+  if (!details.eaId) return { error: "Choose an Expert Advisor." };
   if (account.licenseLimit <= 0) {
     return { error: "The admin has not set a license limit for this account yet." };
   }
