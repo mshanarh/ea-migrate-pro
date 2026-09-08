@@ -22,6 +22,7 @@ import {
 import type { CSSProperties } from "react";
 import { saveWebsite, useCurrentAccount } from "@/lib/auth-store";
 import type { MentorWebsite } from "@/lib/auth-store";
+import { buildWebsiteLink } from "@/lib/website-share";
 
 export const Route = createFileRoute("/dashboard/website")({
   ssr: false,
@@ -62,6 +63,7 @@ const emptyWebsite: WebsiteDraft = {
   description: "",
   whatsapp: "",
   resultImages: [],
+  botImage: "",
 };
 
 const fieldClass = "mt-2 h-13 w-full rounded-2xl border border-border/70 bg-background/70 px-4 text-sm text-foreground outline-none transition focus:border-primary/70 focus:ring-2 focus:ring-primary/15";
@@ -92,7 +94,7 @@ function WebsiteBuilder() {
     [website.theme],
   );
   const selectedEa = account?.eas.find((ea) => ea.id === website.eaId);
-  const publicLink = saved && account ? buildPublicLink(account.username, saved.robotName) : "";
+  const publicLink = saved && account ? buildWebsiteLink(account.username, saved) : "";
 
   const update = <K extends keyof WebsiteDraft>(key: K, value: WebsiteDraft[K]) => {
     setWebsite((current) => ({ ...current, [key]: value }));
@@ -106,6 +108,7 @@ function WebsiteBuilder() {
       eaId,
       robotName: current.robotName || ea?.name || "",
       description: current.description || ea?.briefing || "",
+      botImage: ea?.image || current.botImage || "",
     }));
     setNotice("");
   };
@@ -158,7 +161,7 @@ function WebsiteBuilder() {
       setError("Add a WhatsApp number so clients can reach you.");
       return;
     }
-    const next = { ...website, updatedAt: new Date().toISOString() };
+    const next = { ...website, botImage: website.botImage || selectedEa?.image || "", updatedAt: new Date().toISOString() };
     saveWebsite(account.id, next);
     setSaved(next);
     setWebsite(next);
@@ -269,11 +272,9 @@ function LivePreview({ website, theme, publicLink }: { website: WebsiteDraft; th
   const hasIos = Boolean(website.iosPrice && website.iosLink);
   const hasPc = Boolean(website.pcPrice && website.pcLink);
   const previewStyle = { "--preview-accent": theme.accent, "--preview-surface": theme.surface, "--preview-glow": theme.glow } as CSSProperties;
-  return <section className="panel overflow-hidden p-4 sm:p-5 xl:sticky xl:top-24" style={previewStyle}><div className="flex items-center gap-2 px-1 text-sm font-bold tracking-[0.14em] uppercase"><Smartphone className="size-4 text-primary" /> Live preview</div><div className="mt-4 overflow-hidden rounded-[2rem] border-8 border-zinc-800 bg-[#06090d] shadow-2xl" style={{ boxShadow: "0 0 0 1px rgba(255,255,255,.08), 0 0 55px " + theme.glow }}><div className="min-h-[600px] p-5 sm:p-7" style={{ background: "radial-gradient(circle at 50% 0%, " + theme.glow + ", transparent 35%), linear-gradient(160deg, " + theme.surface + ", #06090d 65%)" }}><div className="text-center text-[11px] font-bold tracking-[0.24em] uppercase" style={{ color: theme.accent }}>{theme.name}</div><div className="mx-auto mt-12 flex size-28 items-center justify-center rounded-[2rem] border" style={{ color: theme.accent, borderColor: theme.accent + "66", backgroundColor: theme.surface, boxShadow: "0 0 38px " + theme.glow }}><Bot className="size-14" /></div><h3 className="mt-5 text-center text-2xl font-bold text-white">{website.robotName || "Your Robot"}</h3><p className="mt-2 text-center text-sm text-zinc-300">{website.tagline || "Your high-precision trading companion"}</p><div className="mt-6 space-y-3 text-sm leading-6 text-zinc-300">{website.description ? website.description.split("\n\n").map((paragraph, index) => <p key={index}>{paragraph}</p>) : <p className="text-center italic text-zinc-500">Your bot description will appear here as you write it.</p>}</div><div className="mt-7 grid gap-2">{website.androidPrice && <PreviewButton icon={<Smartphone className="size-4" />} label="Android" value={website.currency + " " + website.androidPrice} accent={theme.accent} />}{hasIos && <PreviewButton icon={<Apple className="size-4" />} label="iOS" value={website.currency + " " + website.iosPrice} accent={theme.accent} />}{hasPc && <PreviewButton icon={<Monitor className="size-4" />} label="PC" value={website.currency + " " + website.pcPrice} accent={theme.accent} />}</div>{website.resultImages.length > 0 && <div className="mt-6 grid grid-cols-2 gap-2">{website.resultImages.map((image, index) => <img key={image.slice(-18) + index} src={image} alt="" className="aspect-video rounded-xl object-cover opacity-90" />)}</div>}<div className="mt-8 flex items-center justify-center"><span className="flex size-12 items-center justify-center rounded-full text-white" style={{ backgroundColor: "#20d866", boxShadow: "0 0 22px rgba(32,216,102,.45)" }}><MessageCircle className="size-6 fill-white" /></span></div><div className="mt-5 rounded-xl py-3 text-center text-sm font-bold text-white" style={{ background: "linear-gradient(90deg, " + theme.accent + ", #ff8a26)" }}>Buy Now</div></div></div><p className="mt-3 text-center text-xs text-muted-foreground">Preview updates instantly. Save to generate the share link.</p>{publicLink && <p className="mt-1 truncate text-center text-[11px] text-primary">{publicLink}</p>}</section>;
+  return <section className="panel overflow-hidden p-4 sm:p-5 xl:sticky xl:top-24" style={previewStyle}><div className="flex items-center gap-2 px-1 text-sm font-bold tracking-[0.14em] uppercase"><Smartphone className="size-4 text-primary" /> Live preview</div><div className="mt-4 overflow-hidden rounded-[2rem] border-8 border-zinc-800 bg-[#06090d] shadow-2xl" style={{ boxShadow: "0 0 0 1px rgba(255,255,255,.08), 0 0 55px " + theme.glow }}><div className="min-h-[600px] p-5 sm:p-7" style={{ background: "radial-gradient(circle at 50% 0%, " + theme.glow + ", transparent 35%), linear-gradient(160deg, " + theme.surface + ", #06090d 65%)" }}><div className="text-center text-[11px] font-bold tracking-[0.24em] uppercase" style={{ color: theme.accent }}>{theme.name}</div><div className="mx-auto mt-12 flex size-28 items-center justify-center rounded-[2rem] border" style={{ color: theme.accent, borderColor: theme.accent + "66", backgroundColor: theme.surface, boxShadow: "0 0 38px " + theme.glow }}>{website.botImage ? <img src={website.botImage} alt="" className="size-14 rounded-2xl object-cover" /> : <Bot className="size-14" />}</div><h3 className="mt-5 text-center text-2xl font-bold text-white">{website.robotName || "Your Robot"}</h3><p className="mt-2 text-center text-sm text-zinc-300">{website.tagline || "Your high-precision trading companion"}</p><div className="mt-6 space-y-3 text-sm leading-6 text-zinc-300">{website.description ? website.description.split("\n\n").map((paragraph, index) => <p key={index}>{paragraph}</p>) : <p className="text-center italic text-zinc-500">Your bot description will appear here as you write it.</p>}</div><div className="mt-7 grid gap-2">{website.androidPrice && <PreviewButton icon={<Smartphone className="size-4" />} label="Android" value={website.currency + " " + website.androidPrice} accent={theme.accent} />}{hasIos && <PreviewButton icon={<Apple className="size-4" />} label="iOS" value={website.currency + " " + website.iosPrice} accent={theme.accent} />}{hasPc && <PreviewButton icon={<Monitor className="size-4" />} label="PC" value={website.currency + " " + website.pcPrice} accent={theme.accent} />}</div>{website.resultImages.length > 0 && <div className="mt-6 grid grid-cols-2 gap-2">{website.resultImages.map((image, index) => <img key={image.slice(-18) + index} src={image} alt="" className="aspect-video rounded-xl object-cover opacity-90" />)}</div>}<div className="mt-8 flex items-center justify-center"><span className="flex size-12 items-center justify-center rounded-full text-white" style={{ backgroundColor: "#20d866", boxShadow: "0 0 22px rgba(32,216,102,.45)" }}><MessageCircle className="size-6 fill-white" /></span></div><div className="mt-5 rounded-xl py-3 text-center text-sm font-bold text-white" style={{ background: "linear-gradient(90deg, " + theme.accent + ", #ff8a26)" }}>Buy Now</div></div></div><p className="mt-3 text-center text-xs text-muted-foreground">Preview updates instantly. Save to generate the share link.</p>{publicLink && <p className="mt-1 truncate text-center text-[11px] text-primary">{publicLink}</p>}</section>;
 }
 
 function PreviewButton({ icon, label, value, accent }: { icon: React.ReactNode; label: string; value: string; accent: string }) { return <div className="flex items-center justify-between rounded-xl border px-4 py-3 text-white" style={{ borderColor: accent + "55", backgroundColor: accent + "18" }}><span className="flex items-center gap-2 text-sm font-bold">{icon}{label}</span><span className="text-xs font-bold" style={{ color: accent }}>{value}</span></div>; }
-
-function buildPublicLink(username: string, robotName: string) { const slug = (username + "-" + robotName).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, ""); return "https://ea-migrate-pro.com/mentor/" + (slug || "your-robot"); }
 
 function readFileAsDataUrl(file: File) { return new Promise<string>((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(String(reader.result)); reader.onerror = () => reject(reader.error); reader.readAsDataURL(file); }); }
