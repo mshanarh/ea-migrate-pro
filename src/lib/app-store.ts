@@ -28,6 +28,7 @@ export type AppSettings = {
 
 export type AppState = {
   email: string | null;
+  activeRobotId: string | null;
   robots: Robot[];
   mt: MtAccount | null;
   settings: AppSettings;
@@ -37,9 +38,10 @@ const KEY = "eamp.app.v1";
 
 const initial: AppState = {
   email: null,
+  activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "Interface 1", font: "Inter", accent: 60, accentColor: "#6ea8ff" },
+  settings: { background: "Neon Grid", interfaceStyle: "Neuro Scalper", font: "Inter", accent: 60, accentColor: "#6ea8ff" },
 };
 
 let state: AppState = initial;
@@ -56,6 +58,7 @@ function load() {
       state = {
         ...initial,
         ...saved,
+        activeRobotId: saved.activeRobotId ?? initial.activeRobotId,
         settings: { ...initial.settings, ...(saved.settings ?? {}) },
       };
     }
@@ -132,9 +135,16 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
     ...(savedEa?.video ? { video: savedEa.video } : {}),
     running: false,
   };
-  state = { ...state, robots: [...state.robots, robot] };
+  state = { ...state, activeRobotId: state.activeRobotId || robot.id, robots: [...state.robots, robot] };
   persist();
   return { robot };
+}
+
+export function setActiveRobot(id: string) {
+  load();
+  if (!state.robots.some((robot) => robot.id === id)) return;
+  state = { ...state, activeRobotId: id };
+  persist();
 }
 
 export function toggleRobot(id: string) {
@@ -148,7 +158,8 @@ export function toggleRobot(id: string) {
 
 export function removeRobot(id: string) {
   load();
-  state = { ...state, robots: state.robots.filter((r) => r.id !== id) };
+  const robots = state.robots.filter((r) => r.id !== id);
+  state = { ...state, activeRobotId: state.activeRobotId === id ? (robots[0]?.id ?? null) : state.activeRobotId, robots };
   persist();
 }
 
