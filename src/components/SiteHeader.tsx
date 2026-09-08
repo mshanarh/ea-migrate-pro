@@ -20,7 +20,7 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Link to="/" className="flex items-center gap-2">
           <img
-            src="/ea-migrate-platform-robot.png"
+            src="/ea-migrate-platform-robot.jpg"
             alt="EA Migrate Pro"
             className="size-10 object-contain"
           />
