@@ -21,6 +21,24 @@ export type License = {
   expiresAt?: string;
 };
 
+export type MentorWebsite = {
+  eaId: string;
+  robotName: string;
+  tagline: string;
+  theme: string;
+  currency: string;
+  androidPrice: string;
+  androidLink: string;
+  iosPrice: string;
+  iosLink: string;
+  pcPrice: string;
+  pcLink: string;
+  description: string;
+  whatsapp: string;
+  resultImages: string[];
+  updatedAt?: string;
+};
+
 export type ExpertAdvisor = {
   id: string;
   name: string;
@@ -42,6 +60,7 @@ export type Account = {
   licenseLimit: number;
   licenses: License[];
   eas: ExpertAdvisor[];
+  website?: MentorWebsite;
 };
 
 type Store = {
@@ -201,7 +220,7 @@ export function signOut() {
 }
 
 export function register(
-  data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas">,
+  data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas" | "website">,
 ): { error?: string } {
   load();
   if (state.accounts.some((a) => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
@@ -275,6 +294,10 @@ export function addLicense(
 
 export function setEAs(id: string, eas: ExpertAdvisor[]) {
   update(id, (a) => ({ ...a, eas: eas.map((ea) => ({ id: ea.id, name: ea.name.trim(), eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })) }));
+}
+
+export function saveWebsite(id: string, website: MentorWebsite) {
+  update(id, (a) => ({ ...a, website }));
 }
 
 export function setLicenseLimit(id: string, limit: number) {
