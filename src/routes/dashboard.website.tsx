@@ -5,7 +5,6 @@ import {
   Bot,
   Check,
   ChevronDown,
-  CircleDollarSign,
   ExternalLink,
   FileText,
   Globe2,
@@ -16,13 +15,13 @@ import {
   Palette,
   Phone,
   Save,
-  Sparkles,
   Smartphone,
   Trash2,
   WandSparkles,
 } from "lucide-react";
 import type { CSSProperties } from "react";
-import { MentorWebsite, saveWebsite, useCurrentAccount } from "@/lib/auth-store";
+import { saveWebsite, useCurrentAccount } from "@/lib/auth-store";
+import type { MentorWebsite } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/dashboard/website")({
   ssr: false,
