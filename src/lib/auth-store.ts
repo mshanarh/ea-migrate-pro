@@ -10,6 +10,16 @@ export type License = {
   active: boolean;
 };
 
+export type ExpertAdvisor = {
+  id: string;
+  name: string;
+  briefing: string;
+  symbols: string[];
+  image?: string;
+  video?: string;
+  createdAt: string;
+};
+
 export type Account = {
   id: string;
   firstName: string;
@@ -21,7 +31,9 @@ export type Account = {
   role: "mentor" | "admin";
   status: PortalStatus;
   createdAt: string;
+  licenseLimit: number;
   licenses: License[];
+  eas: ExpertAdvisor[];
 };
 
 type Store = {
@@ -42,7 +54,9 @@ const seedAdmin: Account = {
   role: "admin",
   status: "approved",
   createdAt: new Date().toISOString(),
+  licenseLimit: 0,
   licenses: [],
+  eas: [],
 };
 
 const seedMentor: Account = {
@@ -56,20 +70,30 @@ const seedMentor: Account = {
   role: "mentor",
   status: "pending",
   createdAt: new Date().toISOString(),
+  licenseLimit: 0,
   licenses: [],
+  eas: [],
 };
 
 const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
 
 function normalise(store: Store): Store {
-  return {
-    ...store,
-    accounts: store.accounts.map((a) =>
-      OWNER_EMAILS.includes(a.email.trim().toLowerCase())
-        ? { ...a, role: "admin", status: "approved" }
-        : a,
-    ),
-  };
+  const accounts = (Array.isArray(store.accounts) ? store.accounts : []).map((a) => {
+    const account = {
+      ...a,
+      licenseLimit:
+        typeof a.licenseLimit === "number" && Number.isFinite(a.licenseLimit)
+          ? Math.max(0, Math.floor(a.licenseLimit))
+          : 0,
+      licenses: Array.isArray(a.licenses) ? a.licenses : [],
+      eas: Array.isArray(a.eas) ? a.eas : [],
+    };
+    return OWNER_EMAILS.includes(a.email.trim().toLowerCase())
+      ? { ...account, role: "admin" as const, status: "approved" as const }
+      : account;
+  });
+
+  return { ...store, accounts, currentId: store.currentId ?? null };
 }
 
 let state: Store = { accounts: [seedAdmin, seedMentor], currentId: null };
@@ -119,9 +143,8 @@ export function useCurrentAccount() {
 
 export function signIn(email: string, password: string): { error?: string } {
   load();
-  const account = state.accounts.find(
-    (a) => a.email.toLowerCase() === email.trim().toLowerCase() || a.username === email.trim(),
-  );
+  const cleanEmail = email.trim().toLowerCase();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
   if (!account || account.password !== password) return { error: "Wrong email or password." };
   state = { ...state, currentId: account.id };
   persist();
@@ -135,19 +158,22 @@ export function signOut() {
 }
 
 export function register(
-  data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenses">,
+  data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas">,
 ): { error?: string } {
   load();
-  if (state.accounts.some((a) => a.email.toLowerCase() === data.email.toLowerCase())) {
+  if (state.accounts.some((a) => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
     return { error: "That email is already registered." };
   }
   const account: Account = {
     ...data,
-    id: `m-${Date.now()}`,
+    email: data.email.trim().toLowerCase(),
+    id: "m-" + Date.now(),
     role: "mentor",
     status: "pending",
     createdAt: new Date().toISOString(),
+    licenseLimit: 0,
     licenses: [],
+    eas: [],
   };
   state = normalise({ ...state, accounts: [...state.accounts, account], currentId: account.id });
   persist();
@@ -167,14 +193,33 @@ export function setStatus(id: string, status: PortalStatus) {
   update(id, (a) => ({ ...a, status }));
 }
 
-export function addLicense(id: string, plan: string, key: string) {
+export function addLicense(id: string, plan: string, key: string): { error?: string } {
+  load();
+  const account = state.accounts.find((a) => a.id === id);
+  if (!account) return { error: "Mentor account not found." };
+  if (account.licenseLimit <= 0) {
+    return { error: "The admin has not set a license limit for this account yet." };
+  }
+  if (account.licenses.length >= account.licenseLimit) {
+    return { error: "This account has reached its license limit." };
+  }
+
   update(id, (a) => ({
     ...a,
     licenses: [
       ...a.licenses,
-      { id: `l-${Date.now()}`, key, plan, issuedAt: new Date().toISOString(), active: true },
+      { id: "l-" + Date.now(), key, plan, issuedAt: new Date().toISOString(), active: true },
     ],
   }));
+  return {};
+}
+
+export function setEAs(id: string, eas: ExpertAdvisor[]) {
+  update(id, (a) => ({ ...a, eas }));
+}
+
+export function setLicenseLimit(id: string, limit: number) {
+  update(id, (a) => ({ ...a, licenseLimit: Math.max(0, Math.floor(limit)) }));
 }
 
 export function toggleLicense(accountId: string, licenseId: string) {
