@@ -253,7 +253,7 @@ function subscribe(l: () => void) {
   return () => listeners.delete(l);
 }
 
-const serverSnapshot: Store = { accounts: [], currentId: null };
+const serverSnapshot: Store = { accounts: [], currentId: null, payments: [], deviceBindings: [] };
 
 function getSnapshot() {
   load();
