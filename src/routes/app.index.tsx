@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { ArrowRight, Bot, Mail } from "lucide-react";
+import { ArrowRight, Mail } from "lucide-react";
 import { appSignIn } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/")({
@@ -25,7 +25,11 @@ function AppLogin() {
   return (
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6">
       <span className="flex size-24 items-center justify-center rounded-[2rem] bg-gradient-to-br from-primary to-primary/40 glow-ring">
-        <Bot className="size-12 text-primary-foreground" />
+        <img
+          src="/botlogic-mascot.png"
+          alt="EA Migrate Pro"
+          className="size-24 object-contain"
+        />
       </span>
       <h1 className="mt-8 text-4xl font-bold">Login</h1>
       <p className="mt-2 text-sm text-muted-foreground">Enter your email to continue</p>
