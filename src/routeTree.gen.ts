@@ -25,6 +25,10 @@ import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
+import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.index'
+import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
+import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
+import { Route as AppSettingsInterfaceRouteImport } from './routes/app.settings.interface'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -106,6 +110,26 @@ const DashboardWalletRoute = DashboardWalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => DashboardRoute,
 } as any)
+const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
+  id: '/app/settings/',
+  path: '/app/settings/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppSettingsBackgroundRoute = AppSettingsBackgroundRouteImport.update({
+  id: '/app/settings/background',
+  path: '/app/settings/background',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppSettingsFontRoute = AppSettingsFontRouteImport.update({
+  id: '/app/settings/font',
+  path: '/app/settings/font',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppSettingsInterfaceRoute = AppSettingsInterfaceRouteImport.update({
+  id: '/app/settings/interface',
+  path: '/app/settings/interface',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -124,6 +148,10 @@ export interface FileRoutesByFullPath {
   '/dashboard/wallet': typeof DashboardWalletRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/font': typeof AppSettingsFontRoute
+  '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -141,6 +169,10 @@ export interface FileRoutesByTo {
   '/dashboard/wallet': typeof DashboardWalletRoute
   '/app': typeof AppIndexRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/font': typeof AppSettingsFontRoute
+  '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -160,6 +192,10 @@ export interface FileRoutesById {
   '/dashboard/wallet': typeof DashboardWalletRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/font': typeof AppSettingsFontRoute
+  '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -180,6 +216,10 @@ export interface FileRouteTypes {
     | '/dashboard/wallet'
     | '/app/'
     | '/dashboard/'
+    | '/app/settings/background'
+    | '/app/settings/font'
+    | '/app/settings/interface'
+    | '/app/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -197,6 +237,10 @@ export interface FileRouteTypes {
     | '/dashboard/wallet'
     | '/app'
     | '/dashboard'
+    | '/app/settings/background'
+    | '/app/settings/font'
+    | '/app/settings/interface'
+    | '/app/settings'
   id:
     | '__root__'
     | '/'
@@ -215,6 +259,10 @@ export interface FileRouteTypes {
     | '/dashboard/wallet'
     | '/app/'
     | '/dashboard/'
+    | '/app/settings/background'
+    | '/app/settings/font'
+    | '/app/settings/interface'
+    | '/app/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -227,6 +275,10 @@ export interface RootRouteChildren {
   AppHomeRoute: typeof AppHomeRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
   AppIndexRoute: typeof AppIndexRoute
+  AppSettingsBackgroundRoute: typeof AppSettingsBackgroundRoute
+  AppSettingsFontRoute: typeof AppSettingsFontRoute
+  AppSettingsInterfaceRoute: typeof AppSettingsInterfaceRoute
+  AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -343,6 +395,34 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardWalletRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/app/settings/': {
+      id: '/app/settings/'
+      path: '/app/settings'
+      fullPath: '/app/settings/'
+      preLoaderRoute: typeof AppSettingsIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings/background': {
+      id: '/app/settings/background'
+      path: '/app/settings/background'
+      fullPath: '/app/settings/background'
+      preLoaderRoute: typeof AppSettingsBackgroundRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings/font': {
+      id: '/app/settings/font'
+      path: '/app/settings/font'
+      fullPath: '/app/settings/font'
+      preLoaderRoute: typeof AppSettingsFontRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings/interface': {
+      id: '/app/settings/interface'
+      path: '/app/settings/interface'
+      fullPath: '/app/settings/interface'
+      preLoaderRoute: typeof AppSettingsInterfaceRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -380,6 +460,10 @@ const rootRouteChildren: RootRouteChildren = {
   AppHomeRoute: AppHomeRoute,
   AppMetatraderRoute: AppMetatraderRoute,
   AppIndexRoute: AppIndexRoute,
+  AppSettingsBackgroundRoute: AppSettingsBackgroundRoute,
+  AppSettingsFontRoute: AppSettingsFontRoute,
+  AppSettingsInterfaceRoute: AppSettingsInterfaceRoute,
+  AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
