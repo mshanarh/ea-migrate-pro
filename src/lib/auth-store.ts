@@ -13,6 +13,8 @@ export type License = {
   expertAdvisor?: string;
   eaId?: string;
   eaNameHash?: string;
+  briefing?: string;
+  symbols?: string[];
   image?: string;
   video?: string;
   expiry?: string;
@@ -117,7 +119,7 @@ function normalise(store: Store): Store {
           ? Math.max(0, Math.floor(a.licenseLimit))
           : 0,
       licenses: Array.isArray(a.licenses) ? a.licenses : [],
-      eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })),
+      eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })),
     };
     return OWNER_EMAILS.includes(a.email.trim().toLowerCase())
       ? { ...account, role: "admin" as const, status: "approved" as const }
