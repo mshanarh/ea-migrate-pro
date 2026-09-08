@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeftRight, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
-import robot from "@/assets/app-robot.jpg.asset.json";
 import { removeRobot, toggleRobot, useAppState } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/home")({
@@ -19,6 +18,8 @@ export const Route = createFileRoute("/app/home")({
   }),
   component: AppHome,
 });
+
+const robot = { url: "/botlogic-mascot.jpg" };
 
 function AppHome() {
   const app = useAppState();
