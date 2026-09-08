@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { Bot } from "lucide-react";
 
 export function AuthShell({
   active,
@@ -26,7 +25,11 @@ export function AuthShell({
       <main className="mx-auto w-full max-w-md px-5 pt-12 pb-16">
         <div className="flex flex-col items-center text-center">
           <Link to="/" className="flex size-16 items-center justify-center rounded-2xl bg-primary/15 glow-ring">
-            <Bot className="size-8 text-primary" />
+            <img
+              src="/botlogic-mascot.png"
+              alt="EA Migrate Pro"
+              className="size-16 object-contain"
+            />
           </Link>
           <h1 className="mt-5 text-4xl font-bold tracking-tight">
             EA <span className="text-primary">Migrate</span> Pro
