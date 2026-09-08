@@ -26,7 +26,7 @@ function AppLogin() {
     <div className="mx-auto flex min-h-screen w-full max-w-md flex-col items-center justify-center px-6">
       <span className="flex size-24 items-center justify-center rounded-[2rem] bg-gradient-to-br from-primary to-primary/40 glow-ring">
         <img
-          src="/botlogic-mascot.png"
+          src="/botlogic-mascot.jpg?v=2"
           alt="EA Migrate Pro"
           className="size-24 object-contain"
         />
