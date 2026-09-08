@@ -4,40 +4,109 @@ import { Code2, ImageIcon, Plus, Trash2, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { useCurrentAccount } from "@/lib/auth-store";
+import { setEAs, useCurrentAccount, type ExpertAdvisor } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/dashboard/eas")({
   ssr: false,
   component: ManageEAs,
 });
 
-type EA = {
-  id: string;
-  name: string;
-  briefing: string;
-  symbols: string[];
-  image?: string;
-  video?: string;
-};
+const LEGACY_EAS_STORAGE_PREFIX = "eamp.portal.eas.v1";
 
-const EAS_STORAGE_PREFIX = "eamp.portal.eas.v1";
-
-function easStorageKey(accountId: string) {
-  return `${EAS_STORAGE_PREFIX}.${accountId}`;
+function legacyEasStorageKey(accountId: string) {
+  return LEGACY_EAS_STORAGE_PREFIX + "." + accountId;
 }
 
-function readEAs(accountId: string): EA[] {
+function readLegacyEAs(accountId: string): ExpertAdvisor[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = window.localStorage.getItem(easStorageKey(accountId));
+    const raw = window.localStorage.getItem(legacyEasStorageKey(accountId));
     const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? (parsed as EA[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed.map((ea) => ({
+      ...ea,
+      createdAt: typeof ea.createdAt === "string" ? ea.createdAt : new Date().toISOString(),
+    })) as ExpertAdvisor[];
   } catch {
     return [];
   }
 }
 
 function ManageEAs() {
+  const account = useCurrentAccount();
+  const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!account || account.eas.length > 0) return;
+    const legacyEAs = readLegacyEAs(account.id);
+    if (legacyEAs.length > 0) setEAs(account.id, legacyEAs);
+  }, [account?.id, account?.eas.length]);
+
+  if (!account) return null;
+  const eas = account.eas;
+
+  return (
+    <div>
+      <p className="text-xs font-bold tracking-[0.22em] text-primary uppercase">Workspace</p>
+      <h1 className="mt-1 text-3xl font-bold">Expert Advisors</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        Build, deploy and manage your trading bots. Your EAs are saved to your mentor account.
+      </p>
+
+      <Button size="lg" className="mt-6 h-12 rounded-full" onClick={() => setOpen(true)}>
+        <Plus className="size-4" /> Create EA
+      </Button>
+
+      <h2 className="mt-8 text-lg font-semibold">
+        Your EAs <span className="text-muted-foreground">({eas.length})</span>
+      </h2>
+
+      {eas.length === 0 ? (
+        <div className="panel mt-4 flex flex-col items-center gap-3 p-12 text-center">
+          <span className="flex size-14 items-center justify-center rounded-full bg-primary/12">
+            <Code2 className="size-6 text-primary" />
+          </span>
+          <p className="font-semibold">No EAs yet</p>
+          <p className="max-w-sm text-sm text-muted-foreground">
+            Create your first Expert Advisor to start deploying it to your trading terminals.
+          </p>
+        </div>
+      ) : (
+        <ul className="mt-4 space-y-3">
+          {eas.map((ea) => (
+            <li key={ea.id} className="panel flex items-center justify-between gap-4 p-5">
+              <div className="min-w-0">
+                <p className="font-semibold">{ea.name}</p>
+                <p className="truncate text-sm text-muted-foreground">
+                  {ea.symbols.join(", ") || "No symbols"}
+                </p>
+              </div>
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete EA"
+                onClick={() => setEAs(account.id, eas.filter((x) => x.id !== ea.id))}
+              >
+                <Trash2 className="size-4" />
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <CreateEaDialog
+        open={open}
+        onOpenChange={setOpen}
+        onCreate={(ea) => {
+          setEAs(account.id, [...eas, ea]);
+          toast.success(ea.name + " saved");
+        }}
+      />
+    </div>
+  );
+}
+
+function CreateEaDialog
   const account = useCurrentAccount();
   const accountId = account?.id ?? "";
   const [eas, setEas] = useState<EA[]>([]);
@@ -127,7 +196,7 @@ function CreateEaDialog({
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
-  onCreate: (ea: EA) => void;
+  onCreate: (ea: ExpertAdvisor) => void;
 }) {
   const [name, setName] = useState("");
   const [briefing, setBriefing] = useState("");
@@ -180,6 +249,7 @@ function CreateEaDialog({
               name: name.trim(),
               briefing: briefing.trim(),
               symbols,
+              createdAt: new Date().toISOString(),
               ...(image ? { image } : {}),
               ...(video ? { video } : {}),
             });
