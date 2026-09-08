@@ -8,6 +8,7 @@ import {
   BarChart3,
   Wallet,
   UserCircle2,
+  Globe2,
   LogOut,
   PanelLeft,
 } from "lucide-react";
@@ -21,6 +22,7 @@ const nav = [
   { to: "/dashboard/licenses", label: "Licenses", icon: KeyRound },
   { to: "/dashboard/stats", label: "Key Stats", icon: BarChart3 },
   { to: "/dashboard/wallet", label: "Wallet", icon: Wallet },
+  { to: "/dashboard/website", label: "Website", icon: Globe2, mentorOnly: true },
   { to: "/dashboard/profile", label: "Profile", icon: UserCircle2 },
 ] as const;
 
@@ -41,7 +43,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           <LayoutGrid className="size-4" /> Admin console
         </Link>
       )}
-      {nav.map(({ to, label, icon: Icon }) => {
+      {nav.filter((item) => !("mentorOnly" in item) || account?.role === "mentor").map(({ to, label, icon: Icon }) => {
         const active = path === to;
         return (
           <Link
