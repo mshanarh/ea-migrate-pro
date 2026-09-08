@@ -19,7 +19,7 @@ export const Route = createFileRoute("/app/home")({
   component: AppHome,
 });
 
-const robot = { url: "/botlogic-mascot.jpg" };
+const robot = { url: "/botlogic-mascot.jpg?v=2" };
 
 function AppHome() {
   const app = useAppState();
