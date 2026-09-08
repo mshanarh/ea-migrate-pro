@@ -29,6 +29,7 @@ import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.inde
 import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
 import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
 import { Route as AppSettingsInterfaceRouteImport } from './routes/app.settings.interface'
+import { Route as AppSettingsScannerRouteImport } from './routes/app.settings.scanner'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -130,6 +131,11 @@ const AppSettingsInterfaceRoute = AppSettingsInterfaceRouteImport.update({
   path: '/app/settings/interface',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppSettingsScannerRoute = AppSettingsScannerRouteImport.update({
+  id: '/app/settings/scanner',
+  path: '/app/settings/scanner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -151,6 +157,7 @@ export interface FileRoutesByFullPath {
   '/app/settings/background': typeof AppSettingsBackgroundRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings/scanner': typeof AppSettingsScannerRoute
   '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesByTo {
@@ -172,6 +179,7 @@ export interface FileRoutesByTo {
   '/app/settings/background': typeof AppSettingsBackgroundRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings/scanner': typeof AppSettingsScannerRoute
   '/app/settings': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesById {
@@ -195,6 +203,7 @@ export interface FileRoutesById {
   '/app/settings/background': typeof AppSettingsBackgroundRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
+  '/app/settings/scanner': typeof AppSettingsScannerRoute
   '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRouteTypes {
@@ -219,6 +228,7 @@ export interface FileRouteTypes {
     | '/app/settings/background'
     | '/app/settings/font'
     | '/app/settings/interface'
+    | '/app/settings/scanner'
     | '/app/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -240,6 +250,7 @@ export interface FileRouteTypes {
     | '/app/settings/background'
     | '/app/settings/font'
     | '/app/settings/interface'
+    | '/app/settings/scanner'
     | '/app/settings'
   id:
     | '__root__'
@@ -262,6 +273,7 @@ export interface FileRouteTypes {
     | '/app/settings/background'
     | '/app/settings/font'
     | '/app/settings/interface'
+    | '/app/settings/scanner'
     | '/app/settings/'
   fileRoutesById: FileRoutesById
 }
@@ -278,6 +290,7 @@ export interface RootRouteChildren {
   AppSettingsBackgroundRoute: typeof AppSettingsBackgroundRoute
   AppSettingsFontRoute: typeof AppSettingsFontRoute
   AppSettingsInterfaceRoute: typeof AppSettingsInterfaceRoute
+  AppSettingsScannerRoute: typeof AppSettingsScannerRoute
   AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
@@ -423,6 +436,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsInterfaceRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/settings/scanner': {
+      id: '/app/settings/scanner'
+      path: '/app/settings/scanner'
+      fullPath: '/app/settings/scanner'
+      preLoaderRoute: typeof AppSettingsScannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -463,6 +483,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppSettingsBackgroundRoute: AppSettingsBackgroundRoute,
   AppSettingsFontRoute: AppSettingsFontRoute,
   AppSettingsInterfaceRoute: AppSettingsInterfaceRoute,
+  AppSettingsScannerRoute: AppSettingsScannerRoute,
   AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 export const routeTree = rootRouteImport
