@@ -25,6 +25,7 @@ export type ExpertAdvisor = {
   image?: string;
   video?: string;
   createdAt: string;
+  eaNameHash?: string;
 };
 
 export type Account = {
