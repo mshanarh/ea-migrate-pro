@@ -8,6 +8,10 @@ export type License = {
   plan: string;
   issuedAt: string;
   active: boolean;
+  name?: string;
+  clientEmail?: string;
+  expertAdvisor?: string;
+  expiry?: string;
 };
 
 export type ExpertAdvisor = {
@@ -141,13 +145,23 @@ export function useCurrentAccount() {
   return s.accounts.find((a) => a.id === s.currentId) ?? null;
 }
 
-export function signIn(email: string, password: string): { error?: string } {
+export function signIn(email: string, password: string): { error?: string; accountId?: string; role?: Account["role"] } {
   load();
   const cleanEmail = email.trim().toLowerCase();
   const account = state.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
   if (!account || account.password !== password) return { error: "Wrong email or password." };
   state = { ...state, currentId: account.id };
   persist();
+  return { accountId: account.id, role: account.role };
+}
+
+export function resetPassword(email: string, password: string): { error?: string } {
+  load();
+  const cleanEmail = email.trim().toLowerCase();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
+  if (!account) return { error: "No account was found with that email address." };
+  if (password.trim().length < 8) return { error: "Your new password must be at least 8 characters." };
+  update(account.id, (a) => ({ ...a, password: password.trim() }));
   return {};
 }
 
@@ -193,7 +207,12 @@ export function setStatus(id: string, status: PortalStatus) {
   update(id, (a) => ({ ...a, status }));
 }
 
-export function addLicense(id: string, plan: string, key: string): { error?: string } {
+export function addLicense(
+  id: string,
+  plan: string,
+  key: string,
+  details: Pick<License, "name" | "clientEmail" | "expertAdvisor" | "expiry"> = {},
+): { error?: string } {
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
@@ -208,7 +227,14 @@ export function addLicense(id: string, plan: string, key: string): { error?: str
     ...a,
     licenses: [
       ...a.licenses,
-      { id: "l-" + Date.now(), key, plan, issuedAt: new Date().toISOString(), active: true },
+      {
+        id: "l-" + Date.now(),
+        key,
+        plan,
+        issuedAt: new Date().toISOString(),
+        active: true,
+        ...details,
+      },
     ],
   }));
   return {};
