@@ -81,7 +81,7 @@ function WebsiteBuilder() {
       setWebsite(account.website);
       setSaved(account.website);
     }
-  }, [account?.id]);
+  }, [account]);
 
   useEffect(() => () => {
     if (typingRef.current) window.clearInterval(typingRef.current);
