@@ -51,7 +51,7 @@ function WebsitePage({ website }: { website: MentorWebsite }) {
   const hasIos = Boolean(website.iosPrice && website.iosLink);
   const hasPc = Boolean(website.pcPrice && website.pcLink);
   const backgroundImage = website.botImage
-    ? "linear-gradient(rgba(4,7,11,.45), rgba(4,7,11,.92)), url(\\"" + website.botImage + "\\")"
+    ? "linear-gradient(rgba(4,7,11,.45), rgba(4,7,11,.92)), url(\"" + website.botImage + "\")"
     : "radial-gradient(circle at 50% 0%, " + theme.glow + ", transparent 42%)";
   const whatsapp = website.whatsapp.replace(/[^0-9]/g, "");
   const paragraphs = website.description ? website.description.split("\\n\\n") : ["A focused automated trading companion built around a clear, repeatable process."];
