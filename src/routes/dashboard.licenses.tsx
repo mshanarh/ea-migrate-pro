@@ -1,6 +1,8 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { KeyRound } from "lucide-react";
-import { useCurrentAccount } from "@/lib/auth-store";
+import { KeyRound, Plus } from "lucide-react";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { addLicense, generateKey, useCurrentAccount } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/dashboard/licenses")({
   ssr: false,
@@ -18,6 +20,18 @@ function Licenses() {
       <p className="mt-2 text-sm text-muted-foreground">
         Licence keys issued to your portal by the EA Migrate Pro admin team.
       </p>
+
+      <Button
+        size="lg"
+        className="mt-6 h-12 rounded-full"
+        onClick={() => {
+          const key = generateKey();
+          addLicense(account.id, "Pro", key);
+          toast.success("License key created");
+        }}
+      >
+        <Plus className="size-4" /> Create license key
+      </Button>
 
       {account.licenses.length === 0 ? (
         <div className="panel mt-6 flex flex-col items-center gap-3 p-12 text-center">
