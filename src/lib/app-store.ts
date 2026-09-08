@@ -5,6 +5,8 @@ export type Robot = {
   name: string;
   key: string;
   image?: string;
+  video?: string;
+  eaId?: string;
   running: boolean;
 };
 
@@ -98,34 +100,41 @@ export function appSignOut() {
   persist();
 }
 
+function findSavedEaForLicense(key: string) {
+  if (typeof window === "undefined") return undefined;
+  try {
+    const raw = window.localStorage.getItem("eamp.store.v1");
+    const store = raw ? JSON.parse(raw) : null;
+    for (const account of store?.accounts ?? []) {
+      const license = (account.licenses ?? []).find((item: { key?: string }) => item.key === key);
+      if (!license) continue;
+      const ea = (account.eas ?? []).find((item: { id?: string }) => item.id === license.eaId);
+      if (ea) return { eaId: ea.id, name: ea.name, image: ea.image, video: ea.video };
+    }
+  } catch {
+    return undefined;
+  }
+  return undefined;
+}
+
 export function activateKey(key: string): { error?: string; robot?: Robot } {
   load();
   const clean = key.trim().toUpperCase();
-  if (clean.length < 6) return { error: "That licence key looks too short." };
-  if (state.robots.some((r) => r.key === clean)) return { error: "That key is already activated." };
+  if (!clean.startsWith("EMP-") || clean.length !== 16) return { error: "That license key is invalid." };
+  if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
+  const savedEa = findSavedEaForLicense(clean);
   const robot: Robot = {
-    id: `r-${Date.now()}`,
+    id: "r-" + Date.now(),
     key: clean,
-    name: nameFromKey(clean),
+    name: savedEa?.name || "Private EA",
+    ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
+    ...(savedEa?.image ? { image: savedEa.image } : {}),
+    ...(savedEa?.video ? { video: savedEa.video } : {}),
     running: false,
   };
   state = { ...state, robots: [...state.robots, robot] };
   persist();
   return { robot };
-}
-
-const ROBOT_NAMES = [
-  "Sniper Killer EA v2.0",
-  "Specter V9",
-  "Gold Reaper EA",
-  "Nova Scalper EA",
-  "Titan Grid EA",
-];
-
-function nameFromKey(key: string) {
-  let sum = 0;
-  for (const c of key) sum += c.charCodeAt(0);
-  return ROBOT_NAMES[sum % ROBOT_NAMES.length] ?? "EA Robot";
 }
 
 export function toggleRobot(id: string) {
