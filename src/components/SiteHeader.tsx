@@ -69,13 +69,13 @@ export function SiteHeader() {
                   >
                     <Smartphone className="size-4 text-primary" /> Android APK
                   </a>
-                  <a
-                    href="#download"
+                  <Link
+                    to="/app/"
                     onClick={close}
                     className="flex h-12 items-center gap-2 rounded-xl border border-border/70 px-4 text-sm"
                   >
                     <Apple className="size-4 text-primary" /> iOS App
-                  </a>
+                  </Link>
                 </div>
               )}
 
