@@ -274,7 +274,7 @@ export function addLicense(
 }
 
 export function setEAs(id: string, eas: ExpertAdvisor[]) {
-  update(id, (a) => ({ ...a, eas: eas.map((ea) => ({ id: ea.id, name: ea.name.trim(), eaNameHash: ea.eaNameHash || hashEaName(ea.name), createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })) }));
+  update(id, (a) => ({ ...a, eas: eas.map((ea) => ({ id: ea.id, name: ea.name.trim(), eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })) }));
 }
 
 export function setLicenseLimit(id: string, limit: number) {
