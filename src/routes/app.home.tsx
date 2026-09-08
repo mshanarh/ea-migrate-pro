@@ -10,7 +10,7 @@ export const Route = createFileRoute("/app/home")({
   component: AppHome,
 });
 
-const robot = { url: "/ea-migrate-platform-robot.png" };
+const robot = { url: "/ea-migrate-platform-robot.jpg" };
 const STYLE_META = {
   Prime: { pairs: ["XAUUSD", "NAS100", "EURUSD"] },
   Custom: { pairs: ["EURUSD", "GBPUSD", "USDJPY"] },
