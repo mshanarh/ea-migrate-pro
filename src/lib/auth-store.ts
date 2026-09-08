@@ -36,6 +36,7 @@ export type MentorWebsite = {
   description: string;
   whatsapp: string;
   resultImages: string[];
+  botImage?: string;
   updatedAt?: string;
 };
 
