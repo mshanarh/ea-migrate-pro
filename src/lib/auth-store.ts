@@ -11,7 +11,10 @@ export type License = {
   name?: string;
   clientEmail?: string;
   expertAdvisor?: string;
+  eaId?: string;
+  eaNameHash?: string;
   expiry?: string;
+  expiresAt?: string;
 };
 
 export type ExpertAdvisor = {
@@ -80,6 +83,31 @@ const seedMentor: Account = {
 };
 
 const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
+
+export function hashEaName(name: string) {
+  let hash = 2166136261;
+  for (const character of name.trim().toLowerCase()) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0).toString(16).padStart(8, "0");
+}
+
+export function maskEaId(eaId: string) {
+  const suffix = eaId.replace(/[^a-z0-9]/gi, "").slice(-4).toLowerCase().padStart(4, "0");
+  return "Private EA #" + suffix;
+}
+
+export function createEaRecord(name: string): ExpertAdvisor {
+  const cleanName = name.trim();
+  return {
+    id: "ea-" + Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+    name: cleanName,
+    eaNameHash: hashEaName(cleanName),
+    createdAt: new Date().toISOString(),
+  };
+}
+
 
 function normalise(store: Store): Store {
   const accounts = (Array.isArray(store.accounts) ? store.accounts : []).map((a) => {
@@ -234,6 +262,9 @@ export function addLicense(
         issuedAt: new Date().toISOString(),
         active: true,
         ...details,
+        eaId: details.eaId,
+        eaNameHash: details.eaNameHash,
+        expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "3 Days": 3, "3 Months": 90, "6 Months": 180, "9 Months": 270, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
       },
     ],
   }));
@@ -263,9 +294,24 @@ export function removeLicense(accountId: string, licenseId: string) {
 }
 
 export function generateKey() {
-  const block = () =>
-    Math.random().toString(36).replace(/[^a-z0-9]/g, "").slice(0, 4).toUpperCase().padEnd(4, "X");
-  return `EAMP-${block()}-${block()}-${block()}`;
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  let suffix = "";
+  for (let index = 0; index < 12; index += 1) {
+    suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+  }
+  return "EMP-" + suffix;
+}
+
+export function validateLicense(key: string, eaId: string, clientEmail?: string): { valid: boolean; error?: string; license?: License } {
+  load();
+  const cleanKey = key.trim().toUpperCase();
+  const license = state.accounts.flatMap((account) => account.licenses).find((item) => item.key === cleanKey);
+  if (!license) return { valid: false, error: "License key not found." };
+  if (!license.active) return { valid: false, error: "License is inactive." };
+  if (license.eaId !== eaId) return { valid: false, error: "License is not linked to this EA." };
+  if (license.expiresAt && new Date(license.expiresAt).getTime() <= Date.now()) return { valid: false, error: "License has expired." };
+  if (clientEmail && license.clientEmail && license.clientEmail.toLowerCase() !== clientEmail.trim().toLowerCase()) return { valid: false, error: "License email does not match." };
+  return { valid: true, license };
 }
 
 export function updateProfile(id: string, patch: Partial<Account>) {
