@@ -51,7 +51,10 @@ function Activate() {
           onSubmit={(e) => {
             e.preventDefault();
             const res = activateKey(key);
-            if (res.error) return toast.error(res.error);
+            if (res.error) {
+              toast.error(res.error);
+              return;
+            }
             toast.success(`${res.robot?.name} activated`);
             navigate({ to: "/app/home" });
           }}
