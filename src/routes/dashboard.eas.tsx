@@ -171,14 +171,17 @@ function CreateEaDialog({
           className="mt-4 space-y-5"
           onSubmit={(e) => {
             e.preventDefault();
-            if (!name.trim()) return toast.error("Give your EA a codename.");
+            if (!name.trim()) {
+              toast.error("Give your EA a codename.");
+              return;
+            }
             onCreate({
               id: `${Date.now()}`,
               name: name.trim(),
               briefing: briefing.trim(),
               symbols,
-              image,
-              video,
+              ...(image ? { image } : {}),
+              ...(video ? { video } : {}),
             });
             reset();
             onOpenChange(false);
