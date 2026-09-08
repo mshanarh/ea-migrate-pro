@@ -379,7 +379,7 @@ function Home() {
                 size="lg"
                 variant="outline"
                 className="h-14 rounded-full text-base font-semibold"
-                onClick={() => navigate({ to: "/app/" })}
+                onClick={() => navigate({ to: "/app" })}
               >
                 Get iOS App
               </Button>
