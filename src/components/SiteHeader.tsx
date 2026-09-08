@@ -1,22 +1,29 @@
 import { useState } from "react";
-import { Link } from "@tanstack/react-router";
-import { Bot, Menu, ChevronDown, Smartphone, Apple } from "lucide-react";
+import { Link, useNavigate } from "@tanstack/react-router";
+import { Menu, ChevronDown, Smartphone, Apple } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [apkOpen, setApkOpen] = useState(false);
+  const navigate = useNavigate();
 
   const close = () => setOpen(false);
+  const openIosApp = () => {
+    close();
+    navigate({ to: "/app/" });
+  };
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
         <Link to="/" className="flex items-center gap-2">
-          <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 glow-ring">
-            <Bot className="size-4 text-primary" />
-          </span>
+          <img
+            src="/botlogic-mascot.png"
+            alt="EA Migrate Pro"
+            className="size-10 object-contain"
+          />
           <span className="text-base font-bold tracking-tight uppercase">
             EA <span className="text-primary">Migrate</span> Pro
           </span>
@@ -69,13 +76,13 @@ export function SiteHeader() {
                   >
                     <Smartphone className="size-4 text-primary" /> Android APK
                   </a>
-                  <Link
-                    to="/app/"
-                    onClick={close}
-                    className="flex h-12 items-center gap-2 rounded-xl border border-border/70 px-4 text-sm"
+                  <button
+                    type="button"
+                    onClick={openIosApp}
+                    className="flex h-12 items-center gap-2 rounded-xl border border-border/70 px-4 text-left text-sm"
                   >
                     <Apple className="size-4 text-primary" /> iOS App
-                  </Link>
+                  </button>
                 </div>
               )}
 
