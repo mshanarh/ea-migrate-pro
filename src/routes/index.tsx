@@ -1,4 +1,4 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
   Cpu,
@@ -178,6 +178,8 @@ const faqs = [
 ];
 
 function Home() {
+  const navigate = useNavigate();
+
   return (
     <div className="min-h-screen">
       <SiteHeader />
@@ -377,6 +379,7 @@ function Home() {
                 size="lg"
                 variant="outline"
                 className="h-14 rounded-full text-base font-semibold"
+                onClick={() => navigate({ to: "/app/" })}
               >
                 Get iOS App
               </Button>
