@@ -28,7 +28,8 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { SiteHeader } from "@/components/SiteHeader";
-import heroBot from "@/assets/hero-bot.jpg";
+import { motion } from "framer-motion";
+import heroApp from "@/assets/ea-migrate-hero.jpg.asset.json";
 
 export const Route = createFileRoute("/")({
   head: () => ({
