@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { Code2, ImageIcon, Plus, Trash2, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
+import { useCurrentAccount } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/dashboard/eas")({
   ssr: false,
@@ -19,9 +20,44 @@ type EA = {
   video?: string;
 };
 
+const EAS_STORAGE_PREFIX = "eamp.portal.eas.v1";
+
+function easStorageKey(accountId: string) {
+  return `${EAS_STORAGE_PREFIX}.${accountId}`;
+}
+
+function readEAs(accountId: string): EA[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(easStorageKey(accountId));
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? (parsed as EA[]) : [];
+  } catch {
+    return [];
+  }
+}
+
 function ManageEAs() {
+  const account = useCurrentAccount();
+  const accountId = account?.id ?? "";
   const [eas, setEas] = useState<EA[]>([]);
+  const [loadedAccountId, setLoadedAccountId] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+
+  useEffect(() => {
+    if (!accountId) {
+      setEas([]);
+      setLoadedAccountId(null);
+      return;
+    }
+    setEas(readEAs(accountId));
+    setLoadedAccountId(accountId);
+  }, [accountId]);
+
+  useEffect(() => {
+    if (!accountId || loadedAccountId !== accountId || typeof window === "undefined") return;
+    window.localStorage.setItem(easStorageKey(accountId), JSON.stringify(eas));
+  }, [accountId, eas, loadedAccountId]);
 
   return (
     <div>
@@ -77,7 +113,7 @@ function ManageEAs() {
         onOpenChange={setOpen}
         onCreate={(ea) => {
           setEas((v) => [...v, ea]);
-          toast.success(`${ea.name} deployed`);
+          toast.success(`${ea.name} saved`);
         }}
       />
     </div>
