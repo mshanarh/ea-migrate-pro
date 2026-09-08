@@ -1,3 +1,4 @@
+import { useRef } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Home, LineChart, Settings } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
@@ -19,6 +20,15 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
     "--ring": settings.accentColor,
     "--chart-1": settings.accentColor,
   } as React.CSSProperties;
+  const homeHoldTimer = useRef<number | null>(null);
+  const startHomeHold = () => {
+    if (typeof window === "undefined") return;
+    homeHoldTimer.current = window.setTimeout(() => window.dispatchEvent(new Event("eamp:home-hold")), 650);
+  };
+  const stopHomeHold = () => {
+    if (homeHoldTimer.current !== null) window.clearTimeout(homeHoldTimer.current);
+    homeHoldTimer.current = null;
+  };
 
   return (
     <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col overflow-hidden px-5 pt-6 pb-32" style={shellStyle}>
@@ -32,6 +42,10 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
             <Link
               key={to}
               to={to}
+              onPointerDown={to === "/app/home" ? startHomeHold : undefined}
+              onPointerUp={to === "/app/home" ? stopHomeHold : undefined}
+              onPointerLeave={to === "/app/home" ? stopHomeHold : undefined}
+              onPointerCancel={to === "/app/home" ? stopHomeHold : undefined}
               className={active ? "flex h-12 flex-1 items-center justify-center gap-2 rounded-full bg-primary text-sm font-semibold text-primary-foreground glow-ring" : "flex h-12 flex-1 items-center justify-center gap-2 rounded-full text-sm font-semibold text-muted-foreground"}
             >
               <Icon className="size-4" /> {label}
