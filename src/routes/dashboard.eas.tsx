@@ -152,7 +152,6 @@ function CreateEaDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        showCloseButton={false}
         className="max-h-[88vh] overflow-y-auto rounded-3xl border-border/60 bg-card p-6 sm:max-w-md"
       >
         <div className="flex items-start">
