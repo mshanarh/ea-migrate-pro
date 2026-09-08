@@ -14,6 +14,9 @@ import { Route as AdminRouteImport } from './routes/admin'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
+import { Route as AppIndexRouteImport } from './routes/app.index'
+import { Route as AppActivateRouteImport } from './routes/app.activate'
+import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
@@ -45,6 +48,21 @@ const SigninRoute = SigninRouteImport.update({
 const SignupRoute = SignupRouteImport.update({
   id: '/signup',
   path: '/signup',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppIndexRoute = AppIndexRouteImport.update({
+  id: '/app/',
+  path: '/app/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppActivateRoute = AppActivateRouteImport.update({
+  id: '/app/activate',
+  path: '/app/activate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppHomeRoute = AppHomeRouteImport.update({
+  id: '/app/home',
+  path: '/app/home',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
@@ -89,12 +107,15 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRoutesByTo {
@@ -102,12 +123,15 @@ export interface FileRoutesByTo {
   '/admin': typeof AdminRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/app': typeof AppIndexRoute
   '/dashboard': typeof DashboardIndexRoute
 }
 export interface FileRoutesById {
@@ -117,12 +141,15 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRouteWithChildren
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
+  '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
 }
 export interface FileRouteTypes {
@@ -133,12 +160,15 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/signin'
     | '/signup'
+    | '/app/activate'
+    | '/app/home'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/app/'
     | '/dashboard/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -146,12 +176,15 @@ export interface FileRouteTypes {
     | '/admin'
     | '/signin'
     | '/signup'
+    | '/app/activate'
+    | '/app/home'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/app'
     | '/dashboard'
   id:
     | '__root__'
@@ -160,12 +193,15 @@ export interface FileRouteTypes {
     | '/dashboard'
     | '/signin'
     | '/signup'
+    | '/app/activate'
+    | '/app/home'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/app/'
     | '/dashboard/'
   fileRoutesById: FileRoutesById
 }
@@ -175,6 +211,9 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRouteWithChildren
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
+  AppActivateRoute: typeof AppActivateRoute
+  AppHomeRoute: typeof AppHomeRoute
+  AppIndexRoute: typeof AppIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -212,6 +251,27 @@ declare module '@tanstack/react-router' {
       path: '/signup'
       fullPath: '/signup'
       preLoaderRoute: typeof SignupRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/': {
+      id: '/app/'
+      path: '/app'
+      fullPath: '/app/'
+      preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/activate': {
+      id: '/app/activate'
+      path: '/app/activate'
+      fullPath: '/app/activate'
+      preLoaderRoute: typeof AppActivateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/home': {
+      id: '/app/home'
+      path: '/app/home'
+      fullPath: '/app/home'
+      preLoaderRoute: typeof AppHomeRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/': {
@@ -296,6 +356,9 @@ const rootRouteChildren: RootRouteChildren = {
   DashboardRoute: DashboardRouteWithChildren,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
+  AppActivateRoute: AppActivateRoute,
+  AppHomeRoute: AppHomeRoute,
+  AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
