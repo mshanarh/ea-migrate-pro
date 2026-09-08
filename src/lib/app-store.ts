@@ -117,7 +117,7 @@ const ROBOT_NAMES = [
 function nameFromKey(key: string) {
   let sum = 0;
   for (const c of key) sum += c.charCodeAt(0);
-  return ROBOT_NAMES[sum % ROBOT_NAMES.length];
+  return ROBOT_NAMES[sum % ROBOT_NAMES.length] ?? "EA Robot";
 }
 
 export function toggleRobot(id: string) {
