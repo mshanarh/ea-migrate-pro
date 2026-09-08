@@ -9,7 +9,7 @@ import { createEaRecord, setEAs, useCurrentAccount, type ExpertAdvisor } from "@
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 20 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 3 * 1024 * 1024;
 
 function readAsDataUrl(file: File, maxBytes: number) {
   return new Promise<string>((resolve, reject) => {
@@ -66,7 +66,7 @@ function CreateEaDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpe
     <form className="mt-6 space-y-5" onSubmit={(event) => { event.preventDefault(); setError(""); if (!name.trim()) { setError("Enter a display name for your EA."); return; } if (!image || !video) { setError("Choose both a picture and a video before saving."); return; } onCreate({ ...createEaRecord(name), image, video }); reset(); onOpenChange(false); }}>
       <label className="block"><span className="text-sm font-semibold">EA Display Name</span><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Scalper" className="mt-2 h-14 w-full rounded-2xl border border-border/60 bg-background/60 px-5 text-sm outline-none focus:border-primary/60" /></label>
       <label className="block"><span className="text-sm font-semibold">Picture</span><span className="mt-2 flex h-28 cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-border/70 px-4 text-sm text-muted-foreground"><ImageIcon className="size-6 text-primary" />{imageName || "Choose an EA picture (max 5 MB)"}<input type="file" accept="image/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "image")} /></span></label>
-      <label className="block"><span className="text-sm font-semibold">Video</span><span className="mt-2 flex h-28 cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-border/70 px-4 text-sm text-muted-foreground"><Video className="size-6 text-primary" />{videoName || "Choose an EA video (max 20 MB)"}<input type="file" accept="video/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></span></label>
+      <label className="block"><span className="text-sm font-semibold">Video</span><span className="mt-2 flex h-28 cursor-pointer items-center gap-3 rounded-2xl border border-dashed border-border/70 px-4 text-sm text-muted-foreground"><Video className="size-6 text-primary" />{videoName || "Choose an EA video (max 3 MB)"}<input type="file" accept="video/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></span></label>
       {error && <p className="text-sm text-destructive">{error}</p>}
       <button type="submit" className="h-14 w-full rounded-2xl bg-primary text-base font-bold text-primary-foreground glow-ring">Save EA</button>
     </form>
