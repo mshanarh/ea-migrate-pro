@@ -26,6 +26,7 @@ import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
 import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website'
+import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
 import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.index'
 import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
 import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
@@ -117,6 +118,11 @@ const DashboardWebsiteRoute = DashboardWebsiteRouteImport.update({
   path: '/website',
   getParentRoute: () => DashboardRoute,
 } as any)
+const MentorSlugRoute = MentorSlugRouteImport.update({
+  id: '/mentor/$slug',
+  path: '/mentor/$slug',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   id: '/app/settings/',
   path: '/app/settings/',
@@ -154,6 +160,7 @@ export interface FileRoutesByFullPath {
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -177,6 +184,7 @@ export interface FileRoutesByTo {
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -202,6 +210,7 @@ export interface FileRoutesById {
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -228,6 +237,7 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/website'
+    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -251,6 +261,7 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/website'
+    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -275,6 +286,7 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/website'
+    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -298,6 +310,7 @@ export interface RootRouteChildren {
   AppActivateRoute: typeof AppActivateRoute
   AppHomeRoute: typeof AppHomeRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
+  MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
   AppSettingsBackgroundRoute: typeof AppSettingsBackgroundRoute
   AppSettingsFontRoute: typeof AppSettingsFontRoute
@@ -384,6 +397,20 @@ declare module '@tanstack/react-router' {
       fullPath: '/dashboard/eas'
       preLoaderRoute: typeof DashboardEasRouteImport
       parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/website': {
+      id: '/dashboard/website'
+      path: '/website'
+      fullPath: '/dashboard/website'
+      preLoaderRoute: typeof DashboardWebsiteRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/mentor/$slug': {
+      id: '/mentor/$slug'
+      path: '/mentor/$slug'
+      fullPath: '/mentor/$slug'
+      preLoaderRoute: typeof MentorSlugRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/dashboard/licenses': {
       id: '/dashboard/licenses'
@@ -493,6 +520,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppActivateRoute: AppActivateRoute,
   AppHomeRoute: AppHomeRoute,
   AppMetatraderRoute: AppMetatraderRoute,
+  MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
   AppSettingsBackgroundRoute: AppSettingsBackgroundRoute,
   AppSettingsFontRoute: AppSettingsFontRoute,
