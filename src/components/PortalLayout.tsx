@@ -99,7 +99,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
 
           <Link to="/dashboard" className="flex items-center gap-2">
             <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 glow-ring">
-              <img src="/ea-migrate-platform-robot.png" alt="" className="size-6 rounded-md object-cover" />
+              <img src="/ea-migrate-platform-robot.jpg" alt="" className="size-6 rounded-md object-cover" />
             </span>
             <span className="text-base font-bold tracking-tight uppercase">
               EA <span className="text-primary">Migrate</span> Pro
