@@ -19,13 +19,14 @@ export function encodeWebsiteForLink(website: MentorWebsite) {
   const bytes = new TextEncoder().encode(JSON.stringify(website));
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary).replace(/\\+/g, "-").replace(/\\//g, "_").replace(/=+$/g, "");
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 export function decodeWebsiteFromLink(encoded: string | null) {
   if (!encoded) return null;
   try {
-    const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((encoded.length + 3) % 4));
+    const padding = "===".slice(0, (4 - (encoded.length % 4)) % 4);
+    const binary = atob(encoded.replace(/-/g, "+").replace(/_/g, "/") + padding);
     const bytes = Uint8Array.from(binary, (character) => character.charCodeAt(0));
     return JSON.parse(new TextDecoder().decode(bytes)) as MentorWebsite;
   } catch {
