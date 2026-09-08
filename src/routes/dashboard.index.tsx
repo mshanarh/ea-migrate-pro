@@ -16,10 +16,10 @@ function Overview() {
     { label: "Total keys", value: account.licenses.length, note: "Licence keys on your account." },
     {
       label: "Available",
-      value: Math.max(0, 100 - account.licenses.length),
-      note: "Keys still available to create.",
+      value: Math.max(0, account.licenseLimit - account.licenses.length),
+      note: account.licenseLimit > 0 ? "Remaining from the allowance set by your admin." : "Your admin has not set a key allowance yet.",
     },
-    { label: "Active EAs", value: 0, note: "Expert Advisors running now." },
+    { label: "Active EAs", value: account.eas.length, note: "Expert Advisors on your mentor account." },
   ];
 
   const today = new Date().toLocaleDateString(undefined, {
