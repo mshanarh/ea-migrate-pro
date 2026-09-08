@@ -15,10 +15,20 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const effectStyle = settings.background === "Neon Grid"
     ? { backgroundImage: "linear-gradient(rgba(110,168,255,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(110,168,255,0.08) 1px, transparent 1px)", backgroundSize: "34px 34px" }
     : undefined;
+  const fontFamily = {
+    Normal: "ui-sans-serif, system-ui, sans-serif",
+    Inter: "Inter, ui-sans-serif, system-ui, sans-serif",
+    "Fugaz One": "\"Fugaz One\", Trebuchet MS, sans-serif",
+    Rajdhani: "\"Rajdhani\", Arial Narrow, sans-serif",
+    "Black Ops One": "\"Black Ops One\", Impact, sans-serif",
+    Audiowide: "\"Audiowide\", Trebuchet MS, sans-serif",
+    "Rubik Glitch": "\"Rubik Glitch\", fantasy",
+  }[settings.font] || "ui-sans-serif, system-ui, sans-serif";
   const shellStyle = {
     "--primary": settings.accentColor,
     "--ring": settings.accentColor,
     "--chart-1": settings.accentColor,
+    fontFamily,
   } as React.CSSProperties;
   const homeHoldTimer = useRef<number | null>(null);
   const startHomeHold = () => {
