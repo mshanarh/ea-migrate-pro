@@ -2,6 +2,20 @@ import { useSyncExternalStore } from "react";
 
 export type PortalStatus = "pending" | "approved" | "rejected";
 
+export type PaymentRecord = {
+  email: string;
+  paid: boolean;
+  paidAt?: string;
+};
+
+export type DeviceBinding = {
+  email: string;
+  deviceId: string;
+  boundAt: string;
+};
+
+export type PaymentStatus = "paid" | "unpaid" | "admin";
+
 export type License = {
   id: string;
   key: string;
@@ -67,6 +81,8 @@ export type Account = {
 type Store = {
   accounts: Account[];
   currentId: string | null;
+  payments: PaymentRecord[];
+  deviceBindings: DeviceBinding[];
 };
 
 const KEY = "eamp.store.v1";
@@ -103,7 +119,60 @@ const seedMentor: Account = {
   eas: [],
 };
 
-const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
+const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "lwethunkandi3@gmail.com"];
+
+export const PAYMENT_EXEMPT_EMAILS = [
+  "lwethunkandi3@gmail.com",
+  "biyasentobeko222@gmail",
+  "biyasentobeko222@gmail.com",
+];
+
+function cleanEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+export function isPaymentExemptEmail(email: string) {
+  return PAYMENT_EXEMPT_EMAILS.includes(cleanEmail(email));
+}
+
+export function paymentStatusForEmail(email: string): PaymentStatus {
+  load();
+  const clean = cleanEmail(email);
+  if (isPaymentExemptEmail(clean)) return "admin";
+  return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
+}
+
+export function markEmailPaid(email: string) {
+  load();
+  const clean = cleanEmail(email);
+  if (!clean || isPaymentExemptEmail(clean)) return;
+  const existing = state.payments.find((payment) => payment.email === clean);
+  if (existing?.paid) return;
+  state = {
+    ...state,
+    payments: [...state.payments.filter((payment) => payment.email !== clean), { email: clean, paid: true, paidAt: new Date().toISOString() }],
+  };
+  persist();
+}
+
+export function getEmailDeviceBinding(email: string) {
+  load();
+  return state.deviceBindings.find((binding) => binding.email === cleanEmail(email));
+}
+
+export function bindEmailToDevice(email: string, deviceId: string): { error?: string } {
+  load();
+  const clean = cleanEmail(email);
+  const existing = state.deviceBindings.find((binding) => binding.email === clean);
+  if (existing && existing.deviceId !== deviceId) {
+    return { error: "This email is already activated on another device." };
+  }
+  if (!existing) {
+    state = { ...state, deviceBindings: [...state.deviceBindings, { email: clean, deviceId, boundAt: new Date().toISOString() }] };
+    persist();
+  }
+  return {};
+}
 
 export function hashEaName(name: string) {
   let hash = 2166136261;
@@ -146,10 +215,16 @@ function normalise(store: Store): Store {
       : account;
   });
 
-  return { ...store, accounts, currentId: store.currentId ?? null };
+  const payments = (Array.isArray(store.payments) ? store.payments : [])
+    .filter((payment) => typeof payment?.email === "string")
+    .map((payment) => ({ email: payment.email.trim().toLowerCase(), paid: payment.paid === true, paidAt: payment.paidAt }));
+  const deviceBindings = (Array.isArray(store.deviceBindings) ? store.deviceBindings : [])
+    .filter((binding) => typeof binding?.email === "string" && typeof binding?.deviceId === "string")
+    .map((binding) => ({ email: binding.email.trim().toLowerCase(), deviceId: binding.deviceId, boundAt: binding.boundAt || new Date().toISOString() }));
+  return { ...store, accounts, currentId: store.currentId ?? null, payments, deviceBindings };
 }
 
-let state: Store = { accounts: [seedAdmin, seedMentor], currentId: null };
+let state: Store = { accounts: [seedAdmin, seedMentor], currentId: null, payments: [], deviceBindings: [] };
 let loaded = false;
 const listeners = new Set<() => void>();
 
