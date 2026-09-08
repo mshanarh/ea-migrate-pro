@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import {
   addLicense,
   generateKey,
+  setLicenseLimit,
   removeLicense,
   setStatus,
   signOut,
@@ -99,7 +100,7 @@ function AdminConsole() {
         <p className="text-xs font-bold tracking-[0.22em] text-primary uppercase">Control room</p>
         <h1 className="mt-1 text-3xl font-bold">Admin console</h1>
         <p className="mt-2 text-sm text-muted-foreground">
-          Approve mentor portals and issue licence keys.
+          Approve mentor portals and set how many licence keys each mentor may create.
         </p>
 
         <div className="mt-6 grid gap-4 sm:grid-cols-3">
@@ -172,6 +173,19 @@ function AdminConsole() {
 function MentorCard({ mentor }: { mentor: Account }) {
   const [plan, setPlan] = useState("Standard");
   const [key, setKey] = useState(generateKey());
+  const [limit, setLimit] = useState(String(mentor.licenseLimit));
+
+  const saveLimit = () => {
+    const value = Number(limit);
+    if (!Number.isFinite(value) || value < 0) {
+      toast.error("Enter a valid license limit of 0 or more.");
+      return;
+    }
+    const nextLimit = Math.floor(value);
+    setLicenseLimit(mentor.id, nextLimit);
+    setLimit(String(nextLimit));
+    toast.success("License limit saved");
+  };
 
   return (
     <div className="panel p-5">
@@ -202,6 +216,34 @@ function MentorCard({ mentor }: { mentor: Account }) {
         </select>
       </div>
 
+      <div className="mt-4 rounded-2xl bg-secondary/45 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-semibold">License allowance</p>
+            <p className="text-xs text-muted-foreground">
+              {mentor.licenses.length} of {mentor.licenseLimit} licenses used
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min="0"
+              step="1"
+              value={limit}
+              onChange={(e) => setLimit(e.target.value)}
+              aria-label="License limit"
+              className="h-11 w-28 rounded-xl border border-border/70 bg-card/60 px-3 text-sm"
+            />
+            <button
+              onClick={saveLimit}
+              className="h-11 rounded-xl bg-primary px-4 text-sm font-bold text-primary-foreground"
+            >
+              Set limit
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <select
           value={plan}
@@ -225,7 +267,11 @@ function MentorCard({ mentor }: { mentor: Account }) {
         </button>
         <button
           onClick={() => {
-            addLicense(mentor.id, plan, key);
+            const result = addLicense(mentor.id, plan, key);
+            if (result.error) {
+              toast.error(result.error);
+              return;
+            }
             setKey(generateKey());
             toast.success("Licence added");
           }}
