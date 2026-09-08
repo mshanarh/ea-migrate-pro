@@ -12,7 +12,7 @@ export function SiteHeader() {
   const close = () => setOpen(false);
   const openIosApp = () => {
     close();
-    navigate({ to: "/app/" });
+    navigate({ to: "/app" });
   };
 
   return (
