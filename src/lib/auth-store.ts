@@ -20,8 +20,6 @@ export type License = {
 export type ExpertAdvisor = {
   id: string;
   name: string;
-  briefing?: string;
-  symbols?: string[];
   createdAt: string;
   eaNameHash?: string;
 };
