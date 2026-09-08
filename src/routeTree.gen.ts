@@ -17,6 +17,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
 import { Route as AppHomeRouteImport } from './routes/app.home'
+import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
@@ -65,6 +66,11 @@ const AppHomeRoute = AppHomeRouteImport.update({
   path: '/app/home',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppMetatraderRoute = AppMetatraderRouteImport.update({
+  id: '/app/metatrader',
+  path: '/app/metatrader',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -109,6 +115,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -125,6 +132,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -143,6 +151,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -162,6 +171,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/activate'
     | '/app/home'
+    | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/activate'
     | '/app/home'
+    | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/app/activate'
     | '/app/home'
+    | '/app/metatrader'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   AppActivateRoute: typeof AppActivateRoute
   AppHomeRoute: typeof AppHomeRoute
+  AppMetatraderRoute: typeof AppMetatraderRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -272,6 +285,13 @@ declare module '@tanstack/react-router' {
       path: '/app/home'
       fullPath: '/app/home'
       preLoaderRoute: typeof AppHomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/metatrader': {
+      id: '/app/metatrader'
+      path: '/app/metatrader'
+      fullPath: '/app/metatrader'
+      preLoaderRoute: typeof AppMetatraderRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/': {
@@ -358,6 +378,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   AppActivateRoute: AppActivateRoute,
   AppHomeRoute: AppHomeRoute,
+  AppMetatraderRoute: AppMetatraderRoute,
   AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport
