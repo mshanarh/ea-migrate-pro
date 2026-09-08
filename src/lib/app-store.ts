@@ -41,7 +41,7 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "Neuro Scalper", font: "Inter", accent: 60, accentColor: "#6ea8ff" },
+  settings: { background: "Neon Grid", interfaceStyle: "Neuro Scalper", font: "Inter", accent: 60, accentColor: "#FF453A" },
 };
 
 let state: AppState = initial;
