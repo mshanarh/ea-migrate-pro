@@ -22,8 +22,6 @@ export type ExpertAdvisor = {
   name: string;
   briefing?: string;
   symbols?: string[];
-  image?: string;
-  video?: string;
   createdAt: string;
   eaNameHash?: string;
 };
@@ -119,7 +117,7 @@ function normalise(store: Store): Store {
           ? Math.max(0, Math.floor(a.licenseLimit))
           : 0,
       licenses: Array.isArray(a.licenses) ? a.licenses : [],
-      eas: Array.isArray(a.eas) ? a.eas : [],
+      eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), createdAt: ea.createdAt })),
     };
     return OWNER_EMAILS.includes(a.email.trim().toLowerCase())
       ? { ...account, role: "admin" as const, status: "approved" as const }
@@ -273,7 +271,7 @@ export function addLicense(
 }
 
 export function setEAs(id: string, eas: ExpertAdvisor[]) {
-  update(id, (a) => ({ ...a, eas }));
+  update(id, (a) => ({ ...a, eas: eas.map((ea) => ({ id: ea.id, name: ea.name.trim(), eaNameHash: ea.eaNameHash || hashEaName(ea.name), createdAt: ea.createdAt })) }));
 }
 
 export function setLicenseLimit(id: string, limit: number) {
