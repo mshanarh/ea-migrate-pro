@@ -20,8 +20,8 @@ export type License = {
 export type ExpertAdvisor = {
   id: string;
   name: string;
-  briefing: string;
-  symbols: string[];
+  briefing?: string;
+  symbols?: string[];
   image?: string;
   video?: string;
   createdAt: string;
