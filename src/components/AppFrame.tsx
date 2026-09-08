@@ -27,11 +27,11 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const fontFamily = {
     Normal: "ui-sans-serif, system-ui, sans-serif",
     Inter: "Inter, ui-sans-serif, system-ui, sans-serif",
-    "Fugaz One": "\\\"Fugaz One\\\", Trebuchet MS, sans-serif",
-    Rajdhani: "\\\"Rajdhani\\\", Arial Narrow, sans-serif",
-    "Black Ops One": "\\\"Black Ops One\\\", Impact, sans-serif",
-    Audiowide: "\\\"Audiowide\\\", Trebuchet MS, sans-serif",
-    "Rubik Glitch": "\\\"Rubik Glitch\\\", fantasy",
+    "Fugaz One": "'Fugaz One', Trebuchet MS, sans-serif",
+    Rajdhani: "'Rajdhani', Arial Narrow, sans-serif",
+    "Black Ops One": "'Black Ops One', Impact, sans-serif",
+    Audiowide: "'Audiowide', Trebuchet MS, sans-serif",
+    "Rubik Glitch": "'Rubik Glitch', fantasy",
   }[settings.font] || "ui-sans-serif, system-ui, sans-serif";
   const shellStyle = {
     "--primary": accent,
