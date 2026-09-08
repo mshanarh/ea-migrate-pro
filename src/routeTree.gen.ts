@@ -25,6 +25,7 @@ import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
+import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website'
 import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.index'
 import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
 import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
@@ -111,6 +112,11 @@ const DashboardWalletRoute = DashboardWalletRouteImport.update({
   path: '/wallet',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardWebsiteRoute = DashboardWebsiteRouteImport.update({
+  id: '/website',
+  path: '/website',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
   id: '/app/settings/',
   path: '/app/settings/',
@@ -147,6 +153,7 @@ export interface FileRoutesByFullPath {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -169,6 +176,7 @@ export interface FileRoutesByTo {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -193,6 +201,7 @@ export interface FileRoutesById {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
@@ -218,6 +227,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
+    | '/dashboard/website'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -240,6 +250,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
+    | '/dashboard/website'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -263,6 +274,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
+    | '/dashboard/website'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
@@ -448,6 +460,7 @@ declare module '@tanstack/react-router' {
 
 interface DashboardRouteChildren {
   DashboardEasRoute: typeof DashboardEasRoute
+  DashboardWebsiteRoute: typeof DashboardWebsiteRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
   DashboardProfileRoute: typeof DashboardProfileRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
@@ -458,6 +471,7 @@ interface DashboardRouteChildren {
 
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardEasRoute: DashboardEasRoute,
+  DashboardWebsiteRoute: DashboardWebsiteRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
   DashboardProfileRoute: DashboardProfileRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
