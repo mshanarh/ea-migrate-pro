@@ -21,6 +21,7 @@ export type AppSettings = {
   interfaceStyle: string;
   font: string;
   accent: number;
+  accentColor: string;
 };
 
 export type AppState = {
@@ -36,7 +37,7 @@ const initial: AppState = {
   email: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "Interface 1", font: "Inter", accent: 60 },
+  settings: { background: "Neon Grid", interfaceStyle: "Interface 1", font: "Inter", accent: 60, accentColor: "#6ea8ff" },
 };
 
 let state: AppState = initial;
@@ -48,7 +49,14 @@ function load() {
   loaded = true;
   try {
     const raw = window.localStorage.getItem(KEY);
-    if (raw) state = { ...initial, ...(JSON.parse(raw) as AppState) };
+    if (raw) {
+      const saved = JSON.parse(raw) as Partial<AppState>;
+      state = {
+        ...initial,
+        ...saved,
+        settings: { ...initial.settings, ...(saved.settings ?? {}) },
+      };
+    }
   } catch {
     /* ignore */
   }
