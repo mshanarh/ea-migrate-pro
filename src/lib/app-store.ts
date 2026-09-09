@@ -43,7 +43,7 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF453A" },
+  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF3B3B" },
 };
 
 let state: AppState = initial;
