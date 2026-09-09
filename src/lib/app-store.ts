@@ -156,10 +156,11 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
   if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
   if (!state.email) return { error: "Sign in with your email before activating a key." };
   if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
-  const deviceResult = bindEmailToDevice(state.email, getDeviceId());
-  if (deviceResult.error) return { error: deviceResult.error };
+  // Validate the key first, then enforce the one-device binding before creating a robot.
   const licenseResult = findSavedLicenseForEmail(clean, state.email);
   if (licenseResult.error) return { error: licenseResult.error };
+  const deviceResult = bindEmailToDevice(state.email, getDeviceId());
+  if (deviceResult.error) return { error: deviceResult.error };
   const savedEa = licenseResult.ea;
   const robot: Robot = {
     id: "r-" + Date.now(),
