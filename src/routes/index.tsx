@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
@@ -19,6 +20,7 @@ import {
   Zap,
   Smartphone,
   Infinity as InfinityIcon,
+  MessageCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -176,6 +178,81 @@ const faqs = [
     a: "Each licence key is locked to a single trading account. Extra accounts need their own key.",
   },
 ];
+
+type ChatMessage = { from: "bot" | "user"; text: string };
+
+function LandingChatbot() {
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const [messages, setMessages] = useState<ChatMessage[]>([
+    {
+      from: "bot",
+      text: "Hi — I’m the EA Migrate bot. Ask me about building an EA, MT4/MT5, chart scanning, or getting started.",
+    },
+  ]);
+
+  const answer = (question: string) => {
+    const text = question.toLowerCase();
+    if (text.includes("mt4") || text.includes("mt5") || text.includes("broker")) {
+      return "EA Migrate Pro supports MT4 and MT5 brokers. Your account stays with your broker while the hosted EA sends trade instructions.";
+    }
+    if (text.includes("scan") || text.includes("chart")) {
+      return "The AI Scanner lets you upload a chart, choose one of your EA’s configured pairs, and get an instant signal setup.";
+    }
+    if (text.includes("price") || text.includes("cost") || text.includes("payment")) {
+      return "Start by creating your portal account. The available licence and payment options are shown during activation.";
+    }
+    if (text.includes("how") || text.includes("work") || text.includes("start")) {
+      return "Describe your strategy, build the logic, connect MT4 or MT5, then let the hosted robot execute around the clock.";
+    }
+    return "I can help with EA building, MT4/MT5 support, chart scanning, licence activation, and getting started. Try one of the quick questions below.";
+  };
+
+  const send = (value = input) => {
+    const question = value.trim();
+    if (!question) return;
+    setMessages((current) => [...current, { from: "user", text: question }, { from: "bot", text: answer(question) }]);
+    setInput("");
+  };
+
+  return (
+    <div className="fixed right-5 bottom-5 z-[9998] flex flex-col items-end gap-3">
+      {open && (
+        <div className="w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
+          <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
+            <img src="/botlogic-mascot.jpg?v=2" alt="EA Migrate bot" className="size-10 rounded-full border-2 border-primary object-cover shadow-glow" />
+            <div className="min-w-0 flex-1">
+              <p className="font-bold">EA Migrate assistant</p>
+              <p className="text-xs text-emerald-400">Online · Ask anything</p>
+            </div>
+            <button type="button" aria-label="Close chatbot" onClick={() => setOpen(false)} className="text-xl text-muted-foreground hover:text-foreground">×</button>
+          </div>
+          <div className="max-h-72 space-y-3 overflow-y-auto p-4" aria-live="polite">
+            {messages.map((message, index) => (
+              <div key={index} className={message.from === "user" ? "ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-sm text-primary-foreground" : "mr-8 rounded-2xl rounded-bl-md bg-card px-3 py-2 text-sm text-foreground"}>
+                {message.text}
+              </div>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 px-4 pb-3">
+            {["How does it work?", "MT5 support", "Chart scanner"].map((question) => (
+              <button key={question} type="button" onClick={() => send(question)} className="rounded-full border border-primary/30 px-3 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10">{question}</button>
+            ))}
+          </div>
+          <form className="flex gap-2 border-t border-border/60 p-3" onSubmit={(event) => { event.preventDefault(); send(); }}>
+            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about EA Migrate..." aria-label="Message the EA Migrate assistant" className="min-w-0 flex-1 rounded-full border border-border/70 bg-card/60 px-4 py-2 text-sm outline-none focus:border-primary" />
+            <button type="submit" aria-label="Send message" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"><Send className="size-4" /></button>
+          </form>
+        </div>
+      )}
+      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-16 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
+        <img src="/botlogic-mascot.jpg?v=2" alt="" className="size-full rounded-full object-cover" />
+        <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
+        <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
+      </motion.button>
+    </div>
+  );
+}
 
 function Home() {
   const navigate = useNavigate();
@@ -432,6 +509,7 @@ function Home() {
           </div>
         </div>
       </footer>
+      <LandingChatbot />
     </div>
   );
 }
