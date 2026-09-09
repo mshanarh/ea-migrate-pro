@@ -5,6 +5,7 @@ export type Robot = {
   id: string;
   name: string;
   key: string;
+  symbols: string[];
   image?: string;
   video?: string;
   eaId?: string;
@@ -25,6 +26,8 @@ export type AppSettings = {
   font: string;
   accent: number;
   accentColor: string;
+  brandName: string;
+  lotSize: string;
 };
 
 export type AppState = {
@@ -43,7 +46,7 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF3B3B" },
+  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF3B3B", brandName: "EA Migrate", lotSize: "0.01" },
 };
 
 let state: AppState = initial;
@@ -142,7 +145,16 @@ function findSavedLicenseForEmail(key: string, email: string) {
       if (license.clientEmail && license.clientEmail.toLowerCase() !== email.toLowerCase()) return { error: "That license key belongs to a different email." };
       const ea = (account.eas ?? []).find((item: { id?: string }) => item.id === license.eaId);
       const robotName = ea?.name || license.robotName || license.expertAdvisor || license.name || "Private EA";
-      return { license, ea: { eaId: ea?.id || license.eaId, name: robotName, image: ea?.image || license.image, video: ea?.video || license.video } };
+      return {
+        license,
+        ea: {
+          eaId: ea?.id || license.eaId,
+          name: robotName,
+          symbols: ea?.symbols || license.symbols || [],
+          image: ea?.image || license.image,
+          video: ea?.video || license.video,
+        },
+      };
     }
     return { error: "That license key was not found." };
   } catch {
@@ -167,6 +179,7 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
     id: "r-" + Date.now(),
     key: clean,
     name: savedEa?.name || "Private EA",
+    symbols: savedEa?.symbols || licenseResult.license.symbols || [],
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
     ...(savedEa?.image ? { image: savedEa.image } : {}),
     ...(savedEa?.video ? { video: savedEa.video } : {}),
