@@ -88,8 +88,8 @@ function TradingActiveScreen({ active, app, color, robotName, onClose }: { activ
   const [cleared, setCleared] = useState(false);
   const brokerName = app.mt?.broker || "Headway";
   const accountType = app.mt?.platform || "MT5";
-  const brandName = app.settings.brandName || (typeof window !== "undefined" ? window.localStorage.getItem("brandName") : null) || "EA Migrate";
-  const lotSize = app.settings.lotSize || (typeof window !== "undefined" ? window.localStorage.getItem("lotSize") : null) || "0.01";
+  const brandName = (typeof window !== "undefined" ? window.localStorage.getItem("brandName") : null) || app.settings.brandName || "EA Migrate";
+  const lotSize = (typeof window !== "undefined" ? window.localStorage.getItem("lotSize") : null) || app.settings.lotSize || "0.01";
   const symbols = active.symbols?.length ? active.symbols : ["XAUUSDM", "HW_100"];
   const image = active.image || fallbackRobotImage;
   const toggleFullscreen = () => { if (!screenRef.current) return; if (document.fullscreenElement) { void document.exitFullscreen(); } else { void screenRef.current.requestFullscreen?.(); } };
