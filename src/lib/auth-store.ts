@@ -181,7 +181,7 @@ export function bindEmailToDevice(email: string, deviceId: string): { error?: st
   const clean = cleanEmail(email);
   const existing = state.deviceBindings.find((binding) => binding.email === clean);
   if (existing && existing.deviceId !== deviceId) {
-    return { error: "This email is already activated on another device." };
+    return { error: "Email already in use on another device." };
   }
   if (!existing) {
     state = { ...state, deviceBindings: [...state.deviceBindings, { email: clean, deviceId, boundAt: new Date().toISOString() }] };
