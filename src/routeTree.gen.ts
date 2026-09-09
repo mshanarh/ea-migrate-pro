@@ -29,6 +29,7 @@ import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website
 import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
 import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.index'
 import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
+import { Route as AppSettingsColorRouteImport } from './routes/app.settings.color'
 import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
 import { Route as AppSettingsInterfaceRouteImport } from './routes/app.settings.interface'
 import { Route as AppSettingsScannerRouteImport } from './routes/app.settings.scanner'
@@ -133,6 +134,11 @@ const AppSettingsBackgroundRoute = AppSettingsBackgroundRouteImport.update({
   path: '/app/settings/background',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppSettingsColorRoute = AppSettingsColorRouteImport.update({
+  id: '/app/settings/color',
+  path: '/app/settings/color',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppSettingsFontRoute = AppSettingsFontRouteImport.update({
   id: '/app/settings/font',
   path: '/app/settings/font',
@@ -159,16 +165,17 @@ export interface FileRoutesByFullPath {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
-  '/dashboard/website': typeof DashboardWebsiteRoute
-  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/color': typeof AppSettingsColorRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
   '/app/settings/scanner': typeof AppSettingsScannerRoute
@@ -183,16 +190,17 @@ export interface FileRoutesByTo {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
-  '/dashboard/website': typeof DashboardWebsiteRoute
-  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/app': typeof AppIndexRoute
   '/dashboard': typeof DashboardIndexRoute
   '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/color': typeof AppSettingsColorRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
   '/app/settings/scanner': typeof AppSettingsScannerRoute
@@ -209,16 +217,17 @@ export interface FileRoutesById {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/dashboard/eas': typeof DashboardEasRoute
-  '/dashboard/website': typeof DashboardWebsiteRoute
-  '/mentor/$slug': typeof MentorSlugRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
+  '/dashboard/website': typeof DashboardWebsiteRoute
+  '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
   '/app/settings/background': typeof AppSettingsBackgroundRoute
+  '/app/settings/color': typeof AppSettingsColorRoute
   '/app/settings/font': typeof AppSettingsFontRoute
   '/app/settings/interface': typeof AppSettingsInterfaceRoute
   '/app/settings/scanner': typeof AppSettingsScannerRoute
@@ -236,16 +245,17 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
-    | '/dashboard/website'
-    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/dashboard/website'
+    | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
     | '/app/settings/background'
+    | '/app/settings/color'
     | '/app/settings/font'
     | '/app/settings/interface'
     | '/app/settings/scanner'
@@ -260,16 +270,17 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
-    | '/dashboard/website'
-    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/dashboard/website'
+    | '/mentor/$slug'
     | '/app'
     | '/dashboard'
     | '/app/settings/background'
+    | '/app/settings/color'
     | '/app/settings/font'
     | '/app/settings/interface'
     | '/app/settings/scanner'
@@ -285,16 +296,17 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/dashboard/eas'
-    | '/dashboard/website'
-    | '/mentor/$slug'
     | '/dashboard/licenses'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
+    | '/dashboard/website'
+    | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
     | '/app/settings/background'
+    | '/app/settings/color'
     | '/app/settings/font'
     | '/app/settings/interface'
     | '/app/settings/scanner'
@@ -313,6 +325,7 @@ export interface RootRouteChildren {
   MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
   AppSettingsBackgroundRoute: typeof AppSettingsBackgroundRoute
+  AppSettingsColorRoute: typeof AppSettingsColorRoute
   AppSettingsFontRoute: typeof AppSettingsFontRoute
   AppSettingsInterfaceRoute: typeof AppSettingsInterfaceRoute
   AppSettingsScannerRoute: typeof AppSettingsScannerRoute
@@ -398,20 +411,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardEasRouteImport
       parentRoute: typeof DashboardRoute
     }
-    '/dashboard/website': {
-      id: '/dashboard/website'
-      path: '/website'
-      fullPath: '/dashboard/website'
-      preLoaderRoute: typeof DashboardWebsiteRouteImport
-      parentRoute: typeof DashboardRoute
-    }
-    '/mentor/$slug': {
-      id: '/mentor/$slug'
-      path: '/mentor/$slug'
-      fullPath: '/mentor/$slug'
-      preLoaderRoute: typeof MentorSlugRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/dashboard/licenses': {
       id: '/dashboard/licenses'
       path: '/licenses'
@@ -447,6 +446,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardWalletRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/website': {
+      id: '/dashboard/website'
+      path: '/website'
+      fullPath: '/dashboard/website'
+      preLoaderRoute: typeof DashboardWebsiteRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/mentor/$slug': {
+      id: '/mentor/$slug'
+      path: '/mentor/$slug'
+      fullPath: '/mentor/$slug'
+      preLoaderRoute: typeof MentorSlugRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/settings/': {
       id: '/app/settings/'
       path: '/app/settings'
@@ -459,6 +472,13 @@ declare module '@tanstack/react-router' {
       path: '/app/settings/background'
       fullPath: '/app/settings/background'
       preLoaderRoute: typeof AppSettingsBackgroundRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings/color': {
+      id: '/app/settings/color'
+      path: '/app/settings/color'
+      fullPath: '/app/settings/color'
+      preLoaderRoute: typeof AppSettingsColorRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/settings/font': {
@@ -487,23 +507,23 @@ declare module '@tanstack/react-router' {
 
 interface DashboardRouteChildren {
   DashboardEasRoute: typeof DashboardEasRoute
-  DashboardWebsiteRoute: typeof DashboardWebsiteRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
   DashboardProfileRoute: typeof DashboardProfileRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
   DashboardWalletRoute: typeof DashboardWalletRoute
+  DashboardWebsiteRoute: typeof DashboardWebsiteRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardEasRoute: DashboardEasRoute,
-  DashboardWebsiteRoute: DashboardWebsiteRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
   DashboardProfileRoute: DashboardProfileRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
   DashboardWalletRoute: DashboardWalletRoute,
+  DashboardWebsiteRoute: DashboardWebsiteRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
 
@@ -523,6 +543,7 @@ const rootRouteChildren: RootRouteChildren = {
   MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
   AppSettingsBackgroundRoute: AppSettingsBackgroundRoute,
+  AppSettingsColorRoute: AppSettingsColorRoute,
   AppSettingsFontRoute: AppSettingsFontRoute,
   AppSettingsInterfaceRoute: AppSettingsInterfaceRoute,
   AppSettingsScannerRoute: AppSettingsScannerRoute,
