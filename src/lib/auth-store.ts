@@ -23,6 +23,7 @@ export type License = {
   issuedAt: string;
   active: boolean;
   name?: string | undefined;
+  robotName?: string | undefined;
   clientEmail?: string | undefined;
   expertAdvisor?: string | undefined;
   eaId?: string | undefined;
@@ -363,6 +364,8 @@ export function addLicense(
   if (account.licenses.length >= account.licenseLimit) {
     return { error: "This account has reached its license limit." };
   }
+  const linkedEa = account.eas.find((ea) => ea.id === details.eaId);
+  const robotName = linkedEa?.name.trim() || details.expertAdvisor?.trim() || details.name?.trim() || "Private EA";
 
   update(id, (a) => ({
     ...a,
@@ -375,6 +378,8 @@ export function addLicense(
         issuedAt: new Date().toISOString(),
         active: true,
         ...details,
+        robotName,
+        expertAdvisor: robotName,
         eaId: details.eaId,
         eaNameHash: details.eaNameHash,
         expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "3 Days": 3, "3 Months": 90, "6 Months": 180, "9 Months": 270, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
