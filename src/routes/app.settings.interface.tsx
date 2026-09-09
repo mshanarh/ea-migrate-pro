@@ -22,7 +22,7 @@ const STYLES = [
 function InterfaceStyles() {
   const { settings } = useAppState();
   const navigate = useNavigate();
-  const selectedColor = settings.accentColor || (typeof window !== "undefined" ? window.localStorage.getItem("themeColor") : null) || "#FF3B3B";
+  const selectedColor = (typeof window !== "undefined" ? window.localStorage.getItem("themeColor") : null) || settings.accentColor || "#FF3B3B";
   const currentLayout = settings.interfaceStyle || (typeof window !== "undefined" ? window.localStorage.getItem("layout") : null) || "layout_blue";
   const applyLayout = (id: string) => {
     const style = STYLES.find((item) => item.id === id);
