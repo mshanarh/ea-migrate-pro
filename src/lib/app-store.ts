@@ -35,7 +35,8 @@ export type AppState = {
   settings: AppSettings;
 };
 
-const KEY = "eamp.app.v1";
+const KEY = "eamp.app.v2";
+const LEGACY_KEYS = ["eamp.app.v1"];
 
 const initial: AppState = {
   email: null,
@@ -53,6 +54,7 @@ function load() {
   if (loaded || typeof window === "undefined") return;
   loaded = true;
   try {
+    LEGACY_KEYS.forEach((legacy) => window.localStorage.removeItem(legacy));
     const raw = window.localStorage.getItem(KEY);
     if (raw) {
       const saved = JSON.parse(raw) as Partial<AppState>;
