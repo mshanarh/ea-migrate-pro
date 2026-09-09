@@ -16,7 +16,7 @@ export const Route = createFileRoute("/app/")({
   component: AppAccess,
 });
 
-const WHOP_CHECKOUT_URL = (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com";
+const WHOP_CHECKOUT_URL = (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
 
 function AppAccess() {
   const app = useAppState();
