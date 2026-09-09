@@ -43,12 +43,14 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "Neuro Scalper", font: "Inter", accent: 60, accentColor: "#FF453A" },
+  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF453A" },
 };
 
 let state: AppState = initial;
 let loaded = false;
 const listeners = new Set<() => void>();
+
+const LAYOUT_ALIASES: Record<string, string> = { Prime: "layout_sniper_full", Custom: "layout_sniper_circle", "Neuro Scalper": "layout_sniper_circle", "Prime Pro": "layout_sniper_vertical" };
 
 function load() {
   if (loaded || typeof window === "undefined") return;
@@ -65,13 +67,17 @@ function load() {
         settings: { ...initial.settings, ...(saved.settings ?? {}) },
       };
     }
+    const savedLayout = window.localStorage.getItem("layout");
+    const savedThemeColor = window.localStorage.getItem("themeColor");
+    const selectedLayout = savedLayout || LAYOUT_ALIASES[state.settings.interfaceStyle] || state.settings.interfaceStyle || initial.settings.interfaceStyle;
+    state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };
   } catch {
     /* ignore */
   }
 }
 
 function persist() {
-  if (typeof window !== "undefined") window.localStorage.setItem(KEY, JSON.stringify(state));
+  if (typeof window !== "undefined") { window.localStorage.setItem(KEY, JSON.stringify(state)); window.localStorage.setItem("layout", state.settings.interfaceStyle); window.localStorage.setItem("themeColor", state.settings.accentColor); }
   listeners.forEach((l) => l());
 }
 
@@ -159,6 +165,7 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
     ...(savedEa?.video ? { video: savedEa.video } : {}),
     running: false,
   };
+  if (typeof window !== "undefined") window.localStorage.setItem("robotName", robot.name);
   state = { ...state, activeRobotId: state.activeRobotId || robot.id, robots: [...state.robots, robot] };
   persist();
   return { robot };
