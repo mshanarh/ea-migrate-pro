@@ -129,21 +129,24 @@ export function appSignOut() {
   persist();
 }
 
-function findSavedEaForLicense(key: string) {
-  if (typeof window === "undefined") return undefined;
+function findSavedLicenseForEmail(key: string, email: string) {
+  if (typeof window === "undefined") return { error: "License activation is only available in the app." };
   try {
     const raw = window.localStorage.getItem("eamp.store.v1");
     const store = raw ? JSON.parse(raw) : null;
     for (const account of store?.accounts ?? []) {
       const license = (account.licenses ?? []).find((item: { key?: string }) => item.key === key);
       if (!license) continue;
+      if (!license.active) return { error: "That license key is paused." };
+      if (license.expiresAt && new Date(license.expiresAt).getTime() <= Date.now()) return { error: "That license key has expired." };
+      if (license.clientEmail && license.clientEmail.toLowerCase() !== email.toLowerCase()) return { error: "That license key belongs to a different email." };
       const ea = (account.eas ?? []).find((item: { id?: string }) => item.id === license.eaId);
-      if (ea) return { eaId: ea.id, name: ea.name, image: ea.image, video: ea.video };
+      return { license, ea: ea ? { eaId: ea.id, name: ea.name, image: ea.image, video: ea.video } : undefined };
     }
+    return { error: "That license key was not found." };
   } catch {
-    return undefined;
+    return { error: "That license key could not be checked." };
   }
-  return undefined;
 }
 
 export function activateKey(key: string): { error?: string; robot?: Robot } {
@@ -155,7 +158,9 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
   if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };
-  const savedEa = findSavedEaForLicense(clean);
+  const licenseResult = findSavedLicenseForEmail(clean, state.email);
+  if (licenseResult.error) return { error: licenseResult.error };
+  const savedEa = licenseResult.ea;
   const robot: Robot = {
     id: "r-" + Date.now(),
     key: clean,
