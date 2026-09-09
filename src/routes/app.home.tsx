@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Activity, ArrowLeftRight, BarChart3, Check, CircleGauge, Cpu, History, LineChart, MessageCircle, Pause, Play, Plus, ScanLine, Settings2, Sparkles, Trash2, Zap } from "lucide-react";
+import { Activity, ArrowLeftRight, BarChart3, Check, CircleGauge, Cpu, History, Pause, Play, Plus, ScanLine, Settings2, Sparkles, Trash2, Zap } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
 import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 
@@ -10,8 +10,6 @@ export const Route = createFileRoute("/app/home")({
 });
 
 const fallbackRobotImage = "/ea-migrate-platform-robot.jpg";
-const pairs = ["XAUUSD", "NAS100", "EURUSD"];
-
 function cssGlow(color: string, strength = "0 0 28px") {
   return strength + " " + color + "66";
 }
