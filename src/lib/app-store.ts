@@ -12,7 +12,7 @@ export type Robot = {
 };
 
 export type MtAccount = {
-  platform: "MT4" | "MT5";
+  platform: "MT5";
   broker: string;
   server: string;
   accountType: string;
