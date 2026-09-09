@@ -65,7 +65,7 @@ function LayoutSniperVertical({ active, app, color, robotName }: { active: Robot
 function AppHome() {
   const app = useAppState();
   const active = app.robots.find((item) => item.id === app.activeRobotId) || app.robots[0];
-  const color = app.settings.accentColor || "#FF3B3B";
+  const color = (typeof window !== "undefined" ? window.localStorage.getItem("themeColor") : null) || app.settings.accentColor || "#FF3B3B";
   const currentLayout = app.settings.interfaceStyle || (typeof window !== "undefined" ? window.localStorage.getItem("layout") : null) || "layout_blue";
   const robotName = active?.name || (typeof window !== "undefined" ? window.localStorage.getItem("robotName") : null) || "EA MIGRATE PRO";
   if (!active) return <AppFrame><div className="panel mt-16 p-10 text-center"><span className="mx-auto flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: color + "22", color }}><Cpu className="size-8" /></span><h1 className="mt-5 text-2xl font-black uppercase">{robotName}</h1><p className="mt-2 text-sm text-muted-foreground">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-full text-sm font-black uppercase text-white" style={{ backgroundColor: color, boxShadow: cssGlow(color) }}><Plus className="size-5" /> Connect your EA</Link></div></AppFrame>;
