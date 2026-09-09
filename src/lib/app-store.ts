@@ -35,8 +35,8 @@ export type AppState = {
   settings: AppSettings;
 };
 
-const KEY = "eamp.app.v2";
-const LEGACY_KEYS = ["eamp.app.v1"];
+const KEY = "eamp.app.v3";
+const LEGACY_KEYS = ["eamp.app.v1", "eamp.app.v2"];
 
 const initial: AppState = {
   email: null,

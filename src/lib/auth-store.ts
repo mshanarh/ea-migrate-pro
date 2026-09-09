@@ -159,6 +159,18 @@ export function markEmailPaid(email: string) {
   persist();
 }
 
+export function setEmailPaymentStatus(email: string, paid: boolean) {
+  load();
+  const clean = cleanEmail(email);
+  if (!clean || isPaymentExemptEmail(clean)) return;
+  const rest = state.payments.filter((payment) => payment.email !== clean);
+  state = {
+    ...state,
+    payments: paid ? [...rest, { email: clean, paid: true, paidAt: new Date().toISOString() }] : [...rest, { email: clean, paid: false }],
+  };
+  persist();
+}
+
 export function getEmailDeviceBinding(email: string) {
   load();
   return state.deviceBindings.find((binding) => binding.email === cleanEmail(email));
