@@ -47,7 +47,7 @@ function PublicMentorWebsite() {
 }
 
 function WebsitePage({ website }: { website: MentorWebsite }) {
-  const theme = THEMES[website.theme] ?? THEMES.inferno;
+  const theme = THEMES[website.theme] ?? THEMES["inferno"]!;
   const hasIos = Boolean(website.iosPrice && website.iosLink);
   const hasPc = Boolean(website.pcPrice && website.pcLink);
   const backgroundImage = website.botImage

@@ -24,7 +24,7 @@ function PowerPill() {
 function StartButton({ active, circle = false }: { active: Robot; circle?: boolean }) {
   return <button type="button" onClick={() => toggleRobot(active.id)} className={circle ? "flex size-28 flex-col items-center justify-center gap-2 rounded-full border-4 border-primary bg-background text-sm font-black uppercase tracking-[0.08em] text-primary shadow-glow transition-transform active:scale-95" : "flex h-14 flex-1 items-center justify-center gap-3 rounded-2xl bg-primary px-5 text-sm font-black uppercase text-primary-foreground shadow-glow transition-transform active:scale-95"}>{active.running ? <Pause className="size-5" /> : <Play className="size-5" />}{active.running ? "Stop" : "Start"}</button>;
 }
-function PairButton({ pairs, className = "" }: { pairs: string[]; className?: string }) {
+function PairButton({ pairs, className = "" }: { pairs: readonly string[]; className?: string }) {
   return <Link to="/app/metatrader" className={"flex min-w-0 items-center justify-center gap-3 rounded-2xl border-2 border-primary bg-background/85 px-5 py-3 text-sm font-black text-primary shadow-glow " + className}><ArrowLeftRight className="size-5" /><span><span className="block uppercase tracking-[0.1em]">Pairs</span><span className="block truncate text-[10px] font-semibold opacity-80">{pairs.join(" • ")}</span></span></Link>;
 }
 function LogsButton({ className = "" }: { className?: string }) {

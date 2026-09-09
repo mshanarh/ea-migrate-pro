@@ -5,7 +5,7 @@ export type PortalStatus = "pending" | "approved" | "rejected";
 export type PaymentRecord = {
   email: string;
   paid: boolean;
-  paidAt?: string;
+  paidAt?: string | undefined;
 };
 
 export type DeviceBinding = {
@@ -22,17 +22,17 @@ export type License = {
   plan: string;
   issuedAt: string;
   active: boolean;
-  name?: string;
-  clientEmail?: string;
-  expertAdvisor?: string;
-  eaId?: string;
-  eaNameHash?: string;
-  briefing?: string;
-  symbols?: string[];
-  image?: string;
-  video?: string;
-  expiry?: string;
-  expiresAt?: string;
+  name?: string | undefined;
+  clientEmail?: string | undefined;
+  expertAdvisor?: string | undefined;
+  eaId?: string | undefined;
+  eaNameHash?: string | undefined;
+  briefing?: string | undefined;
+  symbols?: string[] | undefined;
+  image?: string | undefined;
+  video?: string | undefined;
+  expiry?: string | undefined;
+  expiresAt?: string | undefined;
 };
 
 export type MentorWebsite = {
@@ -58,7 +58,11 @@ export type ExpertAdvisor = {
   id: string;
   name: string;
   createdAt: string;
-  eaNameHash?: string;
+  eaNameHash?: string | undefined;
+  briefing?: string | undefined;
+  symbols?: string[] | undefined;
+  image?: string | undefined;
+  video?: string | undefined;
 };
 
 export type Account = {
@@ -335,7 +339,7 @@ export function addLicense(
   id: string,
   plan: string,
   key: string,
-  details: Pick<License, "name" | "clientEmail" | "expertAdvisor" | "expiry"> = {},
+  details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
 ): { error?: string } {
   load();
   const account = state.accounts.find((a) => a.id === id);
