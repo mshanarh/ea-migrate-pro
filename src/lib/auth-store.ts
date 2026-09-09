@@ -339,7 +339,7 @@ export function addLicense(
   id: string,
   plan: string,
   key: string,
-  details: Pick<License, "name" | "clientEmail" | "expertAdvisor" | "expiry"> = {},
+  details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
 ): { error?: string } {
   load();
   const account = state.accounts.find((a) => a.id === id);
