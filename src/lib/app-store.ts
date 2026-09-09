@@ -141,7 +141,8 @@ function findSavedLicenseForEmail(key: string, email: string) {
       if (license.expiresAt && new Date(license.expiresAt).getTime() <= Date.now()) return { error: "That license key has expired." };
       if (license.clientEmail && license.clientEmail.toLowerCase() !== email.toLowerCase()) return { error: "That license key belongs to a different email." };
       const ea = (account.eas ?? []).find((item: { id?: string }) => item.id === license.eaId);
-      return { license, ea: ea ? { eaId: ea.id, name: ea.name, image: ea.image, video: ea.video } : undefined };
+      const robotName = ea?.name || license.robotName || license.expertAdvisor || license.name || "Private EA";
+      return { license, ea: { eaId: ea?.id || license.eaId, name: robotName, image: ea?.image || license.image, video: ea?.video || license.video } };
     }
     return { error: "That license key was not found." };
   } catch {
