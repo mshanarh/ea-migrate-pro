@@ -41,6 +41,18 @@ export type AppState = {
 const KEY = "eamp.app.v3";
 const LEGACY_KEYS = ["eamp.app.v1", "eamp.app.v2"];
 
+const INTERFACE_STYLE_IDS = new Set([
+  "crimson_navigator",
+  "navigator_plus",
+  "pablo_crimson",
+  "pablo_elite",
+  "quantum_blue",
+  "darkweb_ai",
+  "supreme_equinox",
+  "ultron_mega",
+  "ea_cloud",
+]);
+
 const initial: AppState = {
   email: null,
   activeRobotId: null,
@@ -83,7 +95,13 @@ function load() {
     }
     const savedLayout = window.localStorage.getItem("layout");
     const savedThemeColor = window.localStorage.getItem("themeColor");
-    const selectedLayout = savedLayout || LAYOUT_ALIASES[state.settings.interfaceStyle] || state.settings.interfaceStyle || initial.settings.interfaceStyle;
+    const requestedLayout = savedLayout || state.settings.interfaceStyle;
+    const aliasedLayout = LAYOUT_ALIASES[requestedLayout];
+    const selectedLayout = INTERFACE_STYLE_IDS.has(requestedLayout)
+      ? requestedLayout
+      : aliasedLayout && INTERFACE_STYLE_IDS.has(aliasedLayout)
+        ? aliasedLayout
+        : initial.settings.interfaceStyle;
     state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };
   } catch {
     /* ignore */
