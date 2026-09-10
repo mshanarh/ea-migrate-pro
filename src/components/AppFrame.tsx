@@ -56,7 +56,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
     <div className="relative flex-1">{children}</div>
     <nav className="fixed inset-x-0 bottom-0 z-50 mx-auto flex h-[5.5rem] w-full max-w-md items-end justify-around border-t border-primary/40 bg-background/95 px-4 pb-3 pt-2 backdrop-blur-xl">
       {items.map(({ to, label, icon: Icon }) => {
-        const active = path === to || (to === "/app/settings" && path.startsWith("/app/settings"));
+        const active = path === to || (to === "/app/home" && path === "/app/pairs") || (to === "/app/settings" && path.startsWith("/app/settings"));
         const isHome = to === "/app/home";
         return <Link key={to} to={to} onPointerDown={isHome ? startHomeHold : undefined} onPointerUp={isHome ? stopHomeHold : undefined} onPointerLeave={isHome ? stopHomeHold : undefined} onPointerCancel={isHome ? stopHomeHold : undefined} className={isHome && active ? "relative -mt-10 flex size-16 flex-col items-center justify-center rounded-full border-4 border-background bg-primary text-primary-foreground shadow-glow" : active ? "flex min-w-20 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-primary" : "flex min-w-20 flex-col items-center justify-center gap-1 rounded-2xl px-2 py-2 text-muted-foreground"}><Icon className={isHome && active ? "size-7" : "size-5"} /><span className={isHome && active ? "mt-1 text-[10px] font-black uppercase tracking-[0.12em] text-primary" : "text-[10px] font-bold uppercase tracking-[0.1em]"}>{label}</span></Link>;
       })}

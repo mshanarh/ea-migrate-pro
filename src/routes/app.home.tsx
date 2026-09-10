@@ -45,6 +45,10 @@ function glow(color: string) {
   return `0 0 28px ${color}55`;
 }
 
+function pairsHref(robotId: string) {
+  return `/app/pairs?robot=${encodeURIComponent(robotId)}`;
+}
+
 function RobotList({ active, robots, color }: Pick<DashboardProps, "active" | "robots" | "color">) {
   return <section className="mt-7">
     <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Connected Robots</p>
@@ -75,7 +79,7 @@ function HorizontalDashboard({ active, robots, color, robotName, running, openCo
     <div className="mt-6 flex items-center justify-around rounded-[2rem] border border-border/60 bg-card/70 px-3 py-4">
       <RoundControl label="Remove" icon={<Trash2 className="size-5" />} color={color} onClick={() => removeRobot(active.id)} />
       <RoundControl label={running ? "Stop" : "Start"} icon={running ? <Pause className="size-5" /> : <Play className="size-5" />} primary color={color} onClick={openControl} />
-      <RoundControl label="Quotes" icon={<Activity className="size-5" />} color={color} />
+      <Link to={pairsHref(active.id)} className="flex size-[4.7rem] shrink-0 flex-col items-center justify-center gap-1 rounded-full border-2 text-[9px] font-black uppercase" style={{ borderColor: color, color }}><Activity className="size-5" />Quotes</Link>
     </div>
     <RobotList active={active} robots={robots} color={color} />
   </main>;
@@ -88,7 +92,7 @@ function ScannerCard({ color }: { color: string }) {
 function HeroDashboard({ active, robots, color, robotName, running, openControl }: DashboardProps) {
   return <main>
     <div className="relative h-[24rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color }}>{running ? "● Trading active" : "● Robot ready"}</p><h1 className="mt-2 text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs text-muted-foreground">Connected to {(active.symbols || []).join(" · ") || "MetaTrader 5"}</p></div></div>
-    <div className="mt-4 grid grid-cols-3 gap-2 rounded-full border border-border/60 bg-card/80 p-2"><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><ArrowLeftRight className="size-4" />Pairs</button><button type="button" onClick={openControl} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-primary-foreground" style={{ backgroundColor: color, boxShadow: glow(color) }}>{running ? <Pause className="size-4" /> : <Play className="size-4" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><History className="size-4" />Logs</button></div>
+    <div className="mt-4 grid grid-cols-3 gap-2 rounded-full border border-border/60 bg-card/80 p-2"><Link to={pairsHref(active.id)} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><ArrowLeftRight className="size-4" />Pairs</Link><button type="button" onClick={openControl} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-primary-foreground" style={{ backgroundColor: color, boxShadow: glow(color) }}>{running ? <Pause className="size-4" /> : <Play className="size-4" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><History className="size-4" />Logs</button></div>
     <Powered color={color} /><ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
   </main>;
 }
@@ -96,7 +100,7 @@ function HeroDashboard({ active, robots, color, robotName, running, openControl 
 function VerticalDashboard({ active, robots, color, robotName, running, openControl }: DashboardProps) {
   return <main>
     <div className="relative h-[22rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><h1 className="text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs font-bold" style={{ color }}>{running ? "● Trading active" : "● Connected and ready"}</p></div></div>
-    <div className="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3"><div className="space-y-2">{[["Pairs", <ArrowLeftRight className="size-5" />], [running ? "Stop" : "Start", running ? <Pause className="size-5" /> : <Play className="size-5" />], ["Logs", <History className="size-5" />]].map(([label, icon], index) => <button key={String(label)} type="button" onClick={index === 1 ? openControl : undefined} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, backgroundColor: index === 1 ? color : "var(--card)", color: index === 1 ? "var(--primary-foreground)" : color }}>{icon}{label}</button>)}</div><Link to="/app/settings/scanner" className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 text-center text-[10px] font-black uppercase" style={{ borderColor: color, color, boxShadow: glow(color) }}><CircleGauge className="size-7" />AI Scan</Link></div>
+    <div className="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3"><div className="space-y-2"><Link to={pairsHref(active.id)} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, color }}><ArrowLeftRight className="size-5" />Pairs</Link><button type="button" onClick={openControl} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, backgroundColor: color, color: "var(--primary-foreground)" }}>{running ? <Pause className="size-5" /> : <Play className="size-5" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, color }}><History className="size-5" />Logs</button></div><Link to="/app/settings/scanner" className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 text-center text-[10px] font-black uppercase" style={{ borderColor: color, color, boxShadow: glow(color) }}><CircleGauge className="size-7" />AI Scan</Link></div>
     <ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
   </main>;
 }

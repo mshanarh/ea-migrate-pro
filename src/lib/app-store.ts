@@ -6,10 +6,17 @@ export type Robot = {
   name: string;
   key: string;
   symbols: string[];
+  pairs?: PairSetting[];
   image?: string;
   video?: string;
   eaId?: string;
   running: boolean;
+};
+
+export type PairSetting = {
+  symbol: string;
+  lotSize: string;
+  maxTrades: string;
 };
 
 export type MtAccount = {
@@ -94,6 +101,13 @@ function load() {
           ? saved.robots.map((robot) => ({
               ...robot,
               symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
+              pairs: Array.isArray(robot.pairs)
+                ? robot.pairs.map((pair) => ({
+                    symbol: typeof pair?.symbol === "string" ? pair.symbol : "",
+                    lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
+                    maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
+                  })).filter((pair) => pair.symbol)
+                : (Array.isArray(robot.symbols) ? robot.symbols : []).map((symbol) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
             }))
           : initial.robots,
         settings: { ...initial.settings, ...(saved.settings ?? {}) },
@@ -215,6 +229,7 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
     key: clean,
     name: savedEa?.name || "Private EA",
     symbols: savedEa?.symbols || licenseResult.license.symbols || [],
+    pairs: (savedEa?.symbols || licenseResult.license.symbols || []).map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
     ...(savedEa?.image ? { image: savedEa.image } : {}),
     ...(savedEa?.video ? { video: savedEa.video } : {}),
@@ -230,6 +245,20 @@ export function setActiveRobot(id: string) {
   load();
   if (!state.robots.some((robot) => robot.id === id)) return;
   state = { ...state, activeRobotId: id };
+  persist();
+}
+
+export function setRobotPairs(id: string, pairs: PairSetting[]) {
+  load();
+  const safePairs = pairs.filter((pair) => pair.symbol.trim()).map((pair) => ({
+    symbol: pair.symbol.trim().toUpperCase(),
+    lotSize: pair.lotSize || "0.01",
+    maxTrades: pair.maxTrades || "0",
+  }));
+  state = {
+    ...state,
+    robots: state.robots.map((robot) => robot.id === id ? { ...robot, pairs: safePairs, symbols: safePairs.map((pair) => pair.symbol) } : robot),
+  };
   persist();
 }
 
