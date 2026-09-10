@@ -29,6 +29,7 @@ export type MtAccount = {
 
 export type AppSettings = {
   background: string;
+  backgroundEnabled: boolean;
   interfaceStyle: string;
   font: string;
   accent: number;
@@ -65,7 +66,7 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "crimson_navigator", font: "Inter", accent: 60, accentColor: "#FF3B3B", brandName: "EA Migrate", lotSize: "0.01" },
+  settings: { background: "Neon Grid", backgroundEnabled: true, interfaceStyle: "crimson_navigator", font: "Inter", accent: 60, accentColor: "#FF3B3B", brandName: "EA Migrate", lotSize: "0.01" },
 };
 
 let state: AppState = initial;
@@ -110,7 +111,7 @@ function load() {
                 : (Array.isArray(robot.symbols) ? robot.symbols : []).map((symbol) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
             }))
           : initial.robots,
-        settings: { ...initial.settings, ...(saved.settings ?? {}) },
+        settings: { ...initial.settings, ...(saved.settings ?? {}), backgroundEnabled: saved.settings?.backgroundEnabled ?? true },
       };
     }
     const savedLayout = window.localStorage.getItem("layout");
