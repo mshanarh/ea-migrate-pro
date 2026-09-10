@@ -90,6 +90,12 @@ function load() {
         ...initial,
         ...saved,
         activeRobotId: saved.activeRobotId ?? initial.activeRobotId,
+        robots: Array.isArray(saved.robots)
+          ? saved.robots.map((robot) => ({
+              ...robot,
+              symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
+            }))
+          : initial.robots,
         settings: { ...initial.settings, ...(saved.settings ?? {}) },
       };
     }

@@ -3,7 +3,9 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Camera, Check, CheckCircle2, Circle, LoaderCircle, ScanLine, ShieldCheck, TrendingUp, Upload, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppFrame } from "@/components/AppFrame";
+import { ExecutionNotification, type ExecutionStatus } from "@/components/ExecutionNotification";
 import { useAppState } from "@/lib/app-store";
+import { executeTrade, type TradeDirection } from "@/lib/execution";
 
 export const Route = createFileRoute("/app/settings/scanner")({
   ssr: false,
@@ -46,6 +48,8 @@ function Scanner() {
   const [symbol, setSymbol] = useState(symbols[0] || "XAUUSD");
   const [progress, setProgress] = useState(0);
   const [usage, setUsage] = useState(readUsage);
+  const [executionStatus, setExecutionStatus] = useState<ExecutionStatus | null>(null);
+  const [executionError, setExecutionError] = useState("");
   const signal = useMemo(() => ({ side: "BUY", entry: "2,346.20", stop: "2,339.80", target: "2,359.00", ratio: "1:2.0", confidence: "87%", lot: app.settings.lotSize || "0.01" }), [app.settings.lotSize]);
 
   useEffect(() => {
@@ -73,7 +77,29 @@ function Scanner() {
     window.localStorage.setItem(USAGE_KEY, JSON.stringify({ day: new Date().toISOString().slice(0, 10), count: next }));
     setStep("scanning");
   };
-  const execute = () => toast.error("Connect your live execution provider before placing this trade.");
+  const execute = () => {
+    if (!active) { toast.error("Activate a robot before placing this trade."); return; }
+    if (!app.mt) { toast.error("Connect MetaTrader 5 before placing this trade."); return; }
+    const direction = signal.side as TradeDirection;
+    setExecutionError("");
+    setExecutionStatus("scanning");
+    window.setTimeout(() => {
+      setExecutionStatus("connecting");
+      window.setTimeout(() => {
+        setExecutionStatus("executing");
+        void executeTrade({ robotId: active.id, symbol, direction, lotSize: signal.lot, mt: app.mt! })
+          .then(() => {
+            setExecutionStatus("success");
+            window.setTimeout(() => setExecutionStatus(null), 4000);
+          })
+          .catch((error: unknown) => {
+            setExecutionError(error instanceof Error ? error.message : "The execution service could not confirm the order.");
+            setExecutionStatus("error");
+            window.setTimeout(() => setExecutionStatus(null), 6000);
+          });
+      }, 900);
+    }, 900);
+  };
 
   return <AppFrame><div className="pb-24"><header className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3"><Link to="/app/settings" aria-label="Back to settings" className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card/60"><ArrowLeft className="size-5" /></Link><div className="min-w-0 text-center"><h1 className="truncate text-xl font-black">AI Chart Scanner</h1><p className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary">● Live market data</p></div><span className="rounded-full border border-primary/40 bg-primary/10 px-3 py-2 text-[10px] font-black text-primary">{MAX_SCANS - usage} left</span></header>
 
@@ -84,6 +110,7 @@ function Scanner() {
     {step === "result" && <><section className="mt-6 overflow-hidden rounded-[2rem] border border-primary/50 bg-card/60 p-3"><img src={image || ""} alt="Scanned trading chart" className="h-64 w-full rounded-[1.5rem] object-contain bg-background" /></section><div className="mt-6 flex items-center gap-3"><span className="flex size-12 items-center justify-center rounded-full bg-emerald-400/10 text-emerald-300"><CheckCircle2 className="size-6" /></span><div><h2 className="text-xl font-black">Signal found</h2><p className="text-sm text-muted-foreground">Review every detail before execution.</p></div></div><section className="mt-5 rounded-[2rem] border border-border/60 bg-card/60 p-5"><div className="flex items-center justify-between"><div><p className="text-xs font-black uppercase tracking-[0.16em] text-muted-foreground">{symbol}</p><p className="mt-1 text-3xl font-black text-emerald-300">{signal.side}</p></div><span className="rounded-full bg-emerald-400/10 px-4 py-2 text-sm font-black text-emerald-300">{signal.confidence} confidence</span></div><div className="mt-5 grid grid-cols-2 gap-3">{[["Entry", signal.entry], ["Stop loss", signal.stop], ["Take profit", signal.target], ["Risk / reward", signal.ratio], ["Lot size", signal.lot], ["Timeframe", "M15"]].map(([label, value]) => <div key={label} className="rounded-2xl bg-secondary/60 p-4"><p className="text-[10px] font-black uppercase tracking-[0.14em] text-muted-foreground">{label}</p><p className="mt-1 font-black">{value}</p></div>)}</div><div className="mt-4 flex items-start gap-3 rounded-2xl border border-primary/30 bg-primary/5 p-4"><TrendingUp className="mt-0.5 size-5 shrink-0 text-primary" /><p className="text-xs leading-5 text-muted-foreground">Bullish structure break with momentum confirmation. Price remains above the identified demand zone.</p></div></section><button type="button" onClick={() => { setStep("upload"); setImage(null); }} className="mt-4 h-12 w-full rounded-full border border-border text-sm font-bold text-muted-foreground">Scan another chart</button></>}
 
     <section className="mt-5 flex items-center gap-3 rounded-3xl border border-border/60 bg-card/60 p-4"><ShieldCheck className="size-5 shrink-0 text-primary" /><div><p className="text-sm font-bold">Live execution connection</p><p className="text-xs text-muted-foreground">Not connected — private API details are required.</p></div></section>
-    {step === "result" && <div className="fixed inset-x-0 bottom-[5.45rem] z-40 mx-auto max-w-md border-t border-border bg-background/95 px-5 py-3 backdrop-blur-xl"><button type="button" onClick={execute} className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-black uppercase text-primary-foreground glow-ring"><TrendingUp className="size-5" />Execute {signal.side}</button></div>}
+    {step === "result" && <div className="fixed inset-x-0 bottom-[5.45rem] z-40 mx-auto max-w-md border-t border-border bg-background/95 px-5 py-3 backdrop-blur-xl"><button type="button" onClick={execute} disabled={executionStatus !== null} className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-black uppercase text-primary-foreground glow-ring disabled:cursor-wait disabled:opacity-60"><TrendingUp className="size-5" />Execute {signal.side}</button></div>}
+    <ExecutionNotification open={executionStatus !== null} robotName={active?.name || "Selected robot"} robotImage={active?.image} robotId={active?.id || ""} symbol={symbol} direction={signal.side as TradeDirection} lotSize={signal.lot} status={executionStatus || "scanning"} errorMessage={executionError} onClose={() => setExecutionStatus(null)} />
   </div></AppFrame>;
 }
