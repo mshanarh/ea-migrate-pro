@@ -1,6 +1,5 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, Check, Palette } from "lucide-react";
-import { toast } from "sonner";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { ArrowLeft, Check, LayoutDashboard } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
 import { setSetting, useAppState } from "@/lib/app-store";
 
@@ -11,25 +10,22 @@ export const Route = createFileRoute("/app/settings/interface")({
 });
 
 const STYLES = [
-  { id: "layout_orange", name: "EA MIGRATE ORANGE", description: "Classic EA style", image: "/interface-layout-orange.jpg", swatch: "#ff6a2b" },
-  { id: "layout_blue", name: "EA MIGRATE BLUE", description: "Connected robot command deck", image: "/interface-layout-blue.jpg", swatch: "#3b82ff" },
-  { id: "layout_green", name: "EA MIGRATE GREEN", description: "Fast green robot launchpad", image: "/interface-layout-green.jpg", swatch: "#58f05b" },
-  { id: "layout_sniper_circle", name: "SNIPER CIRCLE HERO", description: "Circular command hero", image: "/interface-sniper-circle.jpg", swatch: "#ff3b3b" },
-  { id: "layout_sniper_full", name: "SNIPER FULL BLEED", description: "Full-screen scanner deck", image: "/interface-sniper-full.jpg", swatch: "#ff3b3b" },
-  { id: "layout_sniper_vertical", name: "SNIPER VERTICAL", description: "Vertical controls with AI scan", image: "/interface-sniper-circle.jpg", swatch: "#ff3b3b" },
+  { id: "crimson_navigator", name: "Crimson Navigator", description: "Circular robot dashboard with horizontal controls", group: "Horizontal" },
+  { id: "navigator_plus", name: "Navigator Plus", description: "Full hero robot with three-control command deck", group: "Hero" },
+  { id: "pablo_crimson", name: "Pablo Crimson", description: "Crimson hero dashboard with focused controls", group: "Hero" },
+  { id: "pablo_elite", name: "Pablo Elite", description: "Vertical command controls and side scanner", group: "Vertical" },
+  { id: "quantum_blue", name: "Quantum Blue", description: "Blue horizontal robot command dashboard", group: "Horizontal" },
+  { id: "darkweb_ai", name: "Darkweb AI", description: "Dark hero interface with AI scanner access", group: "Hero" },
+  { id: "supreme_equinox", name: "Supreme Equinox", description: "Balanced vertical controls for fast access", group: "Vertical" },
+  { id: "ultron_mega", name: "Ultron Mega", description: "Large robot hero and compact action controls", group: "Hero" },
+  { id: "ea_cloud", name: "EA Cloud", description: "Clean connected-robot dashboard for cloud EAs", group: "Horizontal" },
 ] as const;
 
 function InterfaceStyles() {
   const { settings } = useAppState();
-  const navigate = useNavigate();
-  const selectedColor = (typeof window !== "undefined" ? window.localStorage.getItem("themeColor") : null) || settings.accentColor || "#FF3B3B";
-  const currentLayout = settings.interfaceStyle || (typeof window !== "undefined" ? window.localStorage.getItem("layout") : null) || "layout_blue";
+  const currentLayout = settings.interfaceStyle || "crimson_navigator";
   const applyLayout = (id: string) => {
-    const style = STYLES.find((item) => item.id === id);
     setSetting("interfaceStyle", id);
-    if (typeof window !== "undefined") window.localStorage.setItem("layout", id);
-    toast.success("Interface Applied: " + (style?.name || id) + " ✅");
-    navigate({ to: "/app/home" });
   };
-  return <AppFrame><div className="max-h-[calc(100vh-8rem)] overflow-y-auto pb-8 pr-1"><div className="flex items-center gap-3"><Link to="/app/settings" aria-label="Back to settings" className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card/60"><ArrowLeft className="size-5" /></Link><div><p className="text-xs font-bold uppercase tracking-[0.2em] text-primary">Settings</p><h1 className="text-2xl font-black">Interface Styles</h1></div></div><p className="mt-3 text-sm text-muted-foreground">Tap to apply to Home</p><div className="mt-6 space-y-3">{STYLES.map((style) => { const selected = style.id === currentLayout; return <button type="button" key={style.id} onClick={() => applyLayout(style.id)} className="flex w-full items-center gap-3 rounded-3xl border-2 p-3 text-left transition-transform active:scale-[.99]" style={{ borderColor: selected ? selectedColor : "rgba(255,255,255,.1)", backgroundColor: selected ? selectedColor + "20" : "rgba(255,255,255,.035)", boxShadow: selected ? "0 0 22px " + selectedColor + "44" : "none" }}><img src={style.image} alt={style.name + " preview"} className="h-24 w-[4.8rem] shrink-0 rounded-2xl border border-white/10 object-cover" /><span className="min-w-0 flex-1"><span className="block text-sm font-black uppercase" style={{ color: selected ? selectedColor : undefined }}>{style.name}</span><span className="mt-1 block text-xs text-muted-foreground">{style.description}</span><span className="mt-3 flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.15em] text-muted-foreground"><span className="size-2 rounded-full" style={{ backgroundColor: style.swatch }} /> Home preview</span></span>{selected ? <span className="flex shrink-0 items-center gap-1 text-xs font-black uppercase" style={{ color: selectedColor }}><Check className="size-5" /> Selected</span> : <span className="shrink-0 rounded-full border px-3 py-2 text-[10px] font-black uppercase" style={{ borderColor: selectedColor, color: selectedColor }}>Apply</span>}</button>; })}</div><div className="mt-6 flex items-center gap-3 rounded-2xl border border-border/60 bg-card/50 p-4"><Palette className="size-5 shrink-0" style={{ color: selectedColor }} /><p className="text-xs leading-5 text-muted-foreground">Your current theme color controls the borders, glows, icons, and active Home button across every interface.</p></div></div></AppFrame>;
+  return <AppFrame><div className="max-h-[calc(100vh-8rem)] overflow-y-auto pb-8 pr-1"><div className="flex items-center gap-3"><Link to="/app/settings" aria-label="Back to settings" className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card/60"><ArrowLeft className="size-5" /></Link><div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.2em] text-primary">Settings</p><h1 className="truncate text-2xl font-black">Interface Styles</h1></div></div><p className="mt-3 text-sm text-muted-foreground">Tap a style to apply it instantly.</p><div className="mt-6 space-y-3">{STYLES.map((style) => { const selected = style.id === currentLayout; return <button type="button" key={style.id} onClick={() => applyLayout(style.id)} className={selected ? "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-3xl border border-primary bg-primary/10 p-5 text-left glow-ring" : "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-4 rounded-3xl border border-border/60 bg-card/60 p-5 text-left"}><span className={selected ? "flex size-12 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground" : "flex size-12 shrink-0 items-center justify-center rounded-full bg-secondary text-muted-foreground"}><LayoutDashboard className="size-5" /></span><span className="min-w-0"><span className="block truncate font-black">{style.name}</span><span className="mt-1 block text-xs leading-5 text-muted-foreground">{style.description}</span><span className="mt-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-primary">{style.group} style</span></span>{selected ? <span className="flex shrink-0 items-center gap-1 text-xs font-black uppercase text-primary"><Check className="size-5" /> Active</span> : null}</button>; })}</div></div></AppFrame>;
 }

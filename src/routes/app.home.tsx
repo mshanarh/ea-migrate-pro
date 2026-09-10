@@ -1,120 +1,124 @@
-import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { Activity, ArrowLeftRight, BarChart3, Check, CircleGauge, Cpu, History, Maximize2, MoreVertical, Pause, Play, Plus, ScanLine, Settings2, Sparkles, Trash2, X } from "lucide-react";
+import { Activity, ArrowLeftRight, Check, ChevronRight, CircleGauge, Cpu, History, Pause, Play, Plus, ScanLine, Trash2, X } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
 import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
-  head: () => ({ meta: [{ title: "My Robot — EA Migrate Pro" }, { name: "description", content: "Run and manage your activated trading robot." }] }),
+  head: () => ({ meta: [
+    { title: "Robot Dashboard — EA Migrate Pro" },
+    { name: "description", content: "Control your licensed Forex robots and open the AI chart scanner." },
+    { property: "og:title", content: "Robot Dashboard — EA Migrate Pro" },
+    { property: "og:description", content: "Control your licensed Forex robots and open the AI chart scanner." },
+    { property: "og:type", content: "website" },
+    { name: "twitter:card", content: "summary_large_image" },
+  ] }),
   component: AppHome,
 });
 
 const fallbackRobotImage = "/ea-migrate-platform-robot.jpg";
-function cssGlow(color: string, strength = "0 0 28px") {
-  return strength + " " + color + "66";
+
+type DashboardProps = {
+  active: Robot;
+  robots: Robot[];
+  color: string;
+  robotName: string;
+  running: boolean;
+  openControl: () => void;
+};
+
+const STYLE_META: Record<string, { name: string; structure: "horizontal" | "hero" | "vertical"; accent?: string }> = {
+  crimson_navigator: { name: "Crimson Navigator", structure: "horizontal" },
+  navigator_plus: { name: "Navigator Plus", structure: "hero" },
+  pablo_crimson: { name: "Pablo Crimson", structure: "hero" },
+  pablo_elite: { name: "Pablo Elite", structure: "vertical" },
+  quantum_blue: { name: "Quantum Blue", structure: "horizontal", accent: "#1683F7" },
+  darkweb_ai: { name: "Darkweb AI", structure: "hero" },
+  supreme_equinox: { name: "Supreme Equinox", structure: "vertical" },
+  ultron_mega: { name: "Ultron Mega", structure: "hero" },
+  ea_cloud: { name: "EA Cloud", structure: "horizontal", accent: "#22C55E" },
+};
+
+function glow(color: string) {
+  return `0 0 28px ${color}55`;
 }
 
-function BottomHint() {
-  return <p className="mt-5 text-center text-[10px] font-bold uppercase tracking-[0.22em] text-muted-foreground">Swipe through your active robot controls</p>;
+function RobotList({ active, robots, color }: Pick<DashboardProps, "active" | "robots" | "color">) {
+  return <section className="mt-7">
+    <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Connected Robots</p>
+    <div className="mt-3 space-y-3">
+      {robots.map((robot) => <button key={robot.id} type="button" onClick={() => setActiveRobot(robot.id)} className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-full border border-border/60 bg-card/70 p-2 text-left" style={robot.id === active.id ? { borderColor: color, boxShadow: glow(color) } : undefined}>
+        <img src={robot.image || fallbackRobotImage} alt="" className="size-12 shrink-0 rounded-full object-cover" />
+        <span className="min-w-0"><span className="block truncate text-sm font-black uppercase">{robot.name}</span><span className="block truncate text-xs text-muted-foreground">{robot.symbols.join(" · ") || "Ready to configure"}</span></span>
+        {robot.id === active.id ? <Check className="mr-2 size-5 shrink-0" style={{ color }} /> : <ChevronRight className="mr-2 size-5 shrink-0 text-muted-foreground" />}
+      </button>)}
+      <Link to="/app/activate" className="flex min-h-16 w-full items-center gap-3 rounded-full border border-dashed border-primary/50 bg-primary/5 px-4 text-sm font-black uppercase text-primary"><span className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground"><Plus className="size-5" /></span>Connect New Robot</Link>
+    </div>
+  </section>;
 }
 
 function Powered({ color }: { color: string }) {
-  return <div className="mx-auto mt-5 w-fit rounded-full border-2 bg-black/50 px-6 py-3 text-xs font-black tracking-[0.08em] text-white" style={{ borderColor: color, boxShadow: cssGlow(color) }}>Powered by <span style={{ color }}>EA Migrate</span></div>;
+  return <div className="mx-auto mt-4 w-fit rounded-full border bg-card/80 px-5 py-2 text-xs font-bold" style={{ borderColor: color }}>Powered by <span style={{ color }}>EA Migrate</span></div>;
 }
 
-function ActionButton({ label, icon, onClick, color, active = false, className = "" }: { label: string; icon: React.ReactNode; onClick?: () => void; color: string; active?: boolean; className?: string }) {
-  return <button type="button" onClick={onClick} className={"flex min-w-0 items-center justify-center gap-2 rounded-2xl border-2 px-3 py-3 text-[11px] font-black uppercase tracking-[0.06em] transition-transform active:scale-95 " + className} style={{ borderColor: color, color: active ? "#fff" : color, backgroundColor: active ? color : "rgba(0,0,0,.42)", boxShadow: cssGlow(color, "0 0 18px") }}>{icon}<span className="truncate">{label}</span></button>;
+function RoundControl({ label, icon, primary, color, onClick }: { label: string; icon: ReactNode; primary?: boolean; color: string; onClick?: () => void }) {
+  return <button type="button" onClick={onClick} className="flex size-[4.7rem] shrink-0 flex-col items-center justify-center gap-1 rounded-full border-2 text-[9px] font-black uppercase" style={{ borderColor: color, backgroundColor: primary ? color : "var(--card)", color: primary ? "var(--primary-foreground)" : color, boxShadow: primary ? glow(color) : undefined }}>{icon}{label}</button>;
 }
 
-function CircleAction({ label, icon, onClick, color, filled = false }: { label: string; icon: React.ReactNode; onClick?: () => void; color: string; filled?: boolean }) {
-  return <button type="button" onClick={onClick} className="flex size-[5.4rem] flex-col items-center justify-center gap-1 rounded-full border-4 text-[10px] font-black uppercase" style={{ borderColor: color, color: filled ? "#fff" : color, backgroundColor: filled ? color : "rgba(0,0,0,.72)", boxShadow: cssGlow(color) }}>{icon}<span>{label}</span></button>;
+function HorizontalDashboard({ active, robots, color, robotName, running, openControl }: DashboardProps) {
+  return <main>
+    <header className="text-center"><p className="text-[10px] font-black uppercase tracking-[0.22em]" style={{ color }}>EA Migrate Pro</p><h1 className="mt-1 truncate text-xl font-black uppercase">{robotName}</h1></header>
+    <div className="mx-auto mt-6 size-48 rounded-full border-4 p-2" style={{ borderColor: color, boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full rounded-full object-cover" /></div>
+    <p className="mt-5 text-center text-2xl font-black uppercase">{robotName}</p><p className="mt-1 text-center text-xs font-semibold text-muted-foreground">{running ? "Connected · Trading active" : "Connected · Ready to trade"}</p><Powered color={color} />
+    <div className="mt-6 flex items-center justify-around rounded-[2rem] border border-border/60 bg-card/70 px-3 py-4">
+      <RoundControl label="Remove" icon={<Trash2 className="size-5" />} color={color} onClick={() => removeRobot(active.id)} />
+      <RoundControl label={running ? "Stop" : "Start"} icon={running ? <Pause className="size-5" /> : <Play className="size-5" />} primary color={color} onClick={openControl} />
+      <RoundControl label="Quotes" icon={<Activity className="size-5" />} color={color} />
+    </div>
+    <RobotList active={active} robots={robots} color={color} />
+  </main>;
 }
 
-function HeroImage({ src, alt, className = "" }: { src: string; alt: string; className?: string }) {
-  return <img src={src} alt={alt} className={"object-cover " + className} />;
+function ScannerCard({ color }: { color: string }) {
+  return <Link to="/app/settings/scanner" className="mt-5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-3xl border border-border/60 bg-card/70 p-4"><span className="flex size-12 shrink-0 items-center justify-center rounded-2xl" style={{ backgroundColor: `${color}25`, color }}><ScanLine className="size-6" /></span><span className="min-w-0"><span className="block font-black">AI Scanner</span><span className="block text-xs text-muted-foreground">Scan a chart and review a trade signal</span></span><ChevronRight className="size-5 shrink-0" style={{ color }} /></Link>;
 }
 
-function SharedRobotList({ active, robots, color }: { active: Robot; robots: Robot[]; color: string }) {
-  return <section className="mt-7"><p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Connected Robots</p><div className="mt-3 space-y-2">{robots.map((item) => <button type="button" key={item.id} onClick={() => setActiveRobot(item.id)} className="flex w-full items-center gap-3 rounded-full border p-2 text-left" style={{ borderColor: item.id === active.id ? color : "rgba(255,255,255,.12)", backgroundColor: item.id === active.id ? color + "22" : "rgba(255,255,255,.04)" }}><img src={item.image || fallbackRobotImage} alt="" className="size-10 rounded-full object-cover" /><span className="min-w-0 flex-1 truncate text-sm font-black uppercase">{item.name}</span>{item.id === active.id && <Check className="size-4 shrink-0" style={{ color }} />}</button>)}</div><Link to="/app/activate" className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-full border text-xs font-black uppercase" style={{ borderColor: color, color }}><Plus className="size-4" /> Add robot</Link></section>;
+function HeroDashboard({ active, robots, color, robotName, running, openControl }: DashboardProps) {
+  return <main>
+    <div className="relative h-[24rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color }}>{running ? "● Trading active" : "● Robot ready"}</p><h1 className="mt-2 text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs text-muted-foreground">Connected to {active.symbols.join(" · ") || "MetaTrader 5"}</p></div></div>
+    <div className="mt-4 grid grid-cols-3 gap-2 rounded-full border border-border/60 bg-card/80 p-2"><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><ArrowLeftRight className="size-4" />Pairs</button><button type="button" onClick={openControl} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-primary-foreground" style={{ backgroundColor: color, boxShadow: glow(color) }}>{running ? <Pause className="size-4" /> : <Play className="size-4" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><History className="size-4" />Logs</button></div>
+    <Powered color={color} /><ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
+  </main>;
 }
 
-function LayoutOrange({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-gradient-to-b from-orange-950 via-black to-black p-5" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(255,91,0,.42),transparent_36%)]" /><div className="relative text-center"><p className="text-[10px] font-black uppercase tracking-[0.24em]" style={{ color }}>EA MIGRATE PRO</p><div className="mx-auto mt-5 size-44 rounded-full border-4 bg-white p-2" style={{ borderColor: color, boxShadow: cssGlow(color) }}><HeroImage src={active.image || fallbackRobotImage} alt={robotName} className="size-full rounded-full" /></div><p className="mt-5 text-xs font-semibold text-white/70">Your Trading With</p><h1 className="mt-1 text-2xl font-black uppercase" style={{ color }}>{robotName}</h1><Powered color={color} /><div className="mt-7 grid grid-cols-3 gap-2"><CircleAction label={isTrading ? "Stop" : "Start"} icon={isTrading ? <Pause className="size-5" /> : <Play className="size-5" />} onClick={isTrading ? onStop : onStart} color={isTrading ? "#EF4444" : color} filled /><CircleAction label="Settings" icon={<Settings2 className="size-5" />} color={color} /><CircleAction label="Migrate" icon={<ArrowLeftRight className="size-5" />} color={color} /></div><div className="mt-6 overflow-hidden rounded-[2rem] border-2 bg-white p-2" style={{ borderColor: color }}><HeroImage src={active.image || fallbackRobotImage} alt="" className="h-28 w-full rounded-[1.5rem]" /></div><SharedRobotList active={active} robots={app.robots} color={color} /><BottomHint /></div></div>;
+function VerticalDashboard({ active, robots, color, robotName, running, openControl }: DashboardProps) {
+  return <main>
+    <div className="relative h-[22rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><h1 className="text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs font-bold" style={{ color }}>{running ? "● Trading active" : "● Connected and ready"}</p></div></div>
+    <div className="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3"><div className="space-y-2">{[["Pairs", <ArrowLeftRight className="size-5" />], [running ? "Stop" : "Start", running ? <Pause className="size-5" /> : <Play className="size-5" />], ["Logs", <History className="size-5" />]].map(([label, icon], index) => <button key={String(label)} type="button" onClick={index === 1 ? openControl : undefined} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, backgroundColor: index === 1 ? color : "var(--card)", color: index === 1 ? "var(--primary-foreground)" : color }}>{icon}{label}</button>)}</div><Link to="/app/settings/scanner" className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 text-center text-[10px] font-black uppercase" style={{ borderColor: color, color, boxShadow: glow(color) }}><CircleGauge className="size-7" />AI Scan</Link></div>
+    <ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
+  </main>;
 }
 
-function LayoutBlue({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-gradient-to-b from-slate-950 via-black to-blue-950/50 p-5" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="relative text-center"><p className="text-[10px] font-black uppercase tracking-[0.25em]" style={{ color }}>EA MIGRATE PRO</p><div className="mx-auto mt-5 size-44 rounded-full border-4 bg-white p-2" style={{ borderColor: color, boxShadow: cssGlow(color) }}><HeroImage src={active.image || fallbackRobotImage} alt={robotName} className="size-full rounded-full" /></div><p className="mt-5 text-xs font-semibold text-white/70">Your Trading With</p><h1 className="mt-1 text-2xl font-black uppercase" style={{ color }}>{robotName}</h1><Powered color={color} /><div className="mt-7 grid grid-cols-3 gap-2 rounded-full border-2 bg-white p-2" style={{ borderColor: color }}><ActionButton label="Pause" icon={<Pause className="size-4" />} onClick={onStop} color={color} className="border-0 bg-transparent text-slate-900 shadow-none" />{isTrading ? <ActionButton label="STOP" icon={<Pause className="size-4" />} onClick={onStop} color="#EF4444" active className="border-0 shadow-none" /> : <ActionButton label="Start" icon={<Play className="size-4" />} onClick={onStart} color={color} active className="border-0 shadow-none" />}<ActionButton label="Migrate" icon={<ArrowLeftRight className="size-4" />} color={color} className="border-0 bg-transparent text-slate-900 shadow-none" /></div><SharedRobotList active={active} robots={app.robots} color={color} /><BottomHint /></div></div>;
+function TradingControl({ open, running, active, color, onClose }: { open: boolean; running: boolean; active: Robot; color: string; onClose: () => void }) {
+  const action = () => { toggleRobot(active.id); onClose(); };
+  return <AnimatePresence>{open && <><motion.button type="button" aria-label="Close trading controls" className="fixed inset-0 z-[70] bg-background/65 backdrop-blur-[2px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} /><motion.section role="dialog" aria-modal="true" aria-label="Trading controls" initial={{ y: 120, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 120, opacity: 0 }} className="fixed inset-x-4 bottom-24 z-[80] mx-auto max-w-sm rounded-[2rem] border border-border bg-card p-5 shadow-2xl"><div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3"><img src={active.image || fallbackRobotImage} alt="" className="size-12 shrink-0 rounded-full object-cover" /><div className="min-w-0"><p className="truncate font-black uppercase">{active.name}</p><p className="text-xs text-muted-foreground">{running ? "Trading is active" : "Ready to start live monitoring"}</p></div><button type="button" aria-label="Close" onClick={onClose} className="flex size-9 items-center justify-center rounded-full bg-secondary"><X className="size-4" /></button></div><button type="button" onClick={action} className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-full text-sm font-black uppercase text-primary-foreground" style={{ backgroundColor: running ? "var(--destructive)" : color, boxShadow: glow(color) }}>{running ? <Pause className="size-5" /> : <Play className="size-5" />}{running ? "Stop robot" : "Start robot"}</button><p className="mt-3 text-center text-xs text-muted-foreground">Orders execute only after a live provider is securely connected.</p></motion.section></>}</AnimatePresence>;
 }
 
-function LayoutGreen({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-gradient-to-b from-green-950 via-emerald-950 to-black p-5" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_30%,rgba(44,255,80,.3),transparent_45%)]" /><div className="relative text-center"><p className="text-[10px] font-black uppercase tracking-[0.25em] text-emerald-200">EA MIGRATE PRO</p><div className="mx-auto mt-5 size-44 rounded-full border-4 bg-white p-2" style={{ borderColor: color, boxShadow: cssGlow(color) }}><HeroImage src={active.image || fallbackRobotImage} alt={robotName} className="size-full rounded-full" /></div><h1 className="mt-6 text-2xl font-black uppercase text-white">{robotName}</h1><p className="mt-1 text-xs font-semibold text-emerald-100/75">Your private trading robot</p><div className="mt-7 grid grid-cols-3 gap-2"><ActionButton label={isTrading ? "STOP" : "Start"} icon={isTrading ? <Pause className="size-4" /> : <Play className="size-4" />} onClick={isTrading ? onStop : onStart} color={isTrading ? "#EF4444" : color} active /><ActionButton label="Quotes" icon={<BarChart3 className="size-4" />} color={color} /><ActionButton label="Remove" icon={<Trash2 className="size-4" />} onClick={() => removeRobot(active.id)} color={color} /></div><Link to="/app/activate" className="mt-7 flex min-h-16 w-full flex-col items-center justify-center rounded-2xl text-sm font-black uppercase text-black" style={{ backgroundColor: color, boxShadow: cssGlow(color) }}><Plus className="size-5" />Add robot<span className="text-[9px] tracking-[0.12em] opacity-75">Paste license key</span></Link><SharedRobotList active={active} robots={app.robots} color={color} /><BottomHint /></div></div>;
-}
-
-function LayoutSniperCircle({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-black p-4" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_25%,rgba(255,50,50,.34),transparent_44%)]" /><div className="relative text-center"><div className="mx-auto size-52 rounded-full border-4 p-1" style={{ borderColor: color, boxShadow: cssGlow(color) }}><HeroImage src={active.image || "/interface-sniper-circle.jpg"} alt={robotName} className="size-full rounded-full" /></div><p className="mt-5 text-xs font-bold uppercase tracking-[0.2em] text-white/70">You're trading with</p><h1 className="mt-2 text-3xl font-black uppercase text-white">{robotName}</h1><Powered color={color} /><div className="mt-7 flex justify-center gap-2"><CircleAction label="Remove" icon={<Trash2 className="size-5" />} onClick={() => removeRobot(active.id)} color={color} /><CircleAction label={isTrading ? "Stop" : "Start"} icon={isTrading ? <Pause className="size-5" /> : <Play className="size-5" />} onClick={isTrading ? onStop : onStart} color={isTrading ? "#EF4444" : color} filled /><CircleAction label="Quotes" icon={<Activity className="size-5" />} color={color} /></div><div className="mt-7 overflow-hidden rounded-[2rem] border-4" style={{ borderColor: color }}><HeroImage src={active.image || "/interface-sniper-circle.jpg"} alt="" className="h-52 w-full" /><div className="bg-black/85 p-3 text-left text-[10px] font-black uppercase tracking-[0.18em]" style={{ color }}>● Ready</div></div><BottomHint /></div></div>;
-}
-
-function LayoutSniperFull({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-black p-3" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="relative overflow-hidden rounded-[2rem]" style={{ minHeight: "34rem" }}><HeroImage src={active.image || "/interface-sniper-full.jpg"} alt={robotName} className="absolute inset-0 size-full" /><div className="absolute inset-0 bg-gradient-to-b from-black/10 via-black/10 to-black" /><div className="absolute inset-x-5 bottom-7 text-center"><h1 className="text-2xl font-black uppercase text-white">{robotName}</h1><p className="mt-2 text-xs font-bold uppercase tracking-[0.2em] text-white/75">Aggressive</p></div></div><div className="mt-4 grid grid-cols-3 gap-2 rounded-full border bg-white/10 p-2 backdrop-blur-xl" style={{ borderColor: color + "88" }}><ActionButton label="Pairs" icon={<ArrowLeftRight className="size-4" />} color={color} className="border-0 bg-transparent text-white shadow-none" /><ActionButton label={isTrading ? "STOP" : "Start"} icon={isTrading ? <Pause className="size-4" /> : <Play className="size-4" />} onClick={isTrading ? onStop : onStart} color={isTrading ? "#EF4444" : color} active className="border-0 shadow-none" /><ActionButton label="Logs" icon={<History className="size-4" />} color={color} className="border-0 bg-transparent text-white shadow-none" /></div><Powered color={color} /><Link to="/app/settings/scanner" className="mt-5 flex items-center gap-3 rounded-3xl border bg-white/10 p-4" style={{ borderColor: color + "66" }}><span className="flex size-11 items-center justify-center rounded-2xl text-white" style={{ backgroundColor: color }}><ScanLine className="size-5" /></span><span className="min-w-0 flex-1 text-left"><span className="block font-black text-white">AI Scanner <Sparkles className="inline size-3" style={{ color }} /></span><span className="block text-sm text-white/55">Snap a chart — get an instant signal</span></span><span className="text-xl" style={{ color }}>›</span></Link><SharedRobotList active={active} robots={app.robots} color={color} /><BottomHint /></div>;
-}
-
-function LayoutSniperVertical({ active, app, color, robotName, onStart, onStop, isTrading }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onStart: () => void; onStop: () => void; isTrading: boolean }) {
-  return <div className="relative overflow-hidden rounded-[2.5rem] border bg-gradient-to-b from-slate-950 via-black to-red-950/50 p-5" style={{ borderColor: color, boxShadow: cssGlow(color) }}><div className="relative text-center"><div className="mx-auto size-44 rounded-full border-4 p-1" style={{ borderColor: color, boxShadow: cssGlow(color) }}><HeroImage src={active.image || "/interface-sniper-circle.jpg"} alt={robotName} className="size-full rounded-full" /></div><h1 className="mt-5 text-2xl font-black uppercase text-white">{robotName}</h1><div className="mt-6 flex items-center gap-3"><div className="flex flex-1 flex-col gap-2"><ActionButton label="Pairs" icon={<ArrowLeftRight className="size-4" />} color={color} /><ActionButton label={isTrading ? "STOP" : "Start"} icon={isTrading ? <Pause className="size-4" /> : <Play className="size-4" />} onClick={isTrading ? onStop : onStart} color={isTrading ? "#EF4444" : color} active /><ActionButton label="Logs" icon={<History className="size-4" />} color={color} /></div><div className="flex size-24 flex-col items-center justify-center rounded-3xl border-2 text-center text-[10px] font-black uppercase" style={{ borderColor: color, color, boxShadow: cssGlow(color) }}><CircleGauge className="size-7" /><span className="mt-1">AI Scan</span></div></div><Powered color={color} /><SharedRobotList active={active} robots={app.robots} color={color} /><BottomHint /></div></div>;
-}
-
-
-
-type TradingState = "idle" | "bubble" | "active";
-
-function TradingBubble({ active, color, onOpen, onStop }: { active: Robot; color: string; onOpen: () => void; onStop: () => void }) {
-  const timer = useRef<number | null>(null);
-  const longPressed = useRef(false);
-  const beginPress = () => { longPressed.current = false; timer.current = window.setTimeout(() => { longPressed.current = true; onStop(); }, 700); };
-  const endPress = () => { if (timer.current !== null) window.clearTimeout(timer.current); timer.current = null; window.setTimeout(() => { longPressed.current = false; }, 120); };
-  return <motion.button type="button" drag dragMomentum={false} aria-label="Open active trading screen; hold to stop" onPointerDown={beginPress} onPointerUp={endPress} onPointerCancel={endPress} onClick={() => { if (!longPressed.current) onOpen(); }} initial={{ scale: 0.15, opacity: 0 }} animate={{ scale: [0.92, 1.06, 1], opacity: 1 }} transition={{ type: "spring", stiffness: 360, damping: 18 }} className="fixed bottom-[6.25rem] right-5 z-[9999] touch-none size-20 rounded-full border-[3px] bg-black p-1" style={{ borderColor: color, boxShadow: "0 0 25px " + color }}><img src={active.image || fallbackRobotImage} alt="Active trading" className="size-full rounded-full object-cover" /><motion.span className="absolute -bottom-1 -right-1 size-5 rounded-full border-[3px] border-white bg-[#22C55E] animate-pulse" animate={{ scale: [1, 1.18, 1], boxShadow: ["0 0 0 0 rgba(34,197,94,.7)", "0 0 0 7px rgba(34,197,94,0)", "0 0 0 0 rgba(34,197,94,0)"] }} transition={{ repeat: Infinity, duration: 2 }} /></motion.button>;
-}
-
-function TradingTerminal({ cleared }: { cleared: boolean }) {
-  const target = "● Listening for signals";
-  const [text, setText] = useState("");
-  useEffect(() => { if (cleared) { setText(""); return; } let index = 0; setText(""); const interval = window.setInterval(() => { index += 1; setText(target.slice(0, index)); if (index >= target.length) window.clearInterval(interval); }, 55); return () => window.clearInterval(interval); }, [cleared]);
-  return <div className="mt-5 h-[12.5rem] rounded-xl border border-white/80 bg-black p-5 font-mono text-sm text-white"><span>{text}</span><span className="ml-1 animate-pulse">_</span></div>;
-}
-
-function TradingActiveScreen({ active, app, color, robotName, onClose }: { active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onClose: () => void }) {
-  const screenRef = useRef<HTMLDivElement>(null);
-  const touchStartY = useRef<number | null>(null);
-  const [cleared, setCleared] = useState(false);
-  const brokerName = app.mt?.broker || "Headway";
-  const accountType = app.mt?.platform || "MT5";
-  const brandName = (typeof window !== "undefined" ? window.localStorage.getItem("brandName") : null) || app.settings.brandName || "EA Migrate";
-  const lotSize = (typeof window !== "undefined" ? window.localStorage.getItem("lotSize") : null) || app.settings.lotSize || "0.01";
-  const symbols = active.symbols?.length ? active.symbols : ["XAUUSDM", "HW_100"];
-  const image = active.image || fallbackRobotImage;
-  const toggleFullscreen = () => { if (!screenRef.current) return; if (document.fullscreenElement) { void document.exitFullscreen(); } else { void screenRef.current.requestFullscreen?.(); } };
-  const handleTouchStart = (event: React.TouchEvent<HTMLDivElement>) => { touchStartY.current = event.touches[0]?.clientY ?? null; };
-  const handleTouchEnd = (event: React.TouchEvent<HTMLDivElement>) => { const start = touchStartY.current; touchStartY.current = null; const end = event.changedTouches[0]?.clientY ?? start ?? 0; if (start !== null && end - start > 90) onClose(); };
-  return <div ref={screenRef} onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} className="fixed inset-0 z-[110] overflow-y-auto bg-black text-white" style={{ backgroundImage: "linear-gradient(to bottom, rgba(0,0,0,.08), #000 70%), url(" + image + ")", backgroundPosition: "center top", backgroundSize: "cover" }}><div className="min-h-full bg-black/40 px-5 pb-7 pt-5 backdrop-blur-[1px]"><header className="flex items-center justify-between"><button type="button" aria-label="Trading menu" className="flex size-10 items-center justify-center rounded-full bg-black/40"><MoreVertical className="size-6" /></button><div className="flex items-center gap-2"><button type="button" aria-label="Expand trading screen" onClick={toggleFullscreen} className="flex size-10 items-center justify-center rounded-full border border-white/40 bg-black/40"><Maximize2 className="size-4" /></button><button type="button" onClick={() => setCleared(true)} className="rounded-full border border-white/70 bg-black/50 px-4 py-2 text-xs font-black">CLR</button><button type="button" aria-label="Close trading screen" onClick={onClose} className="flex size-10 items-center justify-center rounded-full border border-white/40 bg-black/40"><X className="size-5" /></button></div></header><div className="flex min-h-[calc(100vh-5rem)] flex-col justify-end"><div className="mx-auto mt-8 flex w-full max-w-md flex-1 items-center justify-center"><img src={image} alt={robotName} className="max-h-[52vh] w-full rounded-[2.5rem] object-cover object-center opacity-95" /></div><div className="relative -mt-16 text-center"><h1 className="text-3xl font-black uppercase tracking-tight drop-shadow-lg">{robotName} V2.0</h1><p className="mt-2 text-sm font-semibold text-[#22C55E] drop-shadow-[0_2px_8px_rgba(0,0,0,.9)]">Connected · {brokerName} · {accountType}</p><div className="mt-5 flex flex-wrap justify-center gap-2"><span className="rounded-full border-2 border-[#22C55E] bg-[#22C55E]/[.12] px-4 py-2 text-[10px] font-black uppercase tracking-[.08em] text-[#22C55E] shadow-[0_0_18px_rgba(34,197,94,.35)]">● Trading active</span><span className="rounded-full border border-white bg-black/30 px-4 py-2 text-[10px] font-black uppercase tracking-[.08em] text-white">Robot activated</span></div><p className="mt-4 text-[9px] font-bold uppercase tracking-[.14em] text-white/70 drop-shadow-[0_2px_8px_rgba(0,0,0,.9)]">BY {brandName} · LOT {lotSize} · {symbols.join(" · ")} · 29 OPEN · 5/SIGNAL · 29 EXECUTED</p></div><TradingTerminal cleared={cleared} /><p className="pointer-events-none fixed bottom-4 right-5 z-20 text-right text-xs italic text-white drop-shadow-[0_2px_8px_rgba(0,0,0,.95)]">Powered by {brandName} Pro</p></div></div></div>;
-}
-
-function TradingExperience({ state, active, app, color, robotName, onOpen, onClose, onStop }: { state: TradingState; active: Robot; app: ReturnType<typeof useAppState>; color: string; robotName: string; onOpen: () => void; onClose: () => void; onStop: () => void }) {
-  if (state === "bubble") return <TradingBubble active={active} color={color} onOpen={onOpen} onStop={onStop} />;
-  if (state === "active") return <TradingActiveScreen active={active} app={app} color={color} robotName={robotName} onClose={onClose} />;
-  return null;
+function TradingBubble({ active, color, openControl }: { active: Robot; color: string; openControl: () => void }) {
+  const pressed = useRef(false);
+  return <motion.button type="button" drag dragMomentum={false} aria-label="Open trading controls" onClick={() => { if (!pressed.current) openControl(); }} onDragStart={() => { pressed.current = true; }} onDragEnd={() => { window.setTimeout(() => { pressed.current = false; }, 100); }} initial={{ scale: 0 }} animate={{ scale: 1 }} className="fixed bottom-[6.4rem] right-5 z-50 size-16 touch-none rounded-full border-[3px] bg-card p-1" style={{ borderColor: color, boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt="" className="size-full rounded-full object-cover" /><span className="absolute -bottom-1 -right-1 size-4 rounded-full border-2 border-background bg-emerald-400" /></motion.button>;
 }
 
 function AppHome() {
   const app = useAppState();
-  const [tradingState, setTradingState] = useState<TradingState>("idle");
+  const [controlOpen, setControlOpen] = useState(false);
   const active = app.robots.find((item) => item.id === app.activeRobotId) || app.robots[0];
-  const color = (typeof window !== "undefined" ? window.localStorage.getItem("themeColor") : null) || app.settings.accentColor || "#FF3B3B";
-  const currentLayout = app.settings.interfaceStyle || (typeof window !== "undefined" ? window.localStorage.getItem("layout") : null) || "layout_blue";
-  const robotName = active?.name || (typeof window !== "undefined" ? window.localStorage.getItem("robotName") : null) || "EA MIGRATE PRO";
-  if (!active) return <AppFrame><div className="panel mt-16 p-10 text-center"><span className="mx-auto flex size-16 items-center justify-center rounded-full" style={{ backgroundColor: color + "22", color }}><Cpu className="size-8" /></span><h1 className="mt-5 text-2xl font-black uppercase">{robotName}</h1><p className="mt-2 text-sm text-muted-foreground">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-full text-sm font-black uppercase text-white" style={{ backgroundColor: color, boxShadow: cssGlow(color) }}><Plus className="size-5" /> Connect your EA</Link></div></AppFrame>;
-  const startTrading = () => { if (!active) return; if (!active.running) toggleRobot(active.id); setTradingState("bubble"); };
-  const stopTrading = () => { if (active?.running) toggleRobot(active.id); setTradingState("idle"); };
-  const props = { active, app, color, robotName, onStart: startTrading, onStop: stopTrading, isTrading: tradingState !== "idle" };
-  return <AppFrame><div className="pb-5">{currentLayout === "layout_orange" && <LayoutOrange {...props} />}{currentLayout === "layout_blue" && <LayoutBlue {...props} />}{currentLayout === "layout_green" && <LayoutGreen {...props} />}{currentLayout === "layout_sniper_circle" && <LayoutSniperCircle {...props} />}{currentLayout === "layout_sniper_full" && <LayoutSniperFull {...props} />}{currentLayout === "layout_sniper_vertical" && <LayoutSniperVertical {...props} />}{!["layout_orange", "layout_blue", "layout_green", "layout_sniper_circle", "layout_sniper_full", "layout_sniper_vertical"].includes(currentLayout) && <LayoutBlue {...props} />}<TradingExperience state={tradingState} active={active} app={app} color={color} robotName={robotName} onOpen={() => setTradingState("active")} onClose={() => setTradingState("bubble")} onStop={stopTrading} /></div></AppFrame>;
+  const style = STYLE_META[app.settings.interfaceStyle] || STYLE_META.crimson_navigator;
+  const color = style?.accent || app.settings.accentColor;
+  useEffect(() => { const open = () => setControlOpen(true); window.addEventListener("eamp:home-hold", open); return () => window.removeEventListener("eamp:home-hold", open); }, []);
+  if (!active) return <AppFrame><div className="panel mt-16 p-10 text-center"><span className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/10 text-primary"><Cpu className="size-8" /></span><h1 className="mt-5 text-2xl font-black uppercase">EA Migrate Pro</h1><p className="mt-2 text-sm text-muted-foreground">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-black uppercase text-primary-foreground"><Plus className="size-5" />Connect your EA</Link></div></AppFrame>;
+  const props = { active, robots: app.robots, color, robotName: active.name, running: active.running, openControl: () => setControlOpen(true) };
+  return <AppFrame><div className="pb-6"><p className="mb-4 text-center text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{style?.name}</p>{style?.structure === "horizontal" && <HorizontalDashboard {...props} />}{style?.structure === "hero" && <HeroDashboard {...props} />}{style?.structure === "vertical" && <VerticalDashboard {...props} />}{active.running && <TradingBubble active={active} color={color} openControl={() => setControlOpen(true)} />}<TradingControl open={controlOpen} running={active.running} active={active} color={color} onClose={() => setControlOpen(false)} /></div></AppFrame>;
 }
