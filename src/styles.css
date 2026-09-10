@@ -9,6 +9,26 @@
   display: none !important;
 }
 
+@keyframes logoMove {
+  0% {
+    transform: translateX(0);
+  }
+
+  50% {
+    transform: translateX(20px);
+  }
+
+  100% {
+    transform: translateX(0);
+  }
+}
+
+.logo-animate {
+  animation: logoMove 1.2s ease-in-out infinite;
+  animation-delay: 2s;
+  animation-iteration-count: infinite;
+}
+
 /*
  * Design system definition.
  *

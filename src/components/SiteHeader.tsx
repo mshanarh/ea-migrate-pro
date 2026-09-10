@@ -22,7 +22,7 @@ export function SiteHeader() {
           <img
             src="/ea-migrate-platform-robot.jpg"
             alt="EA Migrate Pro"
-            className="size-10 object-contain transition-transform duration-200 ease-out group-hover:translate-x-1"
+            className="logo-animate size-10 object-contain transition-transform duration-200 ease-out group-hover:translate-x-1"
           />
           <span className="text-base font-bold tracking-tight uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span> Pro
