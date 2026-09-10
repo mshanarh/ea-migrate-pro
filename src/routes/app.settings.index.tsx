@@ -9,7 +9,7 @@ export const Route = createFileRoute("/app/settings/")({
   component: SettingsPage,
 });
 
-const STYLE_NAMES: Record<string, string> = { layout_orange: "EA MIGRATE ORANGE", layout_blue: "EA MIGRATE BLUE", layout_green: "EA MIGRATE GREEN", layout_sniper_circle: "SNIPER CIRCLE HERO", layout_sniper_full: "SNIPER FULL BLEED", layout_sniper_vertical: "SNIPER VERTICAL" };
+const STYLE_NAMES: Record<string, string> = { crimson_navigator: "Crimson Navigator", navigator_plus: "Navigator Plus", pablo_crimson: "Pablo Crimson", pablo_elite: "Pablo Elite", quantum_blue: "Quantum Blue", darkweb_ai: "Darkweb AI", supreme_equinox: "Supreme Equinox", ultron_mega: "Ultron Mega", ea_cloud: "EA Cloud" };
 
 function SettingsPage() {
   const { settings } = useAppState();

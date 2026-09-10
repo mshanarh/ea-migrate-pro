@@ -46,14 +46,25 @@ const initial: AppState = {
   activeRobotId: null,
   robots: [],
   mt: null,
-  settings: { background: "Neon Grid", interfaceStyle: "layout_blue", font: "Inter", accent: 60, accentColor: "#FF3B3B", brandName: "EA Migrate", lotSize: "0.01" },
+  settings: { background: "Neon Grid", interfaceStyle: "crimson_navigator", font: "Inter", accent: 60, accentColor: "#FF3B3B", brandName: "EA Migrate", lotSize: "0.01" },
 };
 
 let state: AppState = initial;
 let loaded = false;
 const listeners = new Set<() => void>();
 
-const LAYOUT_ALIASES: Record<string, string> = { Prime: "layout_sniper_full", Custom: "layout_sniper_circle", "Neuro Scalper": "layout_sniper_circle", "Prime Pro": "layout_sniper_vertical" };
+const LAYOUT_ALIASES: Record<string, string> = {
+  Prime: "navigator_plus",
+  Custom: "crimson_navigator",
+  "Neuro Scalper": "darkweb_ai",
+  "Prime Pro": "pablo_elite",
+  layout_orange: "crimson_navigator",
+  layout_blue: "quantum_blue",
+  layout_green: "ea_cloud",
+  layout_sniper_circle: "crimson_navigator",
+  layout_sniper_full: "navigator_plus",
+  layout_sniper_vertical: "pablo_elite",
+};
 
 function load() {
   if (loaded || typeof window === "undefined") return;
