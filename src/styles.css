@@ -128,40 +128,40 @@
     oklch(0.4 0.14 245 / 0.55),
     transparent 70%
   );
-  --gradient-brand: linear-gradient(100deg, oklch(0.78 0.14 230), oklch(0.62 0.19 255));
-  --surface-panel: linear-gradient(180deg, oklch(0.22 0.018 250), oklch(0.18 0.014 250));
-}
+      --background: oklch(1 0 0);
+      --foreground: oklch(0.18 0.02 250);
+      --card: oklch(1 0 0);
+      --card-foreground: oklch(0.18 0.02 250);
+      --popover: oklch(1 0 0);
+      --popover-foreground: oklch(0.18 0.02 250);
+      --primary: oklch(0.18 0.02 250);
+      --primary-foreground: oklch(1 0 0);
+      --secondary: oklch(0.96 0.01 250);
+      --secondary-foreground: oklch(0.18 0.02 250);
+      --muted: oklch(0.96 0.01 250);
+      --muted-foreground: oklch(0.48 0.02 250);
+      --accent: oklch(0.96 0.01 250);
+      --accent-foreground: oklch(0.18 0.02 250);
+      --destructive: oklch(0.58 0.22 25);
+      --destructive-foreground: oklch(1 0 0);
+      --border: oklch(0.9 0.01 250);
+      --input: oklch(0.9 0.01 250);
+      --ring: oklch(0.18 0.02 250);
+      --chart-1: oklch(0.18 0.02 250);
+      --chart-2: oklch(0.48 0.02 250);
+      --chart-3: oklch(0.65 0.02 250);
+      --chart-4: oklch(0.76 0.02 250);
+      --chart-5: oklch(0.88 0.01 250);
+      --sidebar: oklch(1 0 0);
+      --sidebar-foreground: oklch(0.18 0.02 250);
+      --sidebar-primary: oklch(0.18 0.02 250);
+      --sidebar-primary-foreground: oklch(1 0 0);
+      --sidebar-accent: oklch(0.96 0.01 250);
+      --sidebar-border: oklch(0.9 0.01 250);
+      --sidebar-ring: oklch(0.18 0.02 250);
 
-.dark {
-  color-scheme: dark;
-}
-
-@theme inline {
-  --shadow-glow: var(--glow);
-  --shadow-glow-soft: var(--glow-soft);
-}
-
-@layer base {
-  * {
-    border-color: var(--color-border);
-  }
-
-  body {
-    background-color: var(--color-background);
-    color: var(--color-foreground);
-    font-family:
-      "Space Grotesk",
-      ui-sans-serif,
-      system-ui,
-      sans-serif;
-    -webkit-font-smoothing: antialiased;
-  }
-
-  h1,
-  h2,
-  h3 {
-    letter-spacing: -0.02em;
-  }
+      --glow: none;
+      --glow-soft: none;
 }
 
 @utility text-brand {
