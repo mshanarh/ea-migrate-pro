@@ -170,6 +170,15 @@
   to { transform: translateY(130%); }
 }
 
+@keyframes scannerLine {
+  0%, 100% { transform: translateY(-7rem); opacity: 0.45; }
+  50% { transform: translateY(7rem); opacity: 1; }
+}
+
+.scanner-line {
+  animation: scannerLine 1.8s ease-in-out infinite;
+}
+
 .app-background-layer {
   position: fixed;
   z-index: 0;

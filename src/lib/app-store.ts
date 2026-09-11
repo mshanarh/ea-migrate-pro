@@ -258,7 +258,7 @@ export function setRobotPairs(id: string, pairs: PairSetting[]) {
   }));
   state = {
     ...state,
-    robots: state.robots.map((robot) => robot.id === id ? { ...robot, pairs: safePairs, symbols: safePairs.map((pair) => pair.symbol) } : robot),
+    robots: state.robots.map((robot) => robot.id === id ? { ...robot, pairs: safePairs } : robot),
   };
   persist();
 }
