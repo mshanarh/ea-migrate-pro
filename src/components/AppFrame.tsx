@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Link, useRouterState } from "@tanstack/react-router";
 import { Home, LineChart, Settings } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
+import { BackgroundEffectsLayer } from "@/components/BackgroundEffects";
 
 const items = [
   { to: "/app/metatrader", label: "Metatrader", icon: LineChart },
@@ -21,9 +22,6 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { settings } = useAppState();
   const accent = settings.accentColor;
-  const effectStyle = settings.background === "Neon Grid"
-    ? { backgroundImage: "linear-gradient(" + accentRgba(accent, 0.09) + " 1px, transparent 1px), linear-gradient(90deg, " + accentRgba(accent, 0.09) + " 1px, transparent 1px)", backgroundSize: "34px 34px" }
-    : undefined;
   const fontFamily = {
     Normal: "ui-sans-serif, system-ui, sans-serif",
     Inter: "Inter, ui-sans-serif, system-ui, sans-serif",
@@ -51,9 +49,9 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
     homeHoldTimer.current = null;
   };
 
-  return <div className="relative mx-auto flex min-h-screen w-full max-w-md flex-col overflow-hidden px-5 pt-6 pb-28" style={shellStyle}>
-    {settings.background !== "None" && <div className="pointer-events-none fixed inset-0 opacity-60" style={effectStyle} />}
-    <div className="relative flex-1">{children}</div>
+  return <div className="relative isolate mx-auto flex min-h-screen w-full max-w-md flex-col overflow-hidden px-5 pt-6 pb-28" style={shellStyle}>
+    <BackgroundEffectsLayer settings={settings} accent={accent} />
+    <div className="relative z-10 flex-1">{children}</div>
     <nav className="fixed inset-x-0 bottom-0 z-50 mx-auto flex h-[5.5rem] w-full max-w-md items-end justify-around border-t border-primary/40 bg-background/95 px-4 pb-3 pt-2 backdrop-blur-xl">
       {items.map(({ to, label, icon: Icon }) => {
         const active = path === to || (to === "/app/home" && path === "/app/pairs") || (to === "/app/settings" && path.startsWith("/app/settings"));
