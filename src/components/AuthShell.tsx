@@ -26,7 +26,7 @@ export function AuthShell({
         <div className="flex flex-col items-center text-center">
           <Link to="/" className="flex size-16 items-center justify-center rounded-2xl border border-[#38BDF8]/20 bg-[#1A2332] shadow-[0_0_24px_rgb(0_168_255_/_0.2)]">
             <img
-              src="/botlogic-mascot.jpg?v=2"
+              src="/ea-migrate-platform-robot.jpg"
               alt="EA Migrate Pro"
               className="size-16 object-contain"
             />

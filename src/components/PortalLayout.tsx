@@ -38,7 +38,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
         <Link
           to="/admin"
           onClick={() => setOpen(false)}
-          className="flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold text-primary hover:bg-secondary"
+            className="flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold text-[#38BDF8] hover:bg-[#1A2332]"
         >
           <LayoutGrid className="size-4" /> Admin console
         </Link>
@@ -53,7 +53,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             className={`flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold transition-colors ${
               active
                 ? "bg-primary text-primary-foreground glow-ring"
-                : "text-muted-foreground hover:bg-secondary hover:text-foreground"
+                : "text-white/60 hover:bg-[#1A2332] hover:text-white"
             }`}
           >
             <Icon className="size-4" /> {label}
@@ -65,7 +65,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           signOut();
           navigate({ to: "/signin" });
         }}
-        className="flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold text-muted-foreground hover:bg-secondary hover:text-foreground"
+        className="flex h-12 items-center gap-3 rounded-full px-4 text-sm font-semibold text-white/60 hover:bg-[#1A2332] hover:text-white"
       >
         <LogOut className="size-4" /> Logout
       </button>
@@ -73,24 +73,24 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="min-h-screen">
-      <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
+    <div className="min-h-screen bg-[#0A0A0A] text-white">
+      <header className="sticky top-0 z-50 border-b border-white/10 bg-[#0A0A0A]/95 backdrop-blur-xl">
         <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-4">
           <Sheet open={open} onOpenChange={setOpen}>
             <SheetTrigger asChild>
               <button
                 aria-label="Open portal menu"
-                className="flex size-10 items-center justify-center rounded-xl border border-border/70 bg-card/60 lg:hidden"
+                className="flex size-10 items-center justify-center rounded-xl border border-white/10 bg-[#111111] lg:hidden"
               >
                 <PanelLeft className="size-5" />
               </button>
             </SheetTrigger>
-            <SheetContent side="left" className="w-72 border-border/60 bg-background/98 p-0 pt-14">
+            <SheetContent side="left" className="w-72 border-white/10 bg-[#111111] p-0 pt-14 text-white">
               <SheetTitle className="px-5 text-base font-bold">
                 EA <span className="text-primary">Migrate</span> Pro
               </SheetTitle>
               {menu}
-              <div className="mt-auto border-t border-border/60 p-5 text-xs text-muted-foreground">
+              <div className="mt-auto border-t border-white/10 p-5 text-xs text-white/50">
                 {account?.displayName ?? "Guest"}
                 <br />© 2026 EA Migrate Pro
               </div>
@@ -109,10 +109,10 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
       </header>
 
       <div className="mx-auto flex max-w-6xl">
-        <aside className="hidden w-64 shrink-0 border-r border-border/60 lg:block">
+        <aside className="hidden w-64 shrink-0 border-r border-white/10 bg-[#0A0A0A] lg:block">
           <div className="sticky top-16">{menu}</div>
         </aside>
-        <main className="min-w-0 flex-1 px-5 py-8">{children}</main>
+        <main className="min-w-0 flex-1 bg-[#0A0A0A] px-5 py-8">{children}</main>
       </div>
     </div>
   );
