@@ -9,5 +9,5 @@ export const Route = createFileRoute("/app/settings/")({
 });
 
 function SettingsPage() {
-  return <AppFrame><div className="min-h-screen pb-20"><h1 className="text-2xl font-bold">Settings</h1><Link to="/app/settings/scanner" className="mt-8 flex items-center gap-4 border-b border-slate-200 py-4"><span className="flex size-10 items-center justify-center bg-slate-100"><ScanLine className="size-5" /></span><span className="flex-1 font-semibold">Chart Scanner</span><ChevronRight className="size-4 text-slate-400" /></Link></div></AppFrame>;
+  return <AppFrame><div className="min-h-screen bg-[#0A0A0A] pb-20"><h1 className="text-2xl font-bold text-white">Settings</h1><Link to="/app/settings/scanner" className="mt-8 flex items-center gap-4 border-b border-white/10 py-4"><span className="flex size-10 items-center justify-center bg-[#1A2332]"><ScanLine className="size-5 text-[#38BDF8]" /></span><span className="flex-1 font-semibold text-white">Chart Scanner</span><ChevronRight className="size-4 text-white/40" /></Link></div></AppFrame>;
 }

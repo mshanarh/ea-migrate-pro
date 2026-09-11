@@ -88,80 +88,48 @@
 
 :root {
   --radius: 0.9rem;
-  --background: oklch(0.16 0.012 250);
-  --foreground: oklch(0.97 0.005 250);
-  --card: oklch(0.2 0.015 250);
-  --card-foreground: oklch(0.97 0.005 250);
-  --popover: oklch(0.2 0.015 250);
-  --popover-foreground: oklch(0.97 0.005 250);
-  --primary: oklch(0.7 0.17 240);
-  --primary-foreground: oklch(0.15 0.02 250);
-  --secondary: oklch(0.26 0.018 250);
-  --secondary-foreground: oklch(0.97 0.005 250);
-  --muted: oklch(0.24 0.015 250);
-  --muted-foreground: oklch(0.68 0.015 250);
-  --accent: oklch(0.28 0.05 240);
-  --accent-foreground: oklch(0.9 0.08 240);
-  --destructive: oklch(0.6 0.22 25);
-  --destructive-foreground: oklch(0.98 0.005 250);
-  --border: oklch(0.3 0.018 250);
-  --input: oklch(0.3 0.018 250);
-  --ring: oklch(0.7 0.17 240);
-  --chart-1: oklch(0.7 0.17 240);
-  --chart-2: oklch(0.75 0.15 190);
-  --chart-3: oklch(0.72 0.16 150);
-  --chart-4: oklch(0.8 0.15 90);
-  --chart-5: oklch(0.65 0.2 300);
-  --sidebar: oklch(0.18 0.014 250);
-  --sidebar-foreground: oklch(0.97 0.005 250);
-  --sidebar-primary: oklch(0.7 0.17 240);
-  --sidebar-primary-foreground: oklch(0.15 0.02 250);
-  --sidebar-accent: oklch(0.26 0.018 250);
-  --sidebar-accent-foreground: oklch(0.97 0.005 250);
-  --sidebar-border: oklch(0.3 0.018 250);
-  --sidebar-ring: oklch(0.7 0.17 240);
+  --background: #0a0a0a;
+  --foreground: #ffffff;
+  --card: #111111;
+  --card-foreground: #ffffff;
+  --popover: #111111;
+  --popover-foreground: #ffffff;
+  --primary: #00a8ff;
+  --primary-foreground: #0a0a0a;
+  --secondary: #1a2332;
+  --secondary-foreground: #ffffff;
+  --muted: #161616;
+  --muted-foreground: #a1a1aa;
+  --accent: #1a2332;
+  --accent-foreground: #38bdf8;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --border: #262626;
+  --input: #262626;
+  --ring: #38bdf8;
+  --chart-1: #00a8ff;
+  --chart-2: #38bdf8;
+  --chart-3: #60a5fa;
+  --chart-4: #93c5fd;
+  --chart-5: #bae6fd;
+  --sidebar: #0a0a0a;
+  --sidebar-foreground: #ffffff;
+  --sidebar-primary: #00a8ff;
+  --sidebar-primary-foreground: #0a0a0a;
+  --sidebar-accent: #1a2332;
+  --sidebar-accent-foreground: #38bdf8;
+  --sidebar-border: #262626;
+  --sidebar-ring: #38bdf8;
 
-  --glow: 0 0 40px oklch(0.7 0.17 240 / 0.35);
-  --glow-soft: 0 0 24px oklch(0.7 0.17 240 / 0.18);
+  --glow: 0 0 40px rgb(0 168 255 / 0.35);
+  --glow-soft: 0 0 24px rgb(56 189 248 / 0.2);
   --gradient-hero: radial-gradient(
     ellipse 80% 60% at 50% -10%,
-    oklch(0.4 0.14 245 / 0.55),
+    rgb(0 168 255 / 0.2),
     transparent 70%
   );
-      --background: oklch(1 0 0);
-      --foreground: oklch(0.18 0.02 250);
-      --card: oklch(1 0 0);
-      --card-foreground: oklch(0.18 0.02 250);
-      --popover: oklch(1 0 0);
-      --popover-foreground: oklch(0.18 0.02 250);
-      --primary: oklch(0.18 0.02 250);
-      --primary-foreground: oklch(1 0 0);
-      --secondary: oklch(0.96 0.01 250);
-      --secondary-foreground: oklch(0.18 0.02 250);
-      --muted: oklch(0.96 0.01 250);
-      --muted-foreground: oklch(0.48 0.02 250);
-      --accent: oklch(0.96 0.01 250);
-      --accent-foreground: oklch(0.18 0.02 250);
-      --destructive: oklch(0.58 0.22 25);
-      --destructive-foreground: oklch(1 0 0);
-      --border: oklch(0.9 0.01 250);
-      --input: oklch(0.9 0.01 250);
-      --ring: oklch(0.18 0.02 250);
-      --chart-1: oklch(0.18 0.02 250);
-      --chart-2: oklch(0.48 0.02 250);
-      --chart-3: oklch(0.65 0.02 250);
-      --chart-4: oklch(0.76 0.02 250);
-      --chart-5: oklch(0.88 0.01 250);
-      --sidebar: oklch(1 0 0);
-      --sidebar-foreground: oklch(0.18 0.02 250);
-      --sidebar-primary: oklch(0.18 0.02 250);
-      --sidebar-primary-foreground: oklch(1 0 0);
-      --sidebar-accent: oklch(0.96 0.01 250);
-      --sidebar-border: oklch(0.9 0.01 250);
-      --sidebar-ring: oklch(0.18 0.02 250);
-
-      --glow: none;
-      --glow-soft: none;
+  --gradient-brand: linear-gradient(100deg, #38bdf8, #00a8ff);
+  --surface-panel: linear-gradient(180deg, #151515, #111111);
 }
 
 @utility text-brand {

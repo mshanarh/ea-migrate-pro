@@ -258,20 +258,20 @@ function Home() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen">
+    <div className="min-h-screen bg-[#0A0A0A] text-white">
       <SiteHeader />
 
       <main>
         <section className="relative overflow-hidden hero-glow">
           <div className="mx-auto max-w-6xl px-5 pt-16 pb-20 text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-primary/30 bg-primary/10 px-4 py-1.5 text-xs font-semibold tracking-[0.2em] text-primary uppercase">
-              <Sparkles className="size-3.5" /> Custom EA platform
+            <span className="inline-flex items-center gap-2 rounded-full border border-[#38BDF8]/30 bg-[#1A2332] px-4 py-1.5 text-xs font-semibold tracking-[0.2em] text-[#38BDF8] uppercase">
+              <Sparkles className="size-3.5" /> EA HOSTING PLATFORM
             </span>
 
-            <h1 className="mt-8 text-4xl leading-[1.05] font-bold sm:text-6xl">
-              Build your own
+            <h1 className="mt-8 text-4xl leading-[1.05] font-bold text-white sm:text-6xl">
+              Your Mentor&apos;s
               <br />
-              <span className="text-brand">trading robot.</span>
+              <span className="text-[#38BDF8]">Robot</span>
             </h1>
 
             <p className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg">
