@@ -17,6 +17,10 @@ const styles: { id: InterfaceId; name: string; description: string; accent: stri
   { id: "predator-oval", name: "PREDATOR OVAL", description: "Thin red oval, standby pill and aggressive scanner action.", accent: "#D32F2F", label: "STANDBY" },
   { id: "skyline-stack", name: "SKYLINE STACK", description: "Double blue ring with stacked pairs, start and logs.", accent: "#38BDF8", label: "ONLINE" },
   { id: "neon-edge", name: "NEON EDGE", description: "Red neon edge card with green AI chart scanner.", accent: "#39FF88", label: "READY" },
+  { id: "void-pulse", name: "VOID PULSE", description: "Red grid pulse with dynamic mentor and EA labels.", accent: "#FF1A1A", label: "READY" },
+  { id: "eclipse-core", name: "ECLIPSE CORE", description: "Image-led core dashboard with live bot identity.", accent: "#FF1A1A", label: "CONNECTED" },
+  { id: "crimson-nexus", name: "CRIMSON NEXUS", description: "Red halo dashboard with dynamic uppercase EA title.", accent: "#FF1A1A", label: "READY" },
+  { id: "neon-phantom", name: "NEON PHANTOM", description: "Red edge scanner with dynamic trading badge.", accent: "#39FF88", label: "TRADING" },
 ];
 
 function InterfaceStyles() {

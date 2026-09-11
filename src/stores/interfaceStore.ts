@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export const INTERFACE_IDS = ["spectre-grid", "blue-orbit", "red-halo", "predator-oval", "skyline-stack", "neon-edge"] as const;
+export const INTERFACE_IDS = ["spectre-grid", "blue-orbit", "red-halo", "predator-oval", "skyline-stack", "neon-edge", "void-pulse", "eclipse-core", "crimson-nexus", "neon-phantom"] as const;
 export type InterfaceId = (typeof INTERFACE_IDS)[number];
 
 const STORAGE_KEY = "selected_interface";

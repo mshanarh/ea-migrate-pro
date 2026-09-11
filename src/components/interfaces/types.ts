@@ -2,6 +2,8 @@ import type { Robot } from "@/lib/app-store";
 
 export type InterfaceProps = {
   active: Robot;
+  mentorName: string;
+  eaName: string;
   robots: Robot[];
   license?: { key?: string; name?: string } | null;
   onStart: () => void;
