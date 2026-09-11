@@ -4,6 +4,7 @@ import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusF
 export type Robot = {
   id: string;
   name: string;
+  version?: string;
   key: string;
   symbols: string[];
   pairs?: PairSetting[];
@@ -200,6 +201,7 @@ function findSavedLicenseForEmail(key: string, email: string) {
         ea: {
           eaId: ea?.id || license.eaId,
           name: robotName,
+          version: ea?.version,
           symbols: ea?.symbols || license.symbols || [],
           image: ea?.image || license.image,
           video: ea?.video || license.video,
@@ -229,6 +231,7 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
     id: "r-" + Date.now(),
     key: clean,
     name: savedEa?.name || "Private EA",
+    ...(savedEa?.version ? { version: savedEa.version } : {}),
     symbols: savedEa?.symbols || licenseResult.license.symbols || [],
     pairs: (savedEa?.symbols || licenseResult.license.symbols || []).map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),

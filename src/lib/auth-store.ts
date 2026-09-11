@@ -58,6 +58,7 @@ export type MentorWebsite = {
 export type ExpertAdvisor = {
   id: string;
   name: string;
+  version?: string;
   createdAt: string;
   eaNameHash?: string | undefined;
   briefing?: string | undefined;
