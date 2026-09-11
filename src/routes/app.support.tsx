@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, ChevronRight, Clock3, Mail, MessageCircle, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowLeft, Check, ChevronRight, Mail, MessageCircle, Users, Zap } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
 
 export const Route = createFileRoute("/app/support")({
@@ -26,28 +26,38 @@ function Support() {
   };
 
   return <AppFrame><div className="pb-8">
-    <header className="flex items-center gap-3">
+    <header className="flex items-center gap-3 border-b border-border/40 pb-5">
       <Link to="/app/settings" aria-label="Back to settings" className="flex size-10 shrink-0 items-center justify-center rounded-full border border-border/60 bg-card/60"><ArrowLeft className="size-5" /></Link>
-      <div className="min-w-0"><p className="text-xs font-bold uppercase tracking-[0.2em] text-primary">EA Migrate Pro</p><h1 className="truncate text-2xl font-black">Support</h1></div>
+      <div className="flex min-w-0 items-center gap-3">
+        <div className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-xl shadow-glow">🤖</div>
+        <div className="min-w-0"><p className="truncate text-lg font-black">EA <span className="text-primary">Migrate Pro</span></p><p className="text-[10px] font-bold uppercase tracking-[0.16em] text-muted-foreground">Trade smarter · Grow faster</p></div>
+      </div>
     </header>
 
-    <section className="mt-8 text-center">
-      <div className="mx-auto flex size-24 items-center justify-center rounded-full border border-primary/60 bg-primary/10 text-primary shadow-glow"><MessageCircle className="size-11" /></div>
-      <h2 className="mt-6 text-3xl font-black tracking-tight">We&apos;re here for you</h2>
-      <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-muted-foreground">Need help with your robot, MetaTrader connection, or account? Reach out and our team will help you get moving.</p>
+    <section className="mt-9 text-center">
+      <div className="mx-auto flex size-20 items-center justify-center rounded-full border border-primary/60 bg-primary/10 text-primary shadow-glow"><MessageCircle className="size-9" /></div>
+      <h1 className="mt-6 text-4xl font-black tracking-tight">Contact <span className="text-primary">Support</span></h1>
+      <p className="mx-auto mt-3 max-w-sm text-sm leading-6 text-muted-foreground">Need help? We&apos;re here for you 24/7.<br />Get in touch with our support team and we&apos;ll respond as soon as possible.</p>
     </section>
 
     <section className="mt-8 space-y-3">
-      <button type="button" onClick={openWhatsApp} className="group flex w-full items-center gap-4 rounded-3xl border border-emerald-300/20 bg-emerald-300/10 p-5 text-left transition hover:border-emerald-300/40 hover:bg-emerald-300/15"><span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-400 text-emerald-950"><MessageCircle className="size-6" /></span><span className="min-w-0 flex-1"><span className="block text-lg font-black">Chat with support</span><span className="mt-1 block text-sm text-muted-foreground">Message us on WhatsApp</span></span><ChevronRight className="size-5 shrink-0 text-emerald-300 transition group-hover:translate-x-1" /></button>
-      <button type="button" onClick={sendEmail} className="group flex w-full items-center gap-4 rounded-3xl border border-primary/25 bg-primary/10 p-5 text-left transition hover:border-primary/50 hover:bg-primary/15"><span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary text-primary-foreground"><Mail className="size-6" /></span><span className="min-w-0 flex-1"><span className="block text-lg font-black">Email us</span><span className="mt-1 block truncate text-sm text-muted-foreground">{SUPPORT_EMAIL}</span></span><ChevronRight className="size-5 shrink-0 text-primary transition group-hover:translate-x-1" /></button>
+      <button type="button" onClick={sendEmail} className="group flex w-full items-center gap-4 rounded-3xl border border-primary/30 bg-card/70 p-5 text-left shadow-glow-soft transition hover:-translate-y-0.5 hover:border-primary/60">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary"><Mail className="size-6" /></span>
+        <span className="min-w-0 flex-1"><span className="block text-lg font-black">Email</span><span className="block break-all text-sm font-bold">{SUPPORT_EMAIL}</span><span className="mt-1 block text-xs text-muted-foreground">We&apos;ll reply within 24 hours</span></span><ChevronRight className="size-5 shrink-0 text-primary transition group-hover:translate-x-1" />
+      </button>
+      <button type="button" onClick={openWhatsApp} className="group flex w-full items-center gap-4 rounded-3xl border border-emerald-300/30 bg-emerald-300/10 p-5 text-left transition hover:-translate-y-0.5 hover:border-emerald-300/60">
+        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-emerald-400 text-emerald-950"><MessageCircle className="size-6" /></span>
+        <span className="min-w-0 flex-1"><span className="block text-lg font-black">WhatsApp</span><span className="block text-sm font-bold">0704950612</span><span className="mt-1 block text-xs text-muted-foreground">Chat with us directly</span></span><ChevronRight className="size-5 shrink-0 text-emerald-300 transition group-hover:translate-x-1" />
+      </button>
     </section>
 
-    <section className="mt-8 grid gap-3 sm:grid-cols-3">
-      <div className="rounded-3xl border border-border/60 bg-card/60 p-4"><MessageCircle className="size-6 text-primary" /><h3 className="mt-4 font-black">Chat with us</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Get direct help when you need it.</p></div>
-      <div className="rounded-3xl border border-border/60 bg-card/60 p-4"><Clock3 className="size-6 text-primary" /><h3 className="mt-4 font-black">Fast response</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">We aim to respond as quickly as possible.</p></div>
-      <div className="rounded-3xl border border-border/60 bg-card/60 p-4"><ShieldCheck className="size-6 text-primary" /><h3 className="mt-4 font-black">Trusted support</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Your trading journey matters to us.</p></div>
+    <section className="mt-8 grid grid-cols-2 gap-px overflow-hidden rounded-3xl border border-border/60 bg-border/60">
+      <div className="bg-card/70 p-4 text-center"><MessageCircle className="mx-auto size-6 text-primary" /><h2 className="mt-3 text-sm font-black">Live Chat</h2><p className="mt-1 text-xs text-muted-foreground">Available 24/7</p></div>
+      <div className="bg-card/70 p-4 text-center"><Zap className="mx-auto size-6 text-primary" /><h2 className="mt-3 text-sm font-black">Fast Response</h2><p className="mt-1 text-xs text-muted-foreground">Quick support</p></div>
+      <div className="bg-card/70 p-4 text-center"><Check className="mx-auto size-6 text-primary" /><h2 className="mt-3 text-sm font-black">Trusted Support</h2><p className="mt-1 text-xs text-muted-foreground">Your success matters</p></div>
+      <div className="bg-card/70 p-4 text-center"><Users className="mx-auto size-6 text-primary" /><h2 className="mt-3 text-sm font-black">Expert Team</h2><p className="mt-1 text-xs text-muted-foreground">Trading specialists</p></div>
     </section>
 
-    <section className="mt-8 rounded-3xl border border-primary/20 bg-primary/5 p-5"><div className="flex items-start gap-3"><Sparkles className="mt-0.5 size-5 shrink-0 text-primary" /><div><h3 className="font-black">Trading support</h3><p className="mt-2 text-sm leading-6 text-muted-foreground">For account, licence, and MetaTrader questions, include your robot name and a short description of what you need help with.</p></div></div></section>
+    <div className="mt-8 flex items-center gap-3 text-center text-xs font-bold text-primary"><span className="h-px flex-1 bg-primary/30" />Your success is our priority<span className="h-px flex-1 bg-primary/30" /></div>
   </div></AppFrame>;
 }
