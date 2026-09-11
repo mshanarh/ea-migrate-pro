@@ -28,7 +28,7 @@ export const Route = createFileRoute("/signup")({
   component: SignUp,
 });
 
-const inputClass = "h-14 rounded-full border-primary/25 bg-card/70 px-5";
+const inputClass = "h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]";
 
 function SignUp() {
   const navigate = useNavigate();
