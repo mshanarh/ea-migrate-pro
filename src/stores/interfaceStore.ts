@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react";
 
-export const INTERFACE_IDS = ["sniper-classic", "blue-edge", "crimson-halo", "predator-oval", "tactical-stack", "neon-scan"] as const;
+export const INTERFACE_IDS = ["spectre-grid", "blue-orbit", "red-halo", "predator-oval", "skyline-stack", "neon-edge"] as const;
 export type InterfaceId = (typeof INTERFACE_IDS)[number];
 
 const STORAGE_KEY = "selected_interface";
-const DEFAULT_INTERFACE: InterfaceId = "sniper-classic";
+const DEFAULT_INTERFACE: InterfaceId = "spectre-grid";
 let selected: InterfaceId = DEFAULT_INTERFACE;
 let loaded = false;
 const listeners = new Set<() => void>();

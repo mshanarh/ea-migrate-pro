@@ -4,12 +4,12 @@ import { ChevronRight, MoreHorizontal, Pause, Play, Plus, ScanLine, Trash2, X } 
 import { AppFrame } from "@/components/AppFrame";
 import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { useInterfaceStore } from "@/stores/interfaceStore";
-import { BlueEdge } from "@/components/interfaces/BlueEdge";
-import { CrimsonHalo } from "@/components/interfaces/CrimsonHalo";
-import { NeonScan } from "@/components/interfaces/NeonScan";
+import { BlueOrbit } from "@/components/interfaces/BlueOrbit";
+import { NeonEdge } from "@/components/interfaces/NeonEdge";
 import { PredatorOval } from "@/components/interfaces/PredatorOval";
-import { SniperClassic } from "@/components/interfaces/SniperClassic";
-import { TacticalStack } from "@/components/interfaces/TacticalStack";
+import { RedHalo } from "@/components/interfaces/RedHalo";
+import { SkylineStack } from "@/components/interfaces/SkylineStack";
+import { SpectreGrid } from "@/components/interfaces/SpectreGrid";
 import type { InterfaceProps } from "@/components/interfaces/types";
 
 export const Route = createFileRoute("/app/home")({
@@ -25,12 +25,12 @@ function BotModal({ active, onClose }: { active: Robot; onClose: () => void }) {
 function InterfaceHome({ active, robots, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner }: InterfaceProps) {
   const { selected } = useInterfaceStore();
   const props = { active, robots, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner };
-  if (selected === "blue-edge") return <BlueEdge {...props} />;
-  if (selected === "crimson-halo") return <CrimsonHalo {...props} />;
+  if (selected === "blue-orbit") return <BlueOrbit {...props} />;
+  if (selected === "red-halo") return <RedHalo {...props} />;
   if (selected === "predator-oval") return <PredatorOval {...props} />;
-  if (selected === "tactical-stack") return <TacticalStack {...props} />;
-  if (selected === "neon-scan") return <NeonScan {...props} />;
-  return <SniperClassic {...props} />;
+  if (selected === "skyline-stack") return <SkylineStack {...props} />;
+  if (selected === "neon-edge") return <NeonEdge {...props} />;
+  return <SpectreGrid {...props} />;
 }
 
 function AppHome() {

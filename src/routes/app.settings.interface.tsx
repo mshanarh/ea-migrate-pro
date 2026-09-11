@@ -11,12 +11,12 @@ export const Route = createFileRoute("/app/settings/interface")({
 });
 
 const styles: { id: InterfaceId; name: string; description: string; accent: string; label: string }[] = [
-  { id: "sniper-classic", name: "Sniper Classic", description: "EA Merge dark grid with start, quotes and remove controls.", accent: "#D32F2F", label: "EA MERGE" },
-  { id: "blue-edge", name: "Blue Edge", description: "AlgoHost blue dashboard with a clean white command pill.", accent: "#38BDF8", label: "ALGOHOST" },
-  { id: "crimson-halo", name: "Crimson Halo", description: "Red-glow robot halo with bold circular commands.", accent: "#D32F2F", label: "READY" },
-  { id: "predator-oval", name: "Predator Oval", description: "Aggressive oval command deck for pairs, start and logs.", accent: "#D32F2F", label: "AGGRESSIVE" },
-  { id: "tactical-stack", name: "Tactical Stack", description: "Vertical tactical controls with a ringed robot chip.", accent: "#38BDF8", label: "TACTICAL" },
-  { id: "neon-scan", name: "Neon Scanner", description: "FX KIID / KOBI-inspired scanner with green AI controls.", accent: "#39FF88", label: "AI SCANNER" },
+  { id: "spectre-grid", name: "SPECTRE GRID", description: "Dark grid card with robot, red ready pill and three controls.", accent: "#D32F2F", label: "READY" },
+  { id: "blue-orbit", name: "BLUE ORBIT", description: "Blue glow ring, white command pill and connected bot row.", accent: "#38BDF8", label: "CONNECTED" },
+  { id: "red-halo", name: "RED HALO", description: "Red outer halo, ready image card and circular commands.", accent: "#D32F2F", label: "READY" },
+  { id: "predator-oval", name: "PREDATOR OVAL", description: "Thin red oval, standby pill and aggressive scanner action.", accent: "#D32F2F", label: "STANDBY" },
+  { id: "skyline-stack", name: "SKYLINE STACK", description: "Double blue ring with stacked pairs, start and logs.", accent: "#38BDF8", label: "ONLINE" },
+  { id: "neon-edge", name: "NEON EDGE", description: "Red neon edge card with green AI chart scanner.", accent: "#39FF88", label: "READY" },
 ];
 
 function InterfaceStyles() {
