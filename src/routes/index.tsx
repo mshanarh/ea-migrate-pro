@@ -494,6 +494,9 @@ function Home() {
             <p className="mt-5 text-sm text-muted-foreground">
               © EA Migrate Pro {new Date().getFullYear()}. All rights reserved.
             </p>
+            <div className="mt-5 flex flex-wrap gap-4 text-sm text-muted-foreground">
+              <Link to="/support" className="transition hover:text-primary">Support</Link>
+            </div>
             <div className="mt-6 flex gap-3">
               {[Youtube, Send, Instagram].map((Icon, i) => (
                 <a
