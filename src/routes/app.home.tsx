@@ -1,146 +1,44 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
-import { AnimatePresence, motion } from "framer-motion";
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { Activity, ArrowLeftRight, Check, ChevronRight, CircleGauge, Cpu, Ellipsis, History, Pause, Play, Plus, ScanLine, Trash2, X } from "lucide-react";
+import { useState } from "react";
+import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { ChevronRight, MoreHorizontal, Pause, Play, Plus, ScanLine, Trash2, X } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
 import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { useInterfaceStore } from "@/stores/interfaceStore";
+import { BlueEdge } from "@/components/interfaces/BlueEdge";
+import { CrimsonHalo } from "@/components/interfaces/CrimsonHalo";
+import { NeonScan } from "@/components/interfaces/NeonScan";
+import { PredatorOval } from "@/components/interfaces/PredatorOval";
+import { SniperClassic } from "@/components/interfaces/SniperClassic";
+import { TacticalStack } from "@/components/interfaces/TacticalStack";
+import type { InterfaceProps } from "@/components/interfaces/types";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
-  head: () => ({ meta: [
-    { title: "Robot Dashboard — EA Migrate Pro" },
-    { name: "description", content: "Control your licensed Forex robots and open the AI chart scanner." },
-    { property: "og:title", content: "Robot Dashboard — EA Migrate Pro" },
-    { property: "og:description", content: "Control your licensed Forex robots and open the AI chart scanner." },
-    { property: "og:type", content: "website" },
-    { name: "twitter:card", content: "summary_large_image" },
-  ] }),
+  head: () => ({ meta: [{ title: "Robot Dashboard - EA Migrate Pro" }, { name: "description", content: "Control your licensed Forex robots." }] }),
   component: AppHome,
 });
 
-const fallbackRobotImage = "/ea-migrate-platform-robot.jpg";
-
-type DashboardProps = {
-  active: Robot;
-  robots: Robot[];
-  color: string;
-  robotName: string;
-  running: boolean;
-  openControl: () => void;
-  openBotModal: () => void;
-};
-
-const STYLE_META: Record<string, { name: string; structure: "horizontal" | "hero" | "vertical"; accent?: string }> = {
-  crimson_navigator: { name: "Crimson Navigator", structure: "horizontal" },
-  navigator_plus: { name: "Navigator Plus", structure: "hero" },
-  pablo_crimson: { name: "Pablo Crimson", structure: "hero" },
-  pablo_elite: { name: "Pablo Elite", structure: "vertical" },
-  quantum_blue: { name: "Quantum Blue", structure: "horizontal", accent: "#1683F7" },
-  darkweb_ai: { name: "Darkweb AI", structure: "hero" },
-  supreme_equinox: { name: "Supreme Equinox", structure: "vertical" },
-  ultron_mega: { name: "Ultron Mega", structure: "hero" },
-  ea_cloud: { name: "EA Cloud", structure: "horizontal", accent: "#22C55E" },
-};
-
-function glow(color: string) {
-  return `0 0 28px ${color}55`;
-}
-
-function pairsHref(robotId: string) {
-  return `/app/pairs?robot=${encodeURIComponent(robotId)}`;
-}
-
-function RobotList({ active, robots, color }: Pick<DashboardProps, "active" | "robots" | "color">) {
-  return <section className="mt-7">
-    <p className="text-xs font-black uppercase tracking-[0.18em] text-muted-foreground">Connected Robots</p>
-    <div className="mt-3 space-y-3">
-      {robots.map((robot) => <button key={robot.id} type="button" onClick={() => setActiveRobot(robot.id)} className="grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-full border border-border/60 bg-card/70 p-2 text-left" style={robot.id === active.id ? { borderColor: color, boxShadow: glow(color) } : undefined}>
-        <img src={robot.image || fallbackRobotImage} alt="" className="size-12 shrink-0 rounded-full object-cover" />
-        <span className="min-w-0"><span className="block truncate text-sm font-black uppercase">{robot.name}</span><span className="block truncate text-xs text-muted-foreground">{(robot.symbols || []).join(" · ") || "Ready to configure"}</span></span>
-        {robot.id === active.id ? <Check className="mr-2 size-5 shrink-0" style={{ color }} /> : <ChevronRight className="mr-2 size-5 shrink-0 text-muted-foreground" />}
-      </button>)}
-      <Link to="/app/activate" className="flex min-h-16 w-full items-center gap-3 rounded-full border border-dashed border-primary/50 bg-primary/5 px-4 text-sm font-black uppercase text-primary"><span className="flex size-10 items-center justify-center rounded-full bg-primary text-primary-foreground"><Plus className="size-5" /></span>Connect New Robot</Link>
-    </div>
-  </section>;
-}
-
-function Powered({ color }: { color: string }) {
-  return <div className="mx-auto mt-4 w-fit rounded-full border bg-card/80 px-5 py-2 text-xs font-bold" style={{ borderColor: color }}>Powered by <span style={{ color }}>EA Migrate</span></div>;
-}
-
-function RoundControl({ label, icon, primary, color, onClick }: { label: string; icon: ReactNode; primary?: boolean; color: string; onClick?: () => void }) {
-  return <button type="button" onClick={onClick} className="flex size-[4.7rem] shrink-0 flex-col items-center justify-center gap-1 rounded-full border-2 text-[9px] font-black uppercase" style={{ borderColor: color, backgroundColor: primary ? color : "var(--card)", color: primary ? "var(--primary-foreground)" : color, boxShadow: primary ? glow(color) : undefined }}>{icon}{label}</button>;
-}
-
-function HorizontalDashboard({ active, robots, color, robotName, running, openControl, openBotModal }: DashboardProps) {
-  return <main>
-    <header className="text-center"><p className="text-[10px] font-black uppercase tracking-[0.22em]" style={{ color }}>EA Migrate Pro</p><h1 className="mt-1 truncate text-xl font-black uppercase">{robotName}</h1></header>
-    <div className="relative mx-auto mt-6 size-48 rounded-full border-4 p-2" style={{ borderColor: color, boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full rounded-full object-cover" /><button type="button" onClick={openBotModal} aria-label="Open bot details" className="absolute left-1 top-1 flex size-10 items-center justify-center rounded-full border border-white/15 bg-black/75 text-white backdrop-blur"><Ellipsis className="size-5" /></button></div>
-    <p className="mt-5 text-center text-2xl font-black uppercase">{robotName}</p><p className="mt-1 text-center text-xs font-semibold text-muted-foreground">{running ? "Connected · Trading active" : "Connected · Ready to trade"}</p><Powered color={color} />
-    <div className="mt-6 flex items-center justify-around rounded-[2rem] border border-border/60 bg-card/70 px-3 py-4">
-      <RoundControl label="Remove" icon={<Trash2 className="size-5" />} color={color} onClick={() => removeRobot(active.id)} />
-      <RoundControl label={running ? "Stop" : "Start"} icon={running ? <Pause className="size-5" /> : <Play className="size-5" />} primary color={color} onClick={openControl} />
-      <Link to={pairsHref(active.id)} className="flex size-[4.7rem] shrink-0 flex-col items-center justify-center gap-1 rounded-full border-2 text-[9px] font-black uppercase" style={{ borderColor: color, color }}><Activity className="size-5" />Quotes</Link>
-    </div>
-    <RobotList active={active} robots={robots} color={color} />
-  </main>;
-}
-
-function ScannerCard({ color }: { color: string }) {
-  return <Link to="/app/settings/scanner" className="mt-5 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-3xl border border-border/60 bg-card/70 p-4"><span className="flex size-12 shrink-0 items-center justify-center rounded-2xl" style={{ backgroundColor: `${color}25`, color }}><ScanLine className="size-6" /></span><span className="min-w-0"><span className="block font-black">AI Scanner</span><span className="block text-xs text-muted-foreground">Scan a chart and review a trade signal</span></span><ChevronRight className="size-5 shrink-0" style={{ color }} /></Link>;
-}
-
-function HeroDashboard({ active, robots, color, robotName, running, openControl, openBotModal }: DashboardProps) {
-  return <main>
-    <div className="relative h-[24rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><button type="button" onClick={openBotModal} aria-label="Open bot details" className="absolute left-4 top-4 flex size-10 items-center justify-center rounded-full border border-white/15 bg-black/75 text-white backdrop-blur"><Ellipsis className="size-5" /></button><div className="absolute inset-0 bg-gradient-to-b from-transparent via-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><p className="text-[10px] font-black uppercase tracking-[0.18em]" style={{ color }}>{running ? "● Trading active" : "● Robot ready"}</p><h1 className="mt-2 text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs text-muted-foreground">Connected to {(active.symbols || []).join(" · ") || "MetaTrader 5"}</p></div></div>
-    <div className="mt-4 grid grid-cols-3 gap-2 rounded-full border border-border/60 bg-card/80 p-2"><Link to={pairsHref(active.id)} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><ArrowLeftRight className="size-4" />Pairs</Link><button type="button" onClick={openControl} className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-primary-foreground" style={{ backgroundColor: color, boxShadow: glow(color) }}>{running ? <Pause className="size-4" /> : <Play className="size-4" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 items-center justify-center gap-1 rounded-full text-xs font-black uppercase text-muted-foreground"><History className="size-4" />Logs</button></div>
-    <Powered color={color} /><ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
-  </main>;
-}
-
-function VerticalDashboard({ active, robots, color, robotName, running, openControl, openBotModal }: DashboardProps) {
-  return <main>
-    <div className="relative h-[22rem] overflow-hidden rounded-[2.5rem] border border-border/60" style={{ boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt={robotName} className="size-full object-cover" /><button type="button" onClick={openBotModal} aria-label="Open bot details" className="absolute left-4 top-4 flex size-10 items-center justify-center rounded-full border border-white/15 bg-black/75 text-white backdrop-blur"><Ellipsis className="size-5" /></button><div className="absolute inset-0 bg-gradient-to-b from-transparent to-background" /><div className="absolute inset-x-5 bottom-5"><h1 className="text-3xl font-black uppercase">{robotName}</h1><p className="mt-1 text-xs font-bold" style={{ color }}>{running ? "● Trading active" : "● Connected and ready"}</p></div></div>
-    <div className="mt-5 grid grid-cols-[minmax(0,1fr)_5.5rem] gap-3"><div className="space-y-2"><Link to={pairsHref(active.id)} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, color }}><ArrowLeftRight className="size-5" />Pairs</Link><button type="button" onClick={openControl} className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, backgroundColor: color, color: "var(--primary-foreground)" }}>{running ? <Pause className="size-5" /> : <Play className="size-5" />}{running ? "Stop" : "Start"}</button><button type="button" className="flex h-14 w-full items-center justify-center gap-3 rounded-2xl border text-sm font-black uppercase" style={{ borderColor: color, color }}><History className="size-5" />Logs</button></div><Link to="/app/settings/scanner" className="flex flex-col items-center justify-center gap-2 rounded-3xl border-2 text-center text-[10px] font-black uppercase" style={{ borderColor: color, color, boxShadow: glow(color) }}><CircleGauge className="size-7" />AI Scan</Link></div>
-    <ScannerCard color={color} /><RobotList active={active} robots={robots} color={color} />
-  </main>;
-}
-
-function TradingControl({ open, running, active, color, onClose }: { open: boolean; running: boolean; active: Robot; color: string; onClose: () => void }) {
-  const action = () => { toggleRobot(active.id); onClose(); };
-  return <AnimatePresence>{open && <><motion.button type="button" aria-label="Close trading controls" className="fixed inset-0 z-[70] bg-background/65 backdrop-blur-[2px]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose} /><motion.section role="dialog" aria-modal="true" aria-label="Trading controls" initial={{ y: 120, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: 120, opacity: 0 }} className="fixed inset-x-4 bottom-24 z-[80] mx-auto max-w-sm rounded-[2rem] border border-border bg-card p-5 shadow-2xl"><div className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3"><img src={active.image || fallbackRobotImage} alt="" className="size-12 shrink-0 rounded-full object-cover" /><div className="min-w-0"><p className="truncate font-black uppercase">{active.name}</p><p className="text-xs text-muted-foreground">{running ? "Trading is active" : "Ready to start live monitoring"}</p></div><button type="button" aria-label="Close" onClick={onClose} className="flex size-9 items-center justify-center rounded-full bg-secondary"><X className="size-4" /></button></div><button type="button" onClick={action} className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-full text-sm font-black uppercase text-primary-foreground" style={{ backgroundColor: running ? "var(--destructive)" : color, boxShadow: glow(color) }}>{running ? <Pause className="size-5" /> : <Play className="size-5" />}{running ? "Stop robot" : "Start robot"}</button><p className="mt-3 text-center text-xs text-muted-foreground">Orders execute only after a live provider is securely connected.</p></motion.section></>}</AnimatePresence>;
-}
-
-function TradingBubble({ active, color, openControl }: { active: Robot; color: string; openControl: () => void }) {
-  const pressed = useRef(false);
-  return <motion.button type="button" drag dragMomentum={false} aria-label="Open trading controls" onClick={() => { if (!pressed.current) openControl(); }} onDragStart={() => { pressed.current = true; }} onDragEnd={() => { window.setTimeout(() => { pressed.current = false; }, 100); }} initial={{ scale: 0 }} animate={{ scale: 1 }} className="fixed bottom-[6.4rem] right-5 z-50 size-16 touch-none rounded-full border-[3px] bg-card p-1" style={{ borderColor: color, boxShadow: glow(color) }}><img src={active.image || fallbackRobotImage} alt="" className="size-full rounded-full object-cover" /><span className="absolute -bottom-1 -right-1 size-4 rounded-full border-2 border-background bg-emerald-400" /></motion.button>;
-}
-
-function BotModal({ active, app, onClose }: { active: Robot; app: ReturnType<typeof useAppState>; onClose: () => void }) {
-  const connectionStatus = app.mt ? (active.running ? "Connected" : "Ready") : "Disconnected";
-  const brokerName = app.mt?.broker || "No broker";
-  const platform = app.mt?.platform || "No platform";
-  const pair = active.pairs?.[0];
-  const lotSize = pair?.lotSize || app.settings.lotSize || "Not set";
-  const tradeState = active.running ? "Trading active" : "No active trades";
-
-  return <motion.div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/70 p-4 backdrop-blur-sm sm:items-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onClick={onClose}>
-    <motion.section role="dialog" aria-modal="true" aria-label="Bot details" className="w-full max-w-md overflow-hidden rounded-[2rem] border border-white/10 bg-[#111111] shadow-2xl" initial={{ y: 32, opacity: 0 }} animate={{ y: 0, opacity: 1 }} onClick={(event) => event.stopPropagation()}>
-      <div className="relative h-52"><img src={active.image || fallbackRobotImage} alt={active.name} className="size-full object-cover" /><div className="absolute inset-0 bg-gradient-to-t from-[#111111] via-transparent to-black/30" /><button type="button" onClick={onClose} aria-label="Close bot details" className="absolute right-4 top-4 flex size-9 items-center justify-center rounded-full bg-black/70 text-white"><X className="size-4" /></button><div className="absolute inset-x-5 bottom-4"><h2 className="text-2xl font-black">{active.name || "No Bot Connected"}{active.version ? ` V${active.version}` : ""}</h2><p className="mt-1 text-xs font-semibold text-white/60">{connectionStatus} · {brokerName} · {platform}</p></div></div>
-      <div className="p-5"><div className="grid grid-cols-3 gap-2"><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] font-black uppercase text-white/40">Lot</p><p className="mt-1 text-sm font-black">{lotSize}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] font-black uppercase text-white/40">Pairs</p><p className="mt-1 text-sm font-black">{active.symbols.length}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] font-black uppercase text-white/40">State</p><p className="mt-1 truncate text-sm font-black">{tradeState}</p></div></div><p className="mt-4 text-xs text-white/50">{active.symbols.join(" · ") || "No configured symbols"}</p></div>
-    </motion.section>
-  </motion.div>;
-}
-
-function AppHome() {
-  const app = useAppState();
-  const [controlOpen, setControlOpen] = useState(false);
-  const [showBotModal, setShowBotModal] = useState(false);
-  const active = app.robots.find((item) => item.id === app.activeRobotId) || app.robots[0];
-  const style = STYLE_META[app.settings.interfaceStyle] || STYLE_META.crimson_navigator;
-  const color = style?.accent || app.settings.accentColor;
-  useEffect(() => { const open = () => setControlOpen(true); window.addEventListener("eamp:home-hold", open); return () => window.removeEventListener("eamp:home-hold", open); }, []);
-  if (!active) return <AppFrame><div className="panel mt-16 p-10 text-center"><span className="mx-auto flex size-16 items-center justify-center rounded-full bg-primary/10 text-primary"><Cpu className="size-8" /></span><h1 className="mt-5 text-2xl font-black uppercase">EA Migrate Pro</h1><p className="mt-2 text-sm text-muted-foreground">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mt-6 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-black uppercase text-primary-foreground"><Plus className="size-5" />Connect your EA</Link></div></AppFrame>;
-  const props = { active, robots: app.robots, color, robotName: active.name, running: active.running, openControl: () => setControlOpen(true), openBotModal: () => setShowBotModal(true) };
-  return <AppFrame><div className="pb-6"><p className="mb-4 text-center text-[10px] font-black uppercase tracking-[0.2em] text-muted-foreground">{style?.name}</p>{style?.structure === "horizontal" && <HorizontalDashboard {...props} />}{style?.structure === "hero" && <HeroDashboard {...props} />}{style?.structure === "vertical" && <VerticalDashboard {...props} />}{active.running && <TradingBubble active={active} color={color} openControl={() => setControlOpen(true)} />}<TradingControl open={controlOpen} running={active.running} active={active} color={color} onClose={() => setControlOpen(false)} />{showBotModal && <BotModal active={active} app={app} onClose={() => setShowBotModal(false)} />}</div></AppFrame>;
-}
+function BotModal({ active, onClose }: { active: Robot; onClose: () => void }) {
+  return <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-5" onClick={onClose}><section role="dialog" aria-modal="true" aria-label="Bot details" className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111111] p-5" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-3"><img src={active.image || "/ea-migrate-platform-robot.jpg"} alt={active.name} className="size-16 rounded-2xl object-cover" /><div className="min-w-0 flex-1"><h2 className="truncate text-xl font-black">{active.name}</h2><p className="text-xs text-white/50">{active.running ? "Trading active" : "Ready"} · {active.symbols.join(" · ") || "No symbols"}</p></div><button type="button" onClick={onClose} aria-label="Close bot details" className="flex size-9 items-center justify-center rounded-full bg-white/10"><X className="size-4" /></button></div><div className="mt-5 grid grid-cols-3 gap-2"><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Pairs</p><p className="mt-1 font-black">{active.symbols.length}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Lot</p><p className="mt-1 font-black">{active.pairs?.[0]?.lotSize || "0.01"}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Status</p><p className="mt-1 truncate font-black">{active.running ? "Live" : "Idle"}</p></div></div></section></div>;
++}
++
++function InterfaceHome({ active, robots, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner }: InterfaceProps) {
++  const { selected } = useInterfaceStore();
++  const props = { active, robots, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner };
++  if (selected === "blue-edge") return <BlueEdge {...props} />;
++  if (selected === "crimson-halo") return <CrimsonHalo {...props} />;
++  if (selected === "predator-oval") return <PredatorOval {...props} />;
++  if (selected === "tactical-stack") return <TacticalStack {...props} />;
++  if (selected === "neon-scan") return <NeonScan {...props} />;
++  return <SniperClassic {...props} />;
++}
++
++function AppHome() {
++  const app = useAppState();
++  const navigate = useNavigate();
++  const [showBotModal, setShowBotModal] = useState(false);
++  const active = app.robots.find((robot) => robot.id === app.activeRobotId) || app.robots[0];
++  if (!active) return <AppFrame><div className="min-h-screen bg-[#0A0A0A] pt-16 text-center text-white"><span className="mx-auto flex size-16 items-center justify-center rounded-full bg-[#1A2332] text-[#38BDF8]"><Plus className="size-8" /></span><h1 className="mt-5 text-2xl font-black">No robot connected</h1><p className="mt-2 text-sm text-white/50">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mx-auto mt-6 flex h-14 max-w-sm items-center justify-center gap-2 rounded-full bg-[#00A8FF] text-sm font-black uppercase text-[#0A0A0A]"><Plus className="size-5" />Connect your EA</Link></div></AppFrame>;
++  const actions: InterfaceProps = { active, robots: app.robots, license: null, onStart: () => toggleRobot(active.id), onRemove: () => removeRobot(active.id), onSelectBot: (id) => setActiveRobot(id), onOpenBotModal: () => setShowBotModal(true), onOpenPairs: () => navigate({ to: "/app/pairs", search: { robot: active.id } }), onOpenScanner: () => navigate({ to: "/app/settings/scanner" }) };
++  return <AppFrame><div className="px-5 pb-20"><InterfaceHome {...actions} />{showBotModal && <BotModal active={active} onClose={() => setShowBotModal(false)} />}</div></AppFrame>;
++}
