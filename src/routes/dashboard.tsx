@@ -12,12 +12,12 @@ export const Route = createFileRoute("/dashboard")({
       {
         name: "description",
         content:
-          "Your EA Migrate Pro mentor portal: licences, Expert Advisors, signals and account settings in one place.",
+          "Your EA Migrate Pro mentor portal: licences, Expert Advisors, copy trading and website tools in one place.",
       },
       { property: "og:title", content: "Mentor Dashboard — EA Migrate Pro" },
       {
         property: "og:description",
-        content: "Manage licences, Expert Advisors and signals from your mentor portal.",
+        content: "Manage licences, Expert Advisors, copy trading and your public website from your mentor portal.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
