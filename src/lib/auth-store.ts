@@ -104,7 +104,7 @@ const seedAdmin: Account = {
   role: "admin",
   status: "approved",
   createdAt: new Date().toISOString(),
-  licenseLimit: 0,
+   licenseLimit: 2000,
   licenses: [],
   eas: [],
 };
@@ -120,7 +120,7 @@ const seedMentor: Account = {
   role: "mentor",
   status: "pending",
   createdAt: new Date().toISOString(),
-  licenseLimit: 0,
+   licenseLimit: 2000,
   licenses: [],
   eas: [],
 };
@@ -383,7 +383,7 @@ export function addLicense(
         expertAdvisor: robotName,
         eaId: details.eaId,
         eaNameHash: details.eaNameHash,
-        expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "3 Days": 3, "3 Months": 90, "6 Months": 180, "9 Months": 270, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
+         expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "1 Week": 7, "1 Month": 30, "3 Months": 90, "6 Months": 180, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
       },
     ],
   }));
