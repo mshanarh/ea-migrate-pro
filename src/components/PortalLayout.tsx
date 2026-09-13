@@ -6,8 +6,6 @@ import {
   Radio,
   KeyRound,
   BarChart3,
-  Wallet,
-  UserCircle2,
   Globe2,
   LogOut,
   PanelLeft,
@@ -17,13 +15,11 @@ import { signOut, useCurrentAccount } from "@/lib/auth-store";
 
 const nav = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutGrid },
+  { to: "/dashboard/licenses", label: "Generate Key", icon: KeyRound },
   { to: "/dashboard/eas", label: "Manage EAs", icon: Code2 },
-  { to: "/dashboard/signals", label: "Signals", icon: Radio },
-  { to: "/dashboard/licenses", label: "Licenses", icon: KeyRound },
   { to: "/dashboard/stats", label: "Key Stats", icon: BarChart3 },
-  { to: "/dashboard/wallet", label: "Wallet", icon: Wallet },
+  { to: "/dashboard/signals", label: "Copy Trading", icon: Radio },
   { to: "/dashboard/website", label: "Website", icon: Globe2, mentorOnly: true },
-  { to: "/dashboard/profile", label: "Profile", icon: UserCircle2 },
 ] as const;
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {
