@@ -33,7 +33,7 @@ function ManageEAs() {
   return (
     <div>
       <p className="text-xs font-bold tracking-[0.22em] text-primary uppercase">Workspace</p>
-      <h1 className="mt-1 text-3xl font-bold">Expert Advisors</h1>
+      <h1 className="mt-1 text-3xl font-bold">Manage EAs</h1>
       <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create and save your EA profile with its briefing, symbols, picture/logo, and optional robot video. These owner assets are never shown in the admin console.</p>
       <Button size="lg" className="mt-6 h-12 rounded-full" onClick={() => setOpen(true)}><Plus className="size-4" /> Create EA</Button>
       <h2 className="mt-8 text-lg font-semibold">Your EAs <span className="text-muted-foreground">({eas.length})</span></h2>
@@ -76,7 +76,7 @@ function CreateEaDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpe
       <div><p className={label}>Image</p><label className="mt-2 flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 text-sm text-muted-foreground"><ImageIcon className="size-6" />{imageName || "Click to upload image (max 5MB)"}<input type="file" accept="image/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "image")} /></label></div>
       <div><p className={label}>Robot Video — Optional; shown in the app instead of the image</p><label className="mt-2 flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 text-sm text-muted-foreground"><Video className="size-6" />{videoName || "Click to upload video (optional, max 3MB)"}<input type="file" accept="video/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label></div>
       {error && <p className="text-sm text-destructive">{error}</p>}
-      <button type="submit" className="h-14 w-full rounded-2xl bg-primary text-base font-bold text-primary-foreground glow-ring">Deploy</button>
+       <button type="submit" className="h-14 w-full rounded-2xl bg-primary text-base font-bold text-primary-foreground glow-ring">Save EA</button>
     </form>
   </DialogContent></Dialog>;
 }
