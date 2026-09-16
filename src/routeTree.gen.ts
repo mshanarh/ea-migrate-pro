@@ -17,6 +17,9 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SupportRouteImport } from './routes/support'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
+import { Route as AppHomeRouteImport } from './routes/app.home'
+import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
+import { Route as AppScannerRouteImport } from './routes/app.scanner'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
@@ -65,6 +68,21 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppActivateRoute = AppActivateRouteImport.update({
   id: '/app/activate',
   path: '/app/activate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppHomeRoute = AppHomeRouteImport.update({
+  id: '/app/home',
+  path: '/app/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppMetatraderRoute = AppMetatraderRouteImport.update({
+  id: '/app/metatrader',
+  path: '/app/metatrader',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppScannerRoute = AppScannerRouteImport.update({
+  id: '/app/scanner',
+  path: '/app/scanner',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
@@ -121,6 +139,9 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
+  '/app/scanner': typeof AppScannerRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -139,6 +160,9 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
+  '/app/scanner': typeof AppScannerRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -159,6 +183,9 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/home': typeof AppHomeRoute
+  '/app/metatrader': typeof AppMetatraderRoute
+  '/app/scanner': typeof AppScannerRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -180,6 +207,9 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/home'
+    | '/app/metatrader'
+    | '/app/scanner'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -198,6 +228,9 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/home'
+    | '/app/metatrader'
+    | '/app/scanner'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -217,6 +250,9 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/home'
+    | '/app/metatrader'
+    | '/app/scanner'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -237,6 +273,9 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
+  AppHomeRoute: typeof AppHomeRoute
+  AppMetatraderRoute: typeof AppMetatraderRoute
+  AppScannerRoute: typeof AppScannerRoute
   MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -297,6 +336,27 @@ declare module '@tanstack/react-router' {
       path: '/app/activate'
       fullPath: '/app/activate'
       preLoaderRoute: typeof AppActivateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/home': {
+      id: '/app/home'
+      path: '/app/home'
+      fullPath: '/app/home'
+      preLoaderRoute: typeof AppHomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/metatrader': {
+      id: '/app/metatrader'
+      path: '/app/metatrader'
+      fullPath: '/app/metatrader'
+      preLoaderRoute: typeof AppMetatraderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/scanner': {
+      id: '/app/scanner'
+      path: '/app/scanner'
+      fullPath: '/app/scanner'
+      preLoaderRoute: typeof AppScannerRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/': {
@@ -399,6 +459,9 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
+  AppHomeRoute: AppHomeRoute,
+  AppMetatraderRoute: AppMetatraderRoute,
+  AppScannerRoute: AppScannerRoute,
   MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
 }
