@@ -11,7 +11,7 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import { ExecutionToast } from "@/components/app/ExecutionToast";
+import ExecutionToast from "@/components/app/ExecutionToast";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
 import { executeLiveTrade } from "@/lib/execution-api";
 
@@ -81,7 +81,6 @@ function AppHome() {
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [execToastOpen, setExecToastOpen] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -118,7 +117,7 @@ function AppHome() {
         return;
       }
       // The L_FX execution popup narrates the run while the live order is placed.
-      setExecToastOpen(true);
+      window.triggerExecutionToast?.(robot.name);
       // Live execution attempt — the START action places a real order
       // through the provider when it is configured and confirms.
       const symbol = robot.symbols[0] ?? "XAUUSD";
@@ -178,7 +177,7 @@ function AppHome() {
       </div>
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
-      <ExecutionToast open={execToastOpen} eaName={robot?.name ?? "Robot"} onClose={() => setExecToastOpen(false)} />
+      <ExecutionToast />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>

@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { CustomizationPanel } from "@/components/app/CustomizationDrawer";
+import ExecutionToast from "@/components/app/ExecutionToast";
 
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
@@ -30,6 +31,7 @@ function AppSettings() {
       </main>
       </div>
       <FixedBottomNav />
+      <ExecutionToast />
     </div>
   );
 }

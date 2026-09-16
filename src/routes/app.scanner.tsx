@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { Loader2, ScanLine, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
+import ExecutionToast from "@/components/app/ExecutionToast";
 import { useAppState } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -92,6 +93,7 @@ function AppScanner() {
       </main>
       </div>
       <FixedBottomNav />
+      <ExecutionToast />
     </div>
   );
 }
