@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
+import { motion } from "framer-motion";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -88,7 +89,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <BrandMark />
         <p className="text-xl font-black tracking-tight">
-          Algo<span className="text-primary">host</span> EA
+          EA <span className="text-primary">Migrate</span> Pro
         </p>
       </div>
 
@@ -174,7 +175,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             <Link to="/dashboard" className="flex items-center gap-2 lg:hidden">
               <BrandMark size="size-8" />
               <span className="text-base font-black tracking-tight">
-                Algo<span className="text-primary">host</span> EA
+                EA <span className="text-primary">Migrate</span> Pro
               </span>
             </Link>
           </div>
@@ -210,7 +211,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <BrandMark size="size-8" />
                 <p className="text-sm font-black">
-                  Algo<span className="text-primary">host</span> EA
+                  EA <span className="text-primary">Migrate</span> Pro
                   <span className="ml-3 font-normal text-white/45">© 2026 All rights reserved.</span>
                 </p>
               </div>

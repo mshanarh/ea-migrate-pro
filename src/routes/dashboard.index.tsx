@@ -1,6 +1,7 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
+import { motion } from "framer-motion";
 import { ArrowRight, Bot, Infinity as InfinityIcon, KeyRound, ShieldCheck, UserCheck } from "lucide-react";
-import { useCurrentAccount } from "@/lib/auth-store";
+import { useCurrentAccount } from "@/lib/auth-store";;
 
 export const Route = createFileRoute("/dashboard/")({
   ssr: false,
@@ -41,11 +42,16 @@ function Overview() {
       </div>
 
       <div className="mt-8 grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
-        {stats.map(({ label, value, note, icon: Icon, gradient, chip }) => (
-          <div
+        {stats.map(({ label, value, note, icon: Icon, gradient, chip }, index) => (
+          <motion.div
             key={label}
-            className={`relative overflow-hidden rounded-3xl bg-gradient-to-br ${gradient} p-6 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.8)]`}
+            initial={{ opacity: 0, y: 22 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5, delay: index * 0.09, ease: [0.22, 1, 0.36, 1] }}
+            whileHover={{ y: -6, scale: 1.02 }}
+            className={`group relative overflow-hidden rounded-3xl bg-gradient-to-br ${gradient} p-6 shadow-[0_18px_40px_-18px_rgba(0,0,0,0.8)]`}
           >
+            <span aria-hidden className="pointer-events-none absolute -left-1/2 top-0 h-full w-1/2 -skew-x-12 bg-white/10 blur-xl transition-all duration-700 group-hover:left-[110%]" />
             <div className="flex items-start justify-between gap-3">
               <p className="text-sm font-black uppercase tracking-[0.14em] text-white/90">{label}</p>
               <span className={`flex size-12 shrink-0 items-center justify-center rounded-2xl ${chip} text-white`}>
@@ -54,7 +60,7 @@ function Overview() {
             </div>
             <p className="mt-4 text-6xl font-black leading-none text-white">{value}</p>
             <p className="mt-4 text-sm font-medium text-white/80">{note}</p>
-          </div>
+          </motion.div>
         ))}
       </div>
 

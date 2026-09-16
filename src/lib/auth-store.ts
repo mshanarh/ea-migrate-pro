@@ -390,6 +390,17 @@ export function addLicense(
   return {};
 }
 
+export function renameEa(accountId: string, eaId: string, patch: { briefing?: string; symbols?: string[]; image?: string; video?: string }): { error?: string } {
+  load();
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!account) return { error: "Mentor account not found." };
+  update(accountId, (a) => ({
+    ...a,
+    eas: a.eas.map((ea) => ea.id === eaId ? { ...ea, ...patch } : ea),
+  }));
+  return {};
+}
+
 export function setEAs(id: string, eas: ExpertAdvisor[]) {
   update(id, (a) => ({ ...a, eas: eas.map((ea) => ({ id: ea.id, name: ea.name.trim(), eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })) }));
 }
