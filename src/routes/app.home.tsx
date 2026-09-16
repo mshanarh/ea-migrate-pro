@@ -12,6 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
+import { executeLiveTrade } from "@/lib/execution-api";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -103,10 +104,37 @@ function AppHome() {
     setModalOpen(false);
   };
 
-  const handleStart = () => {
-    if (!robot) return;
-    toggleRobot(robot.id);
-    toast.success(robot.running ? `${robot.name} stopped` : `${robot.name} started`);
+  const [starting, setStarting] = useState(false);
+
+  const handleStart = async () => {
+    if (!robot || starting) return;
+    setStarting(true);
+    try {
+      if (robot.running) {
+        toggleRobot(robot.id);
+        toast.success(`${robot.name} stopped`);
+        return;
+      }
+      // Live execution attempt first — the START action places a real order
+      // through the provider when it is configured and confirms.
+      const symbol = robot.symbols[0] ?? "XAUUSD";
+      const result = await executeLiveTrade({
+        data: {
+          eaName: robot.name,
+          symbol,
+          direction: "BUY",
+          lotSize: "0.01",
+        },
+      });
+      if (!result.ok) {
+        toast.error(result.message);
+        return;
+      }
+      toggleRobot(robot.id);
+      toast.success(`${robot.name} started — ${symbol} order confirmed`);
+    } finally {
+      setStarting(false);
+    }
   };
 
   const handleQuotes = () => {
@@ -127,7 +155,7 @@ function AppHome() {
         <ThemeContent
           robot={robot}
           robots={app.robots}
-          onStart={handleStart}
+          onStart={() => void handleStart()}
           onQuotes={handleQuotes}
           onRemove={handleRemove}
           onOpenScanner={() => {
