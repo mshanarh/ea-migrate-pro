@@ -7,6 +7,7 @@ export const ACCENT_COLORS = [
   { id: "neon-green", name: "Neon Green", value: "#00FF88" },
   { id: "electric-blue", name: "Electric Blue", value: "#0096FF" },
   { id: "void-purple", name: "Void Purple", value: "#8A2BE2" },
+  { id: "blueprint-blue", name: "Blueprint Blue", value: "#0066FF" },
 ] as const;
 
 export const INTERFACE_THEMES = [

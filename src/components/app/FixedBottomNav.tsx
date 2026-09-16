@@ -1,11 +1,11 @@
 import { Link, useRouterState } from "@tanstack/react-router";
-import { House, Server, Settings } from "lucide-react";
+import { House, Server, ScanLine } from "lucide-react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 const tabs = [
   { to: "/app/metatrader", label: "METATRADER", icon: Server },
   { to: "/app/home", label: "HOME", icon: House },
-  { to: "/app/settings", label: "SETTINGS", icon: Settings },
+  { to: "/app/scanner", label: "SCANNER", icon: ScanLine },
 ] as const;
 
 /**

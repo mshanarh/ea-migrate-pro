@@ -4,6 +4,7 @@ import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customi
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
+import { RobotMedia } from "@/components/app/RobotMedia";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
@@ -72,7 +73,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
         className="relative w-full overflow-hidden rounded-[32px] bg-[#0a0a0a]"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
-        <img src={image} alt="" className="absolute inset-0 size-full object-cover" />
+        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.22)_36%,rgba(0,0,0,0.88)_78%,rgba(0,0,0,0.96)_100%)]" />
         <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
           <h1
@@ -133,7 +134,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
   const image = robot?.image || "/ea-migrate-platform-robot.jpg";
   return (
     <div className="relative flex min-h-[62vh] flex-col items-center justify-center gap-7 overflow-hidden rounded-[32px] bg-black px-5 py-10">
-      <img src={image} alt="" className="absolute inset-0 size-full object-cover opacity-45" />
+      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(0,0,0,0)_0%,rgba(0,0,0,0.72)_58%,rgba(0,0,0,0.94)_100%)]" />
 
       <div className="relative flex flex-col items-center">
@@ -144,7 +145,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
           className="flex size-52 items-center justify-center rounded-full border-4 bg-black p-1.5"
           style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}59` }}
         >
-          <img src={image} alt="" className="size-full rounded-full object-cover" />
+          <RobotMedia image={image} video={robot?.video} variant="avatar" className="size-full rounded-full object-cover" />
         </motion.span>
 
         <p className="mt-7 text-sm font-bold tracking-[0.34em] text-white/60 uppercase">You're trading with</p>
@@ -200,7 +201,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
         className="relative w-full overflow-hidden rounded-b-[36px] bg-[#0a0a0a]"
       >
-        <img src={image} alt="" className="absolute inset-0 size-full object-cover" />
+        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_40%,rgba(0,0,0,0.9)_92%)]" />
         <div className="relative flex min-h-[420px] flex-col items-center justify-end pb-9">
           <h1
@@ -264,7 +265,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
         className="relative w-full overflow-hidden rounded-[32px] bg-[#0a0a0a]"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
-        <img src={image} alt="" className="absolute inset-0 size-full object-cover" />
+        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0.25)_38%,rgba(0,0,0,0.86)_78%,rgba(0,0,0,0.95)_100%)]" />
 
         <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
