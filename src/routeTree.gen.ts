@@ -20,6 +20,7 @@ import { Route as AppActivateRouteImport } from './routes/app.activate'
 import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
 import { Route as AppScannerRouteImport } from './routes/app.scanner'
+import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
@@ -85,6 +86,11 @@ const AppScannerRoute = AppScannerRouteImport.update({
   path: '/app/scanner',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/app/settings',
+  path: '/app/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -142,6 +148,7 @@ export interface FileRoutesByFullPath {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -163,6 +170,7 @@ export interface FileRoutesByTo {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -186,6 +194,7 @@ export interface FileRoutesById {
   '/app/home': typeof AppHomeRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/profile': typeof DashboardProfileRoute
@@ -210,6 +219,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/app/scanner'
+    | '/app/settings'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -231,6 +241,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/app/scanner'
+    | '/app/settings'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -253,6 +264,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/metatrader'
     | '/app/scanner'
+    | '/app/settings'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/profile'
@@ -276,6 +288,7 @@ export interface RootRouteChildren {
   AppHomeRoute: typeof AppHomeRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
   AppScannerRoute: typeof AppScannerRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -357,6 +370,13 @@ declare module '@tanstack/react-router' {
       path: '/app/scanner'
       fullPath: '/app/scanner'
       preLoaderRoute: typeof AppScannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/app/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/': {
@@ -462,6 +482,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppHomeRoute: AppHomeRoute,
   AppMetatraderRoute: AppMetatraderRoute,
   AppScannerRoute: AppScannerRoute,
+  AppSettingsRoute: AppSettingsRoute,
   MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
 }

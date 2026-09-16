@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { AppTabBar } from "@/components/AppTabBar";
+import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { connectMt, useAppState, type MtAccount } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -73,7 +73,7 @@ function AppMetatrader() {
           </button>
         </form>
       </main>
-      <AppTabBar />
+      <FixedBottomNav />
     </div>
   );
 }
