@@ -11,7 +11,7 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import { activateKey, removeRobot, toggleRobot, useAppState } from "@/lib/app-store";
+import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -126,11 +126,19 @@ function AppHome() {
       <main className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-6 px-5 pt-8 pb-40">
         <ThemeContent
           robot={robot}
+          robots={app.robots}
           onStart={handleStart}
           onQuotes={handleQuotes}
           onRemove={handleRemove}
           onOpenScanner={() => {
             window.location.assign("/app/scanner");
+          }}
+          onOpenSymbols={() => {
+            window.location.assign("/app/metatrader");
+          }}
+          onSelectRobot={(id) => {
+            setActiveRobot(id);
+            toast.success("Robot selected");
           }}
           onOpenAdd={() => setModalOpen(true)}
         />

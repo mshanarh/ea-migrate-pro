@@ -3,14 +3,18 @@ import { ChartLine, Info, MessageCircle, Play, Plus, ScanFace, ScanLine, Trash2,
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
+import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
+  robots?: Robot[];
   onStart: () => void;
   onQuotes: () => void;
   onRemove: () => void;
   onOpenScanner: () => void;
   onOpenAdd: () => void;
+  onOpenSymbols?: () => void;
+  onSelectRobot?: (id: string) => void;
 };
 
 function PoweredBadge({ accent }: { accent: string }) {
@@ -351,6 +355,19 @@ export function ThemeContent(props: ThemeContentProps) {
   }
   if (theme === "PRIME FORGE") {
     return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "BLUEPRINT EDGE") {
+    return (
+      <BlueprintEdge
+        robot={props.robot}
+        robots={props.robots ?? (props.robot ? [props.robot] : [])}
+        onStart={props.onStart}
+        onRemove={props.onRemove}
+        onOpenSymbols={props.onOpenSymbols ?? props.onOpenScanner}
+        onOpenAdd={props.onOpenAdd}
+        onSelectRobot={props.onSelectRobot ?? (() => {})}
+      />
+    );
   }
   return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} onOpenScanner={props.onOpenScanner} />;
 }

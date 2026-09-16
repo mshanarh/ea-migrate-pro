@@ -14,6 +14,7 @@ export const INTERFACE_THEMES = [
   { id: "PHANTOM PULSE", name: "PHANTOM PULSE", description: "Circular glow" },
   { id: "TITAN EDGE", name: "TITAN EDGE", description: "Aggressive scanner" },
   { id: "PRIME FORGE", name: "PRIME FORGE", description: "Key activation classic" },
+  { id: "BLUEPRINT EDGE", name: "BLUEPRINT EDGE", description: "Blue robot console" },
 ] as const;
 
 export const FONT_OPTIONS = [
