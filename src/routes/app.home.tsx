@@ -153,8 +153,9 @@ function AppHome() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-6 px-5 pt-8 pb-40">
+    <div className="app-fullscreen bg-black text-white" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="app-scroll-area">
+      <main className="mx-auto flex min-h-full w-full max-w-md flex-col gap-6 px-5 pt-8 pb-40">
         <ThemeContent
           robot={robot}
           robots={app.robots}
@@ -174,6 +175,7 @@ function AppHome() {
           onOpenAdd={() => setModalOpen(true)}
         />
       </main>
+      </div>
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <ExecutionToast open={execToastOpen} eaName={robot?.name ?? "Robot"} onClose={() => setExecToastOpen(false)} />

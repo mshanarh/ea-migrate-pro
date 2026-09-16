@@ -38,8 +38,9 @@ function AppMetatrader() {
   };
 
   return (
-    <div className="min-h-screen bg-black text-white">
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col gap-6 px-5 pt-10 pb-36">
+    <div className="app-fullscreen bg-black text-white">
+      <div className="app-scroll-area">
+      <main className="mx-auto flex min-h-full w-full max-w-md flex-col gap-6 px-5 pt-10 pb-36">
         <div>
           <h1 className="text-3xl font-black tracking-tight">MetaTrader</h1>
           <p className="mt-2 text-sm text-white/55">
@@ -73,6 +74,7 @@ function AppMetatrader() {
           </button>
         </form>
       </main>
+      </div>
       <FixedBottomNav />
     </div>
   );

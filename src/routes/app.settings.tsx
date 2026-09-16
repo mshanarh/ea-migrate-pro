@@ -15,8 +15,9 @@ export const Route = createFileRoute("/app/settings")({
 
 function AppSettings() {
   return (
-    <div className="min-h-screen bg-black text-white">
-      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col px-5 pt-10 pb-40">
+    <div className="app-fullscreen bg-black text-white">
+      <div className="app-scroll-area">
+      <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-10 pb-40">
         <div className="pb-2">
           <h1 className="text-3xl font-black tracking-tight">Settings</h1>
           <p className="mt-2 text-sm text-white/55">
@@ -27,6 +28,7 @@ function AppSettings() {
           <CustomizationPanel />
         </div>
       </main>
+      </div>
       <FixedBottomNav />
     </div>
   );

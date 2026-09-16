@@ -155,6 +155,36 @@
   box-shadow: var(--glow-soft);
 }
 
+/* Full-screen app shell: fill the real viewport on mobile (notches, browser chrome),
+   lock overscroll, and let app pages scroll inside the shell so the bottom nav stays visible. */
+html,
+body {
+  height: 100%;
+  overscroll-behavior: none;
+  background-color: #000;
+}
+
+#root,
+[data-slot="router-outlet"],
+[data-viewport] {
+  min-height: 100%;
+}
+
+.app-fullscreen {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-fullscreen .app-scroll-area {
+  height: 100%;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+}
+.app-fullscreen .app-scroll-area::-webkit-scrollbar {
+  display: none;
+}
+
 /* Brighter portal variant, toggled from the portal header. */
 .portal-bright .panel {
   background: linear-gradient(180deg, #1a222d, #151b23);
