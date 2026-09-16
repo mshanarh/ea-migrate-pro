@@ -12,6 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import ExecutionToast from "@/components/app/ExecutionToast";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
 import { executeLiveTrade } from "@/lib/execution-api";
 
@@ -118,6 +119,8 @@ function AppHome() {
       }
       // The L_FX execution popup narrates the run while the live order is placed.
       window.triggerExecutionToast?.(robot.name);
+      // The draggable "It Started 🚀" bot popup floats above the page.
+      window.showBotStarted?.(robot.name);
       // Live execution attempt — the START action places a real order
       // through the provider when it is configured and confirms.
       const symbol = robot.symbols[0] ?? "XAUUSD";
@@ -178,6 +181,7 @@ function AppHome() {
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <ExecutionToast />
+      <DraggableBotPopup />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>
