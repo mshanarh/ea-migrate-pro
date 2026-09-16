@@ -23,6 +23,7 @@ import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licens
 import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
+import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
 import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website'
 import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
 
@@ -96,6 +97,11 @@ const DashboardStatsRoute = DashboardStatsRouteImport.update({
   path: '/stats',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardWalletRoute = DashboardWalletRouteImport.update({
+  id: '/wallet',
+  path: '/wallet',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardWebsiteRoute = DashboardWebsiteRouteImport.update({
   id: '/website',
   path: '/website',
@@ -120,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard/wallet': typeof DashboardWalletRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
@@ -137,6 +144,7 @@ export interface FileRoutesByTo {
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard/wallet': typeof DashboardWalletRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
   '/mentor/$slug': typeof MentorSlugRoute
   '/app': typeof AppIndexRoute
@@ -156,6 +164,7 @@ export interface FileRoutesById {
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
+  '/dashboard/wallet': typeof DashboardWalletRoute
   '/dashboard/website': typeof DashboardWebsiteRoute
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
@@ -176,6 +185,7 @@ export interface FileRouteTypes {
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
+    | '/dashboard/wallet'
     | '/dashboard/website'
     | '/mentor/$slug'
     | '/app/'
@@ -193,6 +203,7 @@ export interface FileRouteTypes {
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
+    | '/dashboard/wallet'
     | '/dashboard/website'
     | '/mentor/$slug'
     | '/app'
@@ -211,6 +222,7 @@ export interface FileRouteTypes {
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
+    | '/dashboard/wallet'
     | '/dashboard/website'
     | '/mentor/$slug'
     | '/app/'
@@ -329,6 +341,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardStatsRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/wallet': {
+      id: '/dashboard/wallet'
+      path: '/wallet'
+      fullPath: '/dashboard/wallet'
+      preLoaderRoute: typeof DashboardWalletRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/website': {
       id: '/dashboard/website'
       path: '/website'
@@ -352,6 +371,7 @@ interface DashboardRouteChildren {
   DashboardProfileRoute: typeof DashboardProfileRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
+  DashboardWalletRoute: typeof DashboardWalletRoute
   DashboardWebsiteRoute: typeof DashboardWebsiteRoute
   DashboardIndexRoute: typeof DashboardIndexRoute
 }
@@ -362,6 +382,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardProfileRoute: DashboardProfileRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
+  DashboardWalletRoute: DashboardWalletRoute,
   DashboardWebsiteRoute: DashboardWebsiteRoute,
   DashboardIndexRoute: DashboardIndexRoute,
 }
