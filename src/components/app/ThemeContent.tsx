@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Info, Play, Plus, ScanFace, ScanLine, Trash2, Waves } from "lucide-react";
+import { ChartLine, Info, MessageCircle, Play, Plus, ScanFace, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
@@ -246,6 +246,74 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
   );
 }
 
+/* ---------------- PRIME FORGE (key-activation classic) ---------------- */
+
+function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
+  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  return (
+    <div className="flex flex-col gap-6">
+      <motion.section
+        layout
+        initial={{ opacity: 0, y: 22 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full overflow-hidden rounded-[32px] bg-[#0a0a0a]"
+        style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
+      >
+        <img src={image} alt="" className="absolute inset-0 size-full object-cover" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0.25)_38%,rgba(0,0,0,0.86)_78%,rgba(0,0,0,0.95)_100%)]" />
+
+        <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
+          <div className="absolute top-4 left-4 flex flex-col items-center gap-3">
+            <button
+              type="button"
+              aria-label="Chat with support"
+              className="flex size-11 items-center justify-center rounded-full border border-white/20 bg-black/55 text-white backdrop-blur-sm transition-colors hover:bg-black/75"
+            >
+              <MessageCircle className="size-5" />
+            </button>
+            <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-black/55 backdrop-blur-sm">
+              <img src="/botlogic-mascot.png" alt="" className="size-full rounded-full object-cover" />
+              <span className="absolute -bottom-0.5 left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-black bg-[#22C55E]" />
+            </span>
+          </div>
+
+          <h1
+            className="text-center text-3xl font-black tracking-[0.08em] text-white uppercase"
+            style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
+          >
+            {robot?.name ?? "YOUR ROBOT"}
+          </h1>
+
+          <div className="mt-8 grid w-full max-w-xs grid-cols-3 gap-2">
+            {actions.map(({ label, icon: Icon, onClick }) => (
+              <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-2 py-1">
+                <Icon className="size-9 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} strokeWidth={2.2} />
+                <span className="text-xs font-bold tracking-[0.14em]" style={{ color: accent }}>{label}</span>
+              </button>
+            ))}
+          </div>
+
+          <p className="mt-7 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase">Powered by Ea migrate</p>
+        </div>
+      </motion.section>
+
+      <button
+        type="button"
+        onClick={onOpenAdd}
+        className="flex h-24 w-full items-center gap-5 rounded-[32px] px-7 text-left transition-transform active:scale-[0.98]"
+        style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
+      >
+        <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
+        <span className="flex flex-col">
+          <span className="text-xl font-black tracking-wide text-white">ADD ROBOT</span>
+          <span className="text-xs font-semibold tracking-[0.22em] text-white/80">HOST ROBOT KEY</span>
+        </span>
+      </button>
+    </div>
+  );
+}
+
 /* ---------------- SWITCH ---------------- */
 
 export function ThemeContent(props: ThemeContentProps) {
@@ -257,7 +325,7 @@ export function ThemeContent(props: ThemeContentProps) {
     return (
       <div className="flex flex-col gap-6">
         <EmptyRobot accent={accent} onOpenAdd={props.onOpenAdd} />
-        {theme === "NOVA CORE" && (
+        {(theme === "NOVA CORE" || theme === "PRIME FORGE") && (
           <button
             type="button"
             onClick={props.onOpenAdd}
@@ -280,6 +348,9 @@ export function ThemeContent(props: ThemeContentProps) {
   }
   if (theme === "TITAN EDGE") {
     return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} />;
+  }
+  if (theme === "PRIME FORGE") {
+    return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
   }
   return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} onOpenScanner={props.onOpenScanner} />;
 }

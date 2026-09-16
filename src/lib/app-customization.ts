@@ -13,6 +13,7 @@ export const INTERFACE_THEMES = [
   { id: "NOVA CORE", name: "NOVA CORE", description: "Clean & bold" },
   { id: "PHANTOM PULSE", name: "PHANTOM PULSE", description: "Circular glow" },
   { id: "TITAN EDGE", name: "TITAN EDGE", description: "Aggressive scanner" },
+  { id: "PRIME FORGE", name: "PRIME FORGE", description: "Key activation classic" },
 ] as const;
 
 export const FONT_OPTIONS = [
