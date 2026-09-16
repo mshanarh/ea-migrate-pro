@@ -264,22 +264,42 @@ function Home() {
       <main>
         <section className="relative overflow-hidden hero-glow">
           <div className="mx-auto max-w-6xl px-5 pt-16 pb-20 text-center">
-            <span className="inline-flex items-center gap-2 rounded-full border border-[#38BDF8]/30 bg-[#1A2332] px-4 py-1.5 text-xs font-semibold tracking-[0.2em] text-[#38BDF8] uppercase">
+            <motion.span
+              initial={{ opacity: 0, y: 16 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, ease: "easeOut" }}
+              className="inline-flex items-center gap-2 rounded-full border border-[#38BDF8]/30 bg-[#1A2332] px-4 py-1.5 text-xs font-semibold tracking-[0.2em] text-[#38BDF8] uppercase"
+            >
               <Sparkles className="size-3.5" /> EA HOSTING PLATFORM
-            </span>
+            </motion.span>
 
-            <h1 className="mt-8 text-4xl leading-[1.05] font-bold text-white sm:text-6xl">
+            <motion.h1
+              initial={{ opacity: 0, y: 22 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
+              className="mt-8 text-4xl leading-[1.05] font-bold text-white sm:text-6xl"
+            >
               Your Mentor&apos;s
               <br />
               <span className="text-[#38BDF8]">Robot</span>
-            </h1>
+            </motion.h1>
 
-            <p className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg">
+            <motion.p
+              initial={{ opacity: 0, y: 22 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
+              className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg"
+            >
               EA Migrate Pro turns your strategy into a working MT4 or MT5 Expert Advisor —
               built visually, backtested in seconds and hosted around the clock.
-            </p>
+            </motion.p>
 
-            <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+            <motion.div
+              initial={{ opacity: 0, y: 22 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.6, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
+              className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
+            >
               <Button asChild size="lg" className="w-full rounded-full sm:w-auto">
                 <Link to="/signup">Create your portal</Link>
               </Button>
@@ -294,7 +314,7 @@ function Home() {
                   <Download className="size-4" /> See how it works
                 </a>
               </Button>
-            </div>
+            </motion.div>
 
             <div
               className="relative mx-auto mt-14 w-[260px] sm:w-[300px] md:w-[400px]"
@@ -338,8 +358,16 @@ function Home() {
           </p>
 
           <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {features.map((f) => (
-              <article key={f.title} className="panel p-6">
+            {features.map((f, index) => (
+              <motion.article
+                key={f.title}
+                initial={{ opacity: 0, y: 26 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: 0.5, delay: (index % 3) * 0.08, ease: [0.22, 1, 0.36, 1] }}
+                whileHover={{ y: -4 }}
+                className="panel p-6"
+              >
                 <span className="flex size-11 items-center justify-center rounded-xl bg-primary/12 glow-ring">
                   <f.icon className="size-5 text-primary" />
                 </span>
@@ -347,7 +375,7 @@ function Home() {
                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
                   {f.body}
                 </p>
-              </article>
+              </motion.article>
             ))}
           </div>
         </section>
@@ -362,8 +390,15 @@ function Home() {
             </h2>
 
             <ol className="mt-14 grid gap-16 sm:grid-cols-2 sm:gap-12 lg:grid-cols-4">
-              {steps.map((s) => (
-                <li key={s.n} className="flex flex-col items-center">
+              {steps.map((s, index) => (
+                <motion.li
+                  key={s.n}
+                  initial={{ opacity: 0, y: 26 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true, margin: "-60px" }}
+                  transition={{ duration: 0.5, delay: index * 0.1, ease: [0.22, 1, 0.36, 1] }}
+                  className="flex flex-col items-center"
+                >
                   <span className="relative flex size-[136px] items-center justify-center rounded-3xl border border-primary/25 bg-card/60 glow-ring">
                     <s.icon className="size-11 text-primary" strokeWidth={1.5} />
                     <span className="absolute -top-4 -right-4 flex size-11 items-center justify-center rounded-2xl bg-primary text-sm font-bold text-primary-foreground shadow-glow">
@@ -372,7 +407,7 @@ function Home() {
                   </span>
                   <h3 className="mt-8 text-2xl font-bold">{s.t}</h3>
                   <p className="mt-3 max-w-xs text-base text-muted-foreground">{s.d}</p>
-                </li>
+                </motion.li>
               ))}
             </ol>
 
@@ -398,8 +433,16 @@ function Home() {
           </h2>
 
           <div className="mt-12 grid gap-6 text-left lg:grid-cols-3">
-            {why.map((w) => (
-              <article key={w.n} className="panel relative overflow-hidden p-7">
+            {why.map((w, index) => (
+              <motion.article
+                key={w.n}
+                initial={{ opacity: 0, y: 26 }}
+                whileInView={{ opacity: 1, y: 0 }}
+                viewport={{ once: true, margin: "-60px" }}
+                transition={{ duration: 0.5, delay: index * 0.09, ease: [0.22, 1, 0.36, 1] }}
+                whileHover={{ y: -4 }}
+                className="panel relative overflow-hidden p-7"
+              >
                 <span className="pointer-events-none absolute top-4 right-6 text-5xl font-bold text-foreground/5">
                   {w.n}
                 </span>
@@ -408,7 +451,7 @@ function Home() {
                 </span>
                 <h3 className="mt-7 text-2xl font-bold">{w.t}</h3>
                 <p className="mt-3 text-base leading-relaxed text-muted-foreground">{w.d}</p>
-              </article>
+              </motion.article>
             ))}
           </div>
         </section>
@@ -442,7 +485,13 @@ function Home() {
         </section>
 
         <section id="download" className="mx-auto max-w-3xl px-5 pb-20">
-          <div className="panel border-primary/30 px-6 py-14 text-center glow-ring">
+          <motion.div
+            initial={{ opacity: 0, y: 26 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: "-60px" }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+            className="panel border-primary/30 px-6 py-14 text-center glow-ring"
+          >
             <h2 className="text-3xl font-bold sm:text-4xl">Put your EAs on autopilot.</h2>
             <p className="mx-auto mt-4 max-w-md text-base text-muted-foreground">
               Install the app, link your MT account and let your strategies trade around the
@@ -461,7 +510,7 @@ function Home() {
                 Get iOS App
               </Button>
             </div>
-          </div>
+          </motion.div>
         </section>
       </main>
 
