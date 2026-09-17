@@ -165,13 +165,20 @@
   box-sizing: border-box;
 }
 
+/* Overflow safety: nothing may stretch the page horizontally. */
 html,
-body {
+body,
+#root {
   width: 100%;
-  height: 100dvh;
+  max-width: 100vw;
   overflow-x: hidden;
+}
+
+/* Body grows with content; app pages lock their own 100dvh shell. */
+body {
+  min-height: 100dvh;
+  height: auto;
   background-color: #000;
-  overscroll-behavior: none;
 }
 
 /* Never let a stray wide element or media file stretch the page. */

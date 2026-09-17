@@ -25,7 +25,7 @@ function AppSettings() {
             Colors, interface styles and fonts — changes apply instantly and are saved on this device.
           </p>
         </div>
-        <div className="flex-1">
+        <div className="mx-0 w-full max-w-full flex-1 overflow-hidden">
           <CustomizationPanel />
         </div>
       </main>
