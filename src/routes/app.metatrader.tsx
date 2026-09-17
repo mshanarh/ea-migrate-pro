@@ -37,6 +37,9 @@ const BROKER_SERVERS: Record<string, string[]> = {
   FTMO: ["FTMO-Server", "FTMO-Demo"],
 };
 
+/** Popular brokers offered as suggestions — any broker is accepted. */
+const POPULAR_BROKERS = Object.keys(BROKER_SERVERS);
+
 const labelClass = "text-[11px] font-bold tracking-[0.28em] text-white/40 uppercase";
 const fieldClass =
   "h-14 w-full rounded-2xl border border-white/[0.07] bg-[#141414] px-5 text-base text-white outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25 focus:bg-[#181818] focus:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]";
@@ -101,7 +104,7 @@ function AppMetatrader() {
   const accent = accentColorValue(color);
   const mt = app.mt;
 
-  const [broker, setBroker] = useState(mt?.broker && BROKER_SERVERS[mt.broker] ? mt.broker : "");
+  const [broker, setBroker] = useState(mt?.broker ?? "");
   const [server, setServer] = useState(mt?.server ?? "");
   const [accountType, setAccountType] = useState(mt?.accountType ?? "Standard");
   const [loginId, setLoginId] = useState(mt?.loginId ?? "");
@@ -264,13 +267,19 @@ function AppMetatrader() {
             <motion.div custom={0} variants={stagger} initial="hidden" animate="show">
               <label className={labelClass} htmlFor="mt5-broker">Broker</label>
               <div className="mt-2.5">
-                <DarkSelect
+                <input
+                  id="mt5-broker"
                   value={broker}
-                  onChange={setBroker}
-                  placeholder="Select your broker"
-                  options={Object.keys(BROKER_SERVERS)}
-                  ariaLabel="Broker"
+                  onChange={(event) => setBroker(event.target.value)}
+                  placeholder="Any broker — e.g. Exness"
+                  aria-label="Broker"
+                  autoComplete="off"
+                  className={fieldClass}
+                  list="mt5-broker-suggestions"
                 />
+                <datalist id="mt5-broker-suggestions">
+                  {POPULAR_BROKERS.map((item) => <option key={item} value={item} />)}
+                </datalist>
               </div>
             </motion.div>
 
