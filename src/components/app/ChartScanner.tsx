@@ -3,10 +3,11 @@ import { useEffect, useRef, useState } from "react";
 /**
  * ChartScanner — the AI Scanner experience.
  *
- * Always opens straight into the scanner — never an empty-state dead end.
- * The user manages their OWN symbols right here: chips are additive and
- * persistent (localStorage), seeded from the mentor's EA symbols. Pressing
- * Scan without a chart opens the picture picker and scans automatically.
+ * The SYMBOL chips are exactly the symbols the mentor attached to the EA on
+ * the portal. No mentor symbols = nothing to scan (clear guidance shown).
+ * The Scan button stays locked until the user has: selected a symbol,
+ * uploaded the chart screenshot, and set lot size + trades. Execute only
+ * appears in the result view after a completed scan.
  *
  * Everything follows the user's accent color from the customization drawer.
  */
@@ -38,27 +39,6 @@ const SCAN_STEPS = [
 
 const MAX_CHART_BYTES = 5 * 1024 * 1024;
 
-const CUSTOM_KEY = "eamp.scanner.customSymbols";
-const HIDDEN_KEY = "eamp.scanner.hiddenSymbols";
-
-function loadList(key: string): string[] {
-  try {
-    const raw = localStorage.getItem(key);
-    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveList(key: string, list: string[]) {
-  try {
-    localStorage.setItem(key, JSON.stringify(list));
-  } catch {
-    /* ignore */
-  }
-}
-
 export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props) {
   const [symbol, setSymbol] = useState("");
   const [trades, setTrades] = useState(5);
@@ -69,25 +49,26 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
   const [chartSrc, setChartSrc] = useState<string | null>(null);
   const [chartError, setChartError] = useState("");
   const [autoScanPending, setAutoScanPending] = useState(false);
-  const [newSymbol, setNewSymbol] = useState("");
-  const [adding, setAdding] = useState(false);
-  const [customSymbols, setCustomSymbols] = useState<string[]>([]);
-  const [hiddenSymbols, setHiddenSymbols] = useState<string[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Effective chips: mentor's EA symbols + user's own additions − user's removals.
-  const chips = Array.from(new Set([...symbols, ...customSymbols])).filter((item) => !hiddenSymbols.includes(item));
+  const hasSymbols = symbols.length > 0;
+  const lotValid = Number(lot) > 0;
+  // Scan lock: needs a mentor symbol, the chart screenshot, and valid settings.
+  const scanLocked = !hasSymbols || !symbol || !chartSrc || !lotValid || trades < 1;
+  const lockReason = !hasSymbols
+    ? "Your mentor has not added symbols to this EA yet"
+    : !symbol
+      ? "Select a symbol first"
+      : !chartSrc
+        ? "Upload a chart screenshot first"
+        : !lotValid
+          ? "Set a lot size"
+          : "";
 
-  // Load persisted user symbols once.
+  // Preselect the first mentor symbol and its saved lot/trades once known.
   useEffect(() => {
-    setCustomSymbols(loadList(CUSTOM_KEY));
-    setHiddenSymbols(loadList(HIDDEN_KEY));
-  }, []);
-
-  // Preselect the first symbol and its saved lot/trades once chips are known.
-  useEffect(() => {
-    if (chips.length === 0 || symbol) return;
-    const first = chips[0];
+    if (symbols.length === 0 || symbol) return;
+    const first = symbols[0];
     if (!first) return;
     setSymbol(first);
     const saved = pairs.find((pair) => pair.symbol === first);
@@ -95,7 +76,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
     const savedTrades = Number(saved?.maxTrades ?? 0);
     setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chips.length]);
+  }, [symbols]);
 
   const pickChart = (file: File | undefined) => {
     if (!file) return;
@@ -142,47 +123,13 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
 
   /** Scan button: no chart yet → open the picker and scan as soon as it's chosen. */
   const startScan = () => {
-    if (scanning) return;
+    if (scanning || scanLocked) return;
     if (!chartSrc) {
       setAutoScanPending(true);
       fileInputRef.current?.click();
       return;
     }
     runScan();
-  };
-
-  const addSymbol = () => {
-    const clean = newSymbol.trim().toUpperCase().replace(/\s+/g, "");
-    if (!clean) return;
-    if (chips.includes(clean)) {
-      setNewSymbol("");
-      setAdding(false);
-      setSymbol(clean);
-      return;
-    }
-    const nextCustom = Array.from(new Set([...customSymbols, clean]));
-    setCustomSymbols(nextCustom);
-    saveList(CUSTOM_KEY, nextCustom);
-    const nextHidden = hiddenSymbols.filter((item) => item !== clean);
-    setHiddenSymbols(nextHidden);
-    saveList(HIDDEN_KEY, nextHidden);
-    setSymbol(clean);
-    setNewSymbol("");
-    setAdding(false);
-  };
-
-  const removeSymbol = (target: string) => {
-    if (symbols.includes(target)) {
-      // Mentor symbol — hide it on this device.
-      const nextHidden = Array.from(new Set([...hiddenSymbols, target]));
-      setHiddenSymbols(nextHidden);
-      saveList(HIDDEN_KEY, nextHidden);
-    } else {
-      const nextCustom = customSymbols.filter((item) => item !== target);
-      setCustomSymbols(nextCustom);
-      saveList(CUSTOM_KEY, nextCustom);
-    }
-    if (symbol === target) setSymbol("");
   };
 
   const selectSymbol = (item: string) => {
@@ -286,84 +233,28 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             </div>
           )}
 
-          {/* SYMBOL — user-managed chips, persistent on this device */}
+          {/* SYMBOL — exactly the mentor's EA symbols; the user picks one */}
           <div className="mx-3 mt-4 rounded-[20px] border border-white/5 bg-[#151515] p-4">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
-              <button
-                type="button"
-                onClick={() => setAdding((value) => !value)}
-                className="rounded-full px-3 py-1 text-[11px] font-bold"
-                style={{ background: `${accent}22`, color: accent }}
-              >
-                {adding ? "CLOSE" : "+ ADD"}
-              </button>
+              <p className="text-[10px] font-bold text-white/25">{symbols.length} FROM YOUR EA</p>
             </div>
-
-            {adding && (
-              <div className="mb-3 flex gap-2">
-                <input
-                  value={newSymbol}
-                  onChange={(event) => setNewSymbol(event.target.value.toUpperCase())}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") {
-                      event.preventDefault();
-                      addSymbol();
-                    }
-                  }}
-                  placeholder="e.g. XAUUSD, BTCUSD, EURGBP"
-                  aria-label="New symbol"
-                  autoFocus
-                  className="h-11 flex-1 rounded-full border border-white/10 bg-[#222] px-4 text-sm text-white outline-none placeholder:text-white/25 focus:border-white/30"
-                />
-                <button
-                  type="button"
-                  onClick={addSymbol}
-                  className="h-11 rounded-full px-5 text-sm font-bold text-white"
-                  style={{ background: accent }}
-                >
-                  ADD
-                </button>
-              </div>
-            )}
-
             <div className="flex flex-wrap gap-2">
-              {chips.map((item) => (
-                <span key={item} className="relative">
-                  <button
-                    type="button"
-                    onClick={() => selectSymbol(item)}
-                    className="rounded-full px-5 py-2.5 text-[13px] font-bold transition-colors"
-                    style={symbol === item ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
-                  >
-                    {item}
-                  </button>
-                  {!scanning && symbol === item && (
-                    <button
-                      type="button"
-                      aria-label={`Remove ${item}`}
-                      onClick={() => removeSymbol(item)}
-                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full border border-black bg-[#3a3a3a] text-[10px] font-bold text-white/80 hover:bg-red-500"
-                    >
-                      ✕
-                    </button>
-                  )}
-                </span>
-              ))}
-              {chips.length === 0 && !adding && (
+              {symbols.map((item) => (
                 <button
+                  key={item}
                   type="button"
-                  onClick={() => setAdding(true)}
-                  className="rounded-full border border-dashed px-5 py-2.5 text-[13px] font-bold"
-                  style={{ borderColor: `${accent}66`, color: accent }}
+                  onClick={() => selectSymbol(item)}
+                  className="rounded-full px-5 py-2.5 text-[13px] font-bold transition-colors"
+                  style={symbol === item ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
                 >
-                  + Add your first symbol
+                  {item}
                 </button>
-              )}
+              ))}
             </div>
-            {chips.length === 0 && !adding && (
-              <p className="mt-3 text-[11px] text-white/30">
-                Add any symbols you want to scan — they stay saved on this device.
+            {!hasSymbols && (
+              <p className="mt-3 text-[12px] font-semibold text-white/45">
+                No symbols on this EA yet — your mentor adds them on the portal when creating the EA. Until then scanning is locked.
               </p>
             )}
           </div>
@@ -373,7 +264,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             <div className="flex items-center justify-between p-4">
               <div>
                 <p className="font-bold text-white">Trades</p>
-                <p className="text-[11px] text-white/30">Max 20 per scan</p>
+                <p className="text-[11px] text-white/30">Max 20 per scan · set before scanning</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
@@ -411,16 +302,19 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             </div>
           </div>
 
-          {/* Scan button */}
+          {/* Scan button — locked until symbol + chart + lot + trades are all set */}
           <button
             type="button"
             onClick={startScan}
-            disabled={scanning || !symbol}
+            disabled={scanning || scanLocked}
             className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60"
-            style={{ background: accent, boxShadow: `0 0 20px ${accent}66` }}
+            style={{ background: accent, boxShadow: scanLocked ? "none" : `0 0 20px ${accent}66` }}
           >
-            <span className="text-[15px]">⌜⌝</span> {scanning ? "SCANNING..." : chartSrc ? `Scan ${symbol}` : "Upload chart & scan"}
+            <span className="text-[15px]">⌜⌝</span> {scanning ? "SCANNING..." : `Scan ${symbol || "chart"}`}
           </button>
+          {scanLocked && !scanning && lockReason && (
+            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">🔒 {lockReason}</p>
+          )}
         </>
       ) : (
         /* ---------- RESULT VIEW ---------- */
