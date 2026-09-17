@@ -13,7 +13,6 @@ import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import ExecutionToast from "@/components/app/ExecutionToast";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import ScanStepsOverlay from "@/components/app/ScanStepsOverlay";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
 import { DAILY_LIMIT, registerScan, useTradingPairsStore } from "@/lib/trading-pairs-store";
 import { executeLiveTrade } from "@/lib/execution-api";
@@ -85,7 +84,6 @@ function AppHome() {
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [limitOpen, setLimitOpen] = useState(false);
-  const [scanOpen, setScanOpen] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   const { userPairs } = useTradingPairsStore();
@@ -138,11 +136,9 @@ function AppHome() {
     }
     setStarting(true);
     try {
-      // The L_FX execution popup narrates the run while the live order is placed.
-      window.triggerExecutionToast?.(robot.name);
-      // The draggable "It Started 🚀" bot popup floats above the page.
+      // The draggable "It Started 🚀" bot popup (with the bot's own picture) is
+      // the only thing that appears on START — execution narrates from the scanner.
       window.showBotStarted?.(robot.name);
-      setScanOpen(true);
       // Live execution attempt — the START action places a real order
       // through the provider when it is configured and confirms.
       const symbol = myPairs[0]?.symbol ?? robot.symbols[0] ?? "XAUUSD";
@@ -177,9 +173,13 @@ function AppHome() {
   };
 
   return (
-    <div className="app-fullscreen bg-black text-white" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div
+      className="app-fullscreen flex w-full flex-col bg-black text-white"
+      onTouchStart={onTouchStart}
+      onTouchEnd={onTouchEnd}
+    >
       <div className="app-scroll-area">
-      <main className="mx-auto flex min-h-full w-full max-w-md flex-col gap-6 px-5 pt-8 pb-40">
+      <main className="flex w-full flex-col gap-4 pb-36">
         <ThemeContent
           robot={robot}
           robots={app.robots}
@@ -204,12 +204,6 @@ function AppHome() {
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <ExecutionToast />
       <DraggableBotPopup />
-      <ScanStepsOverlay
-        open={scanOpen}
-        eaName={robot?.name ?? "EA"}
-        pairs={myPairs}
-        onClose={() => setScanOpen(false)}
-      />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
           <p className="text-5xl">⛔</p>

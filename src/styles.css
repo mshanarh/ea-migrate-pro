@@ -155,19 +155,53 @@
   box-shadow: var(--glow-soft);
 }
 
-/* Full-screen app shell: fill the real viewport on mobile (notches, browser chrome),
-   lock overscroll, and let app pages scroll inside the shell so the bottom nav stays visible. */
+/* Full-screen native app shell: edge-to-edge on mobile (no browser chrome gaps),
+   lock overscroll and body scrolling — only inner app content scrolls. */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
 html,
 body {
-  height: 100%;
-  overscroll-behavior: none;
+  width: 100%;
+  height: 100dvh;
   background-color: #000;
+  overscroll-behavior: none;
+}
+
+/* Lock the body only while an app screen is mounted — the mentor portal still scrolls. */
+body:has(.app-fullscreen) {
+  overflow: hidden;
 }
 
 #root,
 [data-slot="router-outlet"],
 [data-viewport] {
   min-height: 100%;
+}
+
+/* Full-bleed hero used by the home themes (edge-to-edge, no outer rounding). */
+.app-hero-bleed {
+  width: 100%;
+  border-radius: 0 !important;
+  margin: 0 !important;
+}
+
+/* Chart scanner: the white scan line sweeping up and down over the chart. */
+@keyframes scanMove {
+  0% {
+    top: 10%;
+  }
+  50% {
+    top: 85%;
+  }
+  100% {
+    top: 10%;
+  }
 }
 
 .app-fullscreen {

@@ -10,6 +10,7 @@ const tabs = [
 
 /**
  * The one and only bottom navigation for the EA Migrate Pro app.
+ * Native app style: docked edge-to-edge at the bottom, rounded top corners only.
  * It never changes with the interface theme — themes only swap the top content.
  */
 export function FixedBottomNav() {
@@ -20,12 +21,10 @@ export function FixedBottomNav() {
   return (
     <nav
       aria-label="App navigation"
-      className="fixed inset-x-0 bottom-5 z-50 flex justify-center px-4"
+      className="fixed inset-x-0 bottom-0 z-50 w-full"
+      style={{ paddingTop: "env(safe-area-inset-bottom)", backgroundColor: accent, boxShadow: `0 -8px 40px ${accent}73`, borderRadius: "32px 32px 0 0" }}
     >
-      <div
-        className="flex h-20 w-full max-w-[430px] items-center justify-around rounded-[50px] px-4"
-        style={{ backgroundColor: accent, boxShadow: `0 12px 44px ${accent}59` }}
-      >
+      <div className="flex h-[80px] w-full items-center justify-around px-6">
         {tabs.map(({ to, label, icon: Icon }) => {
           const active = path === to;
           return (

@@ -1,16 +1,23 @@
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
 
+export type ScanStepPair = {
+  symbol: string;
+  lotSize: number;
+  maxTrades: number;
+};
+
 type Props = {
   open: boolean;
   eaName: string;
-  pairs: { symbol: string; lotSize: number; maxTrades: number }[];
+  pairs: ScanStepPair[];
   onClose: () => void;
 };
 
 /**
- * Narrates the run pair by pair: scanning, lot sizing, then the trades.
- * Auto-closes ~1s after the final step.
+ * Execution steps overlay, shown at the TOP of the screen. Used after the AI
+ * Scanner finishes scanning: it narrates each pair from My Pairs, honouring
+ * the Max Trades value the user set for that pair (0 = 2 trades preview).
  */
 export default function ScanStepsOverlay({ open, eaName, pairs, onClose }: Props) {
   const [stepIndex, setStepIndex] = useState(0);
@@ -54,10 +61,11 @@ export default function ScanStepsOverlay({ open, eaName, pairs, onClose }: Props
   if (!step) return null;
 
   return (
-    <div className="fixed inset-0 z-[99998] flex items-end justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-x-0 top-0 z-[99998] flex justify-center px-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
       <div
-        className="mb-28 w-[95%] max-w-md rounded-[16px] border border-[#2A2A2A] bg-[#0D0D0D] p-4"
-        onClick={(event) => event.stopPropagation()}
+        role="status"
+        aria-live="polite"
+        className="w-full max-w-md rounded-2xl border border-[#2A2A2A] bg-[#0D0D0D] p-4 shadow-[0_16px_48px_rgba(0,0,0,0.75)]"
       >
         <div className="flex items-center gap-3">
           <div className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#0F2E1A]">
@@ -73,18 +81,17 @@ export default function ScanStepsOverlay({ open, eaName, pairs, onClose }: Props
           </div>
           <button
             type="button"
-            aria-label="Close"
+            aria-label="Close execution steps"
             onClick={onClose}
             className="flex size-8 shrink-0 items-center justify-center rounded-full bg-[#2A2A2A] text-white"
           >
             <X className="size-4" />
           </button>
         </div>
-        {/* Progress bar */}
         <div className="mt-3 h-1.5 w-full overflow-hidden rounded-full bg-[#1A1A1A]">
           <div
             className="h-full rounded-full bg-[#22C55E] transition-all duration-700"
-            style={{ width: `${((Math.min(stepIndex + 1, steps.length)) / steps.length) * 100}%` }}
+            style={{ width: `${(Math.min(stepIndex + 1, steps.length) / steps.length) * 100}%` }}
           />
         </div>
       </div>

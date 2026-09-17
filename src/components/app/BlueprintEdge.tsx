@@ -1,14 +1,20 @@
 import { motion } from "framer-motion";
 import { Bot, Play, Plus, Trash2 } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
-import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { ACCENT_COLORS, useCustomization } from "@/lib/app-customization";
 import { RobotMedia } from "@/components/app/RobotMedia";
 
 /**
- * BLUEPRINT EDGE — blue robot console theme that follows the user's accent color
- * (default Blueprint Blue #0066FF when the stored accent predates this theme).
+ * BLUEPRINT EDGE — robot console theme. Originally blueprint blue, now it fully
+ * follows the user's accent color from the swipe drawer like every other theme.
  */
+
 const DEFAULT_BLUE = "#0066FF";
+
+function resolveBlueprintAccent(color: string): string {
+  // Any color picked in the drawer applies; unknown/legacy values fall back to the signature blue.
+  return ACCENT_COLORS.find((option) => option.id === color)?.value ?? DEFAULT_BLUE;
+}
 
 export type BlueprintEdgeProps = {
   robot: Robot | undefined;
@@ -36,7 +42,7 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
 
 export function BlueprintEdge({ robot, robots, onStart, onRemove, onOpenSymbols, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
   const { color } = useCustomization();
-  const accent = color === "electric-blue" ? accentColorValue(color) : DEFAULT_BLUE;
+  const accent = resolveBlueprintAccent(color);
   const eaName = robot?.name ?? "YOUR ROBOT";
   const eaImage = robot?.image || "/botlogic-mascot.png";
 

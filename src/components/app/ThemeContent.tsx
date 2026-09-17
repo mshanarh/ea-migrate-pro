@@ -47,7 +47,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
       initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="flex min-h-56 w-full flex-col items-center justify-center gap-3 rounded-[32px] border-2 border-dashed p-10 text-center"
+      className="mx-3 flex min-h-56 w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-3 rounded-[24px] border-2 border-dashed p-10 text-center"
       style={{ borderColor: `${accent}66`, backgroundColor: `${accent}0d` }}
     >
       <span className="flex size-16 items-center justify-center rounded-3xl" style={{ backgroundColor: `${accent}26` }}>
@@ -70,12 +70,12 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full overflow-hidden rounded-[32px] bg-[#0a0a0a]"
+        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-[#0a0a0a]"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.22)_36%,rgba(0,0,0,0.88)_78%,rgba(0,0,0,0.96)_100%)]" />
-        <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
+        <div className="relative flex h-full flex-col items-center justify-end px-4 pb-8 pt-4">
           <h1
             className="text-center text-3xl font-black tracking-[0.08em] text-white uppercase"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
@@ -97,7 +97,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
       <button
         type="button"
         onClick={onOpenAdd}
-        className="flex h-24 w-full items-center gap-5 rounded-[32px] px-7 text-left transition-transform active:scale-[0.98]"
+        className="mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
         style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
       >
         <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
@@ -110,7 +110,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
       <button
         type="button"
         onClick={onOpenScanner}
-        className="flex items-center justify-between gap-4 rounded-[28px] border p-5 text-left"
+        className="mx-3 flex w-[calc(100%-1.5rem)] items-center justify-between gap-4 rounded-[28px] border p-5 text-left"
         style={{ borderColor: `${accent}59`, backgroundColor: `${accent}12` }}
       >
         <span className="flex items-center gap-4">
@@ -133,7 +133,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/ea-migrate-platform-robot.jpg";
   return (
-    <div className="relative flex min-h-[62vh] flex-col items-center justify-center gap-7 overflow-hidden rounded-[32px] bg-black px-5 py-10">
+    <div className="relative flex min-h-[62vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-black px-5 py-10">
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(0,0,0,0)_0%,rgba(0,0,0,0.72)_58%,rgba(0,0,0,0.94)_100%)]" />
 
@@ -199,11 +199,11 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full overflow-hidden rounded-b-[36px] bg-[#0a0a0a]"
+        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-[#0a0a0a]"
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_40%,rgba(0,0,0,0.9)_92%)]" />
-        <div className="relative flex min-h-[420px] flex-col items-center justify-end pb-9">
+        <div className="relative flex h-full flex-col items-center justify-end pb-9">
           <h1
             className="text-center text-3xl font-black text-white"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 20px rgba(0,0,0,0.85)" }}
@@ -262,7 +262,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full overflow-hidden rounded-[32px] bg-[#0a0a0a]"
+        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-[#0a0a0a]"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
@@ -306,7 +306,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
       <button
         type="button"
         onClick={onOpenAdd}
-        className="flex h-24 w-full items-center gap-5 rounded-[32px] px-7 text-left transition-transform active:scale-[0.98]"
+        className="mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
         style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
       >
         <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
@@ -334,7 +334,7 @@ export function ThemeContent(props: ThemeContentProps) {
           <button
             type="button"
             onClick={props.onOpenAdd}
-            className="flex h-24 w-full items-center gap-5 rounded-[32px] px-7 text-left transition-transform active:scale-[0.98]"
+            className="mx-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
             style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
           >
             <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
