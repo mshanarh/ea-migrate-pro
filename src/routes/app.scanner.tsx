@@ -8,7 +8,7 @@ import ExecutionToast from "@/components/app/ExecutionToast";
 import ScanStepsOverlay, { type ScanStepPair } from "@/components/app/ScanStepsOverlay";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { DAILY_LIMIT, getScanCount, registerScan, useTradingPairsStore } from "@/lib/trading-pairs-store";
+import { DAILY_LIMIT, getScanCount, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -27,10 +27,12 @@ function AppScanner() {
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
   const [details, setDetails] = useState<{ symbol: string; lot: string; trades: number } | null>(null);
-  const { userPairs } = useTradingPairsStore();
-  // The scanner only scans the user's own pairs (My Pairs), never the full table.
-  const pairs = userPairs.filter((pair) => pair.userId === (app.email ?? "guest-device"));
   const scansLeft = DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
+
+  // The active robot — its symbols come from the mentor portal (EA creation).
+  const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+  // Per-symbol lot/max trades saved on the robot itself (mentor defaults, user-editable).
+  const robotPairs = robot?.pairs ?? [];
 
   // Register one of the 5 daily SAST scans. Returns false (and shows the limit
   // modal) when the user has used all of today's scans.
@@ -51,33 +53,33 @@ function AppScanner() {
   };
 
   const stepPairs: ScanStepPair[] = details
-    ? pairs
-        .filter((pair) => pair.symbol === details.symbol)
-        .map((pair) => ({
-          symbol: pair.symbol,
-          lotSize: Number(details.lot) || pair.lotSize,
+    ? [
+        {
+          symbol: details.symbol,
+          lotSize: Number(details.lot) || 0.01,
           maxTrades: details.trades,
-        }))
+        },
+      ]
     : [];
 
   return (
     <div className="app-fullscreen bg-black text-white">
       <div className="app-scroll-area">
         <ChartScanner
-          pairs={pairs.map((pair) => ({ id: pair.id, symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
+          symbols={robot?.symbols ?? []}
+          pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
           accent={accent}
-          eaName={app.robots[0]?.name ?? "EA"}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}
           onExecute={handleExecute}
-          onGoToPairs={() => window.location.assign("/app/trading-pairs")}
+          onGoToPairs={() => window.location.assign("/app/metatrader")}
         />
       </div>
       <FixedBottomNav />
       <ExecutionToast />
       <ScanStepsOverlay
         open={stepPairs.length > 0}
-        eaName={app.robots[0]?.name ?? "EA"}
+        eaName={robot?.name ?? "EA"}
         pairs={stepPairs}
         onClose={() => setDetails(null)}
       />

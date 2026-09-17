@@ -14,7 +14,6 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import ExecutionToast from "@/components/app/ExecutionToast";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
-import { DAILY_LIMIT, registerScan, useTradingPairsStore } from "@/lib/trading-pairs-store";
 import { executeLiveTrade } from "@/lib/execution-api";
 
 export const Route = createFileRoute("/app/home")({
@@ -83,10 +82,8 @@ function AppHome() {
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [limitOpen, setLimitOpen] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
-  const { userPairs } = useTradingPairsStore();
 
   // Swipe left anywhere on the screen opens the customization drawer.
   const onTouchStart = (event: React.TouchEvent) => {
@@ -109,55 +106,34 @@ function AppHome() {
     setModalOpen(false);
   };
 
-  const [starting, setStarting] = useState(false);
-
-  // Scanner only runs the user's own pairs (My Pairs), not every available pair.
-  const myPairs = userPairs
-    .filter((pair) => pair.userId === (app.email ?? "guest-device"))
-    .map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }));
-
-  const handleStart = async () => {
-    if (!robot || starting) return;
+  // START toggles the robot and always confirms with the draggable bot popup.
+  const handleStart = () => {
+    if (!robot) return;
     if (robot.running) {
       toggleRobot(robot.id);
+      window.showBotStarted?.(robot.name, "stopped");
       toast.success(`${robot.name} stopped`);
       return;
     }
-    // Daily scan limit: 5 scans per SAST day, checked before anything runs.
-    if (myPairs.length === 0) {
-      toast.error("Add trading pairs first — the scanner only scans My Pairs.");
-      window.location.assign("/app/trading-pairs");
-      return;
-    }
-    const scan = registerScan(app.email ?? "guest-device");
-    if (!scan.allowed) {
-      setLimitOpen(true);
-      return;
-    }
-    setStarting(true);
-    try {
-      // The draggable "It Started 🚀" bot popup (with the bot's own picture) is
-      // the only thing that appears on START — execution narrates from the scanner.
-      window.showBotStarted?.(robot.name);
-      // Live execution attempt — the START action places a real order
-      // through the provider when it is configured and confirms.
-      const symbol = myPairs[0]?.symbol ?? robot.symbols[0] ?? "XAUUSD";
-      const result = await executeLiveTrade({
-        data: {
-          eaName: robot.name,
-          symbol,
-          direction: "BUY",
-          lotSize: String(myPairs[0]?.lotSize ?? 0.01),
-        },
-      });
-      if (!result.ok) {
-        toast.error(result.message);
-        return;
-      }
-      toggleRobot(robot.id);
-    } finally {
-      setStarting(false);
-    }
+    toggleRobot(robot.id);
+    window.showBotStarted?.(robot.name, "started");
+    toast.success(`${robot.name} started`);
+    // Live execution fires in the background when the provider is configured;
+    // it never blocks START.
+    const firstPair = robot.pairs?.[0];
+    const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
+    void executeLiveTrade({
+      data: {
+        eaName: robot.name,
+        symbol,
+        direction: "BUY",
+        lotSize: String(firstPair?.lotSize ?? 0.01),
+      },
+    })
+      .then((result) => {
+        if (!result.ok) console.warn("[start] live execution skipped:", result.message);
+      })
+      .catch(() => {});
   };
 
   const handleQuotes = () => {
@@ -204,24 +180,6 @@ function AppHome() {
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <ExecutionToast />
       <DraggableBotPopup />
-      <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
-        <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
-          <p className="text-5xl">⛔</p>
-          <DialogHeader>
-            <DialogTitle className="text-xl font-black">Daily Scan Limit</DialogTitle>
-            <DialogDescription className="text-sm text-white/55">
-              You have used {DAILY_LIMIT}/{DAILY_LIMIT} scans today. Your limit resets at 00:00 SAST.
-            </DialogDescription>
-          </DialogHeader>
-          <button
-            type="button"
-            onClick={() => setLimitOpen(false)}
-            className="mt-1 flex h-12 w-full items-center justify-center rounded-2xl bg-white/10 text-sm font-black text-white"
-          >
-            GOT IT
-          </button>
-        </DialogContent>
-      </Dialog>
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>

@@ -159,8 +159,8 @@
     max-width: 100%;
   }
 
-  /* Lock the body only while an app screen is mounted — the mentor portal still scrolls. */
-  body:has(.app-fullscreen) {
+  /* Lock the body only while a locked app shell is mounted — the mentor portal still scrolls. */
+  body:has(.app-shell-locked) {
     overflow: hidden;
   }
 }
@@ -171,11 +171,11 @@
   min-height: 100%;
 }
 
-/* Full-bleed hero used by the home themes (edge-to-edge, no outer rounding). */
+/* Hero card used by the home themes — rounded 32px card, small side margins. */
 .app-hero-bleed {
-  width: 100%;
-  border-radius: 0 !important;
-  margin: 0 !important;
+  width: calc(100% - 1.5rem);
+  margin: 0 auto;
+  border-radius: 32px !important;
 }
 
 /* Chart scanner: the white scan line sweeping up and down over the chart. */
@@ -191,19 +191,25 @@
   }
 }
 
+/* Fullscreen lock helper — intentionally unused for now: the app scrolls like
+   a normal page again (users found the locked shell ugly). Kept in case we
+   reintroduce a native-shell mode later. */
 .app-fullscreen {
-  height: 100dvh;
-  overflow: hidden;
+  min-height: 100dvh;
 }
 
 .app-fullscreen .app-scroll-area {
-  height: 100%;
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
-  scrollbar-width: none;
+  min-height: 100dvh;
 }
-.app-fullscreen .app-scroll-area::-webkit-scrollbar {
-  display: none;
+
+/* Lock the body only while a native-shell screen is actually mounted with the
+   locked variant — the mentor portal still scrolls normally. */
+body:has(.app-shell-locked) {
+  overflow: hidden;
+}
+.app-shell-locked {
+  height: 100dvh;
+  overflow: hidden;
 }
 
 /* Brighter portal variant, toggled from the portal header. */

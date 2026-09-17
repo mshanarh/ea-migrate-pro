@@ -1,31 +1,31 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 /**
  * ChartScanner — the AI Scanner experience.
  *
- * Phase 1 (scan): pick a pair from My Pairs, set trades + lot, watch the scan
- * line sweep the chart while the analysis steps narrate.
- * Phase 2 (result): chart read card (signal, order, lot/trades, confidence),
- * trade plan (entry / SL / TP), and an EXECUTE button that fires the
- * execution steps overlay at the top of the screen for the chosen trades.
+ * The user uploads their OWN chart screenshot (MT4/MT5/tradingview export) with
+ * a ✕ to clear it, picks one of the symbols their mentor attached to the bot
+ * (robot.symbols — set on the mentor portal when creating the EA), sets trades
+ * + lot, and runs the narrated scan over the uploaded image. Execution is only
+ * triggered afterwards from the result view.
  *
  * Everything follows the user's accent color from the customization drawer.
  */
 
 type Props = {
-  /** Pairs the user owns (My Pairs from the trading pairs store). */
-  pairs: { id: string; symbol: string; lotSize: number; maxTrades: number }[];
+  /** Symbols the mentor attached to this bot (EA creation on the mentor portal). */
+  symbols: string[];
+  /** Per-symbol lot/max trades saved on the robot (falls back to sensible defaults). */
+  pairs?: { symbol: string; lotSize: string; maxTrades: string }[];
   /** Accent color hex, applied to buttons, bullets and highlights. */
   accent: string;
-  /** Active EA name shown in the execute call. */
-  eaName: string;
-  /** Fires the top execution steps overlay. */
-  onExecute: (details: { symbol: string; lot: string; trades: number }) => void;
   /** Remaining scans today (out of 5). */
   scansLeft: number;
   /** Called when the user taps Scan — registers the daily scan. Return false to block (limit reached). */
   onScanStart: () => boolean;
-  /** Redirect helper when there are no pairs. */
+  /** Fires the top execution steps overlay from the RESULT view only. */
+  onExecute: (details: { symbol: string; lot: string; trades: number }) => void;
+  /** Redirect helper when the bot has no symbols at all. */
   onGoToPairs: () => void;
 };
 
@@ -39,33 +39,57 @@ const SCAN_STEPS = [
   "Building trade plan (Entry / SL / TP)",
 ];
 
-export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLeft, onScanStart, onGoToPairs }: Props) {
+const MAX_CHART_BYTES = 5 * 1024 * 1024;
+
+export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute, onGoToPairs }: Props) {
   const [symbol, setSymbol] = useState("");
   const [trades, setTrades] = useState(5);
   const [lot, setLot] = useState("0.01");
   const [scanning, setScanning] = useState(false);
   const [step, setStep] = useState(0);
   const [done, setDone] = useState(false);
-  const [missing, setMissing] = useState(false);
+  const [chartSrc, setChartSrc] = useState<string | null>(null);
+  const [chartError, setChartError] = useState("");
+  const [autoScanPending, setAutoScanPending] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Preselect the first pair and apply its lot/max trades as the starting values.
+  // Preselect the first mentor-set symbol and its saved lot/trades.
   useEffect(() => {
-    if (pairs.length === 0) return;
-    const first = pairs[0];
-    if (first) {
-      if (!symbol) setSymbol(first.symbol);
-      setLot(String(first.lotSize));
-      setTrades(first.maxTrades > 0 ? Math.min(first.maxTrades, 20) : 5);
-    }
+    if (symbols.length === 0 || symbol) return;
+    const first = symbols[0];
+    if (!first) return;
+    setSymbol(first);
+    const saved = pairs.find((pair) => pair.symbol === first);
+    setLot(saved?.lotSize || "0.01");
+    const savedTrades = Number(saved?.maxTrades ?? 0);
+    setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pairs]);
+  }, [symbols]);
 
-  const startScan = () => {
-    if (!symbol) {
-      setMissing(true);
+  const pickChart = (file: File | undefined) => {
+    if (!file) return;
+    setChartError("");
+    if (file.size > MAX_CHART_BYTES) {
+      setChartError("That image is too large (max 5 MB).");
       return;
     }
-    if (trades > 20) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      setChartSrc(String(reader.result));
+      setDone(false);
+      // Pressing Scan without a chart opened the picker — start scanning
+      // automatically the moment the picture lands.
+      if (autoScanPending) {
+        setAutoScanPending(false);
+        window.setTimeout(() => runScan(), 150);
+      }
+    };
+    reader.onerror = () => setChartError("Could not read that image.");
+    reader.readAsDataURL(file);
+  };
+
+  const runScan = () => {
+    if (!symbol) return;
     // One of the 5 daily scans is consumed here — the route blocks when out of scans.
     if (!onScanStart()) return;
     setScanning(true);
@@ -85,13 +109,24 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
     }, 600);
   };
 
-  if (pairs.length === 0) {
+  /** Scan button: no chart yet → open the picker and scan as soon as it's chosen. */
+  const startScan = () => {
+    if (scanning) return;
+    if (!chartSrc) {
+      setAutoScanPending(true);
+      fileInputRef.current?.click();
+      return;
+    }
+    runScan();
+  };
+
+  if (symbols.length === 0) {
     return (
       <div className="flex h-[100dvh] w-full flex-col items-center justify-center gap-3 bg-black p-6 text-center">
         <p className="text-4xl">📊</p>
-        <p className="text-sm font-bold text-white">No pairs added yet</p>
-        <p className="max-w-[260px] text-[13px] text-white/40">
-          Go to Trading Pairs and add pairs first — the scanner only scans My Pairs.
+        <p className="text-sm font-bold text-white">No symbols on this bot yet</p>
+        <p className="max-w-[280px] text-[13px] text-white/40">
+          Your mentor adds symbols when creating the EA — they appear here automatically.
         </p>
         <button
           type="button"
@@ -99,39 +134,90 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
           className="mt-3 rounded-full px-8 py-3 text-sm font-black text-white"
           style={{ background: accent }}
         >
-          ADD PAIRS
+          GO TO MY TRADER
         </button>
       </div>
     );
   }
 
   return (
-    <div className="flex w-full flex-col overflow-y-auto pb-[130px]" style={{ backgroundColor: "#0A0A0A" }}>
-      {/* Header */}
+    <div className="flex w-full flex-col pb-[130px]" style={{ backgroundColor: "#0A0A0A" }}>
+      {/* Header — back, title, scans-left badge */}
       <div className="flex items-center justify-between p-4">
-        <h1 className="text-sm font-bold tracking-[0.18em] text-white">CHART SCANNER</h1>
-        <span className="rounded-full border border-white/20 px-3 py-1 text-[11px] text-white/60">
-          {scansLeft}/5 SCANS LEFT
-        </span>
+        <div>
+          <h1 className="text-2xl font-black tracking-tight text-white">Chart Scanner</h1>
+          <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold tracking-[0.18em] text-white/40">
+            <span className="inline-block size-2 rounded-full" style={{ background: accent }} />
+            LIVE MARKET DATA
+          </p>
+        </div>
+        <span className="rounded-full border border-white/15 px-4 py-2 text-sm font-bold text-white/70">{scansLeft}/5</span>
       </div>
 
-      {/* Chart box with moving scan line */}
+      {/* Chart box — uploaded screenshot, ✕ to clear, scan line while scanning */}
       <div className="relative mx-3 h-[240px] overflow-hidden rounded-[24px] border border-white/10 bg-black">
-        <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.05)_50%,transparent_51%)] bg-[length:40px_100%]" />
-        <div className="absolute inset-0 bg-[linear-gradient(0deg,transparent_49%,rgba(255,255,255,0.04)_50%,transparent_51%)] bg-[length:100%_40px]" />
+        {chartSrc ? (
+          <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
+        ) : (
+          <>
+            <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.05)_50%,transparent_51%)] bg-[length:40px_100%]" />
+            <div className="absolute inset-0 bg-[linear-gradient(0deg,transparent_49%,rgba(255,255,255,0.04)_50%,transparent_51%)] bg-[length:100%_40px]" />
+          </>
+        )}
         {scanning && (
           <div
             className="absolute inset-x-0 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite] shadow-[0_0_15px_white]"
             style={{ backgroundColor: accent }}
           />
         )}
-        <div className="absolute bottom-3 left-3 flex items-center gap-2 text-[12px]" style={{ color: accent }}>
-          ⌜⌝ {scanning ? `Scanning ${symbol}...` : done ? "Chart read complete" : "Chart ready to scan"}
+
+        {/* ✕ clear — only when a chart is uploaded and not mid-scan */}
+        {chartSrc && !scanning && (
+          <button
+            type="button"
+            aria-label="Remove chart"
+            onClick={() => {
+              setChartSrc(null);
+              setDone(false);
+            }}
+            className="absolute right-3 top-3 z-20 flex size-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition-colors hover:bg-black/80"
+          >
+            ✕
+          </button>
+        )}
+
+        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 text-[12px] font-semibold" style={{ color: accent }}>
+          <span className="text-[14px]">⌜⌝</span>
+          {scanning ? `Scanning ${symbol}...` : done ? "Chart read complete" : chartSrc ? "Chart ready to scan" : "Press scan to upload your chart"}
         </div>
       </div>
 
       {!done ? (
         <>
+          {/* Upload row — hidden while scanning */}
+          {!scanning && (
+            <div className="mx-3 mt-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/*"
+                className="hidden"
+                onChange={(event) => {
+                  pickChart(event.target.files?.[0]);
+                  event.target.value = "";
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
+              >
+                📈 {chartSrc ? "Replace chart image" : "Upload chart screenshot"}
+              </button>
+              {chartError && <p className="mt-2 text-[12px] text-red-400">{chartError}</p>}
+            </div>
+          )}
+
           {/* Narrated analysis steps */}
           {scanning && (
             <div className="mt-4 space-y-2 px-6">
@@ -144,28 +230,29 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
             </div>
           )}
 
-          {/* Pair selector */}
+          {/* SYMBOL — chips come from the mentor's EA creation, exactly like the screenshot */}
           <div className="mx-3 mt-4 rounded-[20px] border border-white/5 bg-[#151515] p-4">
-            <p className="mb-3 text-[10px] tracking-[0.18em] text-white/30">SELECT PAIR — {pairs.length} ADDED</p>
+            <p className="mb-3 text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
             <div className="flex flex-wrap gap-2">
-              {pairs.map((pair) => (
+              {symbols.map((item) => (
                 <button
-                  key={pair.id}
+                  key={item}
                   type="button"
                   onClick={() => {
-                    setSymbol(pair.symbol);
-                    setLot(String(pair.lotSize));
-                    setTrades(pair.maxTrades > 0 ? Math.min(pair.maxTrades, 20) : 5);
-                    setMissing(false);
+                    setSymbol(item);
+                    const saved = pairs.find((pair) => pair.symbol === item);
+                    setLot(saved?.lotSize || "0.01");
+                    const savedTrades = Number(saved?.maxTrades ?? 0);
+                    setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
+                    setDone(false);
                   }}
                   className="rounded-full px-5 py-2.5 text-[13px] font-bold transition-colors"
-                  style={symbol === pair.symbol ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
+                  style={symbol === item ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
                 >
-                  {pair.symbol}
+                  {item}
                 </button>
               ))}
             </div>
-            {missing && !symbol && <p className="mt-3 text-[12px] text-red-400">Pick a pair first.</p>}
           </div>
 
           {/* Trades + lot size */}
@@ -216,10 +303,10 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
             type="button"
             onClick={startScan}
             disabled={scanning}
-            className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white shadow-[0_0_20px_rgba(255,0,170,0.25)] transition-transform active:scale-[0.98] disabled:opacity-70"
+            className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-70"
             style={{ background: accent, boxShadow: `0 0 20px ${accent}66` }}
           >
-            {scanning ? "SCANNING..." : `⌜⌝ Scan ${symbol}`}
+            <span className="text-[15px]">⌜⌝</span> {scanning ? "SCANNING..." : chartSrc ? `Scan ${symbol}` : "Upload chart & scan"}
           </button>
         </>
       ) : (
@@ -229,7 +316,7 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
           <div className="rounded-[24px] border border-white/5 bg-[#151515] p-4">
             <div className="flex justify-between">
               <span className="text-[11px] tracking-[0.18em] text-white/40">⌜⌝ CHART READ</span>
-              <span className="rounded-full border px-3 py-1 text-[11px] text-red-400" style={{ borderColor: `${accent}55`, color: accent }}>
+              <span className="rounded-full border px-3 py-1 text-[11px] font-bold" style={{ borderColor: `${accent}55`, color: accent }}>
                 BEARISH
               </span>
             </div>

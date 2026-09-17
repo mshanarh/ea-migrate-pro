@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Info, MessageCircle, Play, Plus, ScanFace, ScanLine, Trash2, Waves } from "lucide-react";
+import { ChartLine, Info, MessageCircle, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
@@ -61,7 +61,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
 
 /* ---------------- NOVA CORE ---------------- */
 
-function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void; onOpenScanner: () => void }) {
+function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/ea-migrate-platform-robot.jpg";
   return (
     <div className="flex flex-col gap-6">
@@ -107,23 +107,6 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
         </span>
       </button>
 
-      <button
-        type="button"
-        onClick={onOpenScanner}
-        className="mx-3 flex w-[calc(100%-1.5rem)] items-center justify-between gap-4 rounded-[28px] border p-5 text-left"
-        style={{ borderColor: `${accent}59`, backgroundColor: `${accent}12` }}
-      >
-        <span className="flex items-center gap-4">
-          <span className="flex size-12 items-center justify-center rounded-2xl" style={{ backgroundColor: accent }}>
-            <ScanFace className="size-6 text-black" />
-          </span>
-          <span>
-            <span className="block text-base font-black text-white">AI Scanner</span>
-            <span className="block text-sm text-white/55">Snap a chart — get an instant signal</span>
-          </span>
-        </span>
-        <ScanLine className="size-5" style={{ color: accent }} />
-      </button>
     </div>
   );
 }
@@ -370,5 +353,5 @@ export function ThemeContent(props: ThemeContentProps) {
       />
     );
   }
-  return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} onOpenScanner={props.onOpenScanner} />;
+  return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
 }

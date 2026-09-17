@@ -4,8 +4,8 @@ const AUTO_HIDE_MS = 6000; // popup disappears after 6s
 
 declare global {
   interface Window {
-    /** Show the draggable "It Started" popup. Call from any theme: window.showBotStarted(eaName). */
-    showBotStarted?: (name?: string) => void;
+    /** Show the draggable bot popup. Call from any theme: window.showBotStarted(eaName, "started"|"stopped"). */
+    showBotStarted?: (name?: string, status?: "started" | "stopped") => void;
   }
 }
 
@@ -52,17 +52,19 @@ export default function DraggableBotPopup() {
   const [visible, setVisible] = useState(false);
   const [eaName, setEaName] = useState("EA");
   const [eaImage, setEaImage] = useState("/botlogic-mascot.png");
+  const [running, setRunning] = useState(true);
   const [pos, setPos] = useState({ x: 16, y: 150 });
   const [dragging, setDragging] = useState(false);
   const offset = useRef({ x: 0, y: 0 });
   const popupRef = useRef<HTMLDivElement | null>(null);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Register the global trigger once — any theme can call window.showBotStarted(eaName).
+  // Register the global trigger once — any theme can call window.showBotStarted(eaName, status).
   useEffect(() => {
-    window.showBotStarted = (name?: string) => {
+    window.showBotStarted = (name?: string, status?: "started" | "stopped") => {
       setEaName(resolveEaName(name));
       setEaImage(resolveEaImage());
+      setRunning(status !== "stopped");
       setVisible(true);
     };
     return () => {
@@ -121,19 +123,27 @@ export default function DraggableBotPopup() {
         dragging ? "scale-105 cursor-grabbing" : "cursor-grab"
       }`}
     >
-      {/* Robot avatar with blue glow ring and live dot */}
+      {/* Robot avatar with status-colored glow ring and live dot */}
       <div
-        className="relative size-14 shrink-0 overflow-hidden rounded-full border-2 border-[#3A3AFF]"
-        style={{ boxShadow: "0 0 15px rgba(58,58,255,0.6)" }}
+        className="relative size-14 shrink-0 overflow-hidden rounded-full border-2"
+        style={{
+          borderColor: running ? "#3A3AFF" : "#2A2A2A",
+          boxShadow: running ? "0 0 15px rgba(58,58,255,0.6)" : "0 0 10px rgba(255,255,255,0.15)",
+        }}
       >
-        <img src={eaImage} alt="" className="size-full object-cover" />
-        <span className="absolute -bottom-0.5 -right-0.5 size-5 animate-pulse rounded-full border-[3px] border-[#0D0D0D] bg-[#22C55E]" />
+        <img src={eaImage} alt="" className={`size-full object-cover ${running ? "" : "opacity-60 grayscale"}`} />
+        <span
+          className={`absolute -bottom-0.5 -right-0.5 size-5 rounded-full border-[3px] border-[#0D0D0D] ${running ? "animate-pulse bg-[#22C55E]" : "bg-[#666]"}`}
+        />
       </div>
 
       <div className="flex min-w-0 flex-col">
         <p className="truncate text-[13px] font-bold leading-none text-white">{eaName}</p>
-        <p className="mt-1.5 flex items-center gap-1 text-[12px] text-[#22C55E]">
-          <span className="leading-none">●</span> It Started 🚀
+        <p
+          className="mt-1.5 flex items-center gap-1 text-[12px]"
+          style={{ color: running ? "#22C55E" : "rgba(255,255,255,0.55)" }}
+        >
+          <span className="leading-none">●</span> {running ? "It Started 🚀" : "It Stopped ⏹"}
         </p>
       </div>
 
