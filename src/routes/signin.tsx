@@ -61,6 +61,7 @@ function SignIn() {
           const account = store.accounts.find(
             (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
           );
+          sessionStorage.setItem("eamp_pending_welcome", "1");
           navigate({ to: res.role === "admin" || account?.role === "admin" ? "/admin" : "/dashboard" });
         }}
       >

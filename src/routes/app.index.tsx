@@ -48,6 +48,8 @@ function AppAccess() {
       return;
     }
     console.log("[app-login] Login success");
+    // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+    window.sessionStorage.setItem("eamp_pending_welcome", "1");
     if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
     if (successReturn) {
       markEmailPaid(clean);
@@ -73,6 +75,8 @@ function AppAccess() {
     const result = activateKey(normalizedKey);
     if (result.error) { toast.error(result.error); return; }
     toast.success((result.robot?.name || "Robot") + " activated on this device");
+    // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+    window.sessionStorage.setItem("eamp_pending_welcome", "1");
     window.location.replace("/app/home");
   };
 

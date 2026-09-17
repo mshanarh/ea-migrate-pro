@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { AnimatePresence, motion } from "framer-motion";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -11,7 +10,6 @@ import {
 } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
-import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
@@ -87,16 +85,18 @@ function WelcomeMaster() {
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    // Once per browser session — entering the app fresh greets you.
-    if (sessionStorage.getItem("eamp_welcomed")) return;
-    sessionStorage.setItem("eamp_welcomed", "1");
+    // Only when the login flow armed it — navigating within the app skips it.
+    if (sessionStorage.getItem("eamp_pending_welcome") !== "1") return;
+    sessionStorage.removeItem("eamp_pending_welcome");
     setShow(true);
     // Speak the greeting (muted or blocked browsers just skip it silently).
     try {
       const utterance = new SpeechSynthesisUtterance("Welcome Master. It's time to make money.");
+      utterance.lang = "en-US";
       utterance.rate = 1.05;
       utterance.pitch = 1;
       utterance.volume = 1;
+      window.speechSynthesis.cancel();
       window.speechSynthesis.speak(utterance);
     } catch {
       /* voice unsupported — silent fallback */
@@ -105,54 +105,40 @@ function WelcomeMaster() {
     return () => clearTimeout(timer);
   }, []);
 
+  if (!show) return null;
+
   return (
-    <AnimatePresence>
-      {show && (
-        <motion.div
-          key="welcome"
-          role="status"
-          aria-label="Welcome"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          exit={{ opacity: 0, scale: 1.04 }}
-          transition={{ duration: 0.3, ease: "easeOut" }}
-          className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-black"
-        >
-          {/* Ambient accent glow */}
-          <div
-            aria-hidden
-            className="absolute inset-0"
-            style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
-          />
-          <motion.img
-            src="/botlogic-mascot.png"
-            alt=""
-            initial={{ scale: 0.7, opacity: 0, y: 18 }}
-            animate={{ scale: 1, opacity: 1, y: 0 }}
-            transition={{ type: "spring", stiffness: 200, damping: 18 }}
-            className="relative size-24 rounded-[24px] object-cover"
-            style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55` }}
-          />
-          <motion.h1
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.18, duration: 0.35, ease: "easeOut" }}
-            className="relative mt-6 text-3xl font-black tracking-tight text-white"
-            style={{ textShadow: `0 0 32px ${accent}88` }}
-          >
-            WELCOME <span style={{ color: accent }}>MASTER</span>
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.32, duration: 0.3, ease: "easeOut" }}
-            className="relative mt-2 text-sm font-semibold tracking-wide text-white/70"
-          >
-            It&apos;s time to make money 💰
-          </motion.p>
-        </motion.div>
-      )}
-    </AnimatePresence>
+    <div
+      role="status"
+      aria-label="Welcome"
+      className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-black"
+      style={{ animation: "welcomeIn 0.25s ease-out both" }}
+    >
+      {/* Ambient accent glow */}
+      <div
+        aria-hidden
+        className="absolute inset-0"
+        style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
+      />
+      <img
+        src="/botlogic-mascot.png"
+        alt=""
+        className="relative size-24 rounded-[24px] object-cover"
+        style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
+      />
+      <h1
+        className="relative mt-6 text-3xl font-black tracking-tight text-white"
+        style={{ textShadow: `0 0 32px ${accent}88`, animation: "welcomeUp 0.35s ease-out 0.15s both" }}
+      >
+        WELCOME <span style={{ color: accent }}>MASTER</span>
+      </h1>
+      <p
+        className="relative mt-2 text-sm font-semibold tracking-wide text-white/70"
+        style={{ animation: "welcomeUp 0.3s ease-out 0.3s both" }}
+      >
+        It&apos;s time to make money 💰
+      </p>
+    </div>
   );
 }
 
@@ -160,8 +146,6 @@ function AppHome() {
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
-  const [toastOpen, setToastOpen] = useState(false);
-  const [toastTrades, setToastTrades] = useState(0);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -198,10 +182,6 @@ function AppHome() {
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     toast.success(`${robot.name} started`);
-    // Top execution toast narrates the start sequence with per-trade progress.
-    const toastCount = Math.max(1, Math.min(Number(robot.pairs?.[0]?.maxTrades) || 5, 20));
-    setToastTrades(toastCount);
-    setToastOpen(true);
     // Live execution fires in the background on the user's own connected MT5
     // account; it never blocks START. Without a connected account it is a no-op.
     if (!app.mt?.mcAccountId) return;
@@ -266,7 +246,6 @@ function AppHome() {
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <WelcomeMaster />
       <DraggableBotPopup />
-      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>
