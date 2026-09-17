@@ -25,7 +25,7 @@ function AppSettings() {
             Colors, interface styles and fonts — changes apply instantly and are saved on this device.
           </p>
         </div>
-        <div className="-mx-5 flex-1">
+        <div className="flex-1">
           <CustomizationPanel />
         </div>
       </main>

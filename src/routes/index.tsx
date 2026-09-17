@@ -258,7 +258,7 @@ function Home() {
   const navigate = useNavigate();
 
   return (
-    <div className="w-full overflow-x-hidden bg-[#0A0A0A] text-white">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#0A0A0A] text-white">
       <SiteHeader />
 
       <main>
@@ -317,7 +317,7 @@ function Home() {
             </motion.div>
 
             <div
-              className="relative mx-auto mt-14 w-full max-w-[340px] overflow-hidden rounded-[2.5rem] sm:max-w-[380px]"
+              className="relative mx-auto mt-14 w-full max-w-[320px] overflow-hidden rounded-[2.5rem]"
               style={{ perspective: 1200 }}
             >
               <motion.img
