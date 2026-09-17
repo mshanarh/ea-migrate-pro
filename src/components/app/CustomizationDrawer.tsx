@@ -1,5 +1,6 @@
+import { useState, type ReactNode } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Check, X } from "lucide-react";
+import { Check, ChevronRight, X } from "lucide-react";
 import {
   ACCENT_COLORS,
   FONT_OPTIONS,
@@ -15,16 +16,53 @@ import {
   type InterfaceThemeId,
 } from "@/lib/app-customization";
 
+/** Collapsible settings section — tap the heading (with the > chevron) to show it. */
+function CollapsibleSection({ title, defaultOpen, children }: { title: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen ?? false);
+  return (
+    <section>
+      <button
+        type="button"
+        onClick={() => setOpen((value) => !value)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between rounded-xl px-1 py-1 text-left"
+      >
+        <span className="text-xs font-black tracking-[0.24em] text-white/50 uppercase">{title}</span>
+        <motion.span
+          animate={{ rotate: open ? 90 : 0 }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="flex size-7 items-center justify-center rounded-full bg-white/5 text-white/60"
+        >
+          <ChevronRight className="size-4" strokeWidth={2.6} />
+        </motion.span>
+      </button>
+      <AnimatePresence initial={false}>
+        {open && (
+          <motion.div
+            key="content"
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: "auto", opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
+            className="overflow-hidden"
+          >
+            <div className="pt-4">{children}</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </section>
+  );
+}
+
 export function CustomizationPanel() {
   const { color, theme, font } = useCustomization();
   const accent = accentColorValue(color);
 
   return (
     <div className="flex flex-1 flex-col overflow-y-auto">
-      <div className="flex-1 space-y-8 px-5 py-6">
-        <section>
-          <p className="text-xs font-black tracking-[0.24em] text-white/50 uppercase">Accent Colors</p>
-          <div className="mt-4 grid grid-cols-3 gap-3">
+      <div className="flex-1 space-y-6 px-5 py-6">
+        <CollapsibleSection title="Accent Colors">
+          <div className="grid grid-cols-3 gap-3">
             {ACCENT_COLORS.map((option) => (
               <button
                 key={option.id}
@@ -39,11 +77,10 @@ export function CustomizationPanel() {
               </button>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
 
-        <section>
-          <p className="text-xs font-black tracking-[0.24em] text-white/50 uppercase">Interface Styles</p>
-          <div className="mt-4 space-y-3">
+        <CollapsibleSection title="Interface Styles">
+          <div className="space-y-3">
             {INTERFACE_THEMES.map((option) => (
               <button
                 key={option.id}
@@ -64,11 +101,10 @@ export function CustomizationPanel() {
               </button>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
 
-        <section>
-          <p className="text-xs font-black tracking-[0.24em] text-white/50 uppercase">Font Styles</p>
-          <div className="mt-4 space-y-3">
+        <CollapsibleSection title="Font Styles">
+          <div className="space-y-3">
             {FONT_OPTIONS.map((option) => (
               <button
                 key={option.id}
@@ -88,7 +124,7 @@ export function CustomizationPanel() {
               </button>
             ))}
           </div>
-        </section>
+        </CollapsibleSection>
       </div>
 
       <div className="border-t border-white/10 px-5 py-5 text-center">
