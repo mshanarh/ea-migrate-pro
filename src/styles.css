@@ -191,6 +191,18 @@
   }
 }
 
+/* Trade execution toast: slide down from the top edge. */
+@keyframes slideDown {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
 /* Fullscreen lock helper — intentionally unused for now: the app scrolls like
    a normal page again (users found the locked shell ugly). Kept in case we
    reintroduce a native-shell mode later. */

@@ -5,6 +5,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import ChartScanner from "@/components/app/ChartScanner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { executeLiveTrade } from "@/lib/metacopier";
@@ -27,6 +28,8 @@ function AppScanner() {
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
   const [details, setDetails] = useState<{ symbol: string; lot: string; trades: number } | null>(null);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
   const unlimited = isUnlimitedScanner(app.email);
   const scansLeft = unlimited ? Infinity : DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
 
@@ -46,9 +49,9 @@ function AppScanner() {
     return true;
   };
 
-  // Execute pressed — fire the real trade(s) on the connected MT5 account via
-  // MetaCopier AND stream the logs into the floating bot popup. The popup shows
-  // the final EXECUTED / FAILED line depending on the provider response.
+  // Execute pressed — show the TOP execution toast, fire the real trade(s) on
+  // the connected MT5 account via MetaCopier AND stream the logs into the
+  // floating bot popup. The toast's final line reflects the provider outcome.
   const handleExecute = ({ symbol, lot, trades }: { symbol: string; lot: string; trades: number }) => {
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
@@ -56,6 +59,8 @@ function AppScanner() {
       max_trades: trades,
     });
     setDetails(null);
+    setToastTrades(Math.max(1, Math.min(trades, 20)));
+    setToastOpen(true);
 
     const count = Math.max(1, Math.min(trades, 20));
     if (!app.mt?.mcAccountId) {
@@ -107,6 +112,7 @@ function AppScanner() {
       </div>
       <FixedBottomNav />
       <DraggableBotPopup />
+      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
           <p className="text-5xl">⛔</p>

@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
+import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
@@ -81,6 +82,8 @@ function AppHome() {
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -117,6 +120,10 @@ function AppHome() {
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     toast.success(`${robot.name} started`);
+    // Top execution toast narrates the start sequence with per-trade progress.
+    const toastCount = Math.max(1, Math.min(Number(robot.pairs?.[0]?.maxTrades) || 5, 20));
+    setToastTrades(toastCount);
+    setToastOpen(true);
     // Live execution fires in the background on the user's own connected MT5
     // account; it never blocks START. Without a connected account it is a no-op.
     if (!app.mt?.mcAccountId) return;
@@ -180,6 +187,7 @@ function AppHome() {
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
       <DraggableBotPopup />
+      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>
