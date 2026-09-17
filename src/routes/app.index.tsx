@@ -40,11 +40,14 @@ function AppAccess() {
   const continueWithEmail = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const clean = email.trim().toLowerCase();
+    console.log("[app-login] Trying login:", clean);
     const result = appSignIn(clean);
     if (result.error) {
+      console.log("[app-login] Login error:", result.error);
       toast.error(result.error);
       return;
     }
+    console.log("[app-login] Login success");
     if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
     if (successReturn) {
       markEmailPaid(clean);
@@ -62,10 +65,12 @@ function AppAccess() {
   const submitLicense = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!app.email) {
-      const signInResult = appSignIn(email);
+      const signInResult = appSignIn(email.trim().toLowerCase());
       if (signInResult.error) { toast.error(signInResult.error); return; }
     }
-    const result = activateKey(key);
+    // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
+    const normalizedKey = key.trim().toUpperCase().replace(/\s+/g, "");
+    const result = activateKey(normalizedKey);
     if (result.error) { toast.error(result.error); return; }
     toast.success((result.robot?.name || "Robot") + " activated on this device");
     window.location.replace("/app/home");

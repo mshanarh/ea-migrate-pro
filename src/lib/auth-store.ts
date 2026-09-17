@@ -289,9 +289,16 @@ export function useCurrentAccount() {
 
 export function signIn(email: string, password: string): { error?: string; accountId?: string; role?: Account["role"] } {
   load();
+  // Normalise inputs exactly like they are stored at registration.
   const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = password.trim();
+  console.log("[sign-in] Trying login:", cleanEmail);
   const account = state.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
-  if (!account || account.password !== password) return { error: "Wrong email or password." };
+  if (!account || account.password !== cleanPass) {
+    console.log("[sign-in] Login error: wrong email or password for", cleanEmail);
+    return { error: "Wrong email or password. Check the email you registered with and try again." };
+  }
+  console.log("[sign-in] Login success:", account.id);
   state = { ...state, currentId: account.id };
   persist();
   return { accountId: account.id, role: account.role };

@@ -208,16 +208,20 @@ function findSavedLicenseForEmail(key: string, email: string) {
         },
       };
     }
-    return { error: "That license key was not found." };
+    return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
   } catch {
-    return { error: "That license key could not be checked." };
+    return { error: "That license key could not be checked. Please try again." };
   }
 }
 
 export function activateKey(key: string): { error?: string; robot?: Robot } {
   load();
-  const clean = key.trim().toUpperCase();
-  if (!clean.startsWith("EMP-") || clean.length !== 16) return { error: "That license key is invalid." };
+  // Tolerant normalisation: trim, uppercase and strip any spaces the user pasted.
+  const clean = key.trim().toUpperCase().replace(/\s+/g, "");
+  console.log("[key-activation] Checking key:", clean);
+  if (!clean.startsWith("EMP-") || clean.length !== 16) {
+    return { error: "That license key is invalid. It should look like EMP-XXXXXXXXXXXX (no spaces)." };
+  }
   if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
   if (!state.email) return { error: "Sign in with your email before activating a key." };
   if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
