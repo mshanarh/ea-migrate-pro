@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppState } from "@/lib/app-store";
 
+/** Clamp a coordinate so the button can never be dragged off-screen. */
+const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
+
 /**
  * Floating bot companion — visible ONLY while the robot is running.
  *
@@ -40,6 +43,19 @@ export default function DraggableBotPopup() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [state, setState] = useState<"ready" | "executed">("ready");
   const prevRunning = useRef(running);
+
+  // Draggable position — fixed coordinates from the viewport, default bottom-right.
+  const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const btnRef = useRef<HTMLDivElement | null>(null);
+  const dragOffset = useRef({ x: 0, y: 0 });
+  const movedRef = useRef(false);
+  const SIZE = 64;
+
+  const defaultPos = () => ({
+    x: (typeof window !== "undefined" ? window.innerWidth : 400) - SIZE - 16,
+    y: (typeof window !== "undefined" ? window.innerHeight : 800) - SIZE - 96,
+  });
 
   // START (false→true while mounted): reset to ready and pop the popup open.
   // STOP (true→false): close it. Navigating while running does NOT auto-open.
@@ -83,24 +99,69 @@ export default function DraggableBotPopup() {
     };
   }, []);
 
+  // Pointer-drag anywhere on the button; a tap (no movement) toggles the popup.
+  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.setPointerCapture(event.pointerId);
+    const start = pos ?? defaultPos();
+    dragOffset.current = { x: event.clientX - start.x, y: event.clientY - start.y };
+    movedRef.current = false;
+    setPos(start);
+    setDragging(true);
+  };
+
+  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!dragging) return;
+    const width = typeof window !== "undefined" ? window.innerWidth : 400;
+    const height = typeof window !== "undefined" ? window.innerHeight : 800;
+    const next = {
+      x: clamp(event.clientX - dragOffset.current.x, 4, width - SIZE - 4),
+      y: clamp(event.clientY - dragOffset.current.y, 4, height - SIZE - 4),
+    };
+    const start = pos ?? defaultPos();
+    if (Math.abs(next.x - start.x) > 3 || Math.abs(next.y - start.y) > 3) movedRef.current = true;
+    setPos(next);
+  };
+
+  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+    setDragging(false);
+    // A genuine tap (no drag) toggles the popup; a drag does not.
+    if (!movedRef.current) setOpen((value) => !value);
+  };
+
   if (!running) return null;
+
+  const style: React.CSSProperties = {
+    ...(pos
+      ? { left: pos.x, top: pos.y }
+      : { right: 16, bottom: 96 }),
+    position: "fixed" as const,
+    touchAction: "none",
+    border: "3px solid #2E5BFF",
+    boxShadow: "0 0 18px rgba(46,91,255,0.75), 0 0 36px rgba(46,91,255,0.35)",
+  };
 
   return (
     <>
-      {/* Floating bot button — blue glow ring + green dot, like the reference image */}
+      {/* Floating bot button — blue glow ring + green dot, draggable anywhere */}
       <div
+        ref={btnRef}
         role="button"
         tabIndex={0}
         aria-label={`${eaName} running — open trade log`}
-        onClick={() => setOpen((value) => !value)}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onKeyDown={(event) => {
           if (event.key === "Enter" || event.key === " ") setOpen((value) => !value);
         }}
-        className="fixed bottom-[96px] right-4 z-[9998] flex size-[64px] cursor-pointer items-center justify-center rounded-full bg-[#0A0F1E] transition-transform active:scale-95"
-        style={{
-          border: "3px solid #2E5BFF",
-          boxShadow: "0 0 18px rgba(46,91,255,0.75), 0 0 36px rgba(46,91,255,0.35)",
-        }}
+        style={style}
+        className={`z-[9998] flex size-[64px] select-none items-center justify-center rounded-full bg-[#0A0F1E] transition-transform ${
+          dragging ? "scale-110 cursor-grabbing" : "cursor-grab"
+        }`}
       >
         <img src={eaImage} alt={eaName} className="size-full rounded-full object-cover" />
         <span className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border-2 border-black bg-green-500 shadow-[0_0_8px_#22c55e]" />
