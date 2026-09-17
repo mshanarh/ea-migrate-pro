@@ -154,14 +154,22 @@ export function sastToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
 }
 
+/** Platform admins — unlimited daily scans. */
+const ADMIN_EMAILS = new Set(["biyasentobeko222@gmail.com", "lwethunkandi3@gmail.com"]);
+
+export function isUnlimitedScanner(email: string | null | undefined): boolean {
+  return Boolean(email && ADMIN_EMAILS.has(email.trim().toLowerCase()));
+}
+
 export function getScanCount(userId: string): number {
   load();
   const today = sastToday();
   return state.dailyScans.find((scan) => scan.userId === userId && scan.scanDate === today)?.count ?? 0;
 }
 
-/** Registers one scan for the user, enforcing the daily limit (SAST day). */
+/** Registers one scan for the user, enforcing the daily limit (SAST day). Admins are unlimited. */
 export function registerScan(userId: string): { allowed: boolean; count: number } {
+  if (isUnlimitedScanner(userId)) return { allowed: true, count: 0 };
   load();
   const today = sastToday();
   const existing = state.dailyScans.find((scan) => scan.userId === userId && scan.scanDate === today);

@@ -8,7 +8,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { executeLiveTrade } from "@/lib/metacopier";
-import { DAILY_LIMIT, getScanCount, registerScan } from "@/lib/trading-pairs-store";
+import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -27,15 +27,16 @@ function AppScanner() {
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
   const [details, setDetails] = useState<{ symbol: string; lot: string; trades: number } | null>(null);
-  const scansLeft = DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
+  const unlimited = isUnlimitedScanner(app.email);
+  const scansLeft = unlimited ? Infinity : DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
 
   // The active robot — its symbols come from the mentor portal (EA creation).
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   // Per-symbol lot/max trades saved on the robot itself (mentor defaults, user-editable).
   const robotPairs = robot?.pairs ?? [];
 
-  // Register one of the 5 daily SAST scans. Returns false (and shows the limit
-  // modal) when the user has used all of today's scans.
+  // Register one of the 5 daily SAST scans (unlimited for admins). Returns
+  // false (and shows the limit modal) when the user has used all of today's scans.
   const handleScanStart = () => {
     const scan = registerScan(app.email ?? "guest-device");
     if (!scan.allowed) {
@@ -102,7 +103,6 @@ function AppScanner() {
           scansLeft={scansLeft}
           onScanStart={handleScanStart}
           onExecute={handleExecute}
-          onGoToPairs={() => window.location.assign("/app/metatrader")}
         />
       </div>
       <FixedBottomNav />

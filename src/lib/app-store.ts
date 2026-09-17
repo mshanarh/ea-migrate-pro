@@ -174,7 +174,7 @@ export function appSignIn(email: string): { error?: string } {
   if (!clean) return { error: "Enter your email address." };
   const deviceId = getDeviceId();
   const binding = getEmailDeviceBinding(clean);
-  if (binding && binding.deviceId !== deviceId) return { error: "Email already in use on another device." };
+  if (binding && binding.deviceId !== deviceId) return { error: "Account already used — this email is linked to another device. One email, one device." };
   if (paymentStatusForEmail(clean) === "admin") markEmailPaid(clean);
   state = { ...state, email: clean };
   persist();
