@@ -11,26 +11,8 @@
   display: none !important;
 }
 
-@keyframes logoMove {
-  0% {
-    transform: translateX(0);
-  }
-
-  50% {
-    transform: translateX(20px);
-  }
-
-  100% {
-    transform: translateX(0);
-  }
-}
-
-.logo-animate {
-  animation: logoMove 1.2s ease-in-out infinite;
-  animation-delay: 2s;
-  animation-iteration-count: infinite;
-}
-
+/* The header logo no longer auto-slides — the translate loop made it overlap
+   the brand text on narrow screens. Hover feedback only. */
 /*
  * Design system definition.
  *
@@ -155,42 +137,32 @@
   box-shadow: var(--glow-soft);
 }
 
-/* Full-screen native app shell: edge-to-edge on mobile (no browser chrome gaps),
-   lock overscroll and body scrolling — only inner app content scrolls. */
-*,
-*::before,
-*::after {
-  margin: 0;
-  padding: 0;
-  box-sizing: border-box;
-}
+/* Overflow safety — MUST live in @layer base so Tailwind utilities always win.
+   Never add an unlayered universal margin/padding reset here: in Tailwind v4 it
+   would override every px-/mt-/gap- utility and flatten the whole layout. */
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
 
-/* Overflow safety: nothing may stretch the page horizontally. */
-html,
-body,
-#root {
-  width: 100%;
-  max-width: 100vw;
-  overflow-x: hidden;
-}
+  body {
+    min-height: 100dvh;
+    background-color: #000;
+  }
 
-/* Body grows with content; app pages lock their own 100dvh shell. */
-body {
-  min-height: 100dvh;
-  height: auto;
-  background-color: #000;
-}
+  img,
+  video {
+    max-width: 100%;
+  }
 
-/* Never let a stray wide element or media file stretch the page. */
-img,
-video {
-  max-width: 100%;
-  height: auto;
-}
-
-/* Lock the body only while an app screen is mounted — the mentor portal still scrolls. */
-body:has(.app-fullscreen) {
-  overflow: hidden;
+  /* Lock the body only while an app screen is mounted — the mentor portal still scrolls. */
+  body:has(.app-fullscreen) {
+    overflow: hidden;
+  }
 }
 
 #root,
