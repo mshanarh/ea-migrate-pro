@@ -4,14 +4,13 @@ import { useEffect, useRef, useState } from "react";
  * TradeExecutionToast — premium dark toast pinned to the TOP of the screen.
  *
  * Sequence (from the scanner/home EXECUTE button):
- *  1. Five connection steps, 800ms each, with a typing effect
+ *  1. Five connection steps with a slow, readable typing effect
  *  2. Then trade-by-trade: "{botName} Scanning Markets..." → green check
- *     "✅ Trade {n}/{total} completed successfully" with the execute sound,
- *     1.5s per trade
+ *     "✅ Trade {n}/{total} completed successfully" with the execute sound
  *  3. "🎉 All {total} trades executed on MetaTrader" and auto-close.
  *
- * If the live execution result arrives (window.executionResult), the final
- * line reflects the provider's real outcome.
+ * If the live execution result arrives (eamp:execution-result event), the
+ * final line reflects the provider's real outcome.
  */
 
 type Phase = "steps" | "scanning" | "trade" | "done";
@@ -24,8 +23,8 @@ const CONNECTION_STEPS = [
   "🚀 Executing the trade to MetaTrader...",
 ];
 
-const STEP_MS = 800;
-const TRADE_MS = 1500;
+const STEP_MS = 1700;
+const TRADE_MS = 2300;
 
 type Props = {
   isOpen: boolean;
@@ -79,8 +78,9 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
 
     if (phase === "steps") {
       const text = CONNECTION_STEPS[stepIndex] ?? "";
-      // Typing effect, ~18ms per char but capped so the step still fits in STEP_MS.
-      const perChar = Math.max(8, Math.min(24, Math.floor(STEP_MS / Math.max(text.length, 1))));
+      // Typing effect — a deliberate per-character rhythm so every step is
+      // fully readable before the next one starts. Never rushed.
+      const perChar = Math.max(18, Math.min(45, Math.floor(STEP_MS / Math.max(text.length, 1))));
       setTyped("");
       let char = 0;
       const typer = setInterval(() => {
@@ -125,7 +125,7 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
     }
 
     if (phase === "done") {
-      const advance = setTimeout(onClose, 2200);
+      const advance = setTimeout(onClose, 3400);
       timers.current.push(advance);
       return () => clearTimeout(advance);
     }
@@ -133,23 +133,18 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, phase, stepIndex, currentTrade, totalTrades]);
 
-  // Live MT5 outcome from the scanner — skip to the result immediately.
+  // Live MT5 outcome from the scanner — broadcast on the event bus so every
+  // execution surface (this toast AND the floating bot popup) receives it.
   useEffect(() => {
-    if (!isOpen) return;
-    const handler = (result: { ok: boolean; message: string }) => {
+    if (!isOpen) return undefined;
+    const handler = (event: Event) => {
+      const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
       clearTimers();
       setPhase("done");
       setTyped(result.ok ? `✅ ${result.message}` : `⚠️ ${result.message}`);
     };
-    const previous = window.executionResult;
-    window.executionResult = handler;
-    return () => {
-      if (previous) {
-        window.executionResult = previous;
-      } else {
-        delete window.executionResult;
-      }
-    };
+    window.addEventListener("eamp:execution-result", handler);
+    return () => window.removeEventListener("eamp:execution-result", handler);
   }, [isOpen]);
 
   if (!isOpen) return null;

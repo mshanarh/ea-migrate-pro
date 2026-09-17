@@ -29,8 +29,6 @@ declare global {
     /** Open the popup and stream execution logs for a scanned pair. */
     triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => void;
     closeExecutionToast?: () => void;
-    /** Live execution outcome from the scanner — appends the final log line. */
-    executionResult?: (result: { ok: boolean; message: string }) => void;
   }
 }
 
@@ -92,19 +90,22 @@ export default function DraggableBotPopup() {
       });
     };
     window.closeExecutionToast = () => setOpen(false);
-    // Live MT5 outcome — replaces the final "EXECUTED ON MT5" line with the real result.
-    window.executionResult = (result: { ok: boolean; message: string }) => {
+    // Live MT5 outcome — arrives on the event bus so this popup shows the real
+    // result alongside the top execution toast (no single-slot overwrite).
+    const onExecutionResult = (event: Event) => {
+      const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
       setLogs((prev) => {
         const base = prev.filter((line) => line.kind !== "last");
         return [...base, { text: result.ok ? `✔ ${result.message.toUpperCase()}` : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? "last" : "info" }];
       });
     };
+    window.addEventListener("eamp:execution-result", onExecutionResult);
     // Compatibility no-op — visibility is store-driven now.
     window.showBotStarted = () => {};
     return () => {
       delete window.triggerExecutionToast;
       delete window.closeExecutionToast;
-      delete window.executionResult;
+      window.removeEventListener("eamp:execution-result", onExecutionResult);
       delete window.showBotStarted;
     };
   }, []);
@@ -141,7 +142,9 @@ export default function DraggableBotPopup() {
     if (!movedRef.current) setOpen((value) => !value);
   };
 
-  if (!running) return null;
+  // The floating BUTTON only exists while the robot is running, but the popup
+  // must always be able to appear (scanner Execute shows it even when idle).
+  if (!running && !open) return null;
 
   const style: React.CSSProperties = {
     ...(pos

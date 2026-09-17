@@ -65,7 +65,7 @@ function AppScanner() {
     const count = Math.max(1, Math.min(trades, 20));
     if (!app.mt?.mcAccountId) {
       toast.error("Connect your MT5 account first — MetaTrader page.");
-      window.executionResult?.({ ok: false, message: "No connected MT5 account — link it on the MetaTrader page" });
+      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "No connected MT5 account — link it on the MetaTrader page" } }));
       return;
     }
     Promise.all(
@@ -85,16 +85,16 @@ function AppScanner() {
         const ok = results.filter((item) => item.ok).length;
         if (ok === count) {
           toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
-          window.executionResult?.({ ok: true, message: `${ok}/${count} trades executed on MT5` });
+          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: true, message: `${ok}/${count} trades executed on MT5` } }));
         } else {
           const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
           toast.error(`${ok}/${count} executed — ${reason}`);
-          window.executionResult?.({ ok: false, message: reason });
+          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: reason } }));
         }
       })
       .catch(() => {
         toast.error("Could not reach the execution provider.");
-        window.executionResult?.({ ok: false, message: "Could not reach the execution provider." });
+        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "Could not reach the execution provider." } }));
       });
   };
 

@@ -159,6 +159,78 @@
     max-width: 100%;
   }
 
+  /* ── 4K ULTRA polish: crisp text, smooth motion, premium chrome ───────── */
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    text-shadow: 0.02px 0.02px 0 rgba(255, 255, 255, 0.06);
+    transition: background-color 0.3s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+    color: #fff;
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: color-mix(in srgb, var(--primary) 30%, transparent);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: color-mix(in srgb, var(--primary) 55%, transparent);
+  }
+
+  /* All interactive elements get instant-focus polish and buttery transitions. */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    transition-property: color, background-color, border-color, box-shadow, transform, opacity, filter;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary) 80%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* GPU-composited easing — the “4K ultra smooth” feel on phones. */
+  @supports (transform: translateZ(0)) {
+    [role="button"],
+    button {
+      will-change: auto;
+      -webkit-transform: translateZ(0);
+    }
+  }
+
   /* Lock the body only while a locked app shell is mounted — the mentor portal still scrolls. */
   body:has(.app-shell-locked) {
     overflow: hidden;
