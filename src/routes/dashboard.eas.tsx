@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { motion, AnimatePresence } from "framer-motion";
 import { Bot, ImageIcon, Lock, Pencil, Plus, Trash2, Video, X } from "lucide-react";
@@ -6,11 +6,35 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { createEaRecord, renameEa, setEAs, useCurrentAccount, type ExpertAdvisor } from "@/lib/auth-store";
+import { deleteVideoBlob, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
 
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Resolves a video reference (IndexedDB ref or plain URL) to something a
+ * <video> element can play. Data URLs and http URLs pass straight through.
+ */
+function VideoPreview({ src, className }: { src: string; className?: string }) {
+  const [playable, setPlayable] = useState<string>();
+  useEffect(() => {
+    let url: string | undefined;
+    setPlayable(undefined);
+    loadVideoUrl(src)
+      .then((resolved) => {
+        url = resolved ?? undefined;
+        setPlayable(resolved ?? src);
+      })
+      .catch(() => setPlayable(src));
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [src, setPlayable]);
+  if (!playable) return null;
+  return <video src={playable} className={className} controls autoPlay loop muted playsInline />;
+}
 
 function readAsDataUrl(file: File, maxBytes: number) {
   return new Promise<string>((resolve, reject) => {
@@ -83,7 +107,7 @@ function ManageEAs() {
                   <button type="button" aria-label={"Edit " + ea.name} onClick={() => setEditingEa(ea)} className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
                     <Pencil className="size-4" />
                   </button>
-                  <button type="button" aria-label={"Delete " + ea.name} onClick={() => { setEAs(account.id, eas.filter((item) => item.id !== ea.id)); toast.success(ea.name + " removed"); }} className="flex size-10 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-red-400/10 hover:text-red-300">
+                  <button type="button" aria-label={"Delete " + ea.name} onClick={() => { if (ea.video) void deleteVideoBlob(ea.video); setEAs(account.id, eas.filter((item) => item.id !== ea.id)); toast.success(ea.name + " removed"); }} className="flex size-10 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-red-400/10 hover:text-red-300">
                     <Trash2 className="size-4" />
                   </button>
                 </div>
@@ -113,9 +137,25 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
   const chooseFile = (file: File | undefined, kind: "image" | "video") => {
     if (!file) return;
     setError("");
-    readAsDataUrl(file, kind === "image" ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES)
-      .then((data) => { if (kind === "image") setImage(data); else setVideo(data); })
-      .catch((reason: Error) => setError(reason.message));
+    if (kind === "image") {
+      readAsDataUrl(file, MAX_IMAGE_BYTES)
+        .then(setImage)
+        .catch((reason: Error) => setError(reason.message));
+      return;
+    }
+    // Videos go to IndexedDB as real blobs — a 50MB video would otherwise be a
+    // ~67MB base64 string that blows the localStorage quota on save.
+    if (file.size > MAX_VIDEO_BYTES) {
+      setError("That file is too large — maximum 50 MB.");
+      return;
+    }
+    setError("Saving video…");
+    saveVideoBlob(file)
+      .then((ref) => {
+        setVideo(ref);
+        setError("");
+      })
+      .catch(() => setError("Could not store that video — try again."));
   };
   const addSymbol = () => {
     const clean = symbol.trim().toUpperCase();
@@ -133,7 +173,7 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
       </div>
     </div>
     <div><p className={labelClass}>EA Video / GIF <span className="text-sm font-bold text-primary">Unlocked</span></p>
-      <div className="mt-2 rounded-2xl border border-dashed border-white/20 bg-white/[0.02] p-4 text-center text-sm text-white/40">{video ? <video src={video} className="mx-auto max-h-32 rounded-xl" controls /> : "No video"}</div>
+      <div className="mt-2 rounded-2xl border border-dashed border-white/20 bg-white/[0.02] p-4 text-center text-sm text-white/40">{video ? <VideoPreview src={video} className="mx-auto max-h-32 rounded-xl" /> : "No video"}</div>
       <label className="mt-3 flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><Video className="size-4" /> {video ? "Replace Video / GIF" : "Upload Video / GIF"}<input type="file" accept="video/*,image/gif" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label>
       <p className="mt-2 text-xs text-white/40">Any video type · Max 50 MB. MP4 / WebM / MOV / GIF all work.</p>
     </div>
@@ -195,7 +235,7 @@ function EditEaForm({ ea, onClose, onSave }: { ea: ExpertAdvisor; onClose: () =>
       <DialogTitle className="text-2xl font-black">Edit EA</DialogTitle>
       <button type="button" onClick={onClose} aria-label="Close" className="text-white/50 hover:text-white"><X className="size-5" /></button>
     </div>
-    <form className="mt-6 space-y-5" onSubmit={(event) => { event.preventDefault(); onSave({ briefing: briefing.trim(), symbols, ...(image ? { image } : {}), ...(video ? { video } : {}) }); onClose(); }}>
+    <form className="mt-6 space-y-5" onSubmit={(event) => { event.preventDefault(); if (ea.video && video && ea.video !== video) void deleteVideoBlob(ea.video); onSave({ briefing: briefing.trim(), symbols, ...(image ? { image } : {}), ...(video ? { video } : {}) }); onClose(); }}>
       <div>
         <p className={labelClass}>EA Name</p>
         <div className="mt-2 flex h-14 items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-5">

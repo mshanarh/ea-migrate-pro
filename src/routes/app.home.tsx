@@ -78,16 +78,17 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
   );
 }
 
-/** Full-screen welcome moment — plays once per app visit, ~1s, with voice. */
+/** Full-screen welcome moment — greets on every app entry, flashes briefly, voice on. */
 function WelcomeMaster() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const [show, setShow] = useState(false);
 
   useEffect(() => {
-    // Only when the login flow armed it — navigating within the app skips it.
-    if (sessionStorage.getItem("eamp_pending_welcome") !== "1") return;
-    sessionStorage.removeItem("eamp_pending_welcome");
+    // Greet on every app entry — but navigating within the app re-arms nothing
+    // because AppHome only mounts on /app/home, and the in-app nav never
+    // remounts it. The old armed-once flow skipped the greeting entirely on
+    // most entries, which felt broken.
     setShow(true);
     // Speak the greeting (muted or blocked browsers just skip it silently).
     try {
@@ -101,7 +102,8 @@ function WelcomeMaster() {
     } catch {
       /* voice unsupported — silent fallback */
     }
-    const timer = setTimeout(() => setShow(false), 1000);
+    // Brief flash, then straight into the app — fast redirect, greeting still seen.
+    const timer = setTimeout(() => setShow(false), 600);
     return () => clearTimeout(timer);
   }, []);
 

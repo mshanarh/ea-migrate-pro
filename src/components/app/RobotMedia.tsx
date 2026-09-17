@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadVideoUrl } from "@/lib/media-store";
 
 type RobotMediaProps = {
   image: string;
@@ -15,17 +16,45 @@ type RobotMediaProps = {
  * RobotMedia is only mounted on the HOME screen themes, which gives the exact
  * behaviour requested: the video plays as soon as the user lands on HOME.
  *
- * Why the explicit play() below: browsers reject implicit autoplay when the
- * element mounts mid-route-change (especially on mobile) and the failure is
- * silent — the video only appeared after leaving and re-entering HOME. We now
- * call play() on mount, retry when the file is actually decodable (large
- * uploads load slowly), and unlock on the first user gesture as a last resort.
+ * Playback used to need a second HOME press because (a) implicit autoplay is
+ * silently rejected mid-route-change and (b) giant base64 data URLs took seconds
+ * to decode. Videos now live in IndexedDB and are handed to the element as an
+ * instant object URL, and play() is driven explicitly with retries so the first
+ * press just works.
  */
 export function RobotMedia({ image, video, variant, className }: RobotMediaProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [playableSrc, setPlayableSrc] = useState<string>();
+
+  // Resolve IndexedDB video references to a fast object URL; plain URLs and
+  // legacy data URLs pass straight through.
+  useEffect(() => {
+    if (!video) {
+      setPlayableSrc(undefined);
+      return;
+    }
+    let objectUrl: string | undefined;
+    let cancelled = false;
+    loadVideoUrl(video)
+      .then((resolved) => {
+        if (cancelled) {
+          if (resolved) URL.revokeObjectURL(resolved);
+          return;
+        }
+        objectUrl = resolved ?? undefined;
+        setPlayableSrc(resolved ?? video);
+      })
+      .catch(() => {
+        if (!cancelled) setPlayableSrc(video);
+      });
+    return () => {
+      cancelled = true;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [video]);
 
   useEffect(() => {
-    if (!video) return;
+    if (!playableSrc) return;
     const el = videoRef.current;
     if (!el) return;
 
@@ -55,13 +84,13 @@ export function RobotMedia({ image, video, variant, className }: RobotMediaProps
       window.removeEventListener("pointerdown", unlockOnGesture);
       window.removeEventListener("touchstart", unlockOnGesture);
     };
-  }, [video]);
+  }, [playableSrc]);
 
-  if (video) {
+  if (video && playableSrc) {
     return (
       <video
         ref={videoRef}
-        src={video}
+        src={playableSrc}
         className={className}
         autoPlay
         loop
