@@ -29,6 +29,8 @@ declare global {
     /** Open the popup and stream execution logs for a scanned pair. */
     triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => void;
     closeExecutionToast?: () => void;
+    /** Live execution outcome from the scanner — appends the final log line. */
+    executionResult?: (result: { ok: boolean; message: string }) => void;
   }
 }
 
@@ -86,15 +88,23 @@ export default function DraggableBotPopup() {
       setLogs([]);
       setOpen(true);
       stream.forEach((line, index) => {
-        window.setTimeout(() => setLogs((prev) => [...prev, line]), index * 500);
+        window.setTimeout(() => setLogs((prev) => (prev.some((existing) => existing.text === line.text && existing.kind === line.kind) ? prev : [...prev, line])), index * 500);
       });
     };
     window.closeExecutionToast = () => setOpen(false);
+    // Live MT5 outcome — replaces the final "EXECUTED ON MT5" line with the real result.
+    window.executionResult = (result: { ok: boolean; message: string }) => {
+      setLogs((prev) => {
+        const base = prev.filter((line) => line.kind !== "last");
+        return [...base, { text: result.ok ? `✔ ${result.message.toUpperCase()}` : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? "last" : "info" }];
+      });
+    };
     // Compatibility no-op — visibility is store-driven now.
     window.showBotStarted = () => {};
     return () => {
       delete window.triggerExecutionToast;
       delete window.closeExecutionToast;
+      delete window.executionResult;
       delete window.showBotStarted;
     };
   }, []);

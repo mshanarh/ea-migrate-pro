@@ -7,6 +7,7 @@ import ChartScanner from "@/components/app/ChartScanner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
+import { executeLiveTrade } from "@/lib/execution-api";
 import { DAILY_LIMIT, getScanCount, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -44,7 +45,9 @@ function AppScanner() {
     return true;
   };
 
-  // Execute pressed — stream the trade logs into the floating bot popup.
+  // Execute pressed — fire the real trade(s) on the connected MT5 account via
+  // MetaCopier AND stream the logs into the floating bot popup. The popup shows
+  // the final EXECUTED / FAILED line depending on the provider response.
   const handleExecute = ({ symbol, lot, trades }: { symbol: string; lot: string; trades: number }) => {
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
@@ -52,6 +55,35 @@ function AppScanner() {
       max_trades: trades,
     });
     setDetails(null);
+
+    const count = Math.max(1, Math.min(trades, 20));
+    Promise.all(
+      Array.from({ length: count }, () =>
+        executeLiveTrade({
+          data: {
+            eaName: robot?.name ?? "EA",
+            symbol,
+            direction: "SELL",
+            lotSize: lot,
+          },
+        }),
+      ),
+    )
+      .then((results) => {
+        const ok = results.filter((item) => item.ok).length;
+        if (ok === count) {
+          toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
+          window.executionResult?.({ ok: true, message: `${ok}/${count} trades executed on MT5` });
+        } else {
+          const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
+          toast.error(`${ok}/${count} executed — ${reason}`);
+          window.executionResult?.({ ok: false, message: reason });
+        }
+      })
+      .catch(() => {
+        toast.error("Could not reach the execution provider.");
+        window.executionResult?.({ ok: false, message: "Could not reach the execution provider." });
+      });
   };
 
   return (
