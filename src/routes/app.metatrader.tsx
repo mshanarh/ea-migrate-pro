@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
@@ -48,6 +49,17 @@ function AppMetatrader() {
             Your robot trades through your own MT5 account. Funds never leave your broker.
           </p>
         </div>
+
+        <Link
+          to="/app/trading-pairs"
+          className="flex items-center justify-between rounded-[24px] border border-[#FFA500]/30 bg-[#FFA500]/[0.06] p-5 transition-transform active:scale-[0.99]"
+        >
+          <span>
+            <span className="block text-base font-black">Trading Pairs</span>
+            <span className="mt-0.5 block text-xs text-white/50">Choose pairs, lot size & max trades</span>
+          </span>
+          <span className="text-xl text-[#FFA500]">→</span>
+        </Link>
 
         {mt ? (
           <motion.div

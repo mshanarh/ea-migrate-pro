@@ -21,9 +21,11 @@ import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
 import { Route as AppScannerRouteImport } from './routes/app.scanner'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
+import { Route as AppTradingPairsRouteImport } from './routes/app.trading-pairs'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
+import { Route as DashboardPairsRouteImport } from './routes/dashboard.pairs'
 import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
@@ -91,6 +93,11 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/app/settings',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppTradingPairsRoute = AppTradingPairsRouteImport.update({
+  id: '/app/trading-pairs',
+  path: '/app/trading-pairs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
@@ -104,6 +111,11 @@ const DashboardEasRoute = DashboardEasRouteImport.update({
 const DashboardLicensesRoute = DashboardLicensesRouteImport.update({
   id: '/licenses',
   path: '/licenses',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardPairsRoute = DashboardPairsRouteImport.update({
+  id: '/pairs',
+  path: '/pairs',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardProfileRoute = DashboardProfileRouteImport.update({
@@ -149,8 +161,10 @@ export interface FileRoutesByFullPath {
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
@@ -171,8 +185,10 @@ export interface FileRoutesByTo {
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
@@ -195,8 +211,10 @@ export interface FileRoutesById {
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
@@ -220,8 +238,10 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
+    | '/app/trading-pairs'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
@@ -242,8 +262,10 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
+    | '/app/trading-pairs'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
@@ -265,8 +287,10 @@ export interface FileRouteTypes {
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
+    | '/app/trading-pairs'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
     | '/dashboard/signals'
     | '/dashboard/stats'
@@ -289,6 +313,7 @@ export interface RootRouteChildren {
   AppMetatraderRoute: typeof AppMetatraderRoute
   AppScannerRoute: typeof AppScannerRoute
   AppSettingsRoute: typeof AppSettingsRoute
+  AppTradingPairsRoute: typeof AppTradingPairsRoute
   MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -379,6 +404,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/trading-pairs': {
+      id: '/app/trading-pairs'
+      path: '/app/trading-pairs'
+      fullPath: '/app/trading-pairs'
+      preLoaderRoute: typeof AppTradingPairsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/dashboard/': {
       id: '/dashboard/'
       path: '/'
@@ -398,6 +430,13 @@ declare module '@tanstack/react-router' {
       path: '/licenses'
       fullPath: '/dashboard/licenses'
       preLoaderRoute: typeof DashboardLicensesRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/pairs': {
+      id: '/dashboard/pairs'
+      path: '/pairs'
+      fullPath: '/dashboard/pairs'
+      preLoaderRoute: typeof DashboardPairsRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/profile': {
@@ -448,6 +487,7 @@ declare module '@tanstack/react-router' {
 interface DashboardRouteChildren {
   DashboardEasRoute: typeof DashboardEasRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
+  DashboardPairsRoute: typeof DashboardPairsRoute
   DashboardProfileRoute: typeof DashboardProfileRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
@@ -459,6 +499,7 @@ interface DashboardRouteChildren {
 const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardEasRoute: DashboardEasRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
+  DashboardPairsRoute: DashboardPairsRoute,
   DashboardProfileRoute: DashboardProfileRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
@@ -483,19 +524,10 @@ const rootRouteChildren: RootRouteChildren = {
   AppMetatraderRoute: AppMetatraderRoute,
   AppScannerRoute: AppScannerRoute,
   AppSettingsRoute: AppSettingsRoute,
+  AppTradingPairsRoute: AppTradingPairsRoute,
   MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
   ._addFileTypes<FileRouteTypes>()
-
-import type { getRouter } from './router.tsx'
-import type { startInstance } from './start.ts'
-declare module '@tanstack/react-start' {
-  interface Register {
-    ssr: true
-    router: Awaited<ReturnType<typeof getRouter>>
-    config: Awaited<ReturnType<typeof startInstance.getOptions>>
-  }
-}

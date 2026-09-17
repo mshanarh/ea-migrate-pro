@@ -10,6 +10,7 @@ import {
   Globe2,
   KeyRound,
   LayoutGrid,
+  ListOrdered,
   LogOut,
   Menu,
   ShieldCheck,
@@ -39,7 +40,10 @@ const sections: { label?: string; items: NavItem[] }[] = [
   },
   {
     label: "Trading",
-    items: [{ to: "/dashboard/signals", label: "Copy Trading", icon: ArrowLeftRight, badge: true }],
+    items: [
+      { to: "/dashboard/pairs", label: "Manage Pairs", icon: ListOrdered },
+      { to: "/dashboard/signals", label: "Copy Trading", icon: ArrowLeftRight, badge: true },
+    ],
   },
   {
     label: "My Wallet",
