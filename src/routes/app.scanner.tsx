@@ -7,7 +7,7 @@ import ChartScanner from "@/components/app/ChartScanner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { executeLiveTrade } from "@/lib/execution-api";
+import { executeLiveTrade } from "@/lib/metacopier";
 import { DAILY_LIMIT, getScanCount, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -57,10 +57,16 @@ function AppScanner() {
     setDetails(null);
 
     const count = Math.max(1, Math.min(trades, 20));
+    if (!app.mt?.mcAccountId) {
+      toast.error("Connect your MT5 account first — MetaTrader page.");
+      window.executionResult?.({ ok: false, message: "No connected MT5 account — link it on the MetaTrader page" });
+      return;
+    }
     Promise.all(
       Array.from({ length: count }, () =>
         executeLiveTrade({
           data: {
+            accountId: app.mt?.mcAccountId ?? "",
             eaName: robot?.name ?? "EA",
             symbol,
             direction: "SELL",

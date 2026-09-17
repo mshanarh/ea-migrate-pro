@@ -26,6 +26,10 @@ export type MtAccount = {
   server: string;
   accountType: string;
   loginId: string;
+  /** The user's own MetaCopier account id (created under the platform key). */
+  mcAccountId?: string;
+  /** LIVE or DEMO as detected by MetaCopier at connect time. */
+  environment?: string;
 };
 
 export type AppSettings = {
@@ -289,6 +293,12 @@ export function removeRobot(id: string) {
 export function connectMt(mt: MtAccount) {
   load();
   state = { ...state, mt };
+  persist();
+}
+
+export function disconnectMt() {
+  load();
+  state = { ...state, mt: null };
   persist();
 }
 

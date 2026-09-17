@@ -13,7 +13,7 @@ import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
-import { executeLiveTrade } from "@/lib/execution-api";
+import { executeLiveTrade } from "@/lib/metacopier";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -117,12 +117,14 @@ function AppHome() {
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     toast.success(`${robot.name} started`);
-    // Live execution fires in the background when the provider is configured;
-    // it never blocks START.
+    // Live execution fires in the background on the user's own connected MT5
+    // account; it never blocks START. Without a connected account it is a no-op.
+    if (!app.mt?.mcAccountId) return;
     const firstPair = robot.pairs?.[0];
     const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
     void executeLiveTrade({
       data: {
+        accountId: app.mt.mcAccountId,
         eaName: robot.name,
         symbol,
         direction: "BUY",
