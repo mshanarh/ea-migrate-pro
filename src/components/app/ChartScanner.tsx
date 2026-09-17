@@ -87,7 +87,7 @@ export default function ChartScanner({ pairs, accent, eaName, onExecute, scansLe
 
   if (pairs.length === 0) {
     return (
-      <div className="flex h-[100dvh] w-screen flex-col items-center justify-center gap-3 bg-black p-6 text-center">
+      <div className="flex h-[100dvh] w-full flex-col items-center justify-center gap-3 bg-black p-6 text-center">
         <p className="text-4xl">📊</p>
         <p className="text-sm font-bold text-white">No pairs added yet</p>
         <p className="max-w-[260px] text-[13px] text-white/40">

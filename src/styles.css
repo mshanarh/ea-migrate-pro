@@ -169,8 +169,16 @@ html,
 body {
   width: 100%;
   height: 100dvh;
+  overflow-x: hidden;
   background-color: #000;
   overscroll-behavior: none;
+}
+
+/* Never let a stray wide element or media file stretch the page. */
+img,
+video {
+  max-width: 100%;
+  height: auto;
 }
 
 /* Lock the body only while an app screen is mounted — the mentor portal still scrolls. */

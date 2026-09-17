@@ -216,9 +216,9 @@ function LandingChatbot() {
   };
 
   return (
-    <div className="fixed right-5 bottom-5 z-[9998] flex flex-col items-end gap-3">
+    <div className="fixed right-4 bottom-20 z-[9998] flex flex-col items-end gap-3">
       {open && (
-        <div className="w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
+        <div className="max-w-[360px] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
             <img src="/botlogic-mascot.jpg?v=2" alt="EA Migrate bot" className="size-10 rounded-full border-2 border-primary object-cover shadow-glow" />
             <div className="min-w-0 flex-1">
@@ -245,7 +245,7 @@ function LandingChatbot() {
           </form>
         </div>
       )}
-      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-16 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
+      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
         <img src="/botlogic-mascot.jpg?v=2" alt="" className="size-full rounded-full object-cover" />
         <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
         <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
@@ -258,7 +258,7 @@ function Home() {
   const navigate = useNavigate();
 
   return (
-    <div className="min-h-screen bg-[#0A0A0A] text-white">
+    <div className="w-full overflow-x-hidden bg-[#0A0A0A] text-white">
       <SiteHeader />
 
       <main>
@@ -277,7 +277,7 @@ function Home() {
               initial={{ opacity: 0, y: 22 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.08, ease: [0.22, 1, 0.36, 1] }}
-              className="mt-8 text-4xl leading-[1.05] font-bold text-white sm:text-6xl"
+              className="mt-8 max-w-full text-4xl leading-[1.05] font-bold break-words text-white sm:text-6xl"
             >
               Your Mentor&apos;s
               <br />
@@ -300,14 +300,14 @@ function Home() {
               transition={{ duration: 0.6, delay: 0.24, ease: [0.22, 1, 0.36, 1] }}
               className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row"
             >
-              <Button asChild size="lg" className="w-full rounded-full sm:w-auto">
+              <Button asChild size="lg" className="w-full max-w-full rounded-full sm:w-auto">
                 <Link to="/signup">Create your portal</Link>
               </Button>
               <Button
                 asChild
                 size="lg"
                 variant="outline"
-                className="w-full rounded-full sm:w-auto"
+                className="w-full max-w-full rounded-full sm:w-auto"
               >
 
                 <a href="#how">
@@ -317,13 +317,13 @@ function Home() {
             </motion.div>
 
             <div
-              className="relative mx-auto mt-14 w-[260px] sm:w-[300px] md:w-[400px]"
+              className="relative mx-auto mt-14 w-full max-w-[340px] overflow-hidden rounded-[2.5rem] sm:max-w-[380px]"
               style={{ perspective: 1200 }}
             >
               <motion.img
                 src={heroApp.url}
                 alt="EA Migrate Pro app running the EA Migrate tester bot on a phone"
-                className="w-full object-contain"
+                className="h-auto w-full object-contain"
                 style={{
                   borderRadius: 40,
                   boxShadow: "0 0 60px rgba(37,99,235,0.6)",
@@ -366,7 +366,7 @@ function Home() {
                 viewport={{ once: true, margin: "-60px" }}
                 transition={{ duration: 0.5, delay: (index % 3) * 0.08, ease: [0.22, 1, 0.36, 1] }}
                 whileHover={{ y: -4 }}
-                className="panel p-6"
+                className="panel w-full max-w-full overflow-hidden p-6 break-words"
               >
                 <span className="flex size-11 items-center justify-center rounded-xl bg-primary/12 glow-ring">
                   <f.icon className="size-5 text-primary" />
@@ -441,7 +441,7 @@ function Home() {
                 viewport={{ once: true, margin: "-60px" }}
                 transition={{ duration: 0.5, delay: index * 0.09, ease: [0.22, 1, 0.36, 1] }}
                 whileHover={{ y: -4 }}
-                className="panel relative overflow-hidden p-7"
+                className="panel relative w-full max-w-full overflow-hidden p-7 break-words"
               >
                 <span className="pointer-events-none absolute top-4 right-6 text-5xl font-bold text-foreground/5">
                   {w.n}
@@ -472,7 +472,7 @@ function Home() {
                   value={`faq-${i}`}
                   className="panel border-b-0 px-6"
                 >
-                  <AccordionTrigger className="py-6 text-left text-lg font-semibold hover:no-underline">
+                  <AccordionTrigger className="w-full max-w-full py-6 text-left text-lg font-semibold break-words hover:no-underline">
                     {f.q}
                   </AccordionTrigger>
                   <AccordionContent className="pb-6 text-base text-muted-foreground">
@@ -515,7 +515,7 @@ function Home() {
       </main>
 
       <footer className="border-t border-border/60">
-        <div className="mx-auto max-w-6xl px-5">
+        <div className="mx-auto w-full max-w-6xl overflow-hidden px-5">
           <Accordion type="single" collapsible>
             <AccordionItem value="legal" className="border-border/60">
               <AccordionTrigger className="py-6 text-base text-muted-foreground hover:no-underline">

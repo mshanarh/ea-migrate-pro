@@ -17,14 +17,14 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
-        <Link to="/" className="group flex items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
+      <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
+        <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
           <img
             src="/ea-migrate-platform-robot.jpg"
             alt="EA Migrate Pro"
-            className="logo-animate size-10 object-contain transition-transform duration-200 ease-out group-hover:translate-x-1"
+            className="logo-animate size-10 min-w-[32px] shrink-0 object-contain transition-transform duration-200 ease-out group-hover:translate-x-1"
           />
-          <span className="text-base font-bold tracking-tight uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
+          <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span> Pro
           </span>
         </Link>
