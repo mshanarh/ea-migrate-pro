@@ -10,12 +10,12 @@ import { createEaRecord, renameEa, setEAs, useCurrentAccount, type ExpertAdvisor
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 3 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
 
 function readAsDataUrl(file: File, maxBytes: number) {
   return new Promise<string>((resolve, reject) => {
     if (file.size > maxBytes) {
-      reject(new Error("That file is too large for this browser prototype."));
+      reject(new Error(`That file is too large — maximum ${Math.round(maxBytes / (1024 * 1024))} MB.`));
       return;
     }
     const reader = new FileReader();
@@ -134,8 +134,8 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
     </div>
     <div><p className={labelClass}>EA Video / GIF <span className="text-sm font-bold text-primary">Unlocked</span></p>
       <div className="mt-2 rounded-2xl border border-dashed border-white/20 bg-white/[0.02] p-4 text-center text-sm text-white/40">{video ? <video src={video} className="mx-auto max-h-32 rounded-xl" controls /> : "No video"}</div>
-      <label className="mt-3 flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><Video className="size-4" /> {video ? "Replace Video / GIF" : "Upload Video / GIF"}<input type="file" accept="video/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label>
-      <p className="mt-2 text-xs text-white/40">Max 25 MB. MP4 / WebM / GIF recommended.</p>
+      <label className="mt-3 flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><Video className="size-4" /> {video ? "Replace Video / GIF" : "Upload Video / GIF"}<input type="file" accept="video/*,image/gif" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label>
+      <p className="mt-2 text-xs text-white/40">Any video type · Max 50 MB. MP4 / WebM / MOV / GIF all work.</p>
     </div>
     <div><p className={labelClass}>Symbols</p>
       <div className="mt-2 flex gap-3">

@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, removeRobot, setActiveRobot, toggleRobot, useAppState } from "@/lib/app-store";
+import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { executeLiveTrade } from "@/lib/metacopier";
 
@@ -148,6 +148,12 @@ function AppHome() {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+
+  // Pull the mentor's latest EA data (symbols, image, video) into the activated
+  // robots whenever the home screen mounts — portal edits appear instantly.
+  useEffect(() => {
+    syncRobotsFromPortal();
+  }, []);
 
   // Swipe left anywhere on the screen opens the customization drawer.
   const onTouchStart = (event: React.TouchEvent) => {

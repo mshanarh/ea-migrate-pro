@@ -260,6 +260,54 @@ export function setActiveRobot(id: string) {
   persist();
 }
 
+/**
+ * Pull the mentor's latest EA data (symbols, image, video) into every activated
+ * robot that came from that EA — so portal edits appear in the app immediately,
+ * without the user re-activating. Existing per-pair settings are preserved for
+ * symbols the EA still has; symbols the mentor removed are dropped.
+ */
+export function syncRobotsFromPortal() {
+  load();
+  if (typeof window === "undefined" || state.robots.length === 0) return;
+  let raw: string | null = null;
+  try {
+    raw = window.localStorage.getItem("eamp.store.v1");
+  } catch {
+    return;
+  }
+  if (!raw) return;
+  let changed = false;
+  try {
+    const store = JSON.parse(raw) as { accounts?: { eas?: { id?: string; name?: string; symbols?: string[]; image?: string; video?: string }[] }[] };
+    const eas = (store.accounts ?? []).flatMap((account) => account.eas ?? []);
+    if (eas.length === 0) return;
+    const robots = state.robots.map((robot) => {
+      const ea = eas.find((candidate) => candidate.id && candidate.id === robot.eaId);
+      if (!ea) return robot;
+      const symbols = Array.isArray(ea.symbols) ? ea.symbols : [];
+      const oldPairs = robot.pairs ?? [];
+      const pairs = symbols.map((symbol) => oldPairs.find((pair) => pair.symbol === symbol) ?? { symbol, lotSize: "0.01", maxTrades: "0" });
+      const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
+      const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
+      if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) return robot;
+      changed = true;
+      return {
+        ...robot,
+        symbols,
+        pairs,
+        ...(ea.image ? { image: ea.image } : {}),
+        ...(ea.video ? { video: ea.video } : {}),
+        ...(ea.name ? { name: ea.name } : {}),
+      };
+    });
+    if (!changed) return;
+    state = { ...state, robots };
+    persist();
+  } catch {
+    /* ignore malformed portal data */
+  }
+}
+
 export function setRobotPairs(id: string, pairs: PairSetting[]) {
   load();
   const safePairs = pairs.filter((pair) => pair.symbol.trim()).map((pair) => ({
