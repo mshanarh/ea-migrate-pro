@@ -78,7 +78,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.22)_36%,rgba(0,0,0,0.88)_78%,rgba(0,0,0,0.96)_100%)]" />
         <div className="relative flex h-full flex-col items-center justify-end px-4 pb-8 pt-4">
           <h1
-            className="text-center text-3xl font-black tracking-[0.08em] text-white uppercase"
+            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
           >
             {robot?.name ?? "YOUR ROBOT"}
@@ -134,7 +134,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
 
         <p className="mt-7 text-sm font-bold tracking-[0.34em] text-white/60 uppercase">You're trading with</p>
         <h1
-          className="mt-2 text-center text-4xl font-black leading-tight tracking-wide text-white uppercase"
+          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-3xl font-black leading-tight tracking-wide text-white uppercase sm:text-4xl"
           style={{ fontFamily: fontStack(font), textShadow: `0 0 34px ${accent}80` }}
         >
           {robot?.name ?? "YOUR ROBOT"}
@@ -189,7 +189,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_40%,rgba(0,0,0,0.9)_92%)]" />
         <div className="relative flex h-full flex-col items-center justify-end pb-9">
           <h1
-            className="text-center text-3xl font-black text-white"
+            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black leading-tight text-white sm:text-3xl"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 20px rgba(0,0,0,0.85)" }}
           >
             {robot?.name ?? "YOUR ROBOT"}
@@ -268,7 +268,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
           </div>
 
           <h1
-            className="text-center text-3xl font-black tracking-[0.08em] text-white uppercase"
+            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
           >
             {robot?.name ?? "YOUR ROBOT"}

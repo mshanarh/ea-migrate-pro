@@ -56,7 +56,7 @@ export function BlueprintEdge({ robot, robots, onStart, onRemove, onOpenSymbols,
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="flex flex-col items-center rounded-[28px] px-4 pb-2 pt-1"
       >
-        <h2 className="text-center text-lg font-bold" style={{ color: accent, fontFamily: "'Montserrat', sans-serif" }}>
+        <h2 className="max-w-full break-words px-2 text-center text-base font-bold" style={{ color: accent, fontFamily: "'Montserrat', sans-serif" }}>
           {eaName}
         </h2>
 
@@ -69,7 +69,7 @@ export function BlueprintEdge({ robot, robots, onStart, onRemove, onOpenSymbols,
 
         <p className="mt-4 font-sans text-sm font-medium text-white">Your Trading With</p>
         <h1
-          className="mt-1 text-center text-4xl font-black leading-tight tracking-wide text-white uppercase"
+          className="mx-auto mt-1 max-w-full break-words px-2 text-center text-3xl font-black leading-tight tracking-wide text-white uppercase"
           style={{ fontFamily: "'Montserrat', sans-serif", textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
         >
           {eaName}

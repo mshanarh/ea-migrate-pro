@@ -36,6 +36,15 @@ export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
 export type AccentColorId = (typeof ACCENT_COLORS)[number]["id"];
 export type FontOptionId = (typeof FONT_OPTIONS)[number]["id"];
 
+/** Each interface style carries its signature font — picking a style applies it. */
+export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
+  "NOVA CORE": "Orbitron",
+  "PHANTOM PULSE": "Space Grotesk",
+  "TITAN EDGE": "Rajdhani",
+  "PRIME FORGE": "Montserrat",
+  "BLUEPRINT EDGE": "Montserrat",
+};
+
 const DEFAULT_COLOR: AccentColorId = "solar-orange";
 const DEFAULT_THEME: InterfaceThemeId = "NOVA CORE";
 const DEFAULT_FONT: FontOptionId = "Orbitron";
@@ -117,7 +126,8 @@ export function setAccentColor(id: AccentColorId) {
 
 export function setInterfaceTheme(id: InterfaceThemeId) {
   load();
-  state = { ...state, theme: id };
+  // The interface style also drives the font — its signature typeface ships with it.
+  state = { ...state, theme: id, font: THEME_FONT[id] };
   persist();
 }
 

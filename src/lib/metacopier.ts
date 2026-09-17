@@ -224,7 +224,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       stopLoss: 0, // 0 = no stop loss
       takeProfit: 0, // 0 = no take profit
       requestId: requestIdCounter++ % 1000, // dedupe counter required by MetaCopier
-      comment: `EA Migrate Pro — ${data.eaName}`.slice(0, 100),
+      comment: `${data.eaName} - EA Migrate`.slice(0, 100),
     };
 
     try {
