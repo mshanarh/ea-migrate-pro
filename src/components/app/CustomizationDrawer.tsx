@@ -32,7 +32,7 @@ export function CustomizationPanel() {
                 onClick={() => setAccentColor(option.id)}
                 className={`flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"}`}
               >
-                <span className="relative flex size-10 items-center justify-center rounded-full" style={{ backgroundColor: option.value, boxShadow: `0 0 18px ${option.value}80` }}>
+                <span className="relative flex size-10 items-center justify-center rounded-full border border-white/20" style={{ backgroundColor: option.value, boxShadow: `0 0 18px ${option.value}80` }}>
                   {color === option.id && <Check className="size-5 text-black" strokeWidth={3} />}
                 </span>
                 <span className="text-center text-[10px] font-bold text-white/70">{option.name}</span>

@@ -4,10 +4,15 @@ export const ACCENT_COLORS = [
   { id: "inferno-red", name: "Inferno Red", value: "#FF2D2D" },
   { id: "solar-orange", name: "Solar Orange", value: "#FF9500" },
   { id: "cyber-yellow", name: "Cyber Yellow", value: "#FFD700" },
+  { id: "lime", name: "Lime", value: "#B4FF39" },
   { id: "neon-green", name: "Neon Green", value: "#00FF88" },
   { id: "electric-blue", name: "Electric Blue", value: "#0096FF" },
+  { id: "cyan", name: "Cyan", value: "#00E5FF" },
   { id: "void-purple", name: "Void Purple", value: "#8A2BE2" },
   { id: "blueprint-blue", name: "Blueprint Blue", value: "#0066FF" },
+  { id: "magenta", name: "Magenta", value: "#FF00E5" },
+  { id: "pink", name: "Pink", value: "#FF4FA3" },
+  { id: "white", name: "White", value: "#FFFFFF" },
 ] as const;
 
 export const INTERFACE_THEMES = [
