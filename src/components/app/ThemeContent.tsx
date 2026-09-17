@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { ChartLine, Info, MessageCircle, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
+import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
@@ -31,9 +31,10 @@ function PoweredBadge({ accent }: { accent: string }) {
 
 type ActionDef = { label: string; icon: typeof Play; onClick: () => void };
 
-function useActions({ onStart, onQuotes, onRemove }: Pick<ThemeContentProps, "onStart" | "onQuotes" | "onRemove">): ActionDef[] {
+function useActions({ robot, onStart, onQuotes, onRemove }: Pick<ThemeContentProps, "robot" | "onStart" | "onQuotes" | "onRemove">): ActionDef[] {
+  const running = robot?.running ?? false;
   return [
-    { label: "START", icon: Play, onClick: onStart },
+    { label: running ? "STOP" : "START", icon: running ? Pause : Play, onClick: onStart },
     { label: "QUOTES", icon: Waves, onClick: onQuotes },
     { label: "REMOVE", icon: Trash2, onClick: onRemove },
   ];

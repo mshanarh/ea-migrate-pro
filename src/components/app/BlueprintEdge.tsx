@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { Bot, Play, Plus, Trash2 } from "lucide-react";
+import { Bot, Pause, Play, Plus, Trash2 } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { ACCENT_COLORS, useCustomization } from "@/lib/app-customization";
 import { RobotMedia } from "@/components/app/RobotMedia";
@@ -83,7 +83,12 @@ export function BlueprintEdge({ robot, robots, onStart, onRemove, onOpenSymbols,
       {/* MIDDLE CONTROL BAR */}
       <div className="mx-auto flex w-[95%] items-center justify-around rounded-[40px] bg-white px-3 py-4" style={{ boxShadow: `0 10px 34px ${accent}40` }}>
         <ControlButton label="DELETE" icon={Trash2} onClick={onRemove} accent={accent} />
-        <ControlButton label="START" icon={Play} onClick={onStart} accent={accent} />
+        <ControlButton
+          label={robot?.running ? "STOP" : "START"}
+          icon={robot?.running ? Pause : Play}
+          onClick={onStart}
+          accent={accent}
+        />
         <ControlButton label="SYMBOLS" icon={Bot} onClick={onOpenSymbols} accent={accent} />
       </div>
 

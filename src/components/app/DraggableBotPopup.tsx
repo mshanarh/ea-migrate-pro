@@ -1,160 +1,163 @@
 import { useEffect, useRef, useState } from "react";
+import { useAppState } from "@/lib/app-store";
 
-const AUTO_HIDE_MS = 6000; // popup disappears after 6s
+/**
+ * Floating bot companion — visible ONLY while the robot is running.
+ *
+ * - START pressed  → button appears (bot picture, blue glow ring, green dot,
+ *   exactly like the reference image) and the popup opens in "ready" state.
+ * - STOP pressed   → popup closes and the floating button disappears.
+ * - Tapping the button toggles the popup manually while running.
+ * - Scanner Execute streams trade logs into the popup via
+ *   window.triggerExecutionToast(…) even when the robot is idle.
+ */
+
+type LogLine = { text: string; kind: "cmd" | "info" | "ok" | "last" };
+
+const READY_LINES: LogLine[] = [
+  { text: "is ready to execute trades", kind: "info" },
+  { text: "Select pair and press Scan", kind: "cmd" },
+];
 
 declare global {
   interface Window {
-    /** Show the draggable bot popup. Call from any theme: window.showBotStarted(eaName, "started"|"stopped"). */
+    /** Kept for compatibility: no-op — popup state is driven by the app store. */
     showBotStarted?: (name?: string, status?: "started" | "stopped") => void;
+    /** Open the popup and stream execution logs for a scanned pair. */
+    triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => void;
+    closeExecutionToast?: () => void;
   }
 }
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(Math.max(value, min), max);
-}
-
-/** Resolve the robot name: explicit argument → stored active robot → stored name → generic. */
-function resolveEaName(name?: string): string {
-  if (name && name.trim()) return name.trim();
-  try {
-    const active = JSON.parse(localStorage.getItem("activeRobot") || "{}") as { name?: string };
-    if (active.name) return active.name;
-    return localStorage.getItem("robotName") || localStorage.getItem("eaName") || "EA";
-  } catch {
-    return "EA";
-  }
-}
-
-/** Resolve the active robot's avatar image (uploaded from the mentor dashboard), else the built-in mascot. */
-function resolveEaImage(): string {
-  try {
-    const raw = localStorage.getItem("eamp.app.v3");
-    if (raw) {
-      const state = JSON.parse(raw) as { activeRobotId?: string | null; robots?: { id?: string; image?: string }[] };
-      const active = state.robots?.find((robot) => robot.id === state.activeRobotId) ?? state.robots?.[0];
-      if (active?.image) return active.image;
-    }
-    const active = JSON.parse(localStorage.getItem("activeRobot") || "{}") as { image?: string };
-    if (active.image) return active.image;
-  } catch {
-    /* ignore */
-  }
-  return "/botlogic-mascot.png";
-}
-
-/**
- * Draggable bot popup shown when a robot starts. Mount it once per app page;
- * any theme triggers it with window.showBotStarted(eaName).
- * Blue-glow avatar with live dot, EA name, "It Started 🚀", close button,
- * auto-hides after 6s and can be dragged anywhere (mouse + touch).
- */
 export default function DraggableBotPopup() {
-  const [visible, setVisible] = useState(false);
-  const [eaName, setEaName] = useState("EA");
-  const [eaImage, setEaImage] = useState("/botlogic-mascot.png");
-  const [running, setRunning] = useState(true);
-  const [pos, setPos] = useState({ x: 16, y: 150 });
-  const [dragging, setDragging] = useState(false);
-  const offset = useRef({ x: 0, y: 0 });
-  const popupRef = useRef<HTMLDivElement | null>(null);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const app = useAppState();
+  const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+  const running = robot?.running ?? false;
+  const eaName = robot?.name ?? "My EA";
+  const eaImage = robot?.image || "/botlogic-mascot.png";
 
-  // Register the global trigger once — any theme can call window.showBotStarted(eaName, status).
+  const [open, setOpen] = useState(false);
+  const [logs, setLogs] = useState<LogLine[]>([]);
+  const [state, setState] = useState<"ready" | "executed">("ready");
+  const prevRunning = useRef(running);
+
+  // START (false→true while mounted): reset to ready and pop the popup open.
+  // STOP (true→false): close it. Navigating while running does NOT auto-open.
   useEffect(() => {
-    window.showBotStarted = (name?: string, status?: "started" | "stopped") => {
-      setEaName(resolveEaName(name));
-      setEaImage(resolveEaImage());
-      setRunning(status !== "stopped");
-      setVisible(true);
+    if (running && !prevRunning.current) {
+      setState("ready");
+      setLogs([]);
+      setOpen(true);
+    }
+    if (!running && prevRunning.current) {
+      setOpen(false);
+    }
+    prevRunning.current = running;
+  }, [running]);
+
+  // Scanner Execute → stream the trade logs into the popup.
+  useEffect(() => {
+    window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => {
+      const p = pairData ?? { symbol: "XAUUSD", lot_size: 0.01, max_trades: 5 };
+      const stream: LogLine[] = [
+        { text: `NEW SIGNAL: ${p.symbol} BUY`, kind: "cmd" },
+        { text: `OPEN BUY: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
+        { text: "TP: 4330.36 | SL: 4260.01", kind: "info" },
+        { text: `SENDING ${p.max_trades} TRADES TO MT5...`, kind: "info" },
+        { text: `${p.max_trades}/${p.max_trades} TRADES EXECUTED ON MT5`, kind: "last" },
+      ];
+      setState("executed");
+      setLogs([]);
+      setOpen(true);
+      stream.forEach((line, index) => {
+        window.setTimeout(() => setLogs((prev) => [...prev, line]), index * 500);
+      });
     };
+    window.closeExecutionToast = () => setOpen(false);
+    // Compatibility no-op — visibility is store-driven now.
+    window.showBotStarted = () => {};
     return () => {
+      delete window.triggerExecutionToast;
+      delete window.closeExecutionToast;
       delete window.showBotStarted;
     };
   }, []);
 
-  // Auto-hide 6s after each show (timer resets when re-triggered).
-  useEffect(() => {
-    if (!visible) return;
-    hideTimer.current = setTimeout(() => setVisible(false), AUTO_HIDE_MS);
-    return () => {
-      if (hideTimer.current) clearTimeout(hideTimer.current);
-    };
-  }, [visible]);
-
-  const onPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
-    // Let the close button behave as a click instead of starting a drag.
-    if ((event.target as HTMLElement).closest("button")) return;
-    setDragging(true);
-    event.currentTarget.setPointerCapture(event.pointerId);
-    offset.current = { x: event.clientX - pos.x, y: event.clientY - pos.y };
-  };
-
-  const onPointerMove = (event: React.PointerEvent<HTMLDivElement>) => {
-    if (!dragging) return;
-    const rect = popupRef.current?.getBoundingClientRect();
-    const width = rect?.width ?? 220;
-    const height = rect?.height ?? 72;
-    setPos({
-      x: clamp(event.clientX - offset.current.x, 0, window.innerWidth - width),
-      y: clamp(event.clientY - offset.current.y, 0, window.innerHeight - height),
-    });
-  };
-
-  const onPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
-    setDragging(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  };
-
-  if (!visible) return null;
+  if (!running) return null;
 
   return (
-    <div
-      ref={popupRef}
-      role="status"
-      aria-live="polite"
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
-      style={{ left: pos.x, top: pos.y, touchAction: "none" }}
-      className={`fixed z-[99999] flex select-none items-center gap-3 rounded-full border border-[#2A2A2A] bg-[#0D0D0D] py-1 pl-1 pr-4 shadow-2xl transition-transform ${
-        dragging ? "scale-105 cursor-grabbing" : "cursor-grab"
-      }`}
-    >
-      {/* Robot avatar with status-colored glow ring and live dot */}
+    <>
+      {/* Floating bot button — blue glow ring + green dot, like the reference image */}
       <div
-        className="relative size-14 shrink-0 overflow-hidden rounded-full border-2"
+        role="button"
+        tabIndex={0}
+        aria-label={`${eaName} running — open trade log`}
+        onClick={() => setOpen((value) => !value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") setOpen((value) => !value);
+        }}
+        className="fixed bottom-[96px] right-4 z-[9998] flex size-[64px] cursor-pointer items-center justify-center rounded-full bg-[#0A0F1E] transition-transform active:scale-95"
         style={{
-          borderColor: running ? "#3A3AFF" : "#2A2A2A",
-          boxShadow: running ? "0 0 15px rgba(58,58,255,0.6)" : "0 0 10px rgba(255,255,255,0.15)",
+          border: "3px solid #2E5BFF",
+          boxShadow: "0 0 18px rgba(46,91,255,0.75), 0 0 36px rgba(46,91,255,0.35)",
         }}
       >
-        <img src={eaImage} alt="" className={`size-full object-cover ${running ? "" : "opacity-60 grayscale"}`} />
-        <span
-          className={`absolute -bottom-0.5 -right-0.5 size-5 rounded-full border-[3px] border-[#0D0D0D] ${running ? "animate-pulse bg-[#22C55E]" : "bg-[#666]"}`}
-        />
+        <img src={eaImage} alt={eaName} className="size-full rounded-full object-cover" />
+        <span className="absolute -bottom-0.5 -right-0.5 size-3.5 rounded-full border-2 border-black bg-green-500 shadow-[0_0_8px_#22c55e]" />
       </div>
 
-      <div className="flex min-w-0 flex-col">
-        <p className="truncate text-[13px] font-bold leading-none text-white">{eaName}</p>
-        <p
-          className="mt-1.5 flex items-center gap-1 text-[12px]"
-          style={{ color: running ? "#22C55E" : "rgba(255,255,255,0.55)" }}
+      {/* 320px popup with EA header + trade log */}
+      {open && (
+        <div
+          role="dialog"
+          aria-label={`${eaName} trade log`}
+          className="fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 border-[#A020F0] bg-[#0A0A1A] shadow-[0_0_30px_rgba(160,32,240,0.5)]"
         >
-          <span className="leading-none">●</span> {running ? "It Started 🚀" : "It Stopped ⏹"}
-        </p>
-      </div>
+          {/* EA image header */}
+          <div className="relative h-[220px] w-full bg-black">
+            <img src={eaImage} alt={eaName} className="size-full object-cover" />
+            <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
+            <button
+              type="button"
+              aria-label="Close trade log"
+              onClick={() => setOpen(false)}
+              className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur"
+            >
+              ✕
+            </button>
+            <div className="absolute inset-x-4 bottom-3">
+              <h2 className="text-[20px] font-black leading-tight text-white drop-shadow-[0_2px_4px_black]">{eaName}</h2>
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="size-3 rounded-full bg-green-500 shadow-[0_0_8px_#22c55e]" />
+                <span className="text-[12px] font-bold tracking-widest text-green-400">SERVER CONNECTED</span>
+              </div>
+            </div>
+          </div>
 
-      <button
-        type="button"
-        aria-label="Dismiss bot popup"
-        onClick={() => setVisible(false)}
-        className="ml-1 flex size-6 shrink-0 items-center justify-center rounded-full bg-[#2A2A2A] text-xs font-bold text-white transition-transform hover:scale-105 active:scale-95"
-      >
-        ✕
-      </button>
-    </div>
+          {/* Terminal trade log */}
+          <div className="min-h-[110px] bg-[#0F172A] p-4 font-mono text-[12px] leading-[22px]">
+            {state === "ready" ? (
+              READY_LINES.map((line, index) => (
+                <div key={index} className="flex gap-2">
+                  <span className="text-gray-500">{">"}</span>
+                  <span className={line.kind === "cmd" ? "text-gray-400" : "text-white"}>
+                    {line.kind === "info" ? `${eaName} ${line.text}` : line.text}
+                  </span>
+                </div>
+              ))
+            ) : (
+              logs.map((log, index) => (
+                <div key={index} className="flex gap-2">
+                  <span className="text-gray-600">{">"}</span>
+                  <span className={log.kind === "last" ? "font-bold text-green-400" : "text-gray-300"}>{log.text}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+
+      <style>{`@keyframes popUp{from{transform:translateY(15px) scale(0.95);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}`}</style>
+    </>
   );
 }

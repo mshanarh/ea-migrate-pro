@@ -4,8 +4,7 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import ChartScanner from "@/components/app/ChartScanner";
-import ExecutionToast from "@/components/app/ExecutionToast";
-import ScanStepsOverlay, { type ScanStepPair } from "@/components/app/ScanStepsOverlay";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { DAILY_LIMIT, getScanCount, registerScan } from "@/lib/trading-pairs-store";
@@ -45,22 +44,15 @@ function AppScanner() {
     return true;
   };
 
-  // Fire the execution steps overlay at the top of the screen with exactly
-  // the chosen trades count, then narrate through the scan-step pairs.
+  // Execute pressed — stream the trade logs into the floating bot popup.
   const handleExecute = ({ symbol, lot, trades }: { symbol: string; lot: string; trades: number }) => {
-    window.showBotStarted?.(app.robots[0]?.name ?? "EA");
-    setDetails({ symbol, lot, trades });
+    window.triggerExecutionToast?.(robot?.name, robot?.image, {
+      symbol,
+      lot_size: lot,
+      max_trades: trades,
+    });
+    setDetails(null);
   };
-
-  const stepPairs: ScanStepPair[] = details
-    ? [
-        {
-          symbol: details.symbol,
-          lotSize: Number(details.lot) || 0.01,
-          maxTrades: details.trades,
-        },
-      ]
-    : [];
 
   return (
     <div className="app-fullscreen bg-black text-white">
@@ -76,13 +68,7 @@ function AppScanner() {
         />
       </div>
       <FixedBottomNav />
-      <ExecutionToast />
-      <ScanStepsOverlay
-        open={stepPairs.length > 0}
-        eaName={robot?.name ?? "EA"}
-        pairs={stepPairs}
-        onClose={() => setDetails(null)}
-      />
+      <DraggableBotPopup />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
           <p className="text-5xl">⛔</p>

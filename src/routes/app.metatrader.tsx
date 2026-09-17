@@ -4,7 +4,7 @@ import { Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import ExecutionToast from "@/components/app/ExecutionToast";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, useAppState, type MtAccount } from "@/lib/app-store";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -89,7 +89,7 @@ function AppMetatrader() {
       </main>
       </div>
       <FixedBottomNav />
-      <ExecutionToast />
+      <DraggableBotPopup />
     </div>
   );
 }
