@@ -333,4 +333,45 @@ body:has(.app-shell-locked) {
   background-color: #10151c;
 }
 
+/* ── Colour Matrix effect — pulses glows on images, buttons and names ──── */
+/* Scoped under body.eamp-colour-matrix so it only runs when toggled on.   */
+@keyframes eampGlowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px color-mix(in srgb, var(--eamp-glow, #00e5ff) 30%, transparent);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: 0 0 32px color-mix(in srgb, var(--eamp-glow, #00e5ff) 90%, transparent);
+    filter: brightness(1.18);
+  }
+}
+@keyframes eampTextGlowPulse {
+  0%,
+  100% {
+    text-shadow: 0 0 4px color-mix(in srgb, var(--eamp-glow, #00e5ff) 20%, transparent);
+  }
+  50% {
+    text-shadow: 0 0 22px color-mix(in srgb, var(--eamp-glow, #00e5ff) 95%, transparent);
+  }
+}
+body.eamp-colour-matrix img {
+  animation: eampGlowPulse 2.6s ease-in-out infinite;
+}
+body.eamp-colour-matrix button {
+  animation: eampGlowPulse 2.6s ease-in-out infinite;
+}
+body.eamp-colour-matrix h1,
+body.eamp-colour-matrix h2 {
+  animation: eampTextGlowPulse 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.eamp-colour-matrix img,
+  body.eamp-colour-matrix button,
+  body.eamp-colour-matrix h1,
+  body.eamp-colour-matrix h2 {
+    animation: none;
+  }
+}
+
 

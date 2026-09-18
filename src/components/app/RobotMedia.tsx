@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { loadVideoUrl } from "@/lib/media-store";
-import { subscribeVideoRequests } from "@/lib/video-playback";
+import {
+  isRobotVideoAuto,
+  subscribeVideoAuto,
+  subscribeVideoRequests,
+  wasPlaybackRequestedRecently,
+} from "@/lib/video-playback";
 
 type RobotMediaProps = {
   image: string;
@@ -16,10 +21,11 @@ type RobotMediaProps = {
  * Renders the robot's uploaded video when one exists (from the mentor
  * dashboard's EA Video/GIF upload), otherwise the static image.
  *
- * Playback is deliberately NOT automatic. The owner wants: press the HOME
- * button twice → the video starts playing, wherever the media sits (picture
- * slot on circle themes, background on black themes). All mounted RobotMedia
- * instances subscribe to the playback request published by the bottom nav.
+ * Playback is deliberate, never automatic-by-default: pressing the HOME button
+ * twice → the video starts playing, wherever the media sits (picture slot on
+ * circle themes, background on black themes). The Settings → Back Animation →
+ * Robot Video toggle can also start (and keep) playback via the persisted
+ * auto flag. All mounted RobotMedia instances subscribe to the playback bus.
  *
  * Videos live in IndexedDB and are handed to the element as an instant object
  * URL, so the double-press starts playback immediately with no decode lag.
@@ -56,24 +62,63 @@ export function RobotMedia({ image, video, variant, className, preferImage = fal
     };
   }, [video]);
 
-  // Double-tap-HOME playback request — swap in the video and start playing.
+  // Playback requests: live bus for already-mounted media, plus the recent
+  // request check for media that mounted a moment later (the first HOME press
+  // can navigate and remount the home screen — the second press must still win).
+  // The Robot Video toggle (auto flag) also activates, and live-updates via its
+  // own bus so switching off returns the picture slot to the image.
   useEffect(() => {
     if (!playableSrc) return;
-    return subscribeVideoRequests(() => {
-      setActivated(true);
+    if (wasPlaybackRequestedRecently()) setActivated(true);
+    if (isRobotVideoAuto()) setActivated(true);
+    const offRequests = subscribeVideoRequests(() => setActivated(true));
+    const offAuto = subscribeVideoAuto(() => {
+      if (isRobotVideoAuto()) setActivated(true);
+      else {
+        videoRef.current?.pause();
+        setActivated(false);
+      }
     });
+    return () => {
+      offRequests();
+      offAuto();
+    };
   }, [playableSrc]);
 
-  // Once activated, start playback (the double-tap is the user gesture that
-  // unlocks it) and retry on data arrival for slow decoders.
+  // Once activated, actually start playback: try now, and keep retrying until
+  // the element reports it is really playing (slow mobile decoders, browser
+  // autoplay policies, codec probing — the first play() call can fail silently).
   useEffect(() => {
     if (!activated || !playableSrc) return;
     const el = videoRef.current;
     if (!el) return;
-    const attemptPlay = () => el.play().catch(() => {});
+    let cancelled = false;
+    const attemptPlay = () => {
+      if (cancelled) return;
+      void el.play().catch(() => {});
+    };
     attemptPlay();
     el.addEventListener("loadeddata", attemptPlay);
-    return () => el.removeEventListener("loadeddata", attemptPlay);
+    el.addEventListener("canplay", attemptPlay);
+    // A short retry window catches browsers that reject the first play() before
+    // the element is ready, without running forever.
+    const retries = window.setTimeout(attemptPlay, 350);
+    const confirmTimer = window.setInterval(() => {
+      if (!el.paused) {
+        window.clearInterval(confirmTimer);
+        return;
+      }
+      attemptPlay();
+    }, 500);
+    const stopConfirming = window.setTimeout(() => window.clearInterval(confirmTimer), 5000);
+    return () => {
+      cancelled = true;
+      el.removeEventListener("loadeddata", attemptPlay);
+      el.removeEventListener("canplay", attemptPlay);
+      window.clearTimeout(retries);
+      window.clearInterval(confirmTimer);
+      window.clearTimeout(stopConfirming);
+    };
   }, [activated, playableSrc]);
 
   // Show the picture until playback is requested, or when no usable video exists.

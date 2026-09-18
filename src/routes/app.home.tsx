@@ -14,6 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { speakBot } from "@/lib/bot-voice";
 import { executeLiveTrade } from "@/lib/metacopier";
 
 export const Route = createFileRoute("/app/home")({
@@ -90,18 +91,8 @@ function WelcomeMaster() {
     // remounts it. The old armed-once flow skipped the greeting entirely on
     // most entries, which felt broken.
     setShow(true);
-    // Speak the greeting (muted or blocked browsers just skip it silently).
-    try {
-      const utterance = new SpeechSynthesisUtterance("Welcome Master. It's time to make money.");
-      utterance.lang = "en-US";
-      utterance.rate = 1.05;
-      utterance.pitch = 1;
-      utterance.volume = 1;
-      window.speechSynthesis.cancel();
-      window.speechSynthesis.speak(utterance);
-    } catch {
-      /* voice unsupported — silent fallback */
-    }
+    // Speak the greeting through the Bot Voice engine (respects its toggle).
+    speakBot("Welcome Master. It's time to make money.");
     // Brief flash, then straight into the app — fast redirect, greeting still seen.
     const timer = setTimeout(() => setShow(false), 600);
     return () => clearTimeout(timer);
@@ -185,11 +176,13 @@ function AppHome() {
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
       toast.success(`${robot.name} stopped`);
+      speakBot(`${robot.name} stopped. Trading closed.`);
       return;
     }
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     toast.success(`${robot.name} started`);
+    speakBot(`${robot.name} started. Time to make money.`);
     // Live execution fires in the background on the user's own connected MT5
     // account; it never blocks START. Without a connected account it is a no-op.
     if (!app.mt?.mcAccountId) return;

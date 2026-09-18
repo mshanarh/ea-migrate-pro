@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useAppState } from "@/lib/app-store";
+import { speakBot } from "@/lib/bot-voice";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -98,6 +99,7 @@ export default function DraggableBotPopup() {
         const base = prev.filter((line) => line.kind !== "last");
         return [...base, { text: result.ok ? `✔ ${result.message.toUpperCase()}` : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? "last" : "info" }];
       });
+      speakBot(result.message);
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);
     // Compatibility no-op — visibility is store-driven now.

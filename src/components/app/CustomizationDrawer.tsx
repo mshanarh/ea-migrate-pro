@@ -192,7 +192,7 @@ export function CustomizationPanel() {
           onToggle={() => toggle("bg")}
         >
           <p className="px-1 text-xs leading-relaxed text-white/45">
-            Background effects live in Settings → Background Effects. Open the full Settings page for the complete effect gallery.
+            Profit Rain, Lightning, Colour Matrix, Robot Video and more live in Settings → Back Animation.
           </p>
         </PillRow>
 

@@ -200,9 +200,10 @@ function AppMetatrader() {
         },
       });
       if (!result.ok) {
-        // The key-inactive notice gets its own calm amber banner; every other
-        // failure shows the real provider error in red.
-        setKeyNotice(result.message.includes("API key"));
+        // key_missing → amber banner with the exact admin fix (was the endless
+        // "missing platform API key" loop). key_rejected → real provider
+        // status. failed → the real provider error (login/server/password).
+        setKeyNotice(result.code === "key_missing");
         setErrorMessage(result.message);
         toast.error(result.message);
         return;

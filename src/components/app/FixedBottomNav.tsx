@@ -11,14 +11,28 @@ const tabs = [
   { to: "/app/scanner", label: "SCANNER", icon: ScanLine },
 ] as const;
 
+/** Any mounted robot video ref (idb-video:*, data:, http:) we can detect. */
+function robotHasVideo(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const raw = window.localStorage.getItem("eamp.app.v3");
+    if (!raw) return false;
+    const state = JSON.parse(raw) as { robots?: { video?: string }[] };
+    return (state.robots ?? []).some((robot) => typeof robot.video === "string" && robot.video.length > 0);
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The one and only bottom navigation for the EA Migrate Pro app.
  * Floating pill: centered, 90% width, accent glow, fixed 20px from the bottom.
  * It never changes with the interface theme — themes only swap the top content.
  *
- * HOME has a special gesture: pressing it twice in quick succession starts the
- * robot's uploaded video playing (the tap itself unlocks mobile autoplay), and
- * a hint toast confirms the first press.
+ * HOME has a special gesture: pressing it twice starts the robot's uploaded
+ * video playing (the tap itself unlocks mobile autoplay). The request is
+ * timestamped, so it still wins when the first press navigates and remounts
+ * the home screen.
  */
 export function FixedBottomNav() {
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -27,16 +41,17 @@ export function FixedBottomNav() {
   const lastHomeTap = useRef<number>(0);
 
   const handleHomeClick = () => {
+    // The Link's SPA navigation still runs — module state (the request
+    // timestamp) survives it, so a remounted home screen can pick the
+    // playback request up via wasPlaybackRequestedRecently().
     const now = Date.now();
     const isDoubleTap = now - lastHomeTap.current < 800;
     lastHomeTap.current = now;
+
     if (isDoubleTap) {
       requestVideoPlayback();
-      toast.success("Playing your video");
-    } else if (path !== "/app/home") {
-      toast.info("Press HOME again to play your video");
-    } else if (lastHomeTap.current === 0 || now - lastHomeTap.current >= 800) {
-      // First press while already on HOME — hint at the gesture.
+      toast.success(robotHasVideo() ? "Playing your video" : "No robot video yet — your mentor can upload one");
+    } else {
       toast.info("Press HOME again to play your video");
     }
   };
@@ -61,8 +76,8 @@ export function FixedBottomNav() {
             <Link
               key={to}
               to={to}
-              aria-current={active ? "page" : undefined}
               onClick={label === "HOME" ? handleHomeClick : undefined}
+              aria-current={active ? "page" : undefined}
               className="flex min-w-[76px] flex-col items-center justify-center gap-1"
             >
               <span

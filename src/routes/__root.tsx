@@ -12,6 +12,7 @@ import { useEffect, type ReactNode } from "react";
 import appCss from "../styles.css?url";
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
+import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 
@@ -134,6 +135,11 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  // Re-apply the persisted Colour Matrix body class on every mount/route load.
+  useEffect(() => {
+    applyColourMatrixFromStorage();
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       {/* Animated background sits behind everything; content lifts above it. */}
@@ -145,5 +151,4 @@ function RootComponent() {
       </div>
     </QueryClientProvider>
   );
-
 }

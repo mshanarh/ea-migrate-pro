@@ -1,8 +1,8 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronRight } from "lucide-react";
-import { BG_EFFECTS } from "@/components/BackgroundEffects";
+import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
@@ -189,82 +189,12 @@ function FontSection({ accent }: { accent: string }) {
   );
 }
 
-function BackgroundEffectsSection() {
-  const [enabled, setEnabled] = useState(true);
-  const [selected, setSelected] = useState("dollars");
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setEnabled(localStorage.getItem("bgEffectsEnabled") !== "false");
-    setSelected(localStorage.getItem("bgEffectType") || "dollars");
-  }, []);
-
-  const persist = (nextEnabled: boolean, nextType: string) => {
-    localStorage.setItem("bgEffectsEnabled", nextEnabled ? "true" : "false");
-    localStorage.setItem("bgEffectType", nextType);
-    window.dispatchEvent(new Event("eamp:bg-effects"));
-  };
-
-  const toggle = () => {
-    const next = !enabled;
-    setEnabled(next);
-    persist(next, selected);
-  };
-
-  const pick = (id: string) => {
-    setSelected(id);
-    persist(true, id);
-  };
-
-  return (
-    <div>
-      <div className="grid grid-cols-2 gap-3">
-        {BG_EFFECTS.map((effect) => {
-          const active = enabled && selected === effect.id;
-          return (
-            <button
-              key={effect.id}
-              type="button"
-              onClick={() => pick(effect.id)}
-              aria-pressed={active}
-              className="rounded-[16px] border bg-[#1a1a1a] p-3 text-left transition-transform active:scale-[0.97]"
-              style={{
-                borderColor: active ? CYAN : "#2a2a2a",
-                boxShadow: active ? `0 0 18px ${CYAN}33` : "none",
-              }}
-            >
-              <p className="text-sm font-bold" style={{ color: active ? CYAN : "#ffffff" }}>
-                {effect.name}
-              </p>
-              <p className="mt-0.5 text-xs text-white/60">{effect.subtitle}</p>
-            </button>
-          );
-        })}
-      </div>
-      <p className="mt-3 text-center text-[11px] text-white/35">Tap an effect to apply it instantly.</p>
-    </div>
-  );
-}
-
 function AppSettings() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const toggleSection = (key: string) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
-  const [bgEnabled, setBgEnabled] = useState(true);
-
-  useEffect(() => {
-    if (typeof window === "undefined") return;
-    setBgEnabled(localStorage.getItem("bgEffectsEnabled") !== "false");
-  }, []);
-
-  const toggleBg = () => {
-    const next = !bgEnabled;
-    setBgEnabled(next);
-    localStorage.setItem("bgEffectsEnabled", next ? "true" : "false");
-    window.dispatchEvent(new Event("eamp:bg-effects"));
-  };
 
   return (
     <div className="app-fullscreen bg-black text-white">
@@ -289,14 +219,12 @@ function AppSettings() {
             </PillSection>
 
             <PillSection
-              icon="🌌"
-              label="Background Effects"
-              switchOn={bgEnabled}
-              onSwitch={toggleBg}
+              icon="🎞️"
+              label="Back Animation"
               open={!!openSections["bg"]}
               onToggle={() => toggleSection("bg")}
             >
-              <BackgroundEffectsSection />
+              <BackAnimationSection />
             </PillSection>
 
             <PillSection icon="🎵" label="Music" open={!!openSections["music"]} onToggle={() => toggleSection("music")}>
