@@ -122,6 +122,17 @@ async function withMasterToken(
   return { kind: "rejected", status: lastStatus };
 }
 
+/** Exactly 32 hex chars — MetaApi's required transaction-id format (UUID without dashes). */
+function newTransactionId(): string {
+  try {
+    return crypto.randomUUID().replace(/-/g, "");
+  } catch {
+    let id = "";
+    for (let index = 0; index < 32; index += 1) id += Math.floor(Math.random() * 16).toString(16);
+    return id;
+  }
+}
+
 /** Runs one MetaApi provisioning request. */
 async function maFetch(token: string, path: string, init: { method?: string; json?: unknown; transactionId?: string } = {}): Promise<MaResponse> {
   const headers: Record<string, string> = {
@@ -132,7 +143,7 @@ async function maFetch(token: string, path: string, init: { method?: string; jso
     headers["Content-Type"] = "application/json";
     // Provisioning writes want a stable transaction id so in-progress broker
     // settings detection can be polled with the same id.
-    headers["transaction-id"] = init.transactionId ?? `eamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    headers["transaction-id"] = init.transactionId ?? newTransactionId();
   }
   try {
     const response = await fetch(`${PROVISIONING_BASE}${path}`, {
@@ -266,7 +277,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
 
     // Broker settings detection can ask for retries — poll with the same
     // transaction id until the account is created or a real error comes back.
-    const transactionId = `eamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const transactionId = newTransactionId();
     const deadline = Date.now() + 90_000;
     for (;;) {
       const outcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts", { method: "POST", json: body, transactionId }));
@@ -286,7 +297,10 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       const message = maError(payload);
       const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
       if (retryMatch && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, (Number(retryMatch[1]) + 2) * 1000));
+        // Cap each wait so several validation polls fit in the window —
+        // MetaApi shortens the retry time as its detection progresses.
+        const waitSeconds = Math.min(Number(retryMatch[1]) + 2, 20);
+        await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
         continue;
       }
       if (status === 202 && Date.now() < deadline) {
