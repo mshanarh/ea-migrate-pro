@@ -2,7 +2,7 @@ import { useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { Check, ChevronDown, Eye, EyeOff, TrendingUp } from "lucide-react";
+import { Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, useAppState, type MtAccount } from "@/lib/app-store";
@@ -112,6 +112,7 @@ function AppMetatrader() {
   const [showPassword, setShowPassword] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [checking, setChecking] = useState(false);
+  const [connectNotice, setConnectNotice] = useState<string | null>(null);
 
   const servers = broker ? (BROKER_SERVERS[broker] ?? []) : Object.values(BROKER_SERVERS).flat();
 
@@ -123,9 +124,10 @@ function AppMetatrader() {
       return;
     }
     setConnecting(true);
+    setConnectNotice(null);
     try {
-      // Creates the user's account under the platform's MetaCopier key —
-      // credentials are validated by MetaCopier before returning.
+      // The server attaches the platform's master MetaCopier key — the user
+      // only ever supplies their own MT5 credentials here.
       const result = await connectMt5Account({
         data: {
           login: loginId.trim(),
@@ -135,6 +137,9 @@ function AppMetatrader() {
         },
       });
       if (!result.ok) {
+        // Configuration issues (admin's master key not active yet) surface as a
+        // calm inline notice instead of a scary error popup.
+        setConnectNotice(result.message);
         toast.error(result.message);
         return;
       }
@@ -151,6 +156,7 @@ function AppMetatrader() {
       toast.success(`MT5 ${account.accountType.toLowerCase()} account connected`);
       setPassword("");
     } catch {
+      setConnectNotice("Could not reach the execution provider. Check your connection and try again.");
       toast.error("Could not reach the execution provider.");
     } finally {
       setConnecting(false);
@@ -348,6 +354,15 @@ function AppMetatrader() {
             </motion.div>
 
             <motion.div custom={5} variants={stagger} initial="hidden" animate="show" className="pt-1">
+              {connectNotice && (
+                <div
+                  role="status"
+                  className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4"
+                >
+                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-amber-300" />
+                  <p className="text-sm leading-relaxed text-amber-200/90">{connectNotice}</p>
+                </div>
+              )}
               <button
                 type="submit"
                 disabled={connecting}
