@@ -41,7 +41,26 @@ export async function saveVideoBlob(file: Blob): Promise<string> {
     tx.onerror = () => reject(tx.error ?? new Error("Could not store the video"));
   });
   db.close();
+  // Best-effort cloud backup so the upload survives storage evictions and
+  // other devices. Fire-and-forget: the local save already succeeded.
+  void backupVideoToCloud(id, file);
   return REF_PREFIX + id;
+}
+
+/** Copies an uploaded video into the cloud store (no-op when unconfigured). */
+async function backupVideoToCloud(id: string, file: Blob): Promise<void> {
+  try {
+    const { syncSaveEaVideo } = await import("@/lib/account-sync.server");
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+    await syncSaveEaVideo({ data: { videoId: id, dataUrl } });
+  } catch {
+    /* offline or cloud not configured — the local copy still works */
+  }
 }
 
 /** Loads the blob for a reference and hands back a playback-ready object URL. */
@@ -56,7 +75,27 @@ export async function loadVideoUrl(ref: string): Promise<string | null> {
     request.onerror = () => reject(request.error ?? new Error("Could not load the video"));
   });
   db.close();
-  return blob ? URL.createObjectURL(blob) : null;
+  if (blob) return URL.createObjectURL(blob);
+  // Local blob evicted — silently restore it from the cloud backup (if any)
+  // so the mentor never has to re-upload. Restored blobs are re-cached locally.
+  try {
+    const { syncLoadEaVideo } = await import("@/lib/account-sync.server");
+    const backup = await syncLoadEaVideo({ data: { videoId: id } });
+    if (!backup.enabled || !backup.dataUrl) return null;
+    const response = await fetch(backup.dataUrl);
+    const restored = await response.blob();
+    const db2 = await openDb();
+    await new Promise<void>((resolve) => {
+      const tx = db2.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(restored, id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+    db2.close();
+    return URL.createObjectURL(restored);
+  } catch {
+    return null;
+  }
 }
 
 /** Deletes the blob behind a reference (call when a video is replaced/removed). */
@@ -71,6 +110,13 @@ export async function deleteVideoBlob(ref: string | undefined): Promise<void> {
     tx.onerror = () => resolve();
   });
   db.close();
+  // Remove the cloud backup too — only an explicit delete/replace reaches here.
+  try {
+    const { syncDeleteEaVideo } = await import("@/lib/account-sync.server");
+    await syncDeleteEaVideo({ data: { videoId: id } });
+  } catch {
+    /* ignore */
+  }
 }
 
 /* ── Music tracks (uploaded audio) — same pattern as the video store ─────── */

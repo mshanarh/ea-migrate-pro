@@ -327,9 +327,14 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
     const key = cloud.email.toLowerCase();
     const known = existing.get(key);
     if (known) {
-      // Keep the local password hash (it IS the real password locally); refresh the rest.
-      existing.set(key, { ...known, ...cloud, password: known.password });
-      changed = true;
+      // Keep the local password (it IS the real password locally) AND the local
+      // EAs: locally created/edited EAs carry the mentor's latest videos, while
+      // the cloud copy can be stale (saved once at registration). Merging keeps
+      // every EA that exists on either side, local fields winning per EA.
+      const mergedEas = mergeEas(known.eas, cloud.eas);
+      const easChanged = mergedEas.length !== known.eas.length || mergedEas.some((ea, index) => ea !== known.eas[index]);
+      existing.set(key, { ...known, ...cloud, password: known.password, eas: mergedEas });
+      if (easChanged || mergedEas.length !== cloud.eas.length) changed = true;
     } else if (cloud.role === "admin") {
       // Admin records sign in via the dedicated admin login only.
       continue;
@@ -341,6 +346,13 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
   if (!changed) return;
   state = normalise({ ...state, accounts: Array.from(existing.values()) });
   persist();
+}
+
+/** Union merge keyed by EA id — local records win per-EA, cloud-only EAs added. */
+function mergeEas(local: ExpertAdvisor[], cloud: ExpertAdvisor[]): ExpertAdvisor[] {
+  const byId = new Map(cloud.map((ea) => [ea.id, ea]));
+  for (const ea of local) byId.set(ea.id, ea);
+  return Array.from(byId.values());
 }
 
 /** Marks an account as the signed-in user (used by the cloud sign-in fallback). */

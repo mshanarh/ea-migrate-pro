@@ -5,8 +5,16 @@ import { Bot, ImageIcon, Lock, Pencil, Plus, Trash2, Video, X } from "lucide-rea
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { createEaRecord, renameEa, setEAs, useCurrentAccount, type ExpertAdvisor } from "@/lib/auth-store";
+import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type ExpertAdvisor } from "@/lib/auth-store";
 import { deleteVideoBlob, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
+import { syncRegister } from "@/lib/account-sync.server";
+
+/** Mirrors the account (EAs + video refs) to the cloud so every device sees the same EAs. */
+function mirrorAccount(account: Account) {
+  // Sent exactly like registration does — the cloud record needs the full
+  // shape for cross-device sign-in; reads always strip the password server-side.
+  void syncRegister({ data: { account } }).catch(() => {});
+}
 
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });
 
@@ -101,7 +109,7 @@ function ManageEAs() {
                 <div className="min-w-0 flex-1">
                   <p className="truncate font-bold">{ea.name}</p>
                   <p className="truncate text-xs text-muted-foreground">{ea.symbols?.join(", ") || "No symbols"}</p>
-                  <p className="text-xs text-muted-foreground">{ea.video ? "Logo and video saved" : "Logo saved · No video"}</p>
+                  <VideoStateLine ea={ea} />
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   <button type="button" aria-label={"Edit " + ea.name} onClick={() => setEditingEa(ea)} className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
@@ -116,10 +124,41 @@ function ManageEAs() {
           </AnimatePresence>
         </ul>
       )}
-      <CreateEaDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={(ea) => { setEAs(account.id, [...eas, ea]); toast.success(ea.name + " saved privately"); }} />
-      <EditEaDialog ea={editingEa} onClose={() => setEditingEa(null)} onSave={(patch) => { if (!editingEa) return; renameEa(account.id, editingEa.id, patch); toast.success("EA updated"); }} />
+      <CreateEaDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={(ea) => { setEAs(account.id, [...eas, ea]); mirrorAccount({ ...account, eas: [...eas, ea] }); toast.success(ea.name + " saved privately"); }} />
+      <EditEaDialog ea={editingEa} onClose={() => setEditingEa(null)} onSave={(patch) => { if (!editingEa) return; renameEa(account.id, editingEa.id, patch); const updatedEas = eas.map((item) => item.id === editingEa.id ? { ...item, ...patch } : item); mirrorAccount({ ...account, eas: updatedEas }); toast.success("EA updated"); }} />
     </div>
   );
+}
+
+/**
+ * Per-EA video state line. When the local blob was evicted but a cloud backup
+ * exists, loadVideoUrl transparently restores it — so the truthful state is
+ * "Video saved" (restoring, then verified) rather than scaring the mentor into
+ * re-uploading a video they never deleted.
+ */
+function VideoStateLine({ ea }: { ea: ExpertAdvisor }) {
+  const [state, setState] = useState(ea.video ? "Video saved" : "Logo saved · No video");
+  useEffect(() => {
+    if (!ea.video) {
+      setState("Logo saved · No video");
+      return;
+    }
+    setState("Video saved");
+    let cancelled = false;
+    loadVideoUrl(ea.video)
+      .then((resolved) => {
+        if (resolved) {
+          URL.revokeObjectURL(resolved);
+        } else if (!cancelled) {
+          setState("Video saved · tap Edit to restore");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [ea.video]);
+  return <p className="text-xs text-muted-foreground">{state}</p>;
 }
 
 function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage, video, setVideo }: {

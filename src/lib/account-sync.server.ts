@@ -299,3 +299,77 @@ export const syncDeleteMt5Account = createServerFn({ method: "POST" })
     const results = await pipeline([["HDEL", MT5_KEY, data.userId.trim().toLowerCase()]]);
     return { enabled: true, ok: results !== null && !results[0]?.error };
   });
+
+/* ------------------------------------------------------------------ */
+/* EA video cloud backup — mentors' uploaded videos survive across     */
+/* devices and browser storage evictions. IndexedDB alone is          */
+/* best-effort: mobile browsers silently evict it, so a mentor who    */
+/* returns a week later was asked to re-upload. Videos are stored     */
+/* as base64 chunks (Redis values must stay small) behind one hash    */
+/* key per EA, written immediately after a successful upload.         */
+/* ------------------------------------------------------------------ */
+
+const VIDEOS_KEY = "eamp:ea-videos";
+/** Keep chunks safely below Redis' default 512MB value limit. */
+const CHUNK_SIZE = 900_000;
+
+export type EaVideoBackupInput = { videoId: string; dataUrl: string };
+export type EaVideoBackupResult = { enabled: boolean; ok: boolean };
+
+export const syncSaveEaVideo = createServerFn({ method: "POST" })
+  .validator((data: EaVideoBackupInput) => data)
+  .handler(async ({ data }): Promise<EaVideoBackupResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const videoId = data.videoId.trim();
+    if (videoId.length === 0) return { enabled: true, ok: false };
+    const commands: (string | number)[][] = [];
+    const chunks = Math.ceil(data.dataUrl.length / CHUNK_SIZE);
+    for (let index = 0; index < chunks; index += 1) {
+      commands.push(["HSET", VIDEOS_KEY, `${videoId}:${index}`, data.dataUrl.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE)]);
+    }
+    commands.push(["HSET", VIDEOS_KEY, `${videoId}:meta`, JSON.stringify({ chunks, at: new Date().toISOString() })]);
+    const results = await pipeline(commands);
+    return { enabled: true, ok: results !== null && results.every((item) => !item.error) };
+  });
+
+export type EaVideoLoadInput = { videoId: string };
+export type EaVideoLoadResult = { enabled: boolean; dataUrl: string | null };
+
+export const syncLoadEaVideo = createServerFn({ method: "POST" })
+  .validator((data: EaVideoLoadInput) => data)
+  .handler(async ({ data }): Promise<EaVideoLoadResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, dataUrl: null };
+    const videoId = data.videoId.trim();
+    if (videoId.length === 0) return { enabled: true, dataUrl: null };
+    const results = await pipeline([["HGET", VIDEOS_KEY, `${videoId}:meta`]]);
+    const meta = results?.[0]?.result;
+    let chunks = 0;
+    if (typeof meta === "string") {
+      try {
+        chunks = (JSON.parse(meta) as { chunks?: number }).chunks ?? 0;
+      } catch {
+        chunks = 0;
+      }
+    }
+    if (chunks <= 0) return { enabled: true, dataUrl: null };
+    const partResults = await pipeline(Array.from({ length: chunks }, (_, index) => ["HGET", VIDEOS_KEY, `${videoId}:${index}`] as (string | number)[]));
+    if (!partResults) return { enabled: true, dataUrl: null };
+    const parts = partResults.map((item) => (typeof item.result === "string" ? item.result : null));
+    if (parts.some((part) => part === null)) return { enabled: true, dataUrl: null };
+    return { enabled: true, dataUrl: parts.join("") };
+  });
+
+export type EaVideoDeleteInput = { videoId: string };
+export type EaVideoDeleteResult = { enabled: boolean; ok: boolean };
+
+export const syncDeleteEaVideo = createServerFn({ method: "POST" })
+  .validator((data: EaVideoDeleteInput) => data)
+  .handler(async ({ data }): Promise<EaVideoDeleteResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const videoId = data.videoId.trim();
+    if (videoId.length === 0) return { enabled: true, ok: false };
+    // Remove up to a generous chunk count plus meta — HDEL ignores missing fields.
+    const fields = [`${videoId}:meta`, ...Array.from({ length: 80 }, (_, index) => `${videoId}:${index}`)];
+    const results = await pipeline([["HDEL", VIDEOS_KEY, ...fields] as (string | number)[]]);
+    return { enabled: true, ok: results !== null && !results[0]?.error };
+  });
