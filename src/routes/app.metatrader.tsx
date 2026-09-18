@@ -1,13 +1,14 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { connectMt5Account, disconnectMt5Account, getMtAccountStatus } from "@/lib/metacopier";
+import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
@@ -98,6 +99,31 @@ function Mt5Logo() {
   );
 }
 
+/** Local, instant UI mirror of the connection (cloud keeps the durable copy). */
+const MT5_UI_KEY = "mt5_connected_state";
+
+type Mt5UiState = { login: string; server: string; connected: boolean };
+
+function readMt5Ui(): Mt5UiState | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MT5_UI_KEY);
+    return raw ? (JSON.parse(raw) as Mt5UiState) : null;
+  } catch {
+    return null;
+  }
+}
+
+function writeMt5Ui(state: Mt5UiState | null) {
+  if (typeof window === "undefined") return;
+  try {
+    if (state) window.localStorage.setItem(MT5_UI_KEY, JSON.stringify(state));
+    else window.localStorage.removeItem(MT5_UI_KEY);
+  } catch {
+    /* ignore */
+  }
+}
+
 function AppMetatrader() {
   const app = useAppState();
   const { color } = useCustomization();
@@ -112,9 +138,44 @@ function AppMetatrader() {
   const [showPassword, setShowPassword] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [checking, setChecking] = useState(false);
-  const [connectNotice, setConnectNotice] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [keyNotice, setKeyNotice] = useState(false);
 
   const servers = broker ? (BROKER_SERVERS[broker] ?? []) : Object.values(BROKER_SERVERS).flat();
+
+  // On page load: if this user already has a connected account in the cloud
+  // store (and this device lost its local copy), restore it and show Connected.
+  useEffect(() => {
+    if (!app.email || mt) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const cloud = await syncGetMt5Account({ data: { userId: app.email! } });
+        if (cancelled || !cloud.enabled || !cloud.record || !cloud.record.isConnected) return;
+        const record = cloud.record;
+        const account: MtAccount = {
+          platform: "MT5",
+          broker: record.broker || record.server,
+          server: record.server,
+          accountType: record.accountType || "Standard",
+          loginId: record.loginId,
+          mcAccountId: record.mcAccountId,
+          ...(record.environment ? { environment: record.environment } : {}),
+        };
+        connectMt(account);
+        setBroker(account.broker);
+        setServer(account.server);
+        setAccountType(account.accountType);
+        setLoginId(account.loginId);
+      } catch {
+        /* cloud not configured — the device-local store is the source of truth */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [app.email]);
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -124,28 +185,32 @@ function AppMetatrader() {
       return;
     }
     setConnecting(true);
-    setConnectNotice(null);
+    setErrorMessage(null);
+    setKeyNotice(false);
     try {
       // The server attaches the platform's master MetaCopier key — the user
-      // only ever supplies their own MT5 credentials here.
+      // only ever supplies their own MT5 credentials here. Any login works.
       const result = await connectMt5Account({
         data: {
           login: loginId.trim(),
           password: password.trim(),
           server: server.trim(),
           alias: app.email ?? loginId.trim(),
+          accountType,
         },
       });
       if (!result.ok) {
-        // Configuration issues (admin's master key not active yet) surface as a
-        // calm inline notice instead of a scary error popup.
-        setConnectNotice(result.message);
+        // The key-inactive notice gets its own calm amber banner; every other
+        // failure shows the real provider error in red.
+        setKeyNotice(result.message.includes("API key"));
+        setErrorMessage(result.message);
         toast.error(result.message);
         return;
       }
+      const derivedBroker = broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim());
       const account: MtAccount = {
         platform: "MT5",
-        broker: broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim()),
+        broker: derivedBroker,
         server: server.trim(),
         accountType,
         loginId: loginId.trim(),
@@ -153,11 +218,31 @@ function AppMetatrader() {
         ...(result.environment ? { environment: result.environment } : {}),
       };
       connectMt(account);
-      toast.success(`MT5 ${account.accountType.toLowerCase()} account connected`);
+      writeMt5Ui({ login: account.loginId, server: account.server, connected: true });
+      // Durable cloud copy — survives clearing browser data and new devices.
+      if (app.email) {
+        void syncSaveMt5Account({
+          data: {
+            record: {
+              userId: app.email,
+              loginId: account.loginId,
+              server: account.server,
+              accountType: account.accountType,
+              broker: account.broker,
+              mcAccountId: result.accountId,
+              environment: result.environment,
+              isConnected: true,
+              connectedAt: new Date().toISOString(),
+            },
+          },
+        }).catch(() => {});
+      }
+      toast.success(`Connected ✓ — Account ${account.loginId} · ${account.server}`);
       setPassword("");
     } catch {
-      setConnectNotice("Could not reach the execution provider. Check your connection and try again.");
-      toast.error("Could not reach the execution provider.");
+      const message = "Could not reach the execution provider. Check your internet connection and try again.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setConnecting(false);
     }
@@ -190,6 +275,8 @@ function AppMetatrader() {
       if (!result.ok) toast.warning(result.message);
     }
     disconnectMt();
+    writeMt5Ui(null);
+    if (app.email) void syncDeleteMt5Account({ data: { userId: app.email } }).catch(() => {});
     toast.success("MT5 account disconnected.");
   };
 
@@ -245,8 +332,8 @@ function AppMetatrader() {
                   <Check className="size-3" strokeWidth={3} /> LIVE LINK
                 </span>
               </div>
-              <p className="mt-3 text-xl font-black">{mt.broker}</p>
-              <p className="mt-1 text-sm text-white/60">{mt.server} · {mt.loginId}</p>
+              <p className="mt-3 text-xl font-black">Connected ✓ — Account {mt.loginId}</p>
+              <p className="mt-1 text-sm text-white/60">{mt.server} · {mt.broker}</p>
               <p className="mt-1 text-xs text-white/40">{mt.accountType}{mt.environment ? ` · detected ${mt.environment.toLowerCase()}` : ""}</p>
               <div className="mt-4 flex gap-3">
                 <button
@@ -354,13 +441,19 @@ function AppMetatrader() {
             </motion.div>
 
             <motion.div custom={5} variants={stagger} initial="hidden" animate="show" className="pt-1">
-              {connectNotice && (
+              {errorMessage && (
                 <div
-                  role="status"
-                  className="mb-4 flex items-start gap-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 p-4"
+                  role={keyNotice ? "status" : "alert"}
+                  className={`mb-4 flex items-start gap-3 rounded-2xl border p-4 ${
+                    keyNotice ? "border-amber-400/25 bg-amber-400/10" : "border-red-400/30 bg-red-400/10"
+                  }`}
                 >
-                  <ShieldCheck className="mt-0.5 size-5 shrink-0 text-amber-300" />
-                  <p className="text-sm leading-relaxed text-amber-200/90">{connectNotice}</p>
+                  {keyNotice ? (
+                    <ShieldCheck className="mt-0.5 size-5 shrink-0 text-amber-300" />
+                  ) : (
+                    <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-300" />
+                  )}
+                  <p className={`text-sm leading-relaxed ${keyNotice ? "text-amber-200/90" : "text-red-200/90"}`}>{errorMessage}</p>
                 </div>
               )}
               <button

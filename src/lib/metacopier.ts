@@ -90,15 +90,19 @@ async function mcFetch(apiKey: string, path: string, init: { method?: string; js
   return { status: lastStatus };
 }
 
-/** True when the server has no master key yet (admin hasn't configured it). */
-function isConfigMissing(status: number, payload: unknown): boolean {
-  const raw = JSON.stringify(payload ?? {}).toLowerCase();
-  return status === 401 || status === 403 || raw.includes("api key") || raw.includes("api-key") || raw.includes("apikey");
+/**
+ * User-facing error for auth/permission failures. It names the cause plainly
+ * (the admin's MetaCopier key) without leaking env var names or secrets.
+ */
+function friendlyConfigError(): string {
+  return "The platform's MetaCopier API key is not active yet. Please contact support so live trading can be enabled.";
 }
 
-/** User-facing message — never leaks which server variable is missing. */
-function friendlyConfigError(): string {
-  return "Live execution is starting up. Please try again shortly — if this continues, contact support.";
+/** True only when MetaCopier rejected our authorization (admin's master key). */
+function isAuthRejected(status: number, payload: unknown): boolean {
+  if (status === 401 || status === 403) return true;
+  const raw = JSON.stringify(payload ?? {}).toLowerCase();
+  return raw.includes("unauthorized") || raw.includes("forbidden");
 }
 
 type McType = { id: number; name?: string };
@@ -115,6 +119,7 @@ type McAccount = {
 type McPosition = { id?: string; message?: string; error?: string };
 
 export type MtConnectRequest = {
+  /** The user's own MT5 account number — any login works, nothing is hardcoded. */
   login: string;
   password: string;
   server: string;
@@ -122,7 +127,8 @@ export type MtConnectRequest = {
   alias?: string;
   /** MetaCopier region id. When omitted the first available region is used. */
   regionId?: number;
-  accountType?: "LIVE" | "DEMO";
+  /** The type the user picked in the app (Standard, ECN, Demo…) — stored, not sent to MetaCopier. */
+  accountType?: string;
 };
 
 export type MtConnectResult =
@@ -199,9 +205,9 @@ export const connectMt5Account = createServerFn({ method: "POST" })
 
     if (status < 200 || status >= 300) {
       const detail = account?.message || account?.error || account?.statusMessage;
-      // Auth problems mean the admin's master key isn't active yet — keep the
-      // wording generic so users never see server configuration details.
-      if (isConfigMissing(status, payload)) return { ok: false, message: friendlyConfigError() };
+      // Auth rejections mean the admin's master key is inactive — plain wording,
+      // no env details. Every other failure shows the real provider message.
+      if (isAuthRejected(status, payload)) return { ok: false, message: friendlyConfigError() };
       return { ok: false, message: detail || `MetaCopier rejected the connection (HTTP ${status}). Check login, server and password.` };
     }
 
@@ -224,7 +230,7 @@ export const disconnectMt5Account = createServerFn({ method: "POST" })
     if (!apiKey) return { ok: false, message: friendlyConfigError() };
     const { status } = await mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" });
     if (status !== 200 && status !== 202 && status !== 204 && status !== 404) {
-      if (isConfigMissing(status, null)) return { ok: false, message: friendlyConfigError() };
+      if (isAuthRejected(status, null)) return { ok: false, message: friendlyConfigError() };
       return { ok: false, message: `Could not remove the account (HTTP ${status}).` };
     }
     return { ok: true, message: "MT5 account disconnected." };
@@ -239,7 +245,7 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
 
     const { status, payload } = await mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`);
     if (status < 200 || status >= 300) {
-      if (isConfigMissing(status, payload)) return { ok: false, message: friendlyConfigError() };
+      if (isAuthRejected(status, payload)) return { ok: false, message: friendlyConfigError() };
       return { ok: false, message: `Account not found (HTTP ${status}).` };
     }
     const account = payload as McAccount | undefined;
@@ -284,7 +290,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
 
     if (status < 200 || status >= 300) {
       const detail = position?.message || position?.error;
-      if (isConfigMissing(status, payload)) return { ok: false, message: friendlyConfigError() };
+      if (isAuthRejected(status, payload)) return { ok: false, message: friendlyConfigError() };
       return { ok: false, message: detail || `Order rejected (HTTP ${status}).` };
     }
 

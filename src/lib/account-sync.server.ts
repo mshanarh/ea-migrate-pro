@@ -230,3 +230,72 @@ export const syncSetPayment = createServerFn({ method: "POST" })
     const results = await pipeline([command]);
     return { enabled: true, ok: results !== null && !results[0]?.error };
   });
+
+/* ------------------------------------------------------------------ */
+/* MT5 account persistence — the cloud equivalent of the mt5_accounts */
+/* table: one record per app user, written right after MetaCopier     */
+/* accepts the connection, read on page load. The MT5 password is     */
+/* NEVER stored — MetaCopier holds it, we keep only metadata.         */
+/* ------------------------------------------------------------------ */
+
+const MT5_KEY = "eamp:mt5-accounts";
+
+export type Mt5AccountRecord = {
+  userId: string;
+  loginId: string;
+  server: string;
+  accountType: string;
+  broker: string;
+  /** The MetaCopier-hosted account id used for live execution. */
+  mcAccountId: string;
+  environment?: string | undefined;
+  isConnected: boolean;
+  connectedAt: string;
+};
+
+function parseMt5Record(raw: unknown): Mt5AccountRecord | null {
+  if (typeof raw !== "string" || raw.length === 0) return null;
+  try {
+    const parsed = JSON.parse(raw) as Mt5AccountRecord;
+    if (!parsed || typeof parsed.userId !== "string" || typeof parsed.mcAccountId !== "string") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export type Mt5SaveInput = { record: Mt5AccountRecord };
+export type Mt5SaveResult = { enabled: boolean; ok: boolean };
+
+export const syncSaveMt5Account = createServerFn({ method: "POST" })
+  .validator((data: Mt5SaveInput) => data)
+  .handler(async ({ data }): Promise<Mt5SaveResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const record = data.record;
+    if (!record?.userId || !record.mcAccountId) return { enabled: true, ok: false };
+    const results = await pipeline([["HSET", MT5_KEY, record.userId.trim().toLowerCase(), JSON.stringify(record)]]);
+    return { enabled: true, ok: results !== null && !results[0]?.error };
+  });
+
+export type Mt5GetInput = { userId: string };
+export type Mt5GetResult = { enabled: boolean; record: Mt5AccountRecord | null };
+
+export const syncGetMt5Account = createServerFn({ method: "POST" })
+  .validator((data: Mt5GetInput) => data)
+  .handler(async ({ data }): Promise<Mt5GetResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, record: null };
+    const results = await pipeline([["HGET", MT5_KEY, data.userId.trim().toLowerCase()]]);
+    const raw = results?.[0]?.result;
+    return { enabled: true, record: parseMt5Record(raw) };
+  });
+
+export type Mt5DeleteInput = { userId: string };
+export type Mt5DeleteResult = { enabled: boolean; ok: boolean };
+
+export const syncDeleteMt5Account = createServerFn({ method: "POST" })
+  .validator((data: Mt5DeleteInput) => data)
+  .handler(async ({ data }): Promise<Mt5DeleteResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const results = await pipeline([["HDEL", MT5_KEY, data.userId.trim().toLowerCase()]]);
+    return { enabled: true, ok: results !== null && !results[0]?.error };
+  });
