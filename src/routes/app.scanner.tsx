@@ -109,8 +109,6 @@ function AppScanner() {
           pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
           accent={accent}
           scansLeft={scansLeft}
-          {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
-          {...(app.mt?.environment ? { region: app.mt.environment } : {})}
           onScanStart={handleScanStart}
           onExecute={handleExecute}
         />
