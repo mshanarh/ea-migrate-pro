@@ -143,6 +143,13 @@ function AppMetatrader() {
 
   const servers = broker ? (BROKER_SERVERS[broker] ?? []) : Object.values(BROKER_SERVERS).flat();
 
+  // Any edit to the form clears the previous error banner — the user should
+  // never stare at a stale "not configured" box while re-entering details.
+  const clearError = () => {
+    if (errorMessage) setErrorMessage(null);
+    if (keyNotice) setKeyNotice(false);
+  };
+
   // On page load: if this user already has a connected account in the cloud
   // store (and this device lost its local copy), restore it and show Connected.
   useEffect(() => {
@@ -364,7 +371,10 @@ function AppMetatrader() {
                 <input
                   id="mt5-broker"
                   value={broker}
-                  onChange={(event) => setBroker(event.target.value)}
+                  onChange={(event) => {
+                    clearError();
+                    setBroker(event.target.value);
+                  }}
                   placeholder="Any broker — e.g. Exness"
                   aria-label="Broker"
                   autoComplete="off"
@@ -383,7 +393,10 @@ function AppMetatrader() {
                 <input
                   id="mt5-server"
                   value={server}
-                  onChange={(event) => setServer(event.target.value)}
+                  onChange={(event) => {
+                    clearError();
+                    setServer(event.target.value);
+                  }}
                   placeholder={broker ? `e.g. ${BROKER_SERVERS[broker]?.[0] ?? "Exness-MT5Real"}` : "e.g. Exness-MT5Real"}
                   aria-label="Server"
                   className={fieldClass}
@@ -408,7 +421,10 @@ function AppMetatrader() {
                 <input
                   id="mt5-login"
                   value={loginId}
-                  onChange={(event) => setLoginId(event.target.value)}
+                  onChange={(event) => {
+                    clearError();
+                    setLoginId(event.target.value);
+                  }}
                   placeholder="Account number"
                   aria-label="Login ID"
                   inputMode="numeric"
@@ -423,7 +439,10 @@ function AppMetatrader() {
                 <input
                   id="mt5-password"
                   value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={(event) => {
+                    clearError();
+                    setPassword(event.target.value);
+                  }}
                   placeholder="••••••••"
                   aria-label="Password"
                   type={showPassword ? "text" : "password"}

@@ -135,9 +135,9 @@ async function mcFetch(apiKey: string, path: string, init: { method?: string; js
 
 export type MtFailureCode = "key_missing" | "key_rejected" | "failed";
 
-/** The admin never set the master key in this runtime. */
+/** The admin never set the master key in this runtime. Short and clean — no env details. */
 function missingKeyMessage(): string {
-  return "Live execution is not configured yet: the platform's MetaCopier API key is missing on this server. Set METACOPIER_MASTER_KEY in the environment settings (or add the KV key eamp:secrets:metacopier with the key as its value), then reload.";
+  return "Live connection isn't enabled on this deployment yet. The owner enables it once in the hosting cloud settings — then Connect works instantly.";
 }
 
 /** The key is present but MetaCopier rejected it. */
