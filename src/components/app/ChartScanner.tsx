@@ -46,7 +46,15 @@ const SCAN_STEPS = [
 ];
 
 const MAX_CHART_BYTES = 5 * 1024 * 1024;
-const TIMEFRAMES = ["15m", "1h", "4h"] as const;
+type ScannerTimeframe = "15m" | "1h" | "4h";
+
+function detectTimeframe(file: File): ScannerTimeframe {
+  const name = file.name.toLowerCase();
+  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
+  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
+  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
+  return "1h";
+}
 
 function fmtPrice(value: number): string {
   const magnitude = Math.abs(value);
@@ -61,7 +69,7 @@ const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
 
 export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, accountId, region, onScanStart, onExecute }: Props) {
   const [symbol, setSymbol] = useState("");
-  const [timeframe, setTimeframe] = useState<(typeof TIMEFRAMES)[number]>("1h");
+  const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
   const [lot, setLot] = useState("0.01");
   const [scanning, setScanning] = useState(false);
@@ -111,9 +119,11 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
       setChartError("That image is too large (max 5 MB).");
       return;
     }
+    const detectedTimeframe = detectTimeframe(file);
     const reader = new FileReader();
     reader.onload = () => {
       setChartSrc(String(reader.result));
+       setTimeframe(detectedTimeframe);
       setDone(false);
       setAnalysis(null);
       setAnalysisError("");
@@ -179,13 +189,6 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
     setLot(saved?.lotSize || "0.01");
     const savedTrades = Number(saved?.maxTrades ?? 0);
     setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
-    setDone(false);
-    setAnalysis(null);
-    setAnalysisError("");
-  };
-
-  const selectTimeframe = (item: (typeof TIMEFRAMES)[number]) => {
-    setTimeframe(item);
     setDone(false);
     setAnalysis(null);
     setAnalysisError("");
@@ -321,19 +324,11 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
                 No symbols on this EA yet — your mentor adds them on the portal when creating the EA. Until then scanning is locked.
               </p>
             )}
-            <div className="mt-3 flex items-center gap-2">
-              <p className="text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
-              {TIMEFRAMES.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => selectTimeframe(item)}
-                  className="rounded-full px-4 py-1.5 text-[12px] font-bold transition-colors"
-                  style={timeframe === item ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
-                >
-                  {item}
-                </button>
-              ))}
+            <div className="mt-3 flex items-center justify-between">
+              <p className="text-[10px] tracking-[0.28em] text-white/30">AUTO TIMEFRAME</p>
+              <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-bold text-white/65">
+                {timeframe}
+              </span>
             </div>
           </div>
 
