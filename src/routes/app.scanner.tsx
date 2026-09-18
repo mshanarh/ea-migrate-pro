@@ -53,7 +53,11 @@ function AppScanner() {
   // the connected MT5 account via MetaApi in the ANALYZED direction with the
   // analyzed SL/TP attached, AND stream the logs into the floating bot popup.
   // The toast's final line reflects the provider outcome.
-  const handleExecute = ({ symbol, lot, trades, direction, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; stopLoss?: string; takeProfit?: string }) => {
+  const handleExecute = ({ symbol, lot, trades, direction, executionReady, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady: boolean; stopLoss?: string; takeProfit?: string }) => {
+    if (!executionReady) {
+      toast.error("Execution is locked until a live MT5 setup is ready.");
+      return;
+    }
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
       lot_size: lot,
@@ -102,11 +106,13 @@ function AppScanner() {
   };
 
   return (
-    <div className="app-fullscreen bg-black text-white">
+    <div className="app-fullscreen bg-[#07090b] text-white">
       <div className="app-scroll-area">
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
+          {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
+          {...(app.mt?.environment ? { region: app.mt.environment } : {})}
           accent={accent}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}
@@ -118,7 +124,9 @@ function AppScanner() {
       <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
-          <p className="text-5xl">⛔</p>
+          <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">
+            <span className="text-xl font-black">!</span>
+          </div>
           <DialogHeader>
             <DialogTitle className="text-xl font-black">Daily Scan Limit</DialogTitle>
             <DialogDescription className="text-sm text-white/55">
