@@ -50,12 +50,11 @@ const CLIENT_API_HOSTS: Record<string, string> = {
  * priority, so rotating the platform token later only means setting the new
  * value in the environment — no code change.
  */
-const BUILTIN_MASTER_TOKEN =
-  "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiJjYTU1ZTRlNWU5NjZhM2ViNmEzZjAwYWQ1NDhhNmNjYyIsImFjY2Vzc1J1bGVzIjpbeyJpZCI6InRyYWRpbmctYWNjb3VudC1tYW5hZ2VtZW50LWFwaSIsIm1ldGhvZHMiOlsidHJhZGluZy1hY2NvdW50LW1hbmFnZW1lbnQtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVzdC1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcnBjLWFwaSIsIm1ldGhvZHMiOlsibWV0YWFwaS1hcGk6d3M6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVhbC10aW1lLXN0cmVhbWluZy1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOndzOnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJtZXRhc3RhdHMtYXBpIiwibWV0aG9kcyI6WyJtZXRhc3RhdHMtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6InJpc2stbWFuYWdlbWVudC1hcGkiLCJtZXRob2RzIjpbInJpc2stbWFuYWdlbWVudC1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoiY29weWZhY3RvcnktYXBpIiwibWV0aG9kcyI6WyJjb3B5ZmFjdG9yeS1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoibXQtbWFuYWdlci1hcGkiLCJtZXRob2RzIjpbIm10LW1hbmFnZXItYXBpOnJlc3Q6ZGVhbGluZzoqOioiLCJtdC1tYW5hZ2VyLWFwaTpyZXN0OnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJiaWxsaW5nLWFwaSIsIm1ldGhvZHMiOlsiYmlsbGluZy1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfV0sImlnbm9yZVJhdGVMaW1pdHMiOmZhbHNlLCJ0b2tlbklkIjoiMjAyMTAyMTMiLCJpbXBlcnNvbmF0ZWQiOmZhbHNlLCJyZWFsVXNlcklkIjoiY2E1NWU0ZTVlOTY2YTNlYjZhM2YwMGFkNTQ4YTZjY2MiLCJpYXQiOjE3ODk3MzYwODV9.YURNWRrIP55llsfztF7p0FfL-ftOL6Rh9V0eMGePn4IAX494Xf-zAxhPF3i0roXa9wSNcBvKwrM5-MJQtob6hKOQEDTTZgwiaZbpHnJmwe7GRgbaai44ZQp2l0R0_LjQ8iGcv2QVTu7_hvazj3gTt8FYEjqxCePU45Mx0VWKghtJ8lAiLZyyCouGwNEKPZns00q3KFysO_gdhDWkFlzylBn0yztH20ST3Ghvap7CPSbNoZ8-eon3TvUL4ARWnXRtDA4OYty3MHPidXFqUxn_WLFvL1rwQL1RH86v_KOGoSLlp0Di3TyIlv0bU9zlTTT_vovPibGL-cxLO4muWnJcqZYJxASySy2sgN0F4X5CsPACzyFF54STrUKJlJElPh_q55QEZqd0wT7q-aQF760RPou6NTMmJQQ5BpH9nIFnGJ-ITC_k0tEifw0531hSFDna5HYsUfVHTfnlr4D2rsxDMpqMp-75AZA5umV1UJxgm_Kt7GfWqGZA0nVKkDX8G1WCxjlAEJEanzYp4QCGPeAxEnYQ1wJmXqfKuKvWC_N6_EI3e7BU1Li8KsKrHamJSVzsAA3aHGfUanyL9nyQC5IlBiDqqum9qDdGBxo1mdIk4jHg7rHJRZbHDGzZljWfu74uE8Br_04NLvYaLVRfZCmwvhX1GKC5UW3dXRJC4i0ci2c";
+const BUILTIN_MASTER_TOKEN = "";
 
 /** Strips whitespace and quote wrappers that env settings screens sometimes add. */
 function cleanKey(raw: string | undefined | null): string {
-  return (raw ?? "").trim().replace(/^[\"'`]+/, "").replace(/[\"'`]+$/, "");
+  return (raw ?? "").trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 }
 
 /** Every candidate master token, deduped: process env, build env, then built-in. */
@@ -68,7 +67,7 @@ function candidateTokens(): string[] {
       if (value.length > 0) tokens.push(value);
     }
   }
-  tokens.push(BUILTIN_MASTER_TOKEN);
+  if (BUILTIN_MASTER_TOKEN) tokens.push(BUILTIN_MASTER_TOKEN);
   return [...new Set(tokens)];
 }
 
@@ -686,51 +685,45 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       return Promise.race([request, deadline]);
     })();
 
-    // Current candle and price are independent. Reading them together removes
-    // one full network round-trip from every scan.
+    // Entry must come from the current bid/ask. Do not substitute a candle
+    // close: it can be stale by the time the user sees the result.
     const readMarketSnapshot = async () => {
-      let candle: { close: number; high: number; low: number; open: number } | undefined;
       let price: { bid: number; ask: number } | undefined;
       for (const host of hosts) {
-        const [candleResult, priceResult] = await Promise.all([
-          withMasterToken((token) =>
-            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 3_500),
-          ),
-          withMasterToken((token) =>
-            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 3_500),
-          ),
-        ]);
-        if (candleResult.kind === "ok" && candleResult.response.status === 200) {
-          const raw = candleResult.response.payload as { open?: number; high?: number; low?: number; close?: number } | undefined;
-          if (raw?.close) candle = { open: raw.open ?? raw.close, high: raw.high ?? raw.close, low: raw.low ?? raw.close, close: raw.close };
-        }
+        const priceResult = await withMasterToken((token) =>
+          fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 3_500),
+        );
         if (priceResult.kind === "ok" && priceResult.response.status === 200) {
           const raw = priceResult.response.payload as { bid?: number; ask?: number } | undefined;
           if (raw?.bid && raw?.ask) price = { bid: raw.bid, ask: raw.ask };
         }
-        if (candle || price) break;
+        if (price) break;
       }
-      return { candle, price };
+      return { price };
     };
 
     // Warm-up is only a fallback. Connected accounts get a signal from the
     // fast path immediately; cold accounts still receive a bounded retry.
-    let { candle, price } = await readMarketSnapshot();
-    const liveData = Boolean(candle || price);
+    const { price } = await readMarketSnapshot();
     const candles = await historyPromise;
 
-    // A symbol can have historical candles but no current quote while the
-    // broker is opening it. Show an informational signal instead of an error,
-    // but never allow a stale signal to execute a trade.
-    if (!candle && !price) {
-      const last = candles.at(-1);
-      if (!last?.close) {
-        return { ok: true, analysis: buildUnavailableScannerAnalysis(symbol, timeframe, `No live market data for ${symbol} yet — the broker does not currently expose a quote for this symbol.`) };
-      }
-      candle = { open: last.open, high: last.high, low: last.low, close: last.close };
+    // Historical candles alone are not enough to give an executable setup:
+    // entry must be based on the current bid/ask, otherwise a delayed signal
+    // can return an invalid entry and stale SL/TP. Keep this an explicit
+    // NO TRADE result until the broker supplies a live quote.
+    if (!price) {
+      return {
+        ok: true,
+        analysis: buildUnavailableScannerAnalysis(
+          symbol,
+          timeframe,
+          `No live bid/ask is available for ${symbol} yet — the broker may still be opening this symbol.`,
+        ),
+      };
     }
-
-    const close = candle?.close ?? price!.bid;
+    // Use the live bid for the decision and for SELL entry. The current
+    // candle can still be a few seconds behind the quote.
+    const close = price.bid;
     const closes = candles.map((item) => item.close);
     const ema21 = closes.length >= 21 ? ema(closes, 21) : close;
     const ema50 = closes.length >= 50 ? ema(closes, 50) : close;
@@ -756,27 +749,28 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     const signal: ScannerAnalysis["signal"] = bias === "NEUTRAL" ? "NO TRADE" : trendUp === priceAboveEma || Math.abs(score) >= 1.5 ? (score > 0 ? "BUY" : "SELL") : "NO TRADE";
 
     const confidenceBase = Math.round(Math.min(95, Math.max(55, 55 + Math.abs(score) * 14)));
-    const confidence = liveData ? confidenceBase : Math.min(65, confidenceBase);
-    const entry = price ? (signal === "BUY" ? price.ask : price.bid) : close;
+    const confidence = signal === "NO TRADE" ? 0 : confidenceBase;
+    const entry = signal === "NO TRADE" ? 0 : signal === "BUY" ? price.ask : price.bid;
     // SL beyond the recent swing (buffered by 0.5 ATR), TP at ≥2R.
     const direction = signal === "SELL" ? -1 : 1;
     const swingStop = signal === "SELL" ? swing.high + atrValue * 0.5 : swing.low - atrValue * 0.5;
     const atrStop = entry - direction * atrValue * 1.5;
     const stopLoss = signal === "SELL" ? Math.max(swingStop, atrStop) : Math.min(swingStop, atrStop);
-    const risk = Math.abs(entry - stopLoss);
-    const takeProfit = entry + direction * risk * 2;
+    const risk = signal === "NO TRADE" ? 0 : Math.abs(entry - stopLoss);
+    const takeProfit = signal === "NO TRADE" ? 0 : entry + direction * risk * 2;
 
     const reasons: string[] = [];
-    if (!liveData) {
-      reasons.push("Live broker quote unavailable — this is an informational historical signal only.");
-    }
     if (candles.length >= 50) {
       reasons.push(
         `EMA21 is ${ema21 > ema50 ? "above" : "below"} EMA50 — ${trendUp ? "uptrend" : "downtrend"} structure on ${timeframe}.`,
       );
       reasons.push(`RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 60 ? "strong bullish momentum" : rsiValue > 52 ? "mild bullish momentum" : rsiValue < 40 ? "strong bearish momentum" : rsiValue < 48 ? "mild bearish momentum" : "momentum neutral"}.`);
       reasons.push(`Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level.`);
-      reasons.push(`ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — stop placed ${signal === "SELL" ? "above" : "below"} the recent swing with a 0.5 ATR buffer, target at 2R.`);
+      if (signal === "NO TRADE") {
+        reasons.push(`ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — no entry, SL, or TP created because the setup did not pass the trade filter.`);
+      } else {
+        reasons.push(`ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — stop placed ${signal === "SELL" ? "above" : "below"} the recent swing with a 0.5 ATR buffer, target at 2R.`);
+      }
     } else {
       reasons.push(`Limited history for ${symbol} — levels are built from live price and ATR fallbacks.`);
     }
@@ -790,7 +784,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       { label: "Momentum (RSI 14)", value: closes.length >= 15 ? `${rsiValue.toFixed(1)} ${rsiValue > 52 ? "· Bullish" : rsiValue < 48 ? "· Bearish" : "· Neutral"}` : "n/a", bullish: closes.length >= 15 ? rsiValue > 52 ? true : rsiValue < 48 ? false : null : null },
       { label: "Volatility (ATR 14)", value: fmt(atrValue), bullish: null },
       { label: "Swing range (20 bars)", value: `${fmt(swing.low)} — ${fmt(swing.high)}`, bullish: null },
-      { label: liveData ? "Live price (bid/ask)" : "Reference price (last candle)", value: price ? `${fmt(price.bid)} / ${fmt(price.ask)}` : fmt(close), bullish: null },
+      { label: "Live price (bid/ask)", value: `${fmt(price.bid)} / ${fmt(price.ask)}`, bullish: null },
     ];
 
     return {
@@ -805,7 +799,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         stopLoss: roundToTick(stopLoss, entry),
         takeProfit: roundToTick(takeProfit, entry),
         riskReward: "1:2",
-        executionReady: liveData,
+        executionReady: signal !== "NO TRADE",
         atr: atrValue,
         rsi: rsiValue,
         reasons,
