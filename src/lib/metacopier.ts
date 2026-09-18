@@ -122,6 +122,51 @@ async function withMasterToken(
   return { kind: "rejected", status: lastStatus };
 }
 
+/** fetch with JSON parsing and a hard timeout — the client API can hang for minutes when cold. */
+async function fetchJson(url: string, init: RequestInit, timeoutMs: number): Promise<{ status: number; payload?: unknown }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...init, signal: controller.signal });
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // empty body is fine
+    }
+    return payload === undefined ? { status: response.status } : { status: response.status, payload };
+  } catch {
+    return { status: 0 };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Warms the account's broker connection by polling the client API's
+ * account-information endpoint — MetaApi connects lazily, on first use, and
+ * cold accounts answer trade requests with 504/"530"-style rejections.
+ * Returns status 200 with account info once warm, 504-shaped payload on timeout.
+ */
+async function warmAccountConnection(token: string, accountId: string, region: string | undefined, budgetMs: number): Promise<MaResponse> {
+  const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
+  const deadline = Date.now() + budgetMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt += 1;
+    for (const host of hosts) {
+      const result = await fetchJson(`${host}/users/current/accounts/${encodeURIComponent(accountId)}/account-information`, { headers: { "auth-token": token, Accept: "application/json" } }, 30_000);
+      if (result.status === 200) return { status: 200, payload: result.payload };
+      if (result.status === 404) continue; // wrong region host — try the next one
+      // 504/5xx → not connected yet; keep polling until the budget runs out
+    }
+    const waitMs = attempt <= 2 ? 5_000 : 10_000;
+    if (Date.now() + waitMs > deadline) break;
+    await new Promise((resolve) => setTimeout(resolve, waitMs));
+  }
+  return { status: 504, payload: { message: "Broker connection is still starting." } };
+}
+
 /** Exactly 32 hex chars — MetaApi's required transaction-id format (UUID without dashes). */
 function newTransactionId(): string {
   try {
@@ -348,10 +393,38 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
       return { ok: false, code: "failed", message: maError(payload) || `Account not found (HTTP ${status}).` };
     }
     const account = payload as MaAccount;
-    const connected = account.connectionStatus === "CONNECTED" || account.state === "DEPLOYED";
+
+    // Stay connected until the user presses Disconnect: if MetaApi undeployed
+    // the account for any reason, bring it straight back up.
+    if (account.state !== "DEPLOYED") {
+      await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, { method: "POST" }));
+    }
+
+    // While deployed, treat the account as connected — MetaApi attaches the
+    // broker terminal lazily, so requiring CONNECTED here would show scary
+    // "not connected" states during normal operation.
+    const connected = account.state === "DEPLOYED";
+
+    // Best-effort balance read within a short budget; the trade path waits longer.
+    let balance: number | undefined;
+    let equity: number | undefined;
+    let currency: string | undefined;
+    if (connected) {
+      const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, account.region, 20_000));
+      if (warmOutcome.kind === "ok" && warmOutcome.response.status === 200) {
+        const info = warmOutcome.response.payload as { balance?: number; equity?: number; currency?: string } | undefined;
+        balance = info?.balance;
+        equity = info?.equity;
+        currency = info?.currency;
+      }
+    }
+
     return {
       ok: true,
       connected,
+      ...(balance !== undefined ? { balance } : {}),
+      ...(equity !== undefined ? { equity } : {}),
+      ...(currency !== undefined ? { currency } : {}),
       ...(account.statusMessage ? { statusMessage: account.statusMessage } : {}),
       ...(account.region ? { environment: account.region } : {}),
     };
@@ -385,29 +458,39 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       comment: `${data.eaName} - EA Migrate`.slice(0, 26),
     };
 
+    // Resolve the account's region (its API host depends on it) and make sure
+    // it is deployed. Cold accounts reject orders with 504/"530"-style errors,
+    // so warm the broker connection BEFORE placing the order.
+    let region = data.region;
+    const detail = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`));
+    if (detail.kind === "ok" && detail.response.status === 200) {
+      const account = detail.response.payload as MaAccount | undefined;
+      region = account?.region ?? region;
+      if (account && account.state !== "DEPLOYED") {
+        await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, { method: "POST" }));
+      }
+    }
+
+    const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 75_000));
+    if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
+
     // The client API host depends on the region the account was deployed to;
     // fall back to the known hosts when the region is unknown.
-    const hosts = data.region && CLIENT_API_HOSTS[data.region] ? [CLIENT_API_HOSTS[data.region]] : Object.values(CLIENT_API_HOSTS);
-    let lastMessage = "Trade API unreachable — the account may still be starting. Try again in a minute.";
+    const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
+    let lastMessage = "Your robot is starting — the broker connection is still opening for your account. Press START again in a minute; the first connection after linking an account can take a few minutes. If it keeps failing, this broker may be blocking cloud trading terminals — a live (non-demo) server of the same broker usually works.";
     for (const host of hosts) {
-      const outcome = await withMasterToken(async (token) => {
-        try {
-          const response = await fetch(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/orders`, {
+      const outcome = await withMasterToken(async (token) =>
+        fetchJson(
+          `${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/orders`,
+          {
             method: "POST",
             headers: { "auth-token": token, "Content-Type": "application/json", Accept: "application/json" },
             body: JSON.stringify(body),
-          });
-          let payload: unknown;
-          try {
-            payload = await response.json();
-          } catch {
-            // empty body
-          }
-          return { status: response.status, payload } satisfies MaResponse;
-        } catch {
-          return { status: 0 } satisfies MaResponse;
-        }
-      });
+          },
+          40_000,
+        ),
+      );
       if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
       if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
 
@@ -420,7 +503,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
           ...(position?.orderId || position?.positionId ? { orderId: position.orderId ?? position.positionId } : {}),
         };
       }
-      if (status === 404) continue; // wrong region host — try the next one
+      if (status === 404 || status === 504 || status === 0) continue; // wrong host or connection went cold — try the next host
       lastMessage = maError(payload) || `Order rejected (HTTP ${status}).`;
       break;
     }
