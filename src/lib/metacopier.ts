@@ -47,8 +47,15 @@ function cleanKey(raw: string | undefined | null): string {
 async function masterKeyFromEnv(): Promise<string | null> {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
   const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
+  // All three names are fully interchangeable — whichever the host platform
+  // (Lovable Cloud secrets, Freebuff env, .env.local) provides wins.
   const key = cleanKey(
-    env["METACOPIER_MASTER_KEY"] ?? env["METACOPIER_API_KEY"] ?? env["EXECUTION_API_KEY"] ?? viteEnv["METACOPIER_MASTER_KEY"],
+    env["METACOPIER_MASTER_KEY"] ??
+      env["METACOPIER_API_KEY"] ??
+      env["EXECUTION_API_KEY"] ??
+      viteEnv["METACOPIER_MASTER_KEY"] ??
+      viteEnv["METACOPIER_API_KEY"] ??
+      viteEnv["EXECUTION_API_KEY"],
   );
   return key.length > 0 ? key : null;
 }
