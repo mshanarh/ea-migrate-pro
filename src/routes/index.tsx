@@ -31,7 +31,10 @@ import {
 } from "@/components/ui/accordion";
 import { SiteHeader } from "@/components/SiteHeader";
 import { motion } from "framer-motion";
-import heroApp from "@/assets/ea-migrate-hero.jpg.asset.json";
+import heroApp from "/ea-migrate-hero.jpg";
+
+
+
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -321,7 +324,7 @@ function Home() {
               style={{ perspective: 1200 }}
             >
               <motion.img
-                src={heroApp.url}
+                src={heroApp}
                 alt="EA Migrate Pro app running the EA Migrate tester bot on a phone"
                 className="h-auto w-full object-contain"
                 style={{
