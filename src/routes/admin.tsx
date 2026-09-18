@@ -17,6 +17,12 @@ function AdminConsole() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [limit, setLimit] = useState(0);
   const [cloud, setCloud] = useState<{ enabled: boolean; accounts: PublicAccount[] }>({ enabled: false, accounts: [] });
+  // Hooks must run before any early return — merging local + cloud mentors.
+  const mentors: AdminViewAccount[] = useMemo(() => {
+    const known = new Set(store.accounts.map((candidate) => candidate.email.toLowerCase()));
+    const cloudOnly = cloud.accounts.filter((candidate) => !known.has(candidate.email.toLowerCase()) && candidate.role === "mentor");
+    return [...store.accounts.filter((candidate) => candidate.role === "mentor"), ...cloudOnly];
+  }, [cloud.accounts, store.accounts]);
   useEffect(() => { if (!account) navigate({ to: "/signin" }); }, [account, navigate]);
   // Poll the shared cloud store every 3s: a registration from ANY device
   // appears here within seconds. Cloud-only records are merged into the local
@@ -38,11 +44,6 @@ function AdminConsole() {
   if (!account) return null;
   if (account.role !== "admin") return <div className="flex min-h-screen items-center justify-center bg-[#0A0A0A] px-6 text-center text-white"><div><h1 className="text-2xl font-bold">Admins only</h1><p className="mt-2 text-sm text-muted-foreground">This console is restricted to EA Migrate Pro administrators.</p><Link to="/dashboard" className="mt-6 inline-flex h-11 items-center rounded-full bg-primary px-6 text-sm font-bold text-primary-foreground">Back to portal</Link></div></div>;
 
-  const mentors: AdminViewAccount[] = useMemo(() => {
-    const known = new Set(store.accounts.map((candidate) => candidate.email.toLowerCase()));
-    const cloudOnly = cloud.accounts.filter((candidate) => !known.has(candidate.email.toLowerCase()) && candidate.role === "mentor");
-    return [...store.accounts.filter((candidate) => candidate.role === "mentor"), ...cloudOnly];
-  }, [cloud.accounts, store.accounts]);
   const selected = mentors.find((mentor) => mentor.id === selectedId) ?? null;
   const pending = mentors.filter((mentor) => mentor.status === "pending");
   const approved = mentors.filter((mentor) => mentor.status === "approved");
