@@ -139,7 +139,7 @@ function analyzeUploadedChart(source: string, symbol: string, timeframe: string)
  * ChartScanner — the AI Scanner experience.
  *
  * Chart Scanner reads the uploaded chart image locally. It does not require
- * an MT5 account or uploaded chart data. Directional chart signals are for
+ * a broker account or uploaded chart data. Directional chart signals are for
  * analysis only; broker execution remains disabled for screenshot-based reads.
  *
  * Everything follows the user's accent color from the customization drawer.
@@ -218,101 +218,6 @@ function chartOnlyFallback(symbol: string, timeframe: string, reason: string): S
       { label: "Signal", value: "NO TRADE", bullish: null },
     ],
   };
-}
-
-function analyzeUploadedChart(source: string, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => {
-      try {
-        const width = 320;
-        const height = Math.max(180, Math.round(width * (image.naturalHeight / Math.max(image.naturalWidth, 1))));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        if (!context) {
-          resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be read."));
-          return;
-        }
-        context.drawImage(image, 0, 0, width, height);
-        const pixels = context.getImageData(0, 0, width, height).data;
-        let green = 0;
-        let red = 0;
-        let earlyGreen = 0;
-        let earlyRed = 0;
-        let recentGreen = 0;
-        let recentRed = 0;
-        const top = Math.floor(height * 0.08);
-        const bottom = Math.floor(height * 0.88);
-        for (let y = top; y < bottom; y += 1) {
-          for (let x = 0; x < width; x += 1) {
-            const index = (y * width + x) * 4;
-            const r = pixels[index] ?? 0;
-            const g = pixels[index + 1] ?? 0;
-            const b = pixels[index + 2] ?? 0;
-            const isGreen = g > 75 && g > r * 1.22 && g > b * 1.08;
-            const isRed = r > 75 && r > g * 1.22 && r > b * 1.08;
-            if (isGreen) {
-              green += 1;
-              if (x < width * 0.55) earlyGreen += 1;
-              else recentGreen += 1;
-            } else if (isRed) {
-              red += 1;
-              if (x < width * 0.55) earlyRed += 1;
-              else recentRed += 1;
-            }
-          }
-        }
-        const total = green + red;
-        if (total < 12) {
-          resolve(chartOnlyFallback(symbol, timeframe, "No clear green or red candlesticks were detected in the uploaded chart."));
-          return;
-        }
-        const trendScore = (recentGreen - recentRed) - (earlyGreen - earlyRed) * 0.5;
-        const signal: ScannerAnalysis["signal"] = trendScore >= 0 ? "BUY" : "SELL";
-        const bias: ScannerAnalysis["bias"] = signal === "BUY" ? "BULLISH" : "BEARISH";
-        const confidence = Math.min(84, 56 + Math.round(Math.min(28, Math.abs(trendScore) / 12)));
-        const directionText = signal === "BUY" ? "recent candles lean upward" : "recent candles lean downward";
-        resolve({
-          symbol,
-          timeframe,
-          bias,
-          signal,
-          confidence,
-          entry: 0,
-          stopLoss: 0,
-          takeProfit: 0,
-          riskReward: "—",
-          executionReady: false,
-          atr: 0,
-          rsi: 50,
-          reasons: [
-            "Chart-only signal from the uploaded candlestick image.",
-            "The " + directionText + " based on the green/red candle balance.",
-            "Trading stays disabled because this scan does not use a broker price.",
-          ],
-          readouts: [
-            { label: "Chart source", value: "Uploaded image", bullish: null },
-            { label: "Green / red candles", value: green + " / " + red, bullish: signal === "BUY" },
-            { label: "Detected direction", value: signal, bullish: signal === "BUY" },
-          ],
-        });
-      } catch {
-        resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be analyzed."));
-      }
-    };
-    image.onerror = () => resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be opened."));
-    image.src = source;
-  });
-}
-
-function detectTimeframe(file: File): ScannerTimeframe {
-  const name = file.name.toLowerCase();
-  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
-  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
-  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
-  return "1h";
 }
 
 function fmtPrice(value: number): string {
@@ -405,7 +310,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
     setAnalysis(null);
     setAnalysisError("");
     // Narrated steps advance while the real analysis runs. Show the result
-    // as soon as the live analysis responds — never add an artificial delay.
+    // as soon as the chart analysis responds — never add an artificial delay.
     let index = 0;
     const interval = window.setInterval(() => {
       index += 1;
@@ -415,7 +320,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
       const result = await analyzeUploadedChart(chartSrc, symbol || "CHART", timeframe);
       setAnalysis(result);
     } catch {
-      setAnalysisError("Could not run the market analysis. Check your connection and try again.");
+      setAnalysisError("Could not run the chart analysis. Check your connection and try again.");
     } finally {
       window.clearInterval(interval);
       setScanning(false);
