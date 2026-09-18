@@ -50,9 +50,10 @@ function AppScanner() {
   };
 
   // Execute pressed — show the TOP execution toast, fire the real trade(s) on
-  // the connected MT5 account via MetaApi AND stream the logs into the
-  // floating bot popup. The toast's final line reflects the provider outcome.
-  const handleExecute = ({ symbol, lot, trades }: { symbol: string; lot: string; trades: number }) => {
+  // the connected MT5 account via MetaApi in the ANALYZED direction with the
+  // analyzed SL/TP attached, AND stream the logs into the floating bot popup.
+  // The toast's final line reflects the provider outcome.
+  const handleExecute = ({ symbol, lot, trades, direction, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; stopLoss?: string; takeProfit?: string }) => {
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
       lot_size: lot,
@@ -75,8 +76,10 @@ function AppScanner() {
             accountId: app.mt?.mcAccountId ?? "",
             eaName: robot?.name ?? "EA",
             symbol,
-            direction: "SELL",
+            direction,
             lotSize: lot,
+            ...(stopLoss ? { stopLoss } : {}),
+            ...(takeProfit ? { takeProfit } : {}),
           },
         }),
       ),
@@ -106,6 +109,8 @@ function AppScanner() {
           pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
           accent={accent}
           scansLeft={scansLeft}
+          {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
+          {...(app.mt?.environment ? { region: app.mt.environment } : {})}
           onScanStart={handleScanStart}
           onExecute={handleExecute}
         />

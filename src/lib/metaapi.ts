@@ -275,6 +275,10 @@ export type LiveTradeRequest = {
   symbol: string;
   direction: "BUY" | "SELL";
   lotSize: string;
+  /** Stop-loss price — attached to the order when provided. */
+  stopLoss?: string;
+  /** Take-profit price — attached to the order when provided. */
+  takeProfit?: string;
   /** Account region returned at connect time — picks the trade API host. */
   region?: string;
 };
@@ -451,12 +455,16 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
     if (!data.accountId) return { ok: false, code: "failed", message: "No connected MT5 account. Link your account on the MetaTrader page first." };
 
     const volume = Math.max(Number.parseFloat(data.lotSize) || 0, 0.01);
-    const body = {
+    const stopLoss = data.stopLoss !== undefined && data.stopLoss !== "" ? Number.parseFloat(data.stopLoss) : undefined;
+    const takeProfit = data.takeProfit !== undefined && data.takeProfit !== "" ? Number.parseFloat(data.takeProfit) : undefined;
+    const body: Record<string, unknown> = {
       actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
       volume,
       comment: `${data.eaName} - EA Migrate`.slice(0, 26),
     };
+    if (stopLoss !== undefined && Number.isFinite(stopLoss) && stopLoss > 0) body["stopLoss"] = stopLoss;
+    if (takeProfit !== undefined && Number.isFinite(takeProfit) && takeProfit > 0) body["takeProfit"] = takeProfit;
 
     // Resolve the account's region (its API host depends on it) and make sure
     // it is deployed. Cold accounts reject orders with 504/"530"-style errors,
@@ -508,5 +516,255 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       break;
     }
     return { ok: false, code: "failed", message: lastMessage };
+  });
+
+/* ------------------------------------------------------------------ */
+/* Market analysis — real candles → indicators → signal with SL/TP    */
+/* ------------------------------------------------------------------ */
+
+export type ScannerAnalysisRequest = {
+  accountId: string;
+  symbol: string;
+  /** Higher timeframe for trend (e.g. "1h"); "15m"/"5m" for the entry leg. */
+  timeframe?: string;
+  region?: string;
+};
+
+export type ScannerAnalysis = {
+  symbol: string;
+  timeframe: string;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  signal: "BUY" | "SELL" | "NO TRADE";
+  confidence: number;
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: string;
+  atr: number;
+  rsi: number;
+  /** Human-readable reasons behind the signal, newest thinking last. */
+  reasons: string[];
+  /** Structured scan log lines (shown as the narrated steps). */
+  readouts: { label: string; value: string; bullish: boolean | null }[];
+};
+
+type Candle = { time: string; open: number; high: number; low: number; close: number };
+
+/** EMA over closing prices (seeded with an SMA for stability). */
+function ema(values: number[], period: number): number {
+  if (values.length < period) return (values.at(-1) ?? 0);
+  const k = 2 / (period + 1);
+  let running = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
+  for (let index = period; index < values.length; index += 1) running = (values[index] ?? running) * k + running * (1 - k);
+  return running;
+}
+
+/** Wilder's RSI. */
+function rsi(closes: number[], period = 14): number {
+  if (closes.length < period + 1) return 50;
+  let gainSum = 0;
+  let lossSum = 0;
+  for (let index = 1; index <= period; index += 1) {
+    const previous = closes[index - 1] ?? 0;
+    const change = (closes[index] ?? previous) - previous;
+    if (change >= 0) gainSum += change;
+    else lossSum -= change;
+  }
+  let avgGain = gainSum / period;
+  let avgLoss = lossSum / period;
+  for (let index = period + 1; index < closes.length; index += 1) {
+    const previous = closes[index - 1] ?? 0;
+    const change = (closes[index] ?? previous) - previous;
+    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
+    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
+  }
+  if (avgLoss === 0) return 100;
+  return 100 - 100 / (1 + avgGain / avgLoss);
+}
+
+/** Average True Range — volatility in price units. */
+function atr(candles: Candle[], period = 14): number {
+  if (candles.length < 2) return 0;
+  const trs: number[] = [];
+  for (let index = 1; index < candles.length; index += 1) {
+    const current = candles[index];
+    const previousClose = candles[index - 1]?.close;
+    if (!current || previousClose === undefined) continue;
+    trs.push(Math.max(current.high - current.low, Math.abs(current.high - previousClose), Math.abs(current.low - previousClose)));
+  }
+  const slice = trs.slice(-period);
+  return slice.reduce((sum, value) => sum + value, 0) / slice.length;
+}
+
+/** Most recent swing high/low over a lookback window. */
+function swings(candles: Candle[], lookback = 20): { high: number; low: number } {
+  const slice = candles.slice(-lookback);
+  return {
+    high: slice.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY),
+    low: slice.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY),
+  };
+}
+
+function roundToTick(price: number, reference: number): number {
+  const magnitude = Math.abs(reference);
+  const decimals = magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : magnitude >= 1 ? 4 : 5;
+  const factor = 10 ** decimals;
+  return Math.round(price * factor) / factor;
+}
+
+/**
+ * Analyzes real market data for a symbol using the connected MT5 account:
+ * trend (EMA21/50), momentum (RSI14), volatility (ATR14) and swing structure
+ * → direction, entry at market, SL beyond the recent swing, TP at ≥2R.
+ */
+export const getScannerAnalysis = createServerFn({ method: "POST" })
+  .validator((data: ScannerAnalysisRequest) => data)
+  .handler(async ({ data }): Promise<{ ok: true; analysis: ScannerAnalysis } | MtFailure> => {
+    if (!data.accountId) return { ok: false, code: "failed", message: "No connected MT5 account. Link your account on the MetaTrader page first." };
+    const symbol = data.symbol.trim().toUpperCase();
+    const timeframe = data.timeframe ?? "1h";
+
+    // Resolve region + make sure the terminal is up.
+    let region = data.region;
+    const detail = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`));
+    if (detail.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (detail.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(detail.status) };
+    if (detail.kind === "ok" && detail.response.status === 200) {
+      const account = detail.response.payload as MaAccount | undefined;
+      region = account?.region ?? region;
+      if (account && account.state !== "DEPLOYED") {
+        await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, { method: "POST" }));
+      }
+    }
+
+    const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 70_000));
+    if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
+
+    const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
+
+    // Current candle + price (trailing subscription keeps repeat scans fast).
+    let candle: { close: number; high: number; low: number; open: number } | undefined;
+    let price: { bid: number; ask: number } | undefined;
+    for (const host of hosts) {
+      const candleResult = await withMasterToken((token) =>
+        fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 25_000),
+      );
+      if (candleResult.kind === "ok" && candleResult.response.status === 200) {
+        const raw = candleResult.response.payload as { open?: number; high?: number; low?: number; close?: number } | undefined;
+        if (raw?.close) candle = { open: raw.open ?? raw.close, high: raw.high ?? raw.close, low: raw.low ?? raw.close, close: raw.close };
+      }
+      const priceResult = await withMasterToken((token) =>
+        fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 25_000),
+      );
+      if (priceResult.kind === "ok" && priceResult.response.status === 200) {
+        const raw = priceResult.response.payload as { bid?: number; ask?: number } | undefined;
+        if (raw?.bid && raw?.ask) price = { bid: raw.bid, ask: raw.ask };
+      }
+      if (candle || price) break;
+    }
+    if (!candle && !price) {
+      return {
+        ok: false,
+        code: "failed",
+        message: `No live market data for ${symbol} — the broker connection is still opening, or this broker does not list that symbol. Try again in a minute.`,
+      };
+    }
+
+    const close = candle?.close ?? price!.bid;
+
+    // Historical candles for the indicator math (offset so the series ends near now).
+    const candles: Candle[] = [];
+    for (const host of hosts) {
+      const historyResult = await withMasterToken((token) =>
+        fetchJson(
+          `https://mt-market-data-client-api-v1.${(region ?? "new-york")}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
+          { headers: { "auth-token": token, Accept: "application/json" } },
+          90_000,
+        ),
+      );
+      if (historyResult.kind === "ok" && historyResult.response.status === 200 && Array.isArray(historyResult.response.payload)) {
+        candles.push(...(historyResult.response.payload as Candle[]));
+        break;
+      }
+    }
+
+    // With no history the analysis still runs — trend/momentum read neutral.
+    const closes = candles.map((item) => item.close);
+    const ema21 = closes.length >= 21 ? ema(closes, 21) : close;
+    const ema50 = closes.length >= 50 ? ema(closes, 50) : close;
+    const rsiValue = closes.length >= 15 ? rsi(closes) : 50;
+    const atrValue = candles.length >= 15 ? atr(candles) : Math.max(close * 0.0015, 0.0001);
+    const swing = candles.length >= 20 ? swings(candles) : { high: close + atrValue * 2, low: close - atrValue * 2 };
+
+    const trendUp = ema21 > ema50;
+    const trendStrength = Math.abs(ema21 - ema50);
+    const trendFactor = Math.min(trendStrength / (atrValue || 1e-9), 1);
+    const priceAboveEma = close > ema21;
+    const rsiBull = rsiValue > 52;
+    const rsiBear = rsiValue < 48;
+
+    // Score in [-3, +3]: trend ×2, price vs EMA, RSI momentum.
+    let score = 0;
+    score += (trendUp ? 2 : -2) * (0.5 + 0.5 * trendFactor);
+    score += priceAboveEma ? 0.75 : -0.75;
+    score += rsiValue >= 50 ? (rsiBull ? 0.6 : 0.2) : rsiBear ? -0.6 : -0.2;
+
+    const bias: ScannerAnalysis["bias"] = score > 0.6 ? "BULLISH" : score < -0.6 ? "BEARISH" : "NEUTRAL";
+    // Ranging market = no edge; don't fabricate a signal.
+    const signal: ScannerAnalysis["signal"] = bias === "NEUTRAL" ? "NO TRADE" : trendUp === priceAboveEma || Math.abs(score) >= 1.5 ? (score > 0 ? "BUY" : "SELL") : "NO TRADE";
+
+    const confidence = Math.round(Math.min(95, Math.max(55, 55 + Math.abs(score) * 14)));
+    const entry = price ? (signal === "BUY" ? price.ask : price.bid) : close;
+    // SL beyond the recent swing (buffered by 0.5 ATR), TP at ≥2R.
+    const direction = signal === "SELL" ? -1 : 1;
+    const swingStop = signal === "SELL" ? swing.high + atrValue * 0.5 : swing.low - atrValue * 0.5;
+    const atrStop = entry - direction * atrValue * 1.5;
+    const stopLoss = signal === "SELL" ? Math.max(swingStop, atrStop) : Math.min(swingStop, atrStop);
+    const risk = Math.abs(entry - stopLoss);
+    const takeProfit = entry + direction * risk * 2;
+
+    const reasons: string[] = [];
+    if (candles.length >= 50) {
+      reasons.push(
+        `EMA21 is ${ema21 > ema50 ? "above" : "below"} EMA50 — ${trendUp ? "uptrend" : "downtrend"} structure on ${timeframe}.`,
+      );
+      reasons.push(`RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 60 ? "strong bullish momentum" : rsiValue > 52 ? "mild bullish momentum" : rsiValue < 40 ? "strong bearish momentum" : rsiValue < 48 ? "mild bearish momentum" : "momentum neutral"}.`);
+      reasons.push(`Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level.`);
+      reasons.push(`ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — stop placed ${signal === "SELL" ? "above" : "below"} the recent swing with a 0.5 ATR buffer, target at 2R.`);
+    } else {
+      reasons.push(`Limited history for ${symbol} — levels are built from live price and ATR fallbacks.`);
+    }
+    if (signal === "NO TRADE") {
+      reasons.push("Trend and momentum disagree or the market is ranging — no high-probability setup right now. Rescan after the next candle closes.");
+    }
+
+    const fmt = (value: number) => value.toFixed(Math.abs(value) >= 1000 ? 2 : Math.abs(value) >= 10 ? 3 : 5);
+    const readouts: ScannerAnalysis["readouts"] = [
+      { label: "Trend (EMA 21/50)", value: trendUp ? "Up · Bullish" : "Down · Bearish", bullish: candles.length >= 50 ? trendUp : null },
+      { label: "Momentum (RSI 14)", value: closes.length >= 15 ? `${rsiValue.toFixed(1)} ${rsiValue > 52 ? "· Bullish" : rsiValue < 48 ? "· Bearish" : "· Neutral"}` : "n/a", bullish: closes.length >= 15 ? rsiValue > 52 ? true : rsiValue < 48 ? false : null : null },
+      { label: "Volatility (ATR 14)", value: fmt(atrValue), bullish: null },
+      { label: "Swing range (20 bars)", value: `${fmt(swing.low)} — ${fmt(swing.high)}`, bullish: null },
+      { label: "Live price (bid/ask)", value: price ? `${fmt(price.bid)} / ${fmt(price.ask)}` : fmt(close), bullish: null },
+    ];
+
+    return {
+      ok: true,
+      analysis: {
+        symbol,
+        timeframe,
+        bias,
+        signal,
+        confidence,
+        entry: roundToTick(entry, entry),
+        stopLoss: roundToTick(stopLoss, entry),
+        takeProfit: roundToTick(takeProfit, entry),
+        riskReward: "1:2",
+        atr: atrValue,
+        rsi: rsiValue,
+        reasons,
+        readouts,
+      },
+    };
   });
 
