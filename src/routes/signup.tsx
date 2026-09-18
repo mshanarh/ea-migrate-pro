@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
+import { syncRegister } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -64,6 +65,9 @@ function SignUp() {
             whatsapp: form.whatsapp,
           });
           if (res.error) return setError(res.error);
+          // Mirror the new account to the shared cloud store so it appears on
+          // the admin console in near-real time (no-op when KV not configured).
+          if (res.account) void syncRegister({ data: { account: res.account } });
           navigate({ to: "/dashboard" });
         }}
       >

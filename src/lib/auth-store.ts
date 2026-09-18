@@ -314,6 +314,44 @@ export function resetPassword(email: string, password: string): { error?: string
   return {};
 }
 
+/**
+ * Merge cloud-verified accounts into this device's local store (passwords are
+ * already stripped by the server layer). Used by the cross-device sign-in
+ * fallback so a user can sign in on a new phone/browser.
+ */
+export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
+  load();
+  let changed = false;
+  const existing = new Map(state.accounts.map((account) => [account.email.toLowerCase(), account]));
+  for (const cloud of accounts) {
+    const key = cloud.email.toLowerCase();
+    const known = existing.get(key);
+    if (known) {
+      // Keep the local password hash (it IS the real password locally); refresh the rest.
+      existing.set(key, { ...known, ...cloud, password: known.password });
+      changed = true;
+    } else if (cloud.role === "admin") {
+      // Admin records sign in via the dedicated admin login only.
+      continue;
+    } else {
+      existing.set(key, { ...cloud, password: "" } as Account);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  state = normalise({ ...state, accounts: Array.from(existing.values()) });
+  persist();
+}
+
+/** Marks an account as the signed-in user (used by the cloud sign-in fallback). */
+export function setCurrentAccount(email: string) {
+  load();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === email.trim().toLowerCase());
+  if (!account) return;
+  state = { ...state, currentId: account.id };
+  persist();
+}
+
 export function signOut() {
   load();
   state = { ...state, currentId: null };
@@ -322,7 +360,7 @@ export function signOut() {
 
 export function register(
   data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas" | "website">,
-): { error?: string } {
+): { error?: string; account?: Account } {
   load();
   if (state.accounts.some((a) => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
     return { error: "That email is already registered." };
@@ -340,7 +378,7 @@ export function register(
   };
   state = normalise({ ...state, accounts: [...state.accounts, account], currentId: account.id });
   persist();
-  return {};
+  return { account };
 }
 
 function update(id: string, fn: (a: Account) => Account) {

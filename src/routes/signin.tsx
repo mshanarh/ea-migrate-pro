@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { resetPassword, signIn, useStore } from "@/lib/auth-store";
+import { syncSignIn } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/signin")({
   head: () => ({
@@ -53,11 +54,25 @@ function SignIn() {
     <AuthShell active="signin">
       <form
         className="mt-8 space-y-6"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
           setError("");
           const res = signIn(email, password);
-          if (res.error) return setError(res.error);
+          if (res.error) {
+            // Not on this device? Verify against the shared cloud store so
+            // users can sign in from any phone/browser.
+            const cloud = await syncSignIn({ data: { email, password } });
+            if (cloud.enabled && cloud.ok) {
+              // Seed this device with the cloud account and sign in locally.
+              const { hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+              hydrateFromCloud([cloud.account]);
+              setCurrentAccount(email);
+              sessionStorage.setItem("eamp_pending_welcome", "1");
+              navigate({ to: cloud.account.role === "admin" ? "/admin" : "/dashboard" });
+              return;
+            }
+            return setError(res.error);
+          }
           const account = store.accounts.find(
             (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
           );
