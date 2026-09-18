@@ -314,6 +314,13 @@
   min-height: 100dvh;
 }
 
+/* When a background animation is enabled, the app screens must be transparent
+   so the fixed canvas behind them shows through (body.eamp-bg-on is kept in
+   sync by the BackgroundEffects engine). With effects off, screens stay black. */
+body.eamp-bg-on .app-fullscreen.bg-black {
+  background-color: transparent;
+}
+
 /* Lock the body only while a native-shell screen is actually mounted with the
    locked variant — the mentor portal still scrolls normally. */
 body:has(.app-shell-locked) {

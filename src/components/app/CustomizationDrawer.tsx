@@ -13,6 +13,7 @@ import {
   setInterfaceTheme,
   useCustomization,
 } from "@/lib/app-customization";
+import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 
 /**
  * Pill row — the drawer's section header, matching the Settings screenshot:
@@ -191,9 +192,7 @@ export function CustomizationPanel() {
           open={openSection === "bg"}
           onToggle={() => toggle("bg")}
         >
-          <p className="px-1 text-xs leading-relaxed text-white/45">
-            Profit Rain, Lightning, Colour Matrix, Robot Video and more live in Settings → Back Animation.
-          </p>
+          <BackAnimationSection />
         </PillRow>
 
         <PillRow

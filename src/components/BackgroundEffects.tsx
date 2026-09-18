@@ -947,6 +947,22 @@ export function BackgroundEffects() {
       type: localStorage.getItem("bgEffectType") || "dollars",
     });
 
+    // Keep the <body> flag in sync so app screens can go transparent while an
+    // effect is playing (see body.eamp-bg-on in styles.css).
+    const syncBodyFlag = () => {
+      const { enabled } = readConfig();
+      document.body.classList.toggle("eamp-bg-on", enabled);
+      if (enabled) {
+        const type = readConfig().type;
+        const glow =
+          type === "lightning" ? "rgba(255,255,255,0.35)" :
+          type === "candles" || type === "binary" ? "rgba(60,230,120,0.3)" :
+          "rgba(0,229,255,0.3)";
+        document.body.style.setProperty("--eamp-glow", glow);
+      }
+    };
+    syncBodyFlag();
+
     const resize = () => {
       const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       w = window.innerWidth;
@@ -975,7 +991,10 @@ export function BackgroundEffects() {
       stepper?.(dt);
     };
 
-    const refresh = () => { builtFor = ""; };
+    const refresh = () => {
+      builtFor = "";
+      syncBodyFlag();
+    };
     resize();
     window.addEventListener("resize", resize);
     window.addEventListener("eamp:bg-effects", refresh);
@@ -987,6 +1006,7 @@ export function BackgroundEffects() {
       window.removeEventListener("resize", resize);
       window.removeEventListener("eamp:bg-effects", refresh);
       window.removeEventListener("storage", refresh);
+      document.body.classList.remove("eamp-bg-on");
     };
   }, [mounted]);
 
