@@ -61,6 +61,10 @@ function fmtPrice(value: number): string {
   return value.toFixed(magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : 5);
 }
 
+function fmtSignalLevel(value: number): string {
+  return value > 0 ? fmtPrice(value) : "—";
+}
+
 const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   BUY: "#22c55e",
   SELL: "#ef4444",
@@ -450,15 +454,15 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-[16px] bg-black p-3 text-center">
                     <p className="text-[10px]" style={{ color: accent }}>ENTRY</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtPrice(analysis.entry)}</p>
+                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.entry)}</p>
                   </div>
                   <div className="rounded-[16px] bg-black p-3 text-center">
                     <p className="text-[10px] text-red-400">⚠ SL</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtPrice(analysis.stopLoss)}</p>
+                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.stopLoss)}</p>
                   </div>
                   <div className="rounded-[16px] bg-black p-3 text-center">
                     <p className="text-[10px] text-green-400">TP</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtPrice(analysis.takeProfit)}</p>
+                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.takeProfit)}</p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between text-[11px]">
@@ -479,6 +483,14 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 font-bold text-white/50"
                   >
                     No high-probability setup — Execute disabled
+                  </button>
+                ) : !analysis.executionReady ? (
+                  <button
+                    type="button"
+                    disabled
+                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 font-bold text-white/50"
+                  >
+                    Live price unavailable — Execute disabled
                   </button>
                 ) : (
                   <button
