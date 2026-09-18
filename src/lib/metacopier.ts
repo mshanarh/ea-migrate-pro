@@ -196,6 +196,20 @@ function isAuthRejected(status: number, payload: unknown): boolean {
 type McType = { id: number; name?: string };
 type McRegion = { id: number; name?: string };
 
+/**
+ * MetaCopier validation failures arrive as { errors: ["[CODE]", "field -> reason", …] }.
+ * Known platform-gate codes get plain-English fixes; unknown ones pass through.
+ */
+function mcErrorMessage(payload: unknown, status: number): string | undefined {
+  const raw = (payload as { errors?: unknown } | undefined)?.errors;
+  if (!Array.isArray(raw) || raw.length === 0) return undefined;
+  const joined = raw.map((item) => String(item)).join(", ");
+  if (joined.includes("PLEASE_FUND_YOUR_PROJECT")) {
+    return "MetaCopier requires the platform project to be funded before accounts can be connected — the $20 trial credit alone doesn't unlock it. The owner fixes this once in the MetaCopier dashboard: open Billing and add a payment method / fund the project (their system clears payments daily), or contact MetaCopier support. The app side is working correctly.";
+  }
+  return joined;
+}
+
 /** MetaCopier validation failures arrive as { errors: ["field -> reason", …] }. */
 function mcErrors(payload: unknown): string | undefined {
   const raw = (payload as { errors?: unknown } | undefined)?.errors;
@@ -313,7 +327,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
     const account = payload as (McAccount & { message?: string; error?: string }) | undefined;
 
     if (status < 200 || status >= 300) {
-      const detail = account?.message || account?.error || account?.statusMessage || mcErrors(payload);
+      const detail = account?.message || account?.error || account?.statusMessage || mcErrorMessage(payload, status) || mcErrors(payload);
       // Auth rejections mean the admin's master key is inactive — plain wording,
       // no env details. Every other failure shows the real provider message.
       if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
