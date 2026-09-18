@@ -414,254 +414,65 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
     let equity: number | undefined;
     let currency: string | undefined;
     if (connected) {
-      const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, account.region, 20_000));
-      if (warmOutcome.kind === "ok" && warmOutcome.response.status === 200) {
-        const info = warmOutcome.response.payload as { balance?: number; equity?: number; currency?: string } | undefined;
-        balance = info?.balance;
-        equity = info?.equity;
-        currency = info?.currency;
-      }
-    }
+      const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
 
-    return {
-      ok: true,
-      connected,
-      ...(balance !== undefined ? { balance } : {}),
-      ...(equity !== undefined ? { equity } : {}),
-      ...(currency !== undefined ? { currency } : {}),
-      ...(account.statusMessage ? { statusMessage: account.statusMessage } : {}),
-      ...(account.region ? { environment: account.region } : {}),
+    // Start the historical read alongside the live snapshot. History improves
+    // the indicators but must never make a live signal wait on a cold endpoint.
+    const historyPromise = (async (): Promise<Candle[]> => {
+      const deadline = new Promise<Candle[]>((resolve) => setTimeout(() => resolve([]), 3_000));
+      const request = (async (): Promise<Candle[]> => {
+        for (const host of hosts) {
+          const historyResult = await withMasterToken((token) =>
+            fetchJson(
+              `https://mt-market-data-client-api-v1.${(region ?? "new-york")}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
+              { headers: { "auth-token": token, Accept: "application/json" } },
+              5_000,
+            ),
+          );
+          if (historyResult.kind === "ok" && historyResult.response.status === 200 && Array.isArray(historyResult.response.payload)) {
+            return historyResult.response.payload as Candle[];
+          }
+        }
+        return [];
+      })();
+      return Promise.race([request, deadline]);
+    })();
+
+    // Current candle and price are independent. Reading them together removes
+    // one full network round-trip from every scan.
+    const readMarketSnapshot = async () => {
+      let candle: { close: number; high: number; low: number; open: number } | undefined;
+      let price: { bid: number; ask: number } | undefined;
+      for (const host of hosts) {
+        const [candleResult, priceResult] = await Promise.all([
+          withMasterToken((token) =>
+            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 8_000),
+          ),
+          withMasterToken((token) =>
+            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 8_000),
+          ),
+        ]);
+        if (candleResult.kind === "ok" && candleResult.response.status === 200) {
+          const raw = candleResult.response.payload as { open?: number; high?: number; low?: number; close?: number } | undefined;
+          if (raw?.close) candle = { open: raw.open ?? raw.close, high: raw.high ?? raw.close, low: raw.low ?? raw.close, close: raw.close };
+        }
+        if (priceResult.kind === "ok" && priceResult.response.status === 200) {
+          const raw = priceResult.response.payload as { bid?: number; ask?: number } | undefined;
+          if (raw?.bid && raw?.ask) price = { bid: raw.bid, ask: raw.ask };
+        }
+        if (candle || price) break;
+      }
+      return { candle, price };
     };
-  });
 
-/** DELETE /accounts/{accountId} — removes the user's hosted connection. */
-export const disconnectMt5Account = createServerFn({ method: "POST" })
-  .validator((data: MtDisconnectRequest) => data)
-  .handler(async ({ data }): Promise<MtDisconnectResult> => {
-    const outcome = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" }));
-    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
-    const { status, payload } = outcome.response;
-    if (status !== 200 && status !== 202 && status !== 204 && status !== 404) {
-      return { ok: false, code: "failed", message: maError(payload) || `Could not remove the account (HTTP ${status}).` };
-    }
-    return { ok: true, message: "MT5 account disconnected." };
-  });
-
-/** POST {clientApi}/users/current/accounts/{accountId}/orders — market order. */
-export const executeLiveTrade = createServerFn({ method: "POST" })
-  .validator((data: LiveTradeRequest) => data)
-  .handler(async ({ data }): Promise<LiveTradeResult> => {
-    if (!data.accountId) return { ok: false, code: "failed", message: "No connected MT5 account. Link your account on the MetaTrader page first." };
-
-    const volume = Math.max(Number.parseFloat(data.lotSize) || 0, 0.01);
-    const stopLoss = data.stopLoss !== undefined && data.stopLoss !== "" ? Number.parseFloat(data.stopLoss) : undefined;
-    const takeProfit = data.takeProfit !== undefined && data.takeProfit !== "" ? Number.parseFloat(data.takeProfit) : undefined;
-    const body: Record<string, unknown> = {
-      actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
-      symbol: data.symbol,
-      volume,
-      comment: `${data.eaName} - EA Migrate`.slice(0, 26),
-    };
-    if (stopLoss !== undefined && Number.isFinite(stopLoss) && stopLoss > 0) body["stopLoss"] = stopLoss;
-    if (takeProfit !== undefined && Number.isFinite(takeProfit) && takeProfit > 0) body["takeProfit"] = takeProfit;
-
-    // Resolve the account's region (its API host depends on it) and make sure
-    // it is deployed. Cold accounts reject orders with 504/"530"-style errors,
-    // so warm the broker connection BEFORE placing the order.
-    let region = data.region;
-    const detail = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`));
-    if (detail.kind === "ok" && detail.response.status === 200) {
-      const account = detail.response.payload as MaAccount | undefined;
-      region = account?.region ?? region;
-      if (account && account.state !== "DEPLOYED") {
-        await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, { method: "POST" }));
-      }
-    }
-
-    const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 75_000));
-    if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
-
-    // The client API host depends on the region the account was deployed to;
-    // fall back to the known hosts when the region is unknown.
-    const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
-    let lastMessage = "Your robot is starting — the broker connection is still opening for your account. Press START again in a minute; the first connection after linking an account can take a few minutes. If it keeps failing, this broker may be blocking cloud trading terminals — a live (non-demo) server of the same broker usually works.";
-    for (const host of hosts) {
-      const outcome = await withMasterToken(async (token) =>
-        fetchJson(
-          `${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/orders`,
-          {
-            method: "POST",
-            headers: { "auth-token": token, "Content-Type": "application/json", Accept: "application/json" },
-            body: JSON.stringify(body),
-          },
-          40_000,
-        ),
-      );
-      if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-      if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
-
-      const { status, payload } = outcome.response;
-      if (status >= 200 && status < 300) {
-        const position = payload as { orderId?: string; positionId?: string; message?: string } | undefined;
-        return {
-          ok: true,
-          message: `${data.direction} ${volume} ${data.symbol} executed`,
-          ...(position?.orderId || position?.positionId ? { orderId: position.orderId ?? position.positionId } : {}),
-        };
-      }
-      if (status === 404 || status === 504 || status === 0) continue; // wrong host or connection went cold — try the next host
-      lastMessage = maError(payload) || `Order rejected (HTTP ${status}).`;
-      break;
-    }
-    return { ok: false, code: "failed", message: lastMessage };
-  });
-
-/* ------------------------------------------------------------------ */
-/* Market analysis — real candles → indicators → signal with SL/TP    */
-/* ------------------------------------------------------------------ */
-
-export type ScannerAnalysisRequest = {
-  accountId: string;
-  symbol: string;
-  /** Higher timeframe for trend (e.g. "1h"); "15m"/"5m" for the entry leg. */
-  timeframe?: string;
-  region?: string;
-};
-
-export type ScannerAnalysis = {
-  symbol: string;
-  timeframe: string;
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-  signal: "BUY" | "SELL" | "NO TRADE";
-  confidence: number;
-  entry: number;
-  stopLoss: number;
-  takeProfit: number;
-  riskReward: string;
-  atr: number;
-  rsi: number;
-  /** Human-readable reasons behind the signal, newest thinking last. */
-  reasons: string[];
-  /** Structured scan log lines (shown as the narrated steps). */
-  readouts: { label: string; value: string; bullish: boolean | null }[];
-};
-
-type Candle = { time: string; open: number; high: number; low: number; close: number };
-
-/** EMA over closing prices (seeded with an SMA for stability). */
-function ema(values: number[], period: number): number {
-  if (values.length < period) return (values.at(-1) ?? 0);
-  const k = 2 / (period + 1);
-  let running = values.slice(0, period).reduce((sum, value) => sum + value, 0) / period;
-  for (let index = period; index < values.length; index += 1) running = (values[index] ?? running) * k + running * (1 - k);
-  return running;
-}
-
-/** Wilder's RSI. */
-function rsi(closes: number[], period = 14): number {
-  if (closes.length < period + 1) return 50;
-  let gainSum = 0;
-  let lossSum = 0;
-  for (let index = 1; index <= period; index += 1) {
-    const previous = closes[index - 1] ?? 0;
-    const change = (closes[index] ?? previous) - previous;
-    if (change >= 0) gainSum += change;
-    else lossSum -= change;
-  }
-  let avgGain = gainSum / period;
-  let avgLoss = lossSum / period;
-  for (let index = period + 1; index < closes.length; index += 1) {
-    const previous = closes[index - 1] ?? 0;
-    const change = (closes[index] ?? previous) - previous;
-    avgGain = (avgGain * (period - 1) + Math.max(change, 0)) / period;
-    avgLoss = (avgLoss * (period - 1) + Math.max(-change, 0)) / period;
-  }
-  if (avgLoss === 0) return 100;
-  return 100 - 100 / (1 + avgGain / avgLoss);
-}
-
-/** Average True Range — volatility in price units. */
-function atr(candles: Candle[], period = 14): number {
-  if (candles.length < 2) return 0;
-  const trs: number[] = [];
-  for (let index = 1; index < candles.length; index += 1) {
-    const current = candles[index];
-    const previousClose = candles[index - 1]?.close;
-    if (!current || previousClose === undefined) continue;
-    trs.push(Math.max(current.high - current.low, Math.abs(current.high - previousClose), Math.abs(current.low - previousClose)));
-  }
-  const slice = trs.slice(-period);
-  return slice.reduce((sum, value) => sum + value, 0) / slice.length;
-}
-
-/** Most recent swing high/low over a lookback window. */
-function swings(candles: Candle[], lookback = 20): { high: number; low: number } {
-  const slice = candles.slice(-lookback);
-  return {
-    high: slice.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY),
-    low: slice.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY),
-  };
-}
-
-function roundToTick(price: number, reference: number): number {
-  const magnitude = Math.abs(reference);
-  const decimals = magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : magnitude >= 1 ? 4 : 5;
-  const factor = 10 ** decimals;
-  return Math.round(price * factor) / factor;
-}
-
-/**
- * Analyzes real market data for a symbol using the connected MT5 account:
- * trend (EMA21/50), momentum (RSI14), volatility (ATR14) and swing structure
- * → direction, entry at market, SL beyond the recent swing, TP at ≥2R.
- */
-export const getScannerAnalysis = createServerFn({ method: "POST" })
-  .validator((data: ScannerAnalysisRequest) => data)
-  .handler(async ({ data }): Promise<{ ok: true; analysis: ScannerAnalysis } | MtFailure> => {
-    if (!data.accountId) return { ok: false, code: "failed", message: "No connected MT5 account. Link your account on the MetaTrader page first." };
-    const symbol = data.symbol.trim().toUpperCase();
-    const timeframe = data.timeframe ?? "1h";
-
-    // Resolve region + make sure the terminal is up.
-    let region = data.region;
-    const detail = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`));
-    if (detail.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (detail.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(detail.status) };
-    if (detail.kind === "ok" && detail.response.status === 200) {
-      const account = detail.response.payload as MaAccount | undefined;
-      region = account?.region ?? region;
-      if (account && account.state !== "DEPLOYED") {
-        await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, { method: "POST" }));
-      }
-    }
-
-    const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 70_000));
-    if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
-
-    const hosts = region && CLIENT_API_HOSTS[region] ? [CLIENT_API_HOSTS[region]] : Object.values(CLIENT_API_HOSTS);
-
-    // Current candle + price (trailing subscription keeps repeat scans fast).
-    let candle: { close: number; high: number; low: number; open: number } | undefined;
-    let price: { bid: number; ask: number } | undefined;
-    for (const host of hosts) {
-      const candleResult = await withMasterToken((token) =>
-        fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 25_000),
-      );
-      if (candleResult.kind === "ok" && candleResult.response.status === 200) {
-        const raw = candleResult.response.payload as { open?: number; high?: number; low?: number; close?: number } | undefined;
-        if (raw?.close) candle = { open: raw.open ?? raw.close, high: raw.high ?? raw.close, low: raw.low ?? raw.close, close: raw.close };
-      }
-      const priceResult = await withMasterToken((token) =>
-        fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 25_000),
-      );
-      if (priceResult.kind === "ok" && priceResult.response.status === 200) {
-        const raw = priceResult.response.payload as { bid?: number; ask?: number } | undefined;
-        if (raw?.bid && raw?.ask) price = { bid: raw.bid, ask: raw.ask };
-      }
-      if (candle || price) break;
+    // Warm-up is only a fallback. Connected accounts get a signal from the
+    // fast path immediately; cold accounts still receive a bounded retry.
+    let { candle, price } = await readMarketSnapshot();
+    if (!candle && !price) {
+      const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 15_000));
+      if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+      if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
+      ({ candle, price } = await readMarketSnapshot());
     }
     if (!candle && !price) {
       return {
@@ -672,22 +483,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     }
 
     const close = candle?.close ?? price!.bid;
-
-    // Historical candles for the indicator math (offset so the series ends near now).
-    const candles: Candle[] = [];
-    for (const host of hosts) {
-      const historyResult = await withMasterToken((token) =>
-        fetchJson(
-          `https://mt-market-data-client-api-v1.${(region ?? "new-york")}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
-          { headers: { "auth-token": token, Accept: "application/json" } },
-          90_000,
-        ),
-      );
-      if (historyResult.kind === "ok" && historyResult.response.status === 200 && Array.isArray(historyResult.response.payload)) {
-        candles.push(...(historyResult.response.payload as Candle[]));
-        break;
-      }
-    }
+    const candles = await historyPromise;
 
     // With no history the analysis still runs — trend/momentum read neutral.
     const closes = candles.map((item) => item.close);
