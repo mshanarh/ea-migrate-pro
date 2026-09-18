@@ -137,18 +137,15 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
     setStep(0);
     setAnalysis(null);
     setAnalysisError("");
-    // Narrated steps advance while the real analysis runs; completion waits
-    // for the actual result (with a short minimum so the read feels real).
+    // Narrated steps advance while the real analysis runs. Show the result
+    // as soon as the live analysis responds — never add an artificial delay.
     let index = 0;
     const interval = window.setInterval(() => {
       index += 1;
       setStep(Math.min(index, SCAN_STEPS.length - 1));
     }, 650);
-    const startedAt = Date.now();
     try {
       const result = await getScannerAnalysis({ data: { accountId, symbol, timeframe, ...(region ? { region } : {}) } });
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < 2400) await new Promise((resolve) => setTimeout(resolve, 2400 - elapsed));
       if (result.ok) {
         setAnalysis(result.analysis);
       } else {
