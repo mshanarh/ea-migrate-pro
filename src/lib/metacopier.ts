@@ -7,11 +7,12 @@ import { createServerFn } from "@tanstack/react-start";
  * never sees it and never calls MetaCopier directly — it calls the server
  * functions below (this stack's edge functions), which attach the key.
  *
- * Master key resolution order (server-side only):
- *   1. METACOPIER_MASTER_KEY                  ← the canonical admin secret
- *   2. METACOPIER_API_KEY / EXECUTION_API_KEY ← legacy aliases
- *   3. Cloud KV GET eamp:secrets:metacopier   ← fallback the admin can set
- *      by hand when env vars are not injected into the runtime
+ * Master key resolution (server-side only): every candidate —
+ * METACOPIER_MASTER_KEY, METACOPIER_API_KEY, EXECUTION_API_KEY (process.env
+ * and import.meta.env) plus the cloud KV key eamp:secrets:metacopier — is
+ * tried against MetaCopier in order, and the first key the API accepts is
+ * used. A stale or half-pasted value under one name can no longer break the
+ * flow when another name holds the working key.
  *
  * Auth compatibility: MetaCopier's documented auth header is "X-API-KEY";
  * some gateway deployments instead expect a standard "Authorization: Bearer
@@ -44,20 +45,19 @@ function cleanKey(raw: string | undefined | null): string {
   return (raw ?? "").trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 }
 
-async function masterKeyFromEnv(): Promise<string | null> {
+/** Every candidate master key, deduped: process env, build env, then cloud KV. */
+async function candidateKeys(): Promise<string[]> {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
   const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  // All three names are fully interchangeable — whichever the host platform
-  // (Lovable Cloud secrets, Freebuff env, .env.local) provides wins.
-  const key = cleanKey(
-    env["METACOPIER_MASTER_KEY"] ??
-      env["METACOPIER_API_KEY"] ??
-      env["EXECUTION_API_KEY"] ??
-      viteEnv["METACOPIER_MASTER_KEY"] ??
-      viteEnv["METACOPIER_API_KEY"] ??
-      viteEnv["EXECUTION_API_KEY"],
-  );
-  return key.length > 0 ? key : null;
+  const keys: string[] = [];
+  for (const name of ["METACOPIER_MASTER_KEY", "METACOPIER_API_KEY", "EXECUTION_API_KEY"]) {
+    for (const value of [cleanKey(env[name]), cleanKey(viteEnv[name])]) {
+      if (value.length > 0) keys.push(value);
+    }
+  }
+  const fromKv = await masterKeyFromKv();
+  if (fromKv) keys.push(fromKv);
+  return [...new Set(keys)];
 }
 
 /** Fallback: the admin can store the key in the cloud KV (GET eamp:secrets:metacopier). */
@@ -79,9 +79,38 @@ async function masterKeyFromKv(): Promise<string | null> {
   }
 }
 
-/** Returns the server-side master key, or null when the admin hasn't set one. */
-async function masterKey(): Promise<string | null> {
-  return (await masterKeyFromEnv()) ?? (await masterKeyFromKv());
+type McResponse = { status: number; payload?: unknown };
+
+/** The candidate key MetaCopier last accepted — avoids re-probing every call. */
+let workingKey: string | null = null;
+
+/**
+ * Runs `run` with the first candidate key MetaCopier accepts. Hosts often end
+ * up with a stale or half-pasted value under one key name (a truncated key
+ * authenticates as 401), so the first *present* key is not trusted — every
+ * candidate is tried until one passes. 401/403 advance to the next candidate;
+ * any other response is handed back to the caller untouched.
+ */
+async function withMasterKey(
+  run: (apiKey: string) => Promise<McResponse>,
+): Promise<{ kind: "ok"; response: McResponse } | { kind: "missing" } | { kind: "rejected"; status: number }> {
+  const keys = await candidateKeys();
+  if (keys.length === 0) return { kind: "missing" };
+  if (workingKey && keys.includes(workingKey)) {
+    const response = await run(workingKey);
+    if (response.status !== 401 && response.status !== 403) return { kind: "ok", response };
+    workingKey = null; // no longer accepted (rotated?) — re-probe all candidates
+  }
+  let lastStatus = 0;
+  for (const key of keys) {
+    const response = await run(key);
+    if (response.status !== 401 && response.status !== 403) {
+      workingKey = key;
+      return { kind: "ok", response };
+    }
+    lastStatus = response.status || lastStatus;
+  }
+  return { kind: "rejected", status: lastStatus };
 }
 
 /** Resolves the MetaCopier REST root candidates, most-likely first. */
@@ -210,8 +239,12 @@ export type LiveTradeRequest = {
 
 export type LiveTradeResult = { ok: true; message: string; orderId?: string } | MtFailure;
 
+/** Cached — the type/region enums don't change between connects. */
+let mcTypesCache: { typeId: number; regionId?: number } | null = null;
+
 /** GET /types/accountTypes + /types/regions, resolving MT5 and a default region. */
 async function resolveMcTypes(apiKey: string): Promise<{ typeId: number; regionId?: number }> {
+  if (mcTypesCache) return mcTypesCache;
   let typeId = MC_TYPE_MT5;
   try {
     const types = await mcFetch(apiKey, "/types/accountTypes");
@@ -226,14 +259,18 @@ async function resolveMcTypes(apiKey: string): Promise<{ typeId: number; regionI
     const regions = await mcFetch(apiKey, "/types/regions");
     if (regions.status >= 200 && regions.status < 300 && Array.isArray(regions.payload)) {
       const first = (regions.payload as McRegion[])[0];
-      if (first) return { typeId, regionId: first.id };
+      if (first) {
+        mcTypesCache = { typeId, regionId: first.id };
+        return mcTypesCache;
+      }
     }
   } catch {
     /* fall through to the default region below */
   }
   // MetaCopier requires a region on create — default to the first listed one
   // (New York) if the lookup ever fails, instead of guaranteeing a 400.
-  return { typeId, regionId: 1 };
+  mcTypesCache = { typeId, regionId: 1 };
+  return mcTypesCache;
 }
 
 /**
@@ -244,21 +281,23 @@ async function resolveMcTypes(apiKey: string): Promise<{ typeId: number; regionI
 export const connectMt5Account = createServerFn({ method: "POST" })
   .validator((data: MtConnectRequest) => data)
   .handler(async ({ data }): Promise<MtConnectResult> => {
-    const apiKey = await masterKey();
-    if (!apiKey) return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    const outcome = await withMasterKey(async (apiKey) => {
+      const { typeId, regionId } = await resolveMcTypes(apiKey);
+      const body: Record<string, unknown> = {
+        type: { id: typeId },
+        loginAccountNumber: data.login.trim(),
+        loginAccountPassword: data.password,
+        loginServer: data.server.trim(),
+        alias: (data.alias ?? data.login).slice(0, 100),
+        closeUnmanagedPositions: false,
+        ...(regionId !== undefined ? { region: { id: regionId } } : {}),
+      };
+      return mcFetch(apiKey, "/accounts", { method: "POST", json: body });
+    });
+    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
 
-    const { typeId, regionId } = await resolveMcTypes(apiKey);
-    const body: Record<string, unknown> = {
-      type: { id: typeId },
-      loginAccountNumber: data.login.trim(),
-      loginAccountPassword: data.password,
-      loginServer: data.server.trim(),
-      alias: (data.alias ?? data.login).slice(0, 100),
-      closeUnmanagedPositions: false,
-      ...(regionId !== undefined ? { region: { id: regionId } } : {}),
-    };
-
-    const { status, payload } = await mcFetch(apiKey, "/accounts", { method: "POST", json: body });
+    const { status, payload } = outcome.response;
     const account = payload as (McAccount & { message?: string; error?: string }) | undefined;
 
     if (status < 200 || status >= 300) {
@@ -284,9 +323,10 @@ export const connectMt5Account = createServerFn({ method: "POST" })
 export const disconnectMt5Account = createServerFn({ method: "POST" })
   .validator((data: MtDisconnectRequest) => data)
   .handler(async ({ data }): Promise<MtDisconnectResult> => {
-    const apiKey = await masterKey();
-    if (!apiKey) return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    const { status } = await mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" });
+    const outcome = await withMasterKey((apiKey) => mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" }));
+    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+    const { status } = outcome.response;
     if (status !== 200 && status !== 202 && status !== 204 && status !== 404) {
       if (isAuthRejected(status, null)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
       return { ok: false, code: "failed", message: `Could not remove the account (HTTP ${status}).` };
@@ -298,10 +338,11 @@ export const disconnectMt5Account = createServerFn({ method: "POST" })
 export const getMtAccountStatus = createServerFn({ method: "POST" })
   .validator((data: MtStatusRequest) => data)
   .handler(async ({ data }): Promise<MtStatusResult> => {
-    const apiKey = await masterKey();
-    if (!apiKey) return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    const outcome = await withMasterKey((apiKey) => mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`));
+    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
 
-    const { status, payload } = await mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`);
+    const { status, payload } = outcome.response;
     if (status < 200 || status >= 300) {
       if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
       return { ok: false, code: "failed", message: `Account not found (HTTP ${status}).` };
@@ -323,9 +364,6 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
 export const executeLiveTrade = createServerFn({ method: "POST" })
   .validator((data: LiveTradeRequest) => data)
   .handler(async ({ data }): Promise<LiveTradeResult> => {
-    const apiKey = await masterKey();
-    if (!apiKey) return { ok: false, code: "key_missing", message: missingKeyMessage() };
-
     if (!data.accountId) return { ok: false, code: "failed", message: "No connected MT5 account. Link your account on the MetaTrader page first." };
 
     const volume = Math.max(Number.parseFloat(data.lotSize) || 0, 0.01);
@@ -340,10 +378,13 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       comment: `${data.eaName} - EA Migrate`.slice(0, 100),
     };
 
-    const { status, payload } = await mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}/positions`, {
-      method: "POST",
-      json: body,
-    });
+    const outcome = await withMasterKey((apiKey) =>
+      mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}/positions`, { method: "POST", json: body }),
+    );
+    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+
+    const { status, payload } = outcome.response;
     const position = payload as McPosition | undefined;
 
     if (status < 200 || status >= 300) {
