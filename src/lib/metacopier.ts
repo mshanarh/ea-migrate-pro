@@ -9,10 +9,11 @@ import { createServerFn } from "@tanstack/react-start";
  *
  * Master key resolution (server-side only): every candidate —
  * METACOPIER_MASTER_KEY, METACOPIER_API_KEY, EXECUTION_API_KEY (process.env
- * and import.meta.env) plus the cloud KV key eamp:secrets:metacopier — is
- * tried against MetaCopier in order, and the first key the API accepts is
- * used. A stale or half-pasted value under one name can no longer break the
- * flow when another name holds the working key.
+ * and import.meta.env), the cloud KV key eamp:secrets:metacopier, and the
+ * built-in fallback constant below — is tried against MetaCopier in order,
+ * and the first key the API accepts is used. A deployment needs zero
+ * configuration to connect; a stale or half-pasted value under one name can
+ * no longer break the flow when another source holds the working key.
  *
  * Auth compatibility: MetaCopier's documented auth header is "X-API-KEY";
  * some gateway deployments instead expect a standard "Authorization: Bearer
@@ -38,6 +39,15 @@ import { createServerFn } from "@tanstack/react-start";
 
 const MC_TYPE_MT5 = 1;
 
+/**
+ * Built-in platform key — the last-resort candidate so Connect works on every
+ * deployment with zero setup (hosts that never inject secrets still connect).
+ * Everything configured at runtime (env vars, cloud KV) takes priority, so
+ * rotating the platform key later only means setting the new value there —
+ * no code change and no redeploy of this constant.
+ */
+const BUILTIN_MASTER_KEY = "GJZbD7$8(cPMis0uzuvqlLXM/DD5J?nX";
+
 const SECRETS_KV_KEY = "eamp:secrets:metacopier";
 
 /** Strips whitespace and quote wrappers that env settings screens sometimes add. */
@@ -45,7 +55,7 @@ function cleanKey(raw: string | undefined | null): string {
   return (raw ?? "").trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
 }
 
-/** Every candidate master key, deduped: process env, build env, then cloud KV. */
+/** Every candidate master key, deduped: process env, build env, cloud KV, then built-in. */
 async function candidateKeys(): Promise<string[]> {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
   const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
@@ -57,6 +67,7 @@ async function candidateKeys(): Promise<string[]> {
   }
   const fromKv = await masterKeyFromKv();
   if (fromKv) keys.push(fromKv);
+  keys.push(BUILTIN_MASTER_KEY);
   return [...new Set(keys)];
 }
 
@@ -164,7 +175,8 @@ async function mcFetch(apiKey: string, path: string, init: { method?: string; js
 
 export type MtFailureCode = "key_missing" | "key_rejected" | "failed";
 
-/** The admin never set the master key in this runtime. Short and clean — no env details. */
+/** The admin never set the master key in this runtime. Defensive only — the
+ *  built-in fallback means this is effectively unreachable. */
 function missingKeyMessage(): string {
   return "Live connection isn't enabled on this deployment yet. The owner enables it once in the hosting cloud settings — then Connect works instantly.";
 }
