@@ -1,122 +1,120 @@
 import { createServerFn } from "@tanstack/react-start";
 
 /**
- * MetaCopier platform integration — ONE master API key for everyone.
+ * MetaApi (metaapi.cloud) platform integration — ONE master token for everyone.
  *
- * The master key lives ONLY on the server (env / cloud secret). The frontend
- * never sees it and never calls MetaCopier directly — it calls the server
- * functions below (this stack's edge functions), which attach the key.
+ * The master token lives ONLY on the server (env / built-in fallback). The
+ * frontend never sees it and never calls MetaApi directly — it calls the server
+ * functions below (this stack's edge functions), which attach the token.
  *
- * Master key resolution (server-side only): every candidate —
- * METACOPIER_MASTER_KEY, METACOPIER_API_KEY, EXECUTION_API_KEY (process.env
- * and import.meta.env), the cloud KV key eamp:secrets:metacopier, and the
- * built-in fallback constant below — is tried against MetaCopier in order,
- * and the first key the API accepts is used. A deployment needs zero
- * configuration to connect; a stale or half-pasted value under one name can
- * no longer break the flow when another source holds the working key.
+ * Master token resolution: every candidate — METAAPI_TOKEN, METAAPI_API_TOKEN,
+ * METAAPI_MASTER_TOKEN in process.env and import.meta.env, plus the built-in
+ * fallback constant — is tried against MetaApi in order, and the first token
+ * the API accepts is used. (The old MetaCopier key/names are fully retired.)
  *
- * Auth compatibility: MetaCopier's documented auth header is "X-API-KEY";
- * some gateway deployments instead expect a standard "Authorization: Bearer
- * <key>" header. Both are sent — extra headers are ignored by servers that
- * don't need them.
- *
- * Endpoint: verified live — the base is https://api.metacopier.io/rest/api/v1
- * (the .io host; the old .com default is a dead nginx vhost, which is why every
- * connection attempt used to fail regardless of the key). METACOPIER_API_URL /
- * EXECUTION_API_URL can pin a custom host; {host}/api/v1 is tried as fallback.
- *
- * Verified against MetaCopier's official API (js-metacopier-api SDK):
- * - Create: POST {base}/accounts
- *   { type: {id: 1 = MT5}, loginAccountNumber, loginAccountPassword,
- *     loginServer, region: {id}, alias, closeUnmanagedPositions }
- * - Types/regions enums: GET /types/accountTypes, /types/regions
- * - List:   GET /accounts
- * - Delete: DELETE /accounts/{accountId}
- * - Execute: POST /accounts/{accountId}/positions
- *   { symbol, volume, orderType: "Buy"|"Sell", openPrice: 0 (market),
- *     stopLoss, takeProfit, requestId (0-999 dedupe), comment }
+ * Endpoints (verified live against MetaApi's official API):
+ * - List accounts:   GET  https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts
+ * - Create/connect:  POST /users/current/accounts
+ *                    { login, password, name, server, platform: "mt5",
+ *                      magic, region?, type: "cloud-g2" }
+ *                    Broker settings detection/connection validation can take
+ *                    time — the API may answer 200 with a "please retry in N
+ *                    seconds" message; the caller repeats the same request.
+ * - Account detail:  GET /users/current/accounts/{accountId}  (state, connectionStatus…)
+ * - Delete:          DELETE /users/current/accounts/{accountId}
+ * - Trade:           POST https://mt-client-api-v1.<region>.agiliumtrade.ai/users/current/accounts/{accountId}/orders
+ *                    { actionType: "ORDER_TYPE_BUY"|"ORDER_TYPE_SELL",
+ *                      symbol, volume, comment }  (market order — no price)
  */
 
-const MC_TYPE_MT5 = 1;
+const PROVISIONING_BASE = "https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai";
+
+/** Client API hosts per region (the trade execution plane). */
+const CLIENT_API_HOSTS: Record<string, string> = {
+  "new-york": "https://mt-client-api-v1.new-york.agiliumtrade.ai",
+  london: "https://mt-client-api-v1.london.agiliumtrade.ai",
+  singapore: "https://mt-client-api-v1.singapore.agiliumtrade.ai",
+  "hong-kong": "https://mt-client-api-v1.hong-kong.agiliumtrade.ai",
+  moscow: "https://mt-client-api-v1.moscow.agiliumtrade.ai",
+  frankfurt: "https://mt-client-api-v1.frankfurt.agiliumtrade.ai",
+  sydney: "https://mt-client-api-v1.sydney.agiliumtrade.ai",
+  "san-francisco": "https://mt-client-api-v1.san-francisco.agiliumtrade.ai",
+  "sao-paulo": "https://mt-client-api-v1.sao-paulo.agiliumtrade.ai",
+  mumbai: "https://mt-client-api-v1.mumbai.agiliumtrade.ai",
+  "tokyo-1": "https://mt-client-api-v1.tokyo-1.agiliumtrade.ai",
+};
 
 /**
- * Built-in platform key — the last-resort candidate so Connect works on every
- * deployment with zero setup (hosts that never inject secrets still connect).
- * Everything configured at runtime (env vars, cloud KV) takes priority, so
- * rotating the platform key later only means setting the new value there —
- * no code change and no redeploy of this constant.
+ * Built-in platform token — the last-resort candidate so Connect works on every
+ * deployment with zero setup. Everything configured at runtime (env vars) takes
+ * priority, so rotating the platform token later only means setting the new
+ * value in the environment — no code change.
  */
-const BUILTIN_MASTER_KEY = "GJZbD7$8(cPMis0uzuvqlLXM/DD5J?nX";
-
-const SECRETS_KV_KEY = "eamp:secrets:metacopier";
+const BUILTIN_MASTER_TOKEN =
+  "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiJjYTU1ZTRlNWU5NjZhM2ViNmEzZjAwYWQ1NDhhNmNjYyIsImFjY2Vzc1J1bGVzIjpbeyJpZCI6InRyYWRpbmctYWNjb3VudC1tYW5hZ2VtZW50LWFwaSIsIm1ldGhvZHMiOlsidHJhZGluZy1hY2NvdW50LW1hbmFnZW1lbnQtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVzdC1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcnBjLWFwaSIsIm1ldGhvZHMiOlsibWV0YWFwaS1hcGk6d3M6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVhbC10aW1lLXN0cmVhbWluZy1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOndzOnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJtZXRhc3RhdHMtYXBpIiwibWV0aG9kcyI6WyJtZXRhc3RhdHMtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6InJpc2stbWFuYWdlbWVudC1hcGkiLCJtZXRob2RzIjpbInJpc2stbWFuYWdlbWVudC1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoiY29weWZhY3RvcnktYXBpIiwibWV0aG9kcyI6WyJjb3B5ZmFjdG9yeS1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoibXQtbWFuYWdlci1hcGkiLCJtZXRob2RzIjpbIm10LW1hbmFnZXItYXBpOnJlc3Q6ZGVhbGluZzoqOioiLCJtdC1tYW5hZ2VyLWFwaTpyZXN0OnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJiaWxsaW5nLWFwaSIsIm1ldGhvZHMiOlsiYmlsbGluZy1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfV0sImlnbm9yZVJhdGVMaW1pdHMiOmZhbHNlLCJ0b2tlbklkIjoiMjAyMTAyMTMiLCJpbXBlcnNvbmF0ZWQiOmZhbHNlLCJyZWFsVXNlcklkIjoiY2E1NWU0ZTVlOTY2YTNlYjZhM2YwMGFkNTQ4YTZjY2MiLCJpYXQiOjE3ODk3MzYwODV9.YURNWRrIP55llsfztF7p0FfL-ftOL6Rh9V0eMGePn4IAX494Xf-zAxhPF3i0roXa9wSNcBvKwrM5-MJQtob6hKOQEDTTZgwiaZbpHnJmwe7GRgbaai44ZQp2l0R0_LjQ8iGcv2QVTu7_hvazj3gTt8FYEjqxCePU45Mx0VWKghtJ8lAiLZyyCouGwNEKPZns00q3KFysO_gdhDWkFlzylBn0yztH20ST3Ghvap7CPSbNoZ8-eon3TvUL4ARWnXRtDA4OYty3MHPidXFqUxn_WLFvL1rwQL1RH86v_KOGoSLlp0Di3TyIlv0bU9zlTTT_vovPibGL-cxLO4muWnJcqZYJxASySy2sgN0F4X5CsPACzyFF54STrUKJlJElPh_q55QEZqd0wT7q-aQF760RPou6NTMmJQQ5BpH9nIFnGJ-ITC_k0tEifw0531hSFDna5HYsUfVHTfnlr4D2rsxDMpqMp-75AZA5umV1UJxgm_Kt7GfWqGZA0nVKkDX8G1WCxjlAEJEanzYp4QCGPeAxEnYQ1wJmXqfKuKvWC_N6_EI3e7BU1Li8KsKrHamJSVzsAA3aHGfUanyL9nyQC5IlBiDqqum9qDdGBxo1mdIk4jHg7rHJRZbHDGzZljWfu74uE8Br_04NLvYaLVRfZCmwvhX1GKC5UW3dXRJC4i0ci2c";
 
 /** Strips whitespace and quote wrappers that env settings screens sometimes add. */
 function cleanKey(raw: string | undefined | null): string {
-  return (raw ?? "").trim().replace(/^["'`]+/, "").replace(/["'`]+$/, "");
+  return (raw ?? "").trim().replace(/^[\"'`]+/, "").replace(/[\"'`]+$/, "");
 }
 
-/** Every candidate master key, deduped: process env, build env, cloud KV, then built-in. */
-async function candidateKeys(): Promise<string[]> {
+/** Every candidate master token, deduped: process env, build env, then built-in. */
+function candidateTokens(): string[] {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
   const viteEnv = (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const keys: string[] = [];
-  for (const name of ["METACOPIER_MASTER_KEY", "METACOPIER_API_KEY", "EXECUTION_API_KEY"]) {
+  const tokens: string[] = [];
+  for (const name of ["METAAPI_TOKEN", "METAAPI_API_TOKEN", "METAAPI_MASTER_TOKEN"]) {
     for (const value of [cleanKey(env[name]), cleanKey(viteEnv[name])]) {
-      if (value.length > 0) keys.push(value);
+      if (value.length > 0) tokens.push(value);
     }
   }
-  const fromKv = await masterKeyFromKv();
-  if (fromKv) keys.push(fromKv);
-  keys.push(BUILTIN_MASTER_KEY);
-  return [...new Set(keys)];
+  tokens.push(BUILTIN_MASTER_TOKEN);
+  return [...new Set(tokens)];
 }
 
-/** Fallback: the admin can store the key in the cloud KV (GET eamp:secrets:metacopier). */
-async function masterKeyFromKv(): Promise<string | null> {
-  const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
-  const url = cleanKey(env["UPSTASH_REDIS_REST_URL"] ?? env["KV_REST_API_URL"]);
-  const token = cleanKey(env["UPSTASH_REDIS_REST_TOKEN"] ?? env["KV_REST_API_TOKEN"]);
-  if (url.length === 0 || token.length === 0) return null;
-  try {
-    const response = await fetch(`${url.replace(/\/+$/, "")}/get/${encodeURIComponent(SECRETS_KV_KEY)}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as { result?: unknown };
-    const key = cleanKey(typeof payload.result === "string" ? payload.result : null);
-    return key.length > 0 ? key : null;
-  } catch {
-    return null;
+type MaResponse = { status: number; payload?: unknown; retryAfterSeconds?: number };
+
+/** True when MetaApi rejected our authorization (the platform's master token). */
+function isAuthRejected(status: number, payload: unknown): boolean {
+  if (status === 401 || status === 403) return true;
+  const raw = JSON.stringify(payload ?? {}).toLowerCase();
+  return raw.includes("unauthorizederror") || raw.includes("invalid auth-token");
+}
+
+/** Human-readable message from a MetaApi error payload. */
+function maError(payload: unknown): string | undefined {
+  if (payload && typeof payload === "object") {
+    const record = payload as { message?: unknown; error?: unknown; errors?: unknown };
+    if (typeof record.message === "string") return record.message;
+    if (typeof record.error === "string") return record.error;
+    if (Array.isArray(record.errors) && record.errors.length > 0) return record.errors.map((item) => String(item)).join(", ");
   }
+  return undefined;
 }
 
-type McResponse = { status: number; payload?: unknown };
-
-/** The candidate key MetaCopier last accepted — avoids re-probing every call. */
-let workingKey: string | null = null;
+/** The token MetaApi last accepted — avoids re-probing every call. */
+let workingToken: string | null = null;
 
 /**
- * Runs `run` with the first candidate key MetaCopier accepts. Hosts often end
- * up with a stale or half-pasted value under one key name (a truncated key
- * authenticates as 401), so the first *present* key is not trusted — every
- * candidate is tried until one passes. 401/403 advance to the next candidate;
- * any other response is handed back to the caller untouched.
+ * Runs `run` with the first candidate token MetaApi accepts. A stale or
+ * half-pasted value under one env name can no longer block the flow — every
+ * candidate is tried until one passes. 401/403 advance to the next candidate.
  */
-async function withMasterKey(
-  run: (apiKey: string) => Promise<McResponse>,
-): Promise<{ kind: "ok"; response: McResponse } | { kind: "missing" } | { kind: "rejected"; status: number }> {
-  const keys = await candidateKeys();
-  if (keys.length === 0) return { kind: "missing" };
-  if (workingKey && keys.includes(workingKey)) {
-    const response = await run(workingKey);
-    if (response.status !== 401 && response.status !== 403) return { kind: "ok", response };
-    workingKey = null; // no longer accepted (rotated?) — re-probe all candidates
+async function withMasterToken(
+  run: (token: string) => Promise<MaResponse>,
+): Promise<{ kind: "ok"; response: MaResponse } | { kind: "missing" } | { kind: "rejected"; status: number }> {
+  const tokens = candidateTokens();
+  if (tokens.length === 0) return { kind: "missing" };
+  if (workingToken && tokens.includes(workingToken)) {
+    const response = await run(workingToken);
+    if (!isAuthRejected(response.status, response.payload)) return { kind: "ok", response };
+    workingToken = null; // no longer accepted (rotated?) — re-probe all candidates
   }
   let lastStatus = 0;
-  for (const key of keys) {
-    const response = await run(key);
-    if (response.status !== 401 && response.status !== 403) {
-      workingKey = key;
+  for (const token of tokens) {
+    const response = await run(token);
+    if (!isAuthRejected(response.status, response.payload)) {
+      workingToken = token;
       return { kind: "ok", response };
     }
     lastStatus = response.status || lastStatus;
@@ -124,119 +122,79 @@ async function withMasterKey(
   return { kind: "rejected", status: lastStatus };
 }
 
-/** Resolves the MetaCopier REST root candidates, most-likely first. */
-function apiRoots(): string[] {
-  const configured = (process.env["METACOPIER_API_URL"] ?? process.env["EXECUTION_API_URL"] ?? "").trim().replace(/\/+$/, "");
-  const host = configured
-    ? configured.replace(/\/(rest\/api\/v1|api\/v1)$/, "")
-    : "https://api.metacopier.io";
-  const roots = [`${host}/rest/api/v1`, `${host}/api/v1`];
-  // When the admin pinned a full path, try it first.
-  if (/(rest\/api\/v1|api\/v1)$/.test(configured)) roots.unshift(configured);
-  return [...new Set(roots)];
-}
-
-/** Headers for a MetaCopier call — both auth header styles for compatibility. */
-function authHeaders(apiKey: string, json = false): Record<string, string> {
-  return {
-    "X-API-KEY": apiKey,
-    Authorization: `Bearer ${apiKey}`,
-    ...(json ? { "Content-Type": "application/json" } : {}),
+/** Runs one MetaApi provisioning request. */
+async function maFetch(token: string, path: string, init: { method?: string; json?: unknown; transactionId?: string } = {}): Promise<MaResponse> {
+  const headers: Record<string, string> = {
+    "auth-token": token,
+    Accept: "application/json",
   };
-}
-
-/** Runs a MetaCopier request across root variants; returns the first JSON response. */
-async function mcFetch(apiKey: string, path: string, init: { method?: string; json?: unknown } = {}): Promise<{ status: number; payload?: unknown }> {
-  const roots = apiRoots();
-  let lastStatus = 0;
-  for (const root of roots) {
-    try {
-      const response = await fetch(`${root}${path}`, {
-        method: init.method ?? "GET",
-        headers: authHeaders(apiKey, init.json !== undefined),
-        ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
-      });
-      let payload: unknown;
-      try {
-        payload = await response.json();
-      } catch {
-        // Provider may return an empty body.
-      }
-      lastStatus = response.status;
-      // A 404 on one URL variant means the path shape is wrong there — try the next root.
-      if (response.status === 404 && roots.length > 1) continue;
-      return { status: response.status, payload };
-    } catch {
-      // Network error — try the next root variant.
-    }
+  if (init.json !== undefined) {
+    headers["Content-Type"] = "application/json";
+    // Provisioning writes want a stable transaction id so in-progress broker
+    // settings detection can be polled with the same id.
+    headers["transaction-id"] = init.transactionId ?? `eamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   }
-  return { status: lastStatus };
+  try {
+    const response = await fetch(`${PROVISIONING_BASE}${path}`, {
+      method: init.method ?? "GET",
+      headers,
+      ...(init.json !== undefined ? { body: JSON.stringify(init.json) } : {}),
+    });
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      // empty body is fine
+    }
+    const retryAfter = response.headers.get("retry-after");
+    let retryAfterSeconds: number | undefined;
+    if (retryAfter) {
+      const asDate = Date.parse(retryAfter);
+      retryAfterSeconds = Number.isFinite(asDate) ? Math.max(5, Math.round((asDate - Date.now()) / 1000)) : Number.parseInt(retryAfter, 10) || undefined;
+    }
+    return retryAfterSeconds === undefined ? { status: response.status, payload } : { status: response.status, payload, retryAfterSeconds };
+  } catch {
+    return { status: 0 };
+  }
 }
 
 export type MtFailureCode = "key_missing" | "key_rejected" | "failed";
 
-/** The admin never set the master key in this runtime. Defensive only — the
- *  built-in fallback means this is effectively unreachable. */
+/** Defensive only — the built-in fallback makes this effectively unreachable. */
 function missingKeyMessage(): string {
   return "Live connection isn't enabled on this deployment yet. The owner enables it once in the hosting cloud settings — then Connect works instantly.";
 }
 
-/** The key is present but MetaCopier rejected it. */
+/** The token is present but MetaApi rejected it. */
 function rejectedKeyMessage(status: number): string {
-  return `MetaCopier rejected the platform's API key (HTTP ${status}). The key is set but invalid, expired, or lacks access — verify it in the MetaCopier dashboard and update the server setting.`;
+  return `MetaApi rejected the platform's access token (HTTP ${status}). The token is set but invalid, expired, or lacks permissions — generate a new one in the MetaApi dashboard and update the server setting.`;
 }
 
-/** True only when MetaCopier rejected our authorization (admin's master key). */
-function isAuthRejected(status: number, payload: unknown): boolean {
-  if (status === 401 || status === 403) return true;
-  const raw = JSON.stringify(payload ?? {}).toLowerCase();
-  return raw.includes("unauthorized") || raw.includes("forbidden") || raw.includes("api key") || raw.includes("apikey");
-}
-
-type McType = { id: number; name?: string };
-type McRegion = { id: number; name?: string };
-
-/**
- * MetaCopier validation failures arrive as { errors: ["[CODE]", "field -> reason", …] }.
- * Known platform-gate codes get plain-English fixes; unknown ones pass through.
- */
-function mcErrorMessage(payload: unknown, status: number): string | undefined {
-  const raw = (payload as { errors?: unknown } | undefined)?.errors;
-  if (!Array.isArray(raw) || raw.length === 0) return undefined;
-  const joined = raw.map((item) => String(item)).join(", ");
-  if (joined.includes("PLEASE_FUND_YOUR_PROJECT")) {
-    return "MetaCopier requires the platform project to be funded before accounts can be connected — the $20 trial credit alone doesn't unlock it. The owner fixes this once in the MetaCopier dashboard: open Billing and add a payment method / fund the project (their system clears payments daily), or contact MetaCopier support. The app side is working correctly.";
-  }
-  return joined;
-}
-
-/** MetaCopier validation failures arrive as { errors: ["field -> reason", …] }. */
-function mcErrors(payload: unknown): string | undefined {
-  const raw = (payload as { errors?: unknown } | undefined)?.errors;
-  if (Array.isArray(raw) && raw.length > 0) return raw.map((item) => String(item)).join(", ");
-  return undefined;
-}
-type McAccount = {
+type MaAccount = {
   id?: string;
-  alias?: string;
-  loginAccountNumber?: string;
-  loginServer?: string;
-  status?: string;
+  login?: string;
+  name?: string;
+  server?: string;
+  platform?: string;
+  state?: string;
+  connectionStatus?: string;
+  region?: string;
+  reliability?: string;
+  magic?: number;
+  type?: string;
   statusMessage?: string;
-  accountInformation?: { connected?: boolean; environment?: string; wrongCredentials?: boolean; balance?: number; currency?: string; equity?: number };
 };
-type McPosition = { id?: string; message?: string; error?: string };
 
 export type MtConnectRequest = {
   /** The user's own MT5 account number — any login works, nothing is hardcoded. */
   login: string;
   password: string;
   server: string;
-  /** Shown in the MetaCopier dashboard, e.g. the app user's email. */
+  /** Shown in the MetaApi dashboard, e.g. the app user's email. */
   alias?: string;
-  /** MetaCopier region id. When omitted the first available region is used. */
-  regionId?: number;
-  /** The type the user picked in the app (Standard, ECN, Demo…) — stored, not sent to MetaCopier. */
+  /** MT5 by default; MT4 also supported by the platform. */
+  platform?: "mt4" | "mt5";
+  /** The type the user picked in the app (Standard, ECN, Demo…) — stored, not sent. */
   accountType?: string;
 };
 
@@ -255,93 +213,133 @@ export type MtStatusResult =
   | MtFailure;
 
 export type LiveTradeRequest = {
-  /** The END USER's MetaCopier account id (their connected MT5). */
+  /** The END USER's MetaApi account id (their connected MT5). */
   accountId: string;
   eaName: string;
   symbol: string;
   direction: "BUY" | "SELL";
   lotSize: string;
+  /** Account region returned at connect time — picks the trade API host. */
+  region?: string;
 };
 
 export type LiveTradeResult = { ok: true; message: string; orderId?: string } | MtFailure;
 
-/** Cached — the type/region enums don't change between connects. */
-let mcTypesCache: { typeId: number; regionId?: number } | null = null;
-
-/** GET /types/accountTypes + /types/regions, resolving MT5 and a default region. */
-async function resolveMcTypes(apiKey: string): Promise<{ typeId: number; regionId?: number }> {
-  if (mcTypesCache) return mcTypesCache;
-  let typeId = MC_TYPE_MT5;
-  try {
-    const types = await mcFetch(apiKey, "/types/accountTypes");
-    if (types.status >= 200 && types.status < 300 && Array.isArray(types.payload)) {
-      const mt5 = (types.payload as McType[]).find((t) => t.name?.toUpperCase().includes("MT5"));
-      if (mt5) typeId = mt5.id;
-    }
-  } catch {
-    /* keep the documented default (1 = MT5) */
-  }
-  try {
-    const regions = await mcFetch(apiKey, "/types/regions");
-    if (regions.status >= 200 && regions.status < 300 && Array.isArray(regions.payload)) {
-      const first = (regions.payload as McRegion[])[0];
-      if (first) {
-        mcTypesCache = { typeId, regionId: first.id };
-        return mcTypesCache;
-      }
-    }
-  } catch {
-    /* fall through to the default region below */
-  }
-  // MetaCopier requires a region on create — default to the first listed one
-  // (New York) if the lookup ever fails, instead of guaranteeing a 400.
-  mcTypesCache = { typeId, regionId: 1 };
-  return mcTypesCache;
-}
-
 /**
- * Connect the END USER's MT5 account under the platform's MetaCopier project.
- * Uses skipCredentialCheck: false so MetaCopier validates the credentials
- * immediately — a wrong login/server/password fails here, not later mid-trade.
+ * Connect the END USER's MT5 account under the platform's MetaApi account.
+ * MetaApi validates credentials and detects broker settings during creation;
+ * detection can take 30–120s and the API asks the caller to retry — handled
+ * here automatically (up to ~4 minutes total) so the user just presses once.
  */
 export const connectMt5Account = createServerFn({ method: "POST" })
   .validator((data: MtConnectRequest) => data)
   .handler(async ({ data }): Promise<MtConnectResult> => {
-    const outcome = await withMasterKey(async (apiKey) => {
-      const { typeId, regionId } = await resolveMcTypes(apiKey);
-      const body: Record<string, unknown> = {
-        type: { id: typeId },
-        loginAccountNumber: data.login.trim(),
-        loginAccountPassword: data.password,
-        loginServer: data.server.trim(),
-        alias: (data.alias ?? data.login).slice(0, 100),
-        closeUnmanagedPositions: false,
-        ...(regionId !== undefined ? { region: { id: regionId } } : {}),
+    const login = data.login.trim();
+    const password = data.password;
+    const server = data.server.trim();
+    if (!login || !password || !server) return { ok: false, code: "failed", message: "Enter your login, password and server before connecting." };
+
+    const body = {
+      login,
+      password,
+      name: (data.alias ?? login).slice(0, 100),
+      server,
+      platform: data.platform ?? "mt5",
+      magic: 100001,
+      type: "cloud-g2",
+      region: "new-york",
+    };
+
+    const platform = body.platform as string;
+
+    // Reuse an already-hosted copy of this exact login+server instead of
+    // creating a duplicate when Connect is pressed twice.
+    const listOutcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
+    if (listOutcome.kind === "ok" && Array.isArray(listOutcome.response.payload)) {
+      const existing = (listOutcome.response.payload as MaAccount[]).find(
+        (account) => String(account.login ?? "") === login && account.server === server && (account.platform ?? "mt5") === platform,
+      );
+      if (existing?.id) {
+        return existing.region ? { ok: true, accountId: existing.id, environment: existing.region } : { ok: true, accountId: existing.id };
+      }
+    }
+
+    // Broker settings detection can ask for retries — poll with the same
+    // transaction id until the account is created or a real error comes back.
+    const transactionId = `eamp-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    const deadline = Date.now() + 90_000;
+    for (;;) {
+      const outcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts", { method: "POST", json: body, transactionId }));
+      if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+      if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+
+      const { status, payload } = outcome.response;
+      const account = payload as (MaAccount & { message?: string; error?: string }) | undefined;
+
+      if (status >= 200 && status < 300 && account?.id) {
+        // Created — fetch the region so trade orders hit the right API host.
+        const detail = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(account.id as string)}`));
+        const region = detail.kind === "ok" && detail.response.status === 200 ? (detail.response.payload as MaAccount | undefined)?.region : undefined;
+        return region ? { ok: true, accountId: account.id, environment: region } : { ok: true, accountId: account.id };
+      }
+
+      const message = maError(payload);
+      const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
+      if (retryMatch && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, (Number(retryMatch[1]) + 2) * 1000));
+        continue;
+      }
+      if (status === 202 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 15_000));
+        continue;
+      }
+      if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
+      if (Date.now() >= deadline) {
+        return {
+          ok: false,
+          code: "failed",
+          message: "MetaApi is still detecting this broker's connection settings — press Connect Account again in a minute and it will link instantly.",
+        };
+      }
+      return {
+        ok: false,
+        code: "failed",
+        message: message || `MetaApi could not connect the account (HTTP ${status}). Check the login, password and exact server name (e.g. Headway-Demo).`,
       };
-      return mcFetch(apiKey, "/accounts", { method: "POST", json: body });
-    });
+    }
+  });
+
+/** GET /accounts — lists this platform's connected accounts (diagnostics). */
+export const listMtAccounts = createServerFn({ method: "POST" }).handler(async (): Promise<{ ok: true; accounts: MaAccount[] } | MtFailure> => {
+  const outcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
+  if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+  if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+  const { status, payload } = outcome.response;
+  if (status < 200 || status >= 300 || !Array.isArray(payload)) {
+    return { ok: false, code: "failed", message: maError(payload) || `Could not list accounts (HTTP ${status}).` };
+  }
+  return { ok: true, accounts: payload as MaAccount[] };
+});
+
+/** GET /accounts/{accountId} — live connection state for the user's account. */
+export const getMtAccountStatus = createServerFn({ method: "POST" })
+  .validator((data: MtStatusRequest) => data)
+  .handler(async ({ data }): Promise<MtStatusResult> => {
+    const outcome = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`));
     if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
     if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
 
     const { status, payload } = outcome.response;
-    const account = payload as (McAccount & { message?: string; error?: string }) | undefined;
-
     if (status < 200 || status >= 300) {
-      const detail = account?.message || account?.error || account?.statusMessage || mcErrorMessage(payload, status) || mcErrors(payload);
-      // Auth rejections mean the admin's master key is inactive — plain wording,
-      // no env details. Every other failure shows the real provider message.
-      if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
-      return { ok: false, code: "failed", message: detail || `MetaCopier rejected the connection (HTTP ${status}). Check login, server and password.` };
+      return { ok: false, code: "failed", message: maError(payload) || `Account not found (HTTP ${status}).` };
     }
-
-    if (!account?.id) return { ok: false, code: "failed", message: "Connection created but no account ID was returned. Try again." };
-
+    const account = payload as MaAccount;
+    const connected = account.connectionStatus === "CONNECTED" || account.state === "DEPLOYED";
     return {
       ok: true,
-      accountId: account.id,
-      ...(account.accountInformation?.environment ? { environment: account.accountInformation.environment } : {}),
-      ...(account.accountInformation?.balance !== undefined ? { balance: account.accountInformation.balance } : {}),
-      ...(account.accountInformation?.currency ? { currency: account.accountInformation.currency } : {}),
+      connected,
+      ...(account.statusMessage ? { statusMessage: account.statusMessage } : {}),
+      ...(account.region ? { environment: account.region } : {}),
     };
   });
 
@@ -349,44 +347,17 @@ export const connectMt5Account = createServerFn({ method: "POST" })
 export const disconnectMt5Account = createServerFn({ method: "POST" })
   .validator((data: MtDisconnectRequest) => data)
   .handler(async ({ data }): Promise<MtDisconnectResult> => {
-    const outcome = await withMasterKey((apiKey) => mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" }));
+    const outcome = await withMasterToken((token) => maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`, { method: "DELETE" }));
     if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
     if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
-    const { status } = outcome.response;
+    const { status, payload } = outcome.response;
     if (status !== 200 && status !== 202 && status !== 204 && status !== 404) {
-      if (isAuthRejected(status, null)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
-      return { ok: false, code: "failed", message: `Could not remove the account (HTTP ${status}).` };
+      return { ok: false, code: "failed", message: maError(payload) || `Could not remove the account (HTTP ${status}).` };
     }
     return { ok: true, message: "MT5 account disconnected." };
   });
 
-/** GET /accounts/{accountId} — live connection status for the user's own account. */
-export const getMtAccountStatus = createServerFn({ method: "POST" })
-  .validator((data: MtStatusRequest) => data)
-  .handler(async ({ data }): Promise<MtStatusResult> => {
-    const outcome = await withMasterKey((apiKey) => mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}`));
-    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
-
-    const { status, payload } = outcome.response;
-    if (status < 200 || status >= 300) {
-      if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
-      return { ok: false, code: "failed", message: `Account not found (HTTP ${status}).` };
-    }
-    const account = payload as McAccount | undefined;
-    const info = account?.accountInformation;
-    return {
-      ok: true,
-      connected: info?.connected === true,
-      ...(info?.balance !== undefined ? { balance: info.balance } : {}),
-      ...(info?.equity !== undefined ? { equity: info.equity } : {}),
-      ...(info?.currency ? { currency: info.currency } : {}),
-      ...(info?.environment ? { environment: info.environment } : {}),
-      ...(account?.statusMessage ? { statusMessage: account.statusMessage } : {}),
-    };
-  });
-
-/** POST /accounts/{accountId}/positions — places a market order on the user's account. */
+/** POST {clientApi}/users/current/accounts/{accountId}/orders — market order. */
 export const executeLiveTrade = createServerFn({ method: "POST" })
   .validator((data: LiveTradeRequest) => data)
   .handler(async ({ data }): Promise<LiveTradeResult> => {
@@ -394,36 +365,51 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
 
     const volume = Math.max(Number.parseFloat(data.lotSize) || 0, 0.01);
     const body = {
+      actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
       volume,
-      orderType: data.direction === "SELL" ? "Sell" : "Buy",
-      openPrice: 0, // 0 = market execution
-      stopLoss: 0, // 0 = no stop loss
-      takeProfit: 0, // 0 = no take profit
-      requestId: requestIdCounter++ % 1000, // dedupe counter required by MetaCopier
-      comment: `${data.eaName} - EA Migrate`.slice(0, 100),
+      comment: `${data.eaName} - EA Migrate`.slice(0, 26),
     };
 
-    const outcome = await withMasterKey((apiKey) =>
-      mcFetch(apiKey, `/accounts/${encodeURIComponent(data.accountId)}/positions`, { method: "POST", json: body }),
-    );
-    if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+    // The client API host depends on the region the account was deployed to;
+    // fall back to the known hosts when the region is unknown.
+    const hosts = data.region && CLIENT_API_HOSTS[data.region] ? [CLIENT_API_HOSTS[data.region]] : Object.values(CLIENT_API_HOSTS);
+    let lastMessage = "Trade API unreachable — the account may still be starting. Try again in a minute.";
+    for (const host of hosts) {
+      const outcome = await withMasterToken(async (token) => {
+        try {
+          const response = await fetch(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/orders`, {
+            method: "POST",
+            headers: { "auth-token": token, "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify(body),
+          });
+          let payload: unknown;
+          try {
+            payload = await response.json();
+          } catch {
+            // empty body
+          }
+          return { status: response.status, payload } satisfies MaResponse;
+        } catch {
+          return { status: 0 } satisfies MaResponse;
+        }
+      });
+      if (outcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+      if (outcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
 
-    const { status, payload } = outcome.response;
-    const position = payload as McPosition | undefined;
-
-    if (status < 200 || status >= 300) {
-      const detail = position?.message || position?.error || mcErrors(payload);
-      if (isAuthRejected(status, payload)) return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
-      return { ok: false, code: "failed", message: detail || `Order rejected (HTTP ${status}).` };
+      const { status, payload } = outcome.response;
+      if (status >= 200 && status < 300) {
+        const position = payload as { orderId?: string; positionId?: string; message?: string } | undefined;
+        return {
+          ok: true,
+          message: `${data.direction} ${volume} ${data.symbol} executed`,
+          ...(position?.orderId || position?.positionId ? { orderId: position.orderId ?? position.positionId } : {}),
+        };
+      }
+      if (status === 404) continue; // wrong region host — try the next one
+      lastMessage = maError(payload) || `Order rejected (HTTP ${status}).`;
+      break;
     }
-
-    return {
-      ok: true,
-      message: `${data.direction} ${volume} ${data.symbol} executed`,
-      ...(position?.id ? { orderId: position.id } : {}),
-    };
+    return { ok: false, code: "failed", message: lastMessage };
   });
 
-let requestIdCounter = 0;
