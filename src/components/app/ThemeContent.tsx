@@ -384,6 +384,7 @@ export function ThemeContent(props: ThemeContentProps) {
         robot={props.robot}
         robots={props.robots ?? (props.robot ? [props.robot] : [])}
         onStart={props.onStart}
+        onQuotes={props.onQuotes}
         onRemove={props.onRemove}
         onOpenSymbols={props.onOpenSymbols ?? props.onOpenScanner}
         onOpenAdd={props.onOpenAdd}

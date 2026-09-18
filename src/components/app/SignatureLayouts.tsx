@@ -303,49 +303,53 @@ export function PabloElite(props: SignatureLayoutProps) {
   );
 }
 
-/* ---------------- QUANTUM BLUE — ice-blue circle ---------------- */
+/* ---------------- QUANTUM BLUE — circle hero + READY media card ---------------- */
 
 export function QuantumBlue(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd } = props;
   const actions = useActionDefs(props);
   const image = robot?.image || "/ea-migrate-platform-robot.jpg";
   return (
-    <div className="relative flex min-h-[64vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-[#04070d] px-5 py-10">
-      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-25" />
-      <div className="absolute inset-0" style={{ background: "radial-gradient(ellipse 70% 50% at 50% 30%, rgba(0,150,255,0.12), transparent 70%)" }} />
+    <div className="relative flex min-h-[74vh] w-full flex-col items-center gap-6 overflow-hidden bg-black px-5 pb-8 pt-6">
+      {/* Full-bleed media wash behind everything, tinted by the accent */}
+      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
+      <div className="absolute inset-0" style={{ background: `radial-gradient(ellipse 90% 55% at 50% 30%, ${accent}26, transparent 65%), linear-gradient(180deg, rgba(0,0,0,0.35), rgba(0,0,0,0.88) 75%)` }} />
 
+      {/* Hero circle — picture shown big and round, never cropped by a card */}
       <motion.span
         initial={{ opacity: 0, scale: 0.92 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative flex size-52 items-center justify-center rounded-full border-4 bg-black p-1.5"
-        style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}4d` }}
+        className="relative flex size-56 items-center justify-center rounded-full border-4 bg-black p-1.5"
+        style={{ borderColor: accent, boxShadow: `0 0 50px ${accent}, 0 0 120px ${accent}55` }}
       >
         <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
       </motion.span>
 
-      <p className="relative text-sm font-bold tracking-[0.34em] text-white/60 uppercase">You're trading with</p>
-      <h1
-        className="relative mx-auto -mt-4 max-w-full break-words px-2 text-center text-3xl font-black uppercase leading-tight text-white sm:text-4xl"
-        style={{ fontFamily: `'${font}', sans-serif`, textShadow: `0 0 34px ${accent}80` }}
-      >
-        {robot?.name ?? "YOUR ROBOT"}
-      </h1>
+      <div className="relative flex flex-col items-center">
+        <p className="text-sm font-bold tracking-[0.3em] text-white/70 uppercase">You're trading with</p>
+        <h1
+          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-4xl font-black uppercase leading-tight text-white sm:text-5xl"
+          style={{ fontFamily: `'${font}', sans-serif`, textShadow: `0 0 34px ${accent}80, 0 3px 20px rgba(0,0,0,0.9)` }}
+        >
+          {robot?.name ?? "YOUR ROBOT"}
+        </h1>
+      </div>
 
       <div className="relative"><PoweredBadge accent={accent} /></div>
 
       {robot ? (
-        <div className="relative grid w-full max-w-sm grid-cols-3 gap-3">
+        <div className="relative grid w-full max-w-sm grid-cols-3 gap-4">
           {actions.map(({ label, icon: Icon, onClick }) => (
             <button
               key={label}
               type="button"
               onClick={onClick}
-              className="flex size-24 flex-col items-center justify-center gap-1.5 rounded-full border-2 bg-black/90 transition-transform active:scale-95"
-              style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}
+              className="group flex size-28 flex-col items-center justify-center gap-2 rounded-full border-2 bg-black/90 transition-transform active:scale-95"
+              style={{ borderColor: accent, boxShadow: `0 0 26px ${accent}55` }}
             >
-              <Icon className="size-7" style={{ color: accent }} />
-              <span className="text-[11px] font-bold tracking-wider" style={{ color: accent }}>{label}</span>
+              <Icon className="size-8" style={{ color: accent }} />
+              <span className="text-sm font-bold capitalize" style={{ color: accent }}>{label.toLowerCase()}</span>
             </button>
           ))}
         </div>
@@ -358,6 +362,23 @@ export function QuantumBlue(props: SignatureLayoutProps) {
         >
           <Plus className="size-6" /> ADD ROBOT
         </button>
+      )}
+
+      {/* Bottom media card — the picture again, full width, with the READY badge */}
+      {robot && (
+        <motion.div
+          initial={{ opacity: 0, y: 24 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
+          className="relative h-56 w-full overflow-hidden rounded-[32px] border-[3px]"
+          style={{ borderColor: accent, boxShadow: `0 0 40px ${accent}66` }}
+        >
+          <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
+          <span className="absolute bottom-4 left-5 flex items-center gap-2 text-sm font-black tracking-[0.2em] text-white">
+            <span className="size-2.5 rounded-full" style={{ backgroundColor: accent, boxShadow: `0 0 10px ${accent}` }} />
+            {robot.running ? "RUNNING" : "READY"}
+          </span>
+        </motion.div>
       )}
     </div>
   );
