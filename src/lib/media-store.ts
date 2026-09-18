@@ -1,5 +1,6 @@
 /**
- * IndexedDB-backed storage for the mentors' EA videos.
+ * IndexedDB-backed storage for the mentors' EA videos and the user's own
+ * relaxation music.
  *
  * Why: videos are saved as base64 data URLs inside localStorage today, and
  * localStorage caps at ~5MB — a 50MB video becomes a ~67MB string, so
@@ -7,18 +8,22 @@
  * get hundreds of MB, and object URLs play back with zero decode delay (fixing
  * the "double-tap HOME before the video plays" problem in the app).
  *
- * localStorage only ever holds a tiny reference: `idb-video:<id>`.
+ * localStorage only ever holds a tiny reference: `idb-video:<id>` for videos
+ * and `idb-audio:<id>` for music tracks.
  */
 
 const DB_NAME = "eamp-media";
 const STORE = "videos";
+const AUDIO_STORE = "audio";
 const REF_PREFIX = "idb-video:";
+const AUDIO_REF_PREFIX = "idb-audio:";
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 1);
+    const request = indexedDB.open(DB_NAME, 2);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
+      if (!request.result.objectStoreNames.contains(AUDIO_STORE)) request.result.createObjectStore(AUDIO_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB unavailable"));
@@ -62,6 +67,51 @@ export async function deleteVideoBlob(ref: string | undefined): Promise<void> {
   await new Promise<void>((resolve) => {
     const tx = db.transaction(STORE, "readwrite");
     tx.objectStore(STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+/* ── Music tracks (uploaded audio) — same pattern as the video store ─────── */
+
+/** Saves an audio file and returns the tiny reference string for localStorage. */
+export async function saveAudioBlob(file: Blob): Promise<string> {
+  const id = `a_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE, "readwrite");
+    tx.objectStore(AUDIO_STORE).put(file, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Could not store the audio"));
+  });
+  db.close();
+  return AUDIO_REF_PREFIX + id;
+}
+
+/** Loads the audio blob for a reference and hands back a playback-ready object URL. */
+export async function loadAudioUrl(ref: string): Promise<string | null> {
+  if (!ref.startsWith(AUDIO_REF_PREFIX)) return null; // plain http(s) URL passes through
+  const id = ref.slice(AUDIO_REF_PREFIX.length);
+  const db = await openDb();
+  const blob = await new Promise<Blob | undefined>((resolve, reject) => {
+    const tx = db.transaction(AUDIO_STORE, "readonly");
+    const request = tx.objectStore(AUDIO_STORE).get(id);
+    request.onsuccess = () => resolve(request.result as Blob | undefined);
+    request.onerror = () => reject(request.error ?? new Error("Could not load the audio"));
+  });
+  db.close();
+  return blob ? URL.createObjectURL(blob) : null;
+}
+
+/** Deletes the audio blob behind a reference (call when a track is removed). */
+export async function deleteAudioBlob(ref: string | undefined): Promise<void> {
+  if (!ref || !ref.startsWith(AUDIO_REF_PREFIX)) return;
+  const id = ref.slice(AUDIO_REF_PREFIX.length);
+  const db = await openDb();
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(AUDIO_STORE, "readwrite");
+    tx.objectStore(AUDIO_STORE).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });

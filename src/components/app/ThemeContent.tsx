@@ -5,6 +5,16 @@ import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia } from "@/components/app/RobotMedia";
+import {
+  BlackStudioLayout,
+  CrimsonNavigator,
+  EaCloud,
+  NavigatorPlus,
+  PabloCrimson,
+  PabloElite,
+  QuantumBlue,
+  SupremeEquinox,
+} from "@/components/app/SignatureLayouts";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
@@ -18,7 +28,7 @@ export type ThemeContentProps = {
   onSelectRobot?: (id: string) => void;
 };
 
-function PoweredBadge({ accent }: { accent: string }) {
+export function PoweredBadge({ accent }: { accent: string }) {
   return (
     <span
       className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/85 px-6 py-2.5 text-sm font-bold text-white"
@@ -129,7 +139,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
           className="flex size-52 items-center justify-center rounded-full border-4 bg-black p-1.5"
           style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}59` }}
         >
-          <RobotMedia image={image} video={robot?.video} variant="avatar" className="size-full rounded-full object-cover" />
+          <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </motion.span>
 
         <p className="mt-7 text-sm font-bold tracking-[0.34em] text-white/60 uppercase">You're trading with</p>
@@ -334,6 +344,33 @@ export function ThemeContent(props: ThemeContentProps) {
 
   if (theme === "PHANTOM PULSE") {
     return <PhantomPulse {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "CRIMSON NAVIGATOR") {
+    return <CrimsonNavigator robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "NAVIGATOR PLUS") {
+    return <NavigatorPlus robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "PABLO CRIMSON") {
+    return <PabloCrimson robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "PABLO ELITE") {
+    return <PabloElite robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "QUANTUM BLUE") {
+    return <QuantumBlue robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "DARKWEB AI") {
+    return <BlackStudioLayout label="DARKWEB AI" robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "SUPREME EQUINOX") {
+    return <SupremeEquinox robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "ULTRON MEGA") {
+    return <BlackStudioLayout label="ULTRON MEGA" robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "EA CLOUD") {
+    return <EaCloud robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "TITAN EDGE") {
     return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} />;

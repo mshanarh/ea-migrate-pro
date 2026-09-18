@@ -21,6 +21,15 @@ export const INTERFACE_THEMES = [
   { id: "TITAN EDGE", name: "TITAN EDGE", description: "Aggressive scanner" },
   { id: "PRIME FORGE", name: "PRIME FORGE", description: "Key activation classic" },
   { id: "BLUEPRINT EDGE", name: "BLUEPRINT EDGE", description: "Blue robot console" },
+  { id: "CRIMSON NAVIGATOR", name: "CRIMSON NAVIGATOR", description: "Laid-back red console" },
+  { id: "NAVIGATOR PLUS", name: "NAVIGATOR PLUS", description: "White circle on red" },
+  { id: "PABLO CRIMSON", name: "PABLO CRIMSON", description: "Mentor favourite" },
+  { id: "PABLO ELITE", name: "PABLO ELITE", description: "Sniper focus mode" },
+  { id: "QUANTUM BLUE", name: "QUANTUM BLUE", description: "Ice-blue circle" },
+  { id: "DARKWEB AI", name: "DARKWEB AI", description: "Black sniper studio" },
+  { id: "SUPREME EQUINOX", name: "SUPREME EQUINOX", description: "Dual accent layout" },
+  { id: "ULTRON MEGA", name: "ULTRON MEGA", description: "Heavy metal console" },
+  { id: "EA CLOUD", name: "EA CLOUD", description: "Green ladder classic" },
 ] as const;
 
 export const FONT_OPTIONS = [
@@ -30,6 +39,9 @@ export const FONT_OPTIONS = [
   { id: "Rajdhani", name: "Rajdhani" },
   { id: "Space Grotesk", name: "Space Grotesk" },
   { id: "Inter", name: "Inter" },
+  { id: "Bebas Neue", name: "Bebas Neue" },
+  { id: "Chakra Petch", name: "Chakra Petch" },
+  { id: "Saira", name: "Saira" },
 ] as const;
 
 export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
@@ -43,6 +55,15 @@ export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
   "TITAN EDGE": "Rajdhani",
   "PRIME FORGE": "Montserrat",
   "BLUEPRINT EDGE": "Montserrat",
+  "CRIMSON NAVIGATOR": "Saira",
+  "NAVIGATOR PLUS": "Saira",
+  "PABLO CRIMSON": "Bebas Neue",
+  "PABLO ELITE": "Bebas Neue",
+  "QUANTUM BLUE": "Chakra Petch",
+  "DARKWEB AI": "Chakra Petch",
+  "SUPREME EQUINOX": "Saira",
+  "ULTRON MEGA": "Rajdhani",
+  "EA CLOUD": "Saira",
 };
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";

@@ -64,7 +64,7 @@ export function BlueprintEdge({ robot, robots, onStart, onRemove, onOpenSymbols,
           className="mt-4 flex size-44 items-center justify-center overflow-hidden rounded-full border-[5px] bg-white p-2"
           style={{ borderColor: accent, boxShadow: `0 0 42px ${accent}, 0 0 90px ${accent}66` }}
         >
-          <RobotMedia image={eaImage} video={robot?.video} variant="avatar" className="size-full rounded-full object-cover" />
+          <RobotMedia image={eaImage} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </span>
 
         <p className="mt-4 font-sans text-sm font-medium text-white">Your Trading With</p>

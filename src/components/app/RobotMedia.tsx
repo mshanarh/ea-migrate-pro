@@ -7,6 +7,8 @@ type RobotMediaProps = {
   /** "hero" = background layer (muted loop, no controls); "avatar" = framed player with controls. */
   variant: "hero" | "avatar";
   className: string;
+  /** Prefer the picture even when a video exists (themes that show media in a circle). */
+  preferImage?: boolean;
 };
 
 /**
@@ -22,7 +24,7 @@ type RobotMediaProps = {
  * instant object URL, and play() is driven explicitly with retries so the first
  * press just works.
  */
-export function RobotMedia({ image, video, variant, className }: RobotMediaProps) {
+export function RobotMedia({ image, video, variant, className, preferImage = false }: RobotMediaProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [playableSrc, setPlayableSrc] = useState<string>();
 
@@ -86,20 +88,45 @@ export function RobotMedia({ image, video, variant, className }: RobotMediaProps
     };
   }, [playableSrc]);
 
-  if (video && playableSrc) {
-    return (
-      <video
-        ref={videoRef}
-        src={playableSrc}
-        className={className}
-        autoPlay
-        loop
-        muted
-        playsInline
-        controls={variant === "avatar"}
-        preload="auto"
-      />
-    );
+  if (preferImage || !video || !playableSrc) {
+    return <img src={image} alt="" className={className} />;
   }
-  return <img src={image} alt="" className={className} />;
+
+  return (
+    <video
+      ref={videoRef}
+      src={playableSrc}
+      className={className}
+      autoPlay
+      loop
+      muted
+      playsInline
+      controls={variant === "avatar"}
+      preload="auto"
+    />
+  );
+}
+
+/**
+ * Full-bleed fixed backdrop that plays the robot's video edge-to-edge across
+ * the whole screen — used by the black-background interface styles, where the
+ * media belongs behind the content instead of inside the small rounded screen.
+ * Falls back to a static image layer, then to nothing.
+ */
+export function VideoBackdrop({ image, video, accent }: { image: string; video?: string | undefined; accent: string }) {
+  return (
+    <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
+      <RobotMedia image={image} video={video} variant="hero" className="size-full object-cover opacity-50" />
+      {/* Legibility scrims over the media */}
+      <div className="absolute inset-0 bg-black/45" />
+      <div
+        className="absolute inset-0"
+        style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
+      />
+      <div
+        className="absolute inset-x-0 bottom-0 h-56"
+        style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+      />
+    </div>
+  );
 }
