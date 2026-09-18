@@ -233,9 +233,9 @@ export const syncSetPayment = createServerFn({ method: "POST" })
 
 /* ------------------------------------------------------------------ */
 /* MT5 account persistence — the cloud equivalent of the mt5_accounts */
-/* table: one record per app user, written right after MetaCopier     */
+/* table: one record per app user, written right after MetaApi        */
 /* accepts the connection, read on page load. The MT5 password is     */
-/* NEVER stored — MetaCopier holds it, we keep only metadata.         */
+/* NEVER stored — MetaApi holds it, we keep only metadata.            */
 /* ------------------------------------------------------------------ */
 
 const MT5_KEY = "eamp:mt5-accounts";
@@ -246,7 +246,7 @@ export type Mt5AccountRecord = {
   server: string;
   accountType: string;
   broker: string;
-  /** The MetaCopier-hosted account id used for live execution. */
+  /** The MetaApi-hosted account id used for live execution. */
   mcAccountId: string;
   environment?: string | undefined;
   isConnected: boolean;

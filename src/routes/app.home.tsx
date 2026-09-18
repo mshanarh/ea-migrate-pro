@@ -15,7 +15,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
-import { executeLiveTrade } from "@/lib/metacopier";
+import { executeLiveTrade } from "@/lib/metaapi";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,

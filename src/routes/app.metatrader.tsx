@@ -7,7 +7,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { connectMt5Account, disconnectMt5Account, getMtAccountStatus } from "@/lib/metacopier";
+import { connectMt5Account, disconnectMt5Account, getMtAccountStatus } from "@/lib/metaapi";
 import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -195,7 +195,7 @@ function AppMetatrader() {
     setErrorMessage(null);
     setKeyNotice(false);
     try {
-      // The server attaches the platform's master MetaCopier key — the user
+      // The server attaches the platform's master MetaApi token — the user
       // only ever supplies their own MT5 credentials here. Any login works.
       const result = await connectMt5Account({
         data: {

@@ -26,9 +26,9 @@ export type MtAccount = {
   server: string;
   accountType: string;
   loginId: string;
-  /** The user's own MetaCopier account id (created under the platform key). */
+  /** The user's own MetaApi account id (created under the platform token). */
   mcAccountId?: string;
-  /** LIVE or DEMO as detected by MetaCopier at connect time. */
+  /** LIVE or DEMO as detected by MetaApi at connect time. */
   environment?: string;
 };
 

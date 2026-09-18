@@ -8,7 +8,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { executeLiveTrade } from "@/lib/metacopier";
+import { executeLiveTrade } from "@/lib/metaapi";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -50,7 +50,7 @@ function AppScanner() {
   };
 
   // Execute pressed — show the TOP execution toast, fire the real trade(s) on
-  // the connected MT5 account via MetaCopier AND stream the logs into the
+  // the connected MT5 account via MetaApi AND stream the logs into the
   // floating bot popup. The toast's final line reflects the provider outcome.
   const handleExecute = ({ symbol, lot, trades }: { symbol: string; lot: string; trades: number }) => {
     window.triggerExecutionToast?.(robot?.name, robot?.image, {

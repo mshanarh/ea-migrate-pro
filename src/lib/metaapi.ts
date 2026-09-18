@@ -10,7 +10,7 @@ import { createServerFn } from "@tanstack/react-start";
  * Master token resolution: every candidate — METAAPI_TOKEN, METAAPI_API_TOKEN,
  * METAAPI_MASTER_TOKEN in process.env and import.meta.env, plus the built-in
  * fallback constant — is tried against MetaApi in order, and the first token
- * the API accepts is used. (The old MetaCopier key/names are fully retired.)
+ * the API accepts is used.
  *
  * Endpoints (verified live against MetaApi's official API):
  * - List accounts:   GET  https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts
