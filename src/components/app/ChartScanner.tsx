@@ -119,7 +119,7 @@ function analyzeUploadedChart(source: string, symbol: string, timeframe: string)
           reasons: [
             "Chart-only signal from the uploaded candlestick image.",
             "The " + directionText + " based on the green/red candle balance.",
-            "Trading stays disabled because this scan does not use a live price.",
+            "Trading stays disabled because this scan does not use a broker price.",
           ],
           readouts: [
             { label: "Chart source", value: "Uploaded image", bullish: null },
@@ -139,7 +139,7 @@ function analyzeUploadedChart(source: string, symbol: string, timeframe: string)
  * ChartScanner — the AI Scanner experience.
  *
  * Chart Scanner reads the uploaded chart image locally. It does not require
- * an MT5 account or live market data. Directional chart signals are for
+ * an MT5 account or uploaded chart data. Directional chart signals are for
  * analysis only; broker execution remains disabled for screenshot-based reads.
  *
  * Everything follows the user's accent color from the customization drawer.
@@ -290,7 +290,7 @@ function analyzeUploadedChart(source: string, symbol: string, timeframe: string)
           reasons: [
             "Chart-only signal from the uploaded candlestick image.",
             "The " + directionText + " based on the green/red candle balance.",
-            "Trading stays disabled because this scan does not use a live price.",
+            "Trading stays disabled because this scan does not use a broker price.",
           ],
           readouts: [
             { label: "Chart source", value: "Uploaded image", bullish: null },
@@ -330,7 +330,7 @@ const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   "NO TRADE": "#9ca3af",
 };
 
-export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props {
+export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props) {
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
