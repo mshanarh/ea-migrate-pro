@@ -170,56 +170,6 @@ const SCAN_STEPS = [
 ];
 
 const MAX_CHART_BYTES = 5 * 1024 * 1024;
-type ScannerTimeframe = "15m" | "1h" | "4h";
-
-type ScannerAnalysis = {
-  symbol: string;
-  timeframe: string;
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-  signal: "BUY" | "SELL" | "NO TRADE";
-  confidence: number;
-  entry: number;
-  stopLoss: number;
-  takeProfit: number;
-  riskReward: string;
-  executionReady: boolean;
-  atr: number;
-  rsi: number;
-  reasons: string[];
-  readouts: { label: string; value: string; bullish: boolean | null }[];
-};
-
-function detectTimeframe(file: File): ScannerTimeframe {
-  const name = file.name.toLowerCase();
-  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
-  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
-  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
-  return "1h";
-}
-
-function chartOnlyFallback(symbol: string, timeframe: string, reason: string): ScannerAnalysis {
-  return {
-    symbol,
-    timeframe,
-    bias: "NEUTRAL",
-    signal: "NO TRADE",
-    confidence: 0,
-    entry: 0,
-    stopLoss: 0,
-    takeProfit: 0,
-    riskReward: "—",
-    executionReady: false,
-    atr: 0,
-    rsi: 50,
-    reasons: [reason, "Upload a clearer candlestick chart to get a directional signal."],
-    readouts: [
-      { label: "Chart source", value: "Uploaded image", bullish: null },
-      { label: "Candle colors", value: "Not detected", bullish: null },
-      { label: "Signal", value: "NO TRADE", bullish: null },
-    ],
-  };
-}
-
 function fmtPrice(value: number): string {
   const magnitude = Math.abs(value);
   return value.toFixed(magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : 5);
