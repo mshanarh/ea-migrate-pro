@@ -1,22 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/metaapi";
 type ScannerTimeframe = "15m" | "1h" | "4h";
-
-type ScannerAnalysis = {
-  symbol: string;
-  timeframe: string;
-  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-  signal: "BUY" | "SELL" | "NO TRADE";
-  confidence: number;
-  entry: number;
-  stopLoss: number;
-  takeProfit: number;
-  riskReward: string;
-  executionReady: boolean;
-  atr: number;
-  rsi: number;
-  reasons: string[];
-  readouts: { label: string; value: string; bullish: boolean | null }[];
-};
 
 function detectTimeframe(file: File): ScannerTimeframe {
   const name = file.name.toLowerCase();
@@ -40,107 +24,37 @@ function chartOnlyFallback(symbol: string, timeframe: string, reason: string): S
     executionReady: false,
     atr: 0,
     rsi: 50,
-    reasons: [reason, "Upload a clearer candlestick chart to get a directional signal."],
+    reasons: [reason, "No directional trade is returned without a live broker quote."],
     readouts: [
-      { label: "Chart source", value: "Uploaded image", bullish: null },
-      { label: "Candle colors", value: "Not detected", bullish: null },
+      { label: "Market data", value: "Unavailable", bullish: null },
+      { label: "Live price", value: "—", bullish: null },
       { label: "Signal", value: "NO TRADE", bullish: null },
     ],
   };
 }
 
-function analyzeUploadedChart(source: string, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
-  return new Promise((resolve) => {
-    const image = new Image();
-    image.onload = () => {
-      try {
-        const width = 320;
-        const height = Math.max(180, Math.round(width * (image.naturalHeight / Math.max(image.naturalWidth, 1))));
-        const canvas = document.createElement("canvas");
-        canvas.width = width;
-        canvas.height = height;
-        const context = canvas.getContext("2d", { willReadFrequently: true });
-        if (!context) {
-          resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be read."));
-          return;
-        }
-        context.drawImage(image, 0, 0, width, height);
-        const pixels = context.getImageData(0, 0, width, height).data;
-        let green = 0;
-        let red = 0;
-        let earlyGreen = 0;
-        let earlyRed = 0;
-        let recentGreen = 0;
-        let recentRed = 0;
-        const top = Math.floor(height * 0.08);
-        const bottom = Math.floor(height * 0.88);
-        for (let y = top; y < bottom; y += 1) {
-          for (let x = 0; x < width; x += 1) {
-            const index = (y * width + x) * 4;
-            const r = pixels[index] ?? 0;
-            const g = pixels[index + 1] ?? 0;
-            const b = pixels[index + 2] ?? 0;
-            const isGreen = g > 75 && g > r * 1.22 && g > b * 1.08;
-            const isRed = r > 75 && r > g * 1.22 && r > b * 1.08;
-            if (isGreen) {
-              green += 1;
-              if (x < width * 0.55) earlyGreen += 1;
-              else recentGreen += 1;
-            } else if (isRed) {
-              red += 1;
-              if (x < width * 0.55) earlyRed += 1;
-              else recentRed += 1;
-            }
-          }
-        }
-        const total = green + red;
-        if (total < 12) {
-          resolve(chartOnlyFallback(symbol, timeframe, "No clear green or red candlesticks were detected in the uploaded chart."));
-          return;
-        }
-        const trendScore = (recentGreen - recentRed) - (earlyGreen - earlyRed) * 0.5;
-        const signal: ScannerAnalysis["signal"] = trendScore >= 0 ? "BUY" : "SELL";
-        const bias: ScannerAnalysis["bias"] = signal === "BUY" ? "BULLISH" : "BEARISH";
-        const confidence = Math.min(84, 56 + Math.round(Math.min(28, Math.abs(trendScore) / 12)));
-        const directionText = signal === "BUY" ? "recent candles lean upward" : "recent candles lean downward";
-        resolve({
-          symbol,
-          timeframe,
-          bias,
-          signal,
-          confidence,
-          entry: 0,
-          stopLoss: 0,
-          takeProfit: 0,
-          riskReward: "—",
-          executionReady: false,
-          atr: 0,
-          rsi: 50,
-          reasons: [
-            "Chart-only signal from the uploaded candlestick image.",
-            "The " + directionText + " based on the green/red candle balance.",
-            "Trading stays disabled because this scan does not use a broker price.",
-          ],
-          readouts: [
-            { label: "Chart source", value: "Uploaded image", bullish: null },
-            { label: "Green / red candles", value: green + " / " + red, bullish: signal === "BUY" },
-            { label: "Detected direction", value: signal, bullish: signal === "BUY" },
-          ],
-        });
-      } catch {
-        resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be analyzed."));
-      }
-    };
-    image.onerror = () => resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be opened."));
-    image.src = source;
+async function analyzeMarket(accountId: string | undefined, region: string | undefined, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
+  if (!accountId) {
+    return chartOnlyFallback(symbol, timeframe, "Connect your MT5 account to read live prices and calculate a trade setup.");
+  }
+
+  const result = await getScannerAnalysis({
+    data: {
+      accountId,
+      symbol,
+      timeframe,
+      ...(region ? { region } : {}),
+    },
   });
+  if (!result.ok) return chartOnlyFallback(symbol, timeframe, result.message);
+  return result.analysis;
 }
 /**
  * ChartScanner — the AI Scanner experience.
  *
- * Chart Scanner reads the uploaded chart image locally. It does not require
- * a broker account or uploaded chart data. Directional chart signals are for
- * analysis only; broker execution remains disabled for screenshot-based reads.
+ * Chart Scanner uses the connected MT5 account's live quote and candle history.
+ * An uploaded screenshot is optional context only; it is never used to invent
+ * a price, direction, stop-loss, or take-profit.
  *
  * Everything follows the user's accent color from the customization drawer.
  */
@@ -148,6 +62,10 @@ function analyzeUploadedChart(source: string, symbol: string, timeframe: string)
 type Props = {
   /** Symbols the mentor attached to this bot (EA creation on the mentor portal). */
   symbols: string[];
+  /** MetaApi account used for live quotes and historical candles. */
+  accountId?: string;
+  /** MetaApi region returned when the MT5 account was connected. */
+  region?: string;
   /** Per-symbol lot/max trades saved on the robot (falls back to sensible defaults). */
   pairs?: { symbol: string; lotSize: string; maxTrades: string }[];
   /** Accent color hex, applied to buttons, bullets and highlights. */
@@ -157,16 +75,16 @@ type Props = {
   /** Called when the user taps Scan — registers the daily scan. Return false to block (limit reached). */
   onScanStart: () => boolean;
   /** Fires the top execution steps from the RESULT view only. */
-  onExecute: (details: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; stopLoss?: string; takeProfit?: string }) => void;
+  onExecute: (details: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady: boolean; stopLoss?: string; takeProfit?: string }) => void;
 };
 
 const SCAN_STEPS = [
-  "Preparing uploaded chart...",
-  "Reading candle colors & price action...",
-  "Measuring recent direction...",
-  "Checking bullish vs bearish momentum...",
-  "Scoring chart trend strength...",
-  "Building chart signal...",
+  "Connecting to the live MT5 quote...",
+  "Loading recent candles...",
+  "Measuring EMA trend structure...",
+  "Checking RSI momentum...",
+  "Calculating ATR volatility and swing levels...",
+  "Building entry, stop-loss and take-profit...",
 ];
 
 const MAX_CHART_BYTES = 5 * 1024 * 1024;
@@ -185,7 +103,7 @@ const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   "NO TRADE": "#9ca3af",
 };
 
-export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props) {
+export default function ChartScanner({ symbols, accountId, region, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props) {
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
@@ -198,18 +116,19 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
   const [chartSrc, setChartSrc] = useState<string | null>(null);
   const [chartError, setChartError] = useState("");
   const [dragging, setDragging] = useState(false);
-  const [autoScanPending, setAutoScanPending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasSymbols = symbols.length > 0;
   const lotValid = Number(lot) > 0;
-  // Chart scans only need an uploaded image and valid trade settings.
-  const scanLocked = !chartSrc || !lotValid || trades < 1;
-  const lockReason = !chartSrc
-    ? "Upload your chart first"
-    : !lotValid
-      ? "Set a lot size"
-      : "";
+  // A screenshot is optional. Accurate signals require the live MT5 account.
+  const scanLocked = !accountId || !symbol || !lotValid || trades < 1;
+  const lockReason = !accountId
+    ? "Connect your MT5 account first"
+    : !symbol
+      ? "Add a symbol to your EA"
+      : !lotValid
+        ? "Set a lot size"
+        : "";
 
   // Preselect the first mentor symbol and its saved lot/trades once known.
   useEffect(() => {
@@ -235,23 +154,17 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
     const reader = new FileReader();
     reader.onload = () => {
       setChartSrc(String(reader.result));
-       setTimeframe(detectedTimeframe);
+      setTimeframe(detectedTimeframe);
       setDone(false);
       setAnalysis(null);
       setAnalysisError("");
-      // Pressing Scan without a chart opened the picker — start scanning
-      // automatically the moment the picture lands.
-      if (autoScanPending) {
-        setAutoScanPending(false);
-        window.setTimeout(() => void runScanRef.current?.(), 150);
-      }
     };
     reader.onerror = () => setChartError("Could not read that image.");
     reader.readAsDataURL(file);
   };
 
   const runScan = async () => {
-    if (!chartSrc || scanning) return;
+    if (scanning) return;
     // One of the 5 daily scans is consumed here — the route blocks when out of scans.
     if (!onScanStart()) return;
     setScanning(true);
@@ -260,14 +173,14 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
     setAnalysis(null);
     setAnalysisError("");
     // Narrated steps advance while the real analysis runs. Show the result
-    // as soon as the chart analysis responds — never add an artificial delay.
+    // as soon as the live analysis responds — never add an artificial delay.
     let index = 0;
     const interval = window.setInterval(() => {
       index += 1;
       setStep(Math.min(index, SCAN_STEPS.length - 1));
     }, 650);
     try {
-      const result = await analyzeUploadedChart(chartSrc, symbol || "CHART", timeframe);
+      const result = await analyzeMarket(accountId, region, symbol, timeframe);
       setAnalysis(result);
     } catch {
       setAnalysisError("Could not run the chart analysis. Check your connection and try again.");
@@ -277,17 +190,9 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
       setDone(true);
     }
   };
-  const runScanRef = useRef<(() => Promise<void>) | null>(null);
-  runScanRef.current = runScan;
-
-  /** Scan button: no chart yet → open the picker and scan as soon as it's chosen. */
+  /** Run an immediate live-market scan; a screenshot is optional. */
   const startScan = () => {
     if (scanning || scanLocked) return;
-    if (!chartSrc) {
-      setAutoScanPending(true);
-      fileInputRef.current?.click();
-      return;
-    }
     void runScan();
   };
 
@@ -303,37 +208,40 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
   };
 
   const statusLine = scanning
-    ? "Analyzing uploaded chart..."
+    ? "Analyzing live MT5 market..."
     : done
       ? analysis
         ? "Analysis complete"
         : analysisError
           ? "Analysis unavailable"
           : "Chart read complete"
-      : chartSrc
-        ? "Chart ready to scan"
-        : "Press scan to upload your chart";
+        : chartSrc
+          ? "Live market ready · chart attached"
+          : "Live market ready to scan";
 
   return (
-    <div className="flex w-full flex-col pb-[130px]" style={{ backgroundColor: "#0A0A0A" }}>
+    <div className="mx-auto flex w-full max-w-5xl flex-col pb-[130px]" style={{ backgroundColor: "#090c10" }}>
       {/* Header — title, scans-left badge */}
-      <div className="flex items-center justify-between p-4">
+      <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-5 sm:px-6">
         <div>
-          <h1 className="text-2xl font-black tracking-tight text-white">Chart Scanner</h1>
-          <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold tracking-[0.18em] text-white/40">
-            <span className="inline-block size-2 rounded-full" style={{ background: accent }} />
-            UPLOAD A CHART · GET A SIGNAL
+          <div className="flex items-center gap-2">
+            <span className="size-2 rounded-full" style={{ background: accountId ? "#22c55e" : "#9ca3af" }} />
+            <span className="text-[10px] font-bold tracking-[0.2em] text-white/40">{accountId ? "MT5 CONNECTED" : "MT5 NOT CONNECTED"}</span>
+          </div>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
+          <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
+            Live candles and broker quotes build the setup. A screenshot is optional context only.
           </p>
         </div>
-        <span className="rounded-full border border-white/15 px-4 py-2 text-sm font-bold text-white/70">
+        <span data-testid="text-scans-remaining" className="shrink-0 rounded-full border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm">
           {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
         </span>
       </div>
 
-      {/* Chart upload — chart-only scanner */}
+      {/* Optional screenshot — the signal is calculated from MT5 market data. */}
       <div
-        className="relative mx-3 min-h-[300px] overflow-hidden rounded-[26px] border-2 border-dashed"
-        style={{ borderColor: dragging ? "#ff334d" : "#9c1d2d", backgroundColor: "#180609" }}
+        className="relative mx-3 min-h-[260px] overflow-hidden rounded-[26px] border-2 border-dashed sm:mx-6 sm:min-h-[320px]"
+        style={{ borderColor: dragging ? accent : "#4a2029", backgroundColor: "#120b10" }}
         onDragOver={(event) => {
           event.preventDefault();
           setDragging(true);
@@ -361,19 +269,19 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             onClick={() => fileInputRef.current?.click()}
             className="relative z-10 flex min-h-[300px] w-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
-            <span className="flex size-[88px] items-center justify-center rounded-full border-2 border-[#ff233f] text-[#ff233f] shadow-[0_0_28px_rgba(255,35,63,0.2)]">
+            <span className="flex size-[76px] items-center justify-center rounded-full border text-white/85" style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}33` }}>
               <svg viewBox="0 0 24 24" className="size-10" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
                 <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
               </svg>
             </span>
-            <span className="text-[20px] font-black text-white">Upload your chart</span>
-            <span className="text-[14px] text-white/45">Screenshot your chart and drop it here</span>
+            <span className="text-[20px] font-black text-white">Attach a chart screenshot</span>
+            <span className="text-[14px] text-white/45">Optional — live MT5 data powers the signal</span>
           </button>
         ) : (
           <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
         )}
         <div className="pointer-events-none absolute inset-0 opacity-30" style={{ backgroundImage: "linear-gradient(rgba(255,35,63,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,35,63,0.16) 1px, transparent 1px)", backgroundSize: "38px 38px" }} />
-        {scanning && <div className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite] bg-[#ff233f] shadow-[0_0_15px_#ff233f]" />}
+        {scanning && <div className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite]" style={{ background: accent, boxShadow: `0 0 15px ${accent}` }} />}
         {chartSrc && !scanning && (
           <button
             type="button"
@@ -386,12 +294,12 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             }}
             className="absolute right-3 top-3 z-20 flex size-9 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur transition-colors hover:bg-black/85"
           >
-            ✕
+            <span aria-hidden="true">Remove</span>
           </button>
         )}
         {(chartSrc || scanning) && (
           <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 text-[12px] font-semibold text-[#ff5a6e]">
-            <span className="text-[14px]">⌜⌝</span>
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />
             {statusLine}
           </div>
         )}
@@ -403,22 +311,12 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
           {/* Upload row — hidden while scanning */}
           {!scanning && (
             <div className="mx-3 mt-3">
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="hidden"
-                onChange={(event) => {
-                  pickChart(event.target.files?.[0]);
-                  event.target.value = "";
-                }}
-              />
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
               >
-                📈 {chartSrc ? "Replace chart image" : "Upload chart screenshot"}
+                {chartSrc ? "Replace chart image" : "Attach chart screenshot"}
               </button>
               {chartError && <p className="mt-2 text-[12px] text-red-400">{chartError}</p>}
             </div>
@@ -426,7 +324,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
 
           {/* Narrated analysis steps */}
           {scanning && (
-            <div className="mt-4 space-y-2 px-6">
+            <div className="mt-4 space-y-2 px-6 sm:px-8">
               {SCAN_STEPS.slice(0, step + 1).map((text, index) => (
                 <div key={index} className="flex gap-2 text-[13px] text-white/70">
                   <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: accent }} />
@@ -437,7 +335,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
           )}
 
           {/* SYMBOL — exactly the mentor's EA symbols; the user picks one */}
-          <div className="mx-3 mt-4 rounded-[20px] border border-white/5 bg-[#151515] p-4">
+          <div className="mx-3 mt-4 rounded-[20px] border border-white/8 bg-[#151a20] p-4 sm:mx-6">
             <div className="mb-3 flex items-center justify-between">
               <p className="text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
               <p className="text-[10px] font-bold text-white/25">{symbols.length} FROM YOUR EA</p>
@@ -461,7 +359,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
               </p>
             )}
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-[10px] tracking-[0.28em] text-white/30">AUTO TIMEFRAME</p>
+             <p className="text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-bold text-white/65">
                 {timeframe}
               </span>
@@ -469,7 +367,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
           </div>
 
           {/* Trades + lot size */}
-          <div className="mx-3 mt-3 divide-y divide-white/5 rounded-[20px] border border-white/5 bg-[#151515]">
+          <div className="mx-3 mt-3 divide-y divide-white/5 rounded-[20px] border border-white/8 bg-[#151a20] sm:mx-6">
             <div className="flex items-center justify-between p-4">
               <div>
                 <p className="font-bold text-white">Trades</p>
@@ -511,23 +409,24 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
             </div>
           </div>
 
-          {/* Scan button — locked until symbol + chart + lot + trades + account are all set */}
+           {/* Scan button — locked until symbol + account + trade settings are set */}
           <button
             type="button"
             onClick={startScan}
             disabled={scanning || scanLocked}
-            className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60"
+            data-testid="button-run-scan"
+            className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60 sm:mx-6"
             style={{ background: accent, boxShadow: scanLocked ? "none" : `0 0 20px ${accent}66` }}
           >
-            <span className="text-[15px]">⌜⌝</span> {scanning ? "SCANNING..." : `Scan ${symbol || "chart"}`}
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
           </button>
           {scanLocked && !scanning && lockReason && (
-            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">🔒 {lockReason}</p>
+            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">Scanning locked · {lockReason}</p>
           )}
         </>
       ) : (
         /* ---------- RESULT VIEW ---------- */
-        <div className="mx-3 mt-3 space-y-3">
+        <div className="mx-3 mt-3 space-y-3 sm:mx-6">
           {analysisError && (
             <div className="rounded-[24px] border border-red-500/25 bg-red-500/[0.06] p-4">
               <p className="text-[13px] font-bold text-red-300">Scan failed</p>
@@ -538,9 +437,12 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
           {analysis && (
             <>
               {/* Chart read — real bias + indicator readouts */}
-              <div className="rounded-[24px] border border-white/5 bg-[#151515] p-4">
+              <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4">
                 <div className="flex justify-between">
-                  <span className="text-[11px] tracking-[0.18em] text-white/40">⌜⌝ CHART SIGNAL · {analysis.timeframe}</span>
+                  <span className="flex items-center gap-2 text-[11px] tracking-[0.18em] text-white/40">
+                    <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                    LIVE MARKET SIGNAL · {analysis.timeframe}
+                  </span>
                   <span
                     className="rounded-full border px-3 py-1 text-[11px] font-bold"
                     style={{
@@ -567,7 +469,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
                 <div className="mt-4">
                   <div className="flex justify-between text-[11px]">
                     <span className="text-white/30">CONFIDENCE</span>
-                    <span className="text-white">{analysis.confidence}%</span>
+                    <span data-testid="text-analysis-confidence" className="text-white">{analysis.confidence}%</span>
                   </div>
                   <div className="mt-2 h-2 rounded-full bg-[#222]">
                     <div className="h-2 rounded-full" style={{ width: `${analysis.confidence}%`, background: accent }} />
@@ -576,43 +478,60 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
               </div>
 
               {/* Trade plan — real levels from the analysis */}
-              <div className="rounded-[24px] border border-white/5 bg-[#151515] p-4">
+              <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-[22px] font-black text-white">↗ {analysis.symbol}</h2>
-                  <span className="rounded-full px-6 py-2 text-[13px] font-bold text-white" style={{ background: SIGNAL_COLORS[analysis.signal] }}>
+                  <div>
+                    <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
+                    <h2 data-testid="text-analysis-symbol" className="mt-1 text-[22px] font-black text-white">{analysis.symbol}</h2>
+                  </div>
+                  <span data-testid="status-analysis-signal" className="rounded-full px-6 py-2 text-[13px] font-bold text-white" style={{ background: SIGNAL_COLORS[analysis.signal] }}>
                     {analysis.signal}
                   </span>
                 </div>
+                <div className="mt-3 flex items-center justify-between border-y border-white/5 py-2.5">
+                  <span className="text-[10px] font-bold tracking-[0.18em] text-white/35">EXECUTION STATUS</span>
+                  <span
+                    data-testid="status-execution-ready"
+                    className="text-[11px] font-bold"
+                    style={{ color: analysis.executionReady && analysis.signal !== "NO TRADE" ? "#4ade80" : "#9ca3af" }}
+                  >
+                    {analysis.executionReady && analysis.signal !== "NO TRADE" ? "READY · LIVE QUOTE" : "LOCKED · ANALYSIS ONLY"}
+                  </span>
+                </div>
                 <div className="mt-4 grid grid-cols-3 gap-2">
-                  <div className="rounded-[16px] bg-black p-3 text-center">
+                  <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
                     <p className="text-[10px]" style={{ color: accent }}>ENTRY</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.entry)}</p>
+                    <p data-testid="text-analysis-entry" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.entry)}</p>
                   </div>
-                  <div className="rounded-[16px] bg-black p-3 text-center">
-                    <p className="text-[10px] text-red-400">⚠ SL</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.stopLoss)}</p>
+                  <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+                    <p className="text-[10px] text-red-400">STOP-LOSS</p>
+                    <p data-testid="text-analysis-stop-loss" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.stopLoss)}</p>
                   </div>
-                  <div className="rounded-[16px] bg-black p-3 text-center">
-                    <p className="text-[10px] text-green-400">TP</p>
-                    <p className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.takeProfit)}</p>
+                  <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+                    <p className="text-[10px] text-green-400">TAKE-PROFIT</p>
+                    <p data-testid="text-analysis-take-profit" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.takeProfit)}</p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between text-[11px]">
                   <span className="text-white/30">RISK : REWARD</span>
-                  <span className="font-bold" style={{ color: accent }}>{analysis.riskReward}</span>
+                  <span data-testid="text-analysis-risk-reward" className="font-bold" style={{ color: accent }}>{analysis.riskReward}</span>
                 </div>
                 <div className="mt-3 space-y-1.5">
                   {analysis.reasons.map((reason, index) => (
-                    <p key={index} className="text-[12px] leading-relaxed text-white/50">• {reason}</p>
+                    <p key={index} className="flex gap-2 text-[12px] leading-relaxed text-white/50">
+                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: accent }} aria-hidden="true" />
+                      <span>{reason}</span>
+                    </p>
                   ))}
                 </div>
 
-                {/* Chart-only signals are informational; broker execution is disabled. */}
+                 {/* Only live-quote signals can be executed. */}
                 {analysis.signal === "NO TRADE" ? (
                   <button
                     type="button"
                     disabled
-                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 font-bold text-white/50"
+                    data-testid="button-execute-disabled-no-trade"
+                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 px-4 text-center font-bold text-white/50"
                   >
                     No high-probability setup — Execute disabled
                   </button>
@@ -620,14 +539,16 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
                   <button
                     type="button"
                     disabled
-                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 font-bold text-white/50"
+                    data-testid="button-execute-disabled-not-ready"
+                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 px-4 text-center font-bold text-white/50"
                   >
-                    Chart signal only — Trading disabled
+                     Live quote unavailable — Trading disabled
                   </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => onExecute({ symbol: analysis.symbol, lot, trades, direction: analysis.signal as "BUY" | "SELL", stopLoss: String(analysis.stopLoss), takeProfit: String(analysis.takeProfit) })}
+                    onClick={() => onExecute({ symbol: analysis.symbol, lot, trades, direction: analysis.signal as "BUY" | "SELL", executionReady: analysis.executionReady, stopLoss: String(analysis.stopLoss), takeProfit: String(analysis.takeProfit) })}
+                    data-testid="button-execute-trade"
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full font-bold text-white"
                     style={{ background: accent }}
                   >
@@ -644,14 +565,14 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
                   className="mt-3 h-[48px] w-full rounded-full border text-[14px] font-bold"
                   style={{ borderColor: `${accent}40`, color: accent }}
                 >
-                  ↻ New Scan
+                  New scan
                 </button>
               </div>
             </>
           )}
 
           {!analysis && !analysisError && (
-            <div className="rounded-[24px] border border-white/5 bg-[#151515] p-4 text-center">
+            <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4 text-center">
               <p className="text-[13px] text-white/60">Scan finished without a result — try again.</p>
               <button
                 type="button"
@@ -659,7 +580,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, o
                 className="mt-3 h-[48px] w-full rounded-full border text-[14px] font-bold"
                 style={{ borderColor: `${accent}40`, color: accent }}
               >
-                ↻ New Scan
+                New scan
               </button>
             </div>
           )}
