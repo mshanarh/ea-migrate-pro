@@ -540,6 +540,8 @@ export type ScannerAnalysis = {
   stopLoss: number;
   takeProfit: number;
   riskReward: string;
+  /** True only when the scan has a live bid/ask snapshot and can be executed. */
+  executionReady: boolean;
   atr: number;
   rsi: number;
   /** Human-readable reasons behind the signal, newest thinking last. */
@@ -547,6 +549,29 @@ export type ScannerAnalysis = {
   /** Structured scan log lines (shown as the narrated steps). */
   readouts: { label: string; value: string; bullish: boolean | null }[];
 };
+
+function buildUnavailableScannerAnalysis(symbol: string, timeframe: string, reason: string): ScannerAnalysis {
+  return {
+    symbol,
+    timeframe,
+    bias: "NEUTRAL",
+    signal: "NO TRADE",
+    confidence: 0,
+    entry: 0,
+    stopLoss: 0,
+    takeProfit: 0,
+    riskReward: "—",
+    executionReady: false,
+    atr: 0,
+    rsi: 50,
+    reasons: [reason, "No BUY/SELL trade is allowed until live broker data is available."],
+    readouts: [
+      { label: "Market data", value: "Unavailable", bullish: null },
+      { label: "Live price", value: "—", bullish: null },
+      { label: "Signal", value: "NO TRADE", bullish: null },
+    ],
+  };
+}
 
 type Candle = { time: string; open: number; high: number; low: number; close: number };
 
@@ -669,10 +694,10 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       for (const host of hosts) {
         const [candleResult, priceResult] = await Promise.all([
           withMasterToken((token) =>
-            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 8_000),
+            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-candles/${timeframe}?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 3_500),
           ),
           withMasterToken((token) =>
-            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 8_000),
+            fetchJson(`${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`, { headers: { "auth-token": token, Accept: "application/json" } }, 3_500),
           ),
         ]);
         if (candleResult.kind === "ok" && candleResult.response.status === 200) {
@@ -691,22 +716,21 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     // Warm-up is only a fallback. Connected accounts get a signal from the
     // fast path immediately; cold accounts still receive a bounded retry.
     let { candle, price } = await readMarketSnapshot();
+    const liveData = Boolean(candle || price);
+    const candles = await historyPromise;
+
+    // A symbol can have historical candles but no current quote while the
+    // broker is opening it. Show an informational signal instead of an error,
+    // but never allow a stale signal to execute a trade.
     if (!candle && !price) {
-      const warmOutcome = await withMasterToken((token) => warmAccountConnection(token, data.accountId, region, 15_000));
-      if (warmOutcome.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
-      if (warmOutcome.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
-      ({ candle, price } = await readMarketSnapshot());
-    }
-    if (!candle && !price) {
-      return {
-        ok: false,
-        code: "failed",
-        message: `No live market data for ${symbol} — the broker connection is still opening, or this broker does not list that symbol. Try again in a minute.`,
-      };
+      const last = candles.at(-1);
+      if (!last?.close) {
+        return { ok: true, analysis: buildUnavailableScannerAnalysis(symbol, timeframe, `No live market data for ${symbol} yet — the broker does not currently expose a quote for this symbol.`) };
+      }
+      candle = { open: last.open, high: last.high, low: last.low, close: last.close };
     }
 
     const close = candle?.close ?? price!.bid;
-    const candles = await historyPromise;
     const closes = candles.map((item) => item.close);
     const ema21 = closes.length >= 21 ? ema(closes, 21) : close;
     const ema50 = closes.length >= 50 ? ema(closes, 50) : close;
@@ -731,7 +755,8 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     // Ranging market = no edge; don't fabricate a signal.
     const signal: ScannerAnalysis["signal"] = bias === "NEUTRAL" ? "NO TRADE" : trendUp === priceAboveEma || Math.abs(score) >= 1.5 ? (score > 0 ? "BUY" : "SELL") : "NO TRADE";
 
-    const confidence = Math.round(Math.min(95, Math.max(55, 55 + Math.abs(score) * 14)));
+    const confidenceBase = Math.round(Math.min(95, Math.max(55, 55 + Math.abs(score) * 14)));
+    const confidence = liveData ? confidenceBase : Math.min(65, confidenceBase);
     const entry = price ? (signal === "BUY" ? price.ask : price.bid) : close;
     // SL beyond the recent swing (buffered by 0.5 ATR), TP at ≥2R.
     const direction = signal === "SELL" ? -1 : 1;
@@ -742,6 +767,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     const takeProfit = entry + direction * risk * 2;
 
     const reasons: string[] = [];
+    if (!liveData) {
+      reasons.push("Live broker quote unavailable — this is an informational historical signal only.");
+    }
     if (candles.length >= 50) {
       reasons.push(
         `EMA21 is ${ema21 > ema50 ? "above" : "below"} EMA50 — ${trendUp ? "uptrend" : "downtrend"} structure on ${timeframe}.`,
@@ -762,7 +790,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       { label: "Momentum (RSI 14)", value: closes.length >= 15 ? `${rsiValue.toFixed(1)} ${rsiValue > 52 ? "· Bullish" : rsiValue < 48 ? "· Bearish" : "· Neutral"}` : "n/a", bullish: closes.length >= 15 ? rsiValue > 52 ? true : rsiValue < 48 ? false : null : null },
       { label: "Volatility (ATR 14)", value: fmt(atrValue), bullish: null },
       { label: "Swing range (20 bars)", value: `${fmt(swing.low)} — ${fmt(swing.high)}`, bullish: null },
-      { label: "Live price (bid/ask)", value: price ? `${fmt(price.bid)} / ${fmt(price.ask)}` : fmt(close), bullish: null },
+      { label: liveData ? "Live price (bid/ask)" : "Reference price (last candle)", value: price ? `${fmt(price.bid)} / ${fmt(price.ask)}` : fmt(close), bullish: null },
     ];
 
     return {
@@ -777,6 +805,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         stopLoss: roundToTick(stopLoss, entry),
         takeProfit: roundToTick(takeProfit, entry),
         riskReward: "1:2",
+        executionReady: liveData,
         atr: atrValue,
         rsi: rsiValue,
         reasons,
