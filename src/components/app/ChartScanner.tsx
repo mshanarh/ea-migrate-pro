@@ -1,16 +1,146 @@
 import { useEffect, useRef, useState } from "react";
-import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/metaapi";
+type ScannerTimeframe = "15m" | "1h" | "4h";
 
+type ScannerAnalysis = {
+  symbol: string;
+  timeframe: string;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  signal: "BUY" | "SELL" | "NO TRADE";
+  confidence: number;
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: string;
+  executionReady: boolean;
+  atr: number;
+  rsi: number;
+  reasons: string[];
+  readouts: { label: string; value: string; bullish: boolean | null }[];
+};
+
+function detectTimeframe(file: File): ScannerTimeframe {
+  const name = file.name.toLowerCase();
+  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
+  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
+  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
+  return "1h";
+}
+
+function chartOnlyFallback(symbol: string, timeframe: string, reason: string): ScannerAnalysis {
+  return {
+    symbol,
+    timeframe,
+    bias: "NEUTRAL",
+    signal: "NO TRADE",
+    confidence: 0,
+    entry: 0,
+    stopLoss: 0,
+    takeProfit: 0,
+    riskReward: "—",
+    executionReady: false,
+    atr: 0,
+    rsi: 50,
+    reasons: [reason, "Upload a clearer candlestick chart to get a directional signal."],
+    readouts: [
+      { label: "Chart source", value: "Uploaded image", bullish: null },
+      { label: "Candle colors", value: "Not detected", bullish: null },
+      { label: "Signal", value: "NO TRADE", bullish: null },
+    ],
+  };
+}
+
+function analyzeUploadedChart(source: string, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const width = 320;
+        const height = Math.max(180, Math.round(width * (image.naturalHeight / Math.max(image.naturalWidth, 1))));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) {
+          resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be read."));
+          return;
+        }
+        context.drawImage(image, 0, 0, width, height);
+        const pixels = context.getImageData(0, 0, width, height).data;
+        let green = 0;
+        let red = 0;
+        let earlyGreen = 0;
+        let earlyRed = 0;
+        let recentGreen = 0;
+        let recentRed = 0;
+        const top = Math.floor(height * 0.08);
+        const bottom = Math.floor(height * 0.88);
+        for (let y = top; y < bottom; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const index = (y * width + x) * 4;
+            const r = pixels[index] ?? 0;
+            const g = pixels[index + 1] ?? 0;
+            const b = pixels[index + 2] ?? 0;
+            const isGreen = g > 75 && g > r * 1.22 && g > b * 1.08;
+            const isRed = r > 75 && r > g * 1.22 && r > b * 1.08;
+            if (isGreen) {
+              green += 1;
+              if (x < width * 0.55) earlyGreen += 1;
+              else recentGreen += 1;
+            } else if (isRed) {
+              red += 1;
+              if (x < width * 0.55) earlyRed += 1;
+              else recentRed += 1;
+            }
+          }
+        }
+        const total = green + red;
+        if (total < 12) {
+          resolve(chartOnlyFallback(symbol, timeframe, "No clear green or red candlesticks were detected in the uploaded chart."));
+          return;
+        }
+        const trendScore = (recentGreen - recentRed) - (earlyGreen - earlyRed) * 0.5;
+        const signal: ScannerAnalysis["signal"] = trendScore >= 0 ? "BUY" : "SELL";
+        const bias: ScannerAnalysis["bias"] = signal === "BUY" ? "BULLISH" : "BEARISH";
+        const confidence = Math.min(84, 56 + Math.round(Math.min(28, Math.abs(trendScore) / 12)));
+        const directionText = signal === "BUY" ? "recent candles lean upward" : "recent candles lean downward";
+        resolve({
+          symbol,
+          timeframe,
+          bias,
+          signal,
+          confidence,
+          entry: 0,
+          stopLoss: 0,
+          takeProfit: 0,
+          riskReward: "—",
+          executionReady: false,
+          atr: 0,
+          rsi: 50,
+          reasons: [
+            "Chart-only signal from the uploaded candlestick image.",
+            "The " + directionText + " based on the green/red candle balance.",
+            "Trading stays disabled because this scan does not use a live price.",
+          ],
+          readouts: [
+            { label: "Chart source", value: "Uploaded image", bullish: null },
+            { label: "Green / red candles", value: green + " / " + red, bullish: signal === "BUY" },
+            { label: "Detected direction", value: signal, bullish: signal === "BUY" },
+          ],
+        });
+      } catch {
+        resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be analyzed."));
+      }
+    };
+    image.onerror = () => resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be opened."));
+    image.src = source;
+  });
+}
 /**
  * ChartScanner — the AI Scanner experience.
  *
- * Accuracy: pressing Scan runs a REAL market analysis for the selected symbol
- * through the connected MT5 account (MetaApi market data): EMA 21/50 trend,
- * RSI(14) momentum, ATR(14) volatility and 20-bar swing structure. The result
- * view shows that analysis — bias, confidence, entry, SL beyond the swing,
- * TP at 2R — and Execute fires the trades in the ANALYZED direction with the
- * analyzed SL/TP attached. No mentor symbols or no connected MT5 account =
- * nothing to scan (clear guidance shown).
+ * Chart Scanner reads the uploaded chart image locally. It does not require
+ * an MT5 account or live market data. Directional chart signals are for
+ * analysis only; broker execution remains disabled for screenshot-based reads.
  *
  * Everything follows the user's accent color from the customization drawer.
  */
@@ -24,10 +154,6 @@ type Props = {
   accent: string;
   /** Remaining scans today (out of 5). Infinity for unlimited admins. */
   scansLeft: number;
-  /** The user's connected MetaApi account id — live market data comes through it. */
-  accountId?: string;
-  /** Account region captured at connect time — picks the data API host. */
-  region?: string;
   /** Called when the user taps Scan — registers the daily scan. Return false to block (limit reached). */
   onScanStart: () => boolean;
   /** Fires the top execution steps from the RESULT view only. */
@@ -35,18 +161,151 @@ type Props = {
 };
 
 const SCAN_STEPS = [
-  "Connecting to live market feed...",
-  "Reading candles & price action...",
-  "Scanning market structure (BOS / ChoCH)...",
-  "Measuring trend (EMA 21/50)...",
-  "Gauging momentum (RSI 14)...",
-  "Locating swing highs & lows...",
-  "Pricing volatility (ATR 14)...",
-  "Building trade plan (Entry / SL / TP)",
+  "Preparing uploaded chart...",
+  "Reading candle colors & price action...",
+  "Measuring recent direction...",
+  "Checking bullish vs bearish momentum...",
+  "Scoring chart trend strength...",
+  "Building chart signal...",
 ];
 
 const MAX_CHART_BYTES = 5 * 1024 * 1024;
 type ScannerTimeframe = "15m" | "1h" | "4h";
+
+type ScannerAnalysis = {
+  symbol: string;
+  timeframe: string;
+  bias: "BULLISH" | "BEARISH" | "NEUTRAL";
+  signal: "BUY" | "SELL" | "NO TRADE";
+  confidence: number;
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: string;
+  executionReady: boolean;
+  atr: number;
+  rsi: number;
+  reasons: string[];
+  readouts: { label: string; value: string; bullish: boolean | null }[];
+};
+
+function detectTimeframe(file: File): ScannerTimeframe {
+  const name = file.name.toLowerCase();
+  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
+  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
+  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
+  return "1h";
+}
+
+function chartOnlyFallback(symbol: string, timeframe: string, reason: string): ScannerAnalysis {
+  return {
+    symbol,
+    timeframe,
+    bias: "NEUTRAL",
+    signal: "NO TRADE",
+    confidence: 0,
+    entry: 0,
+    stopLoss: 0,
+    takeProfit: 0,
+    riskReward: "—",
+    executionReady: false,
+    atr: 0,
+    rsi: 50,
+    reasons: [reason, "Upload a clearer candlestick chart to get a directional signal."],
+    readouts: [
+      { label: "Chart source", value: "Uploaded image", bullish: null },
+      { label: "Candle colors", value: "Not detected", bullish: null },
+      { label: "Signal", value: "NO TRADE", bullish: null },
+    ],
+  };
+}
+
+function analyzeUploadedChart(source: string, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      try {
+        const width = 320;
+        const height = Math.max(180, Math.round(width * (image.naturalHeight / Math.max(image.naturalWidth, 1))));
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const context = canvas.getContext("2d", { willReadFrequently: true });
+        if (!context) {
+          resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be read."));
+          return;
+        }
+        context.drawImage(image, 0, 0, width, height);
+        const pixels = context.getImageData(0, 0, width, height).data;
+        let green = 0;
+        let red = 0;
+        let earlyGreen = 0;
+        let earlyRed = 0;
+        let recentGreen = 0;
+        let recentRed = 0;
+        const top = Math.floor(height * 0.08);
+        const bottom = Math.floor(height * 0.88);
+        for (let y = top; y < bottom; y += 1) {
+          for (let x = 0; x < width; x += 1) {
+            const index = (y * width + x) * 4;
+            const r = pixels[index] ?? 0;
+            const g = pixels[index + 1] ?? 0;
+            const b = pixels[index + 2] ?? 0;
+            const isGreen = g > 75 && g > r * 1.22 && g > b * 1.08;
+            const isRed = r > 75 && r > g * 1.22 && r > b * 1.08;
+            if (isGreen) {
+              green += 1;
+              if (x < width * 0.55) earlyGreen += 1;
+              else recentGreen += 1;
+            } else if (isRed) {
+              red += 1;
+              if (x < width * 0.55) earlyRed += 1;
+              else recentRed += 1;
+            }
+          }
+        }
+        const total = green + red;
+        if (total < 12) {
+          resolve(chartOnlyFallback(symbol, timeframe, "No clear green or red candlesticks were detected in the uploaded chart."));
+          return;
+        }
+        const trendScore = (recentGreen - recentRed) - (earlyGreen - earlyRed) * 0.5;
+        const signal: ScannerAnalysis["signal"] = trendScore >= 0 ? "BUY" : "SELL";
+        const bias: ScannerAnalysis["bias"] = signal === "BUY" ? "BULLISH" : "BEARISH";
+        const confidence = Math.min(84, 56 + Math.round(Math.min(28, Math.abs(trendScore) / 12)));
+        const directionText = signal === "BUY" ? "recent candles lean upward" : "recent candles lean downward";
+        resolve({
+          symbol,
+          timeframe,
+          bias,
+          signal,
+          confidence,
+          entry: 0,
+          stopLoss: 0,
+          takeProfit: 0,
+          riskReward: "—",
+          executionReady: false,
+          atr: 0,
+          rsi: 50,
+          reasons: [
+            "Chart-only signal from the uploaded candlestick image.",
+            "The " + directionText + " based on the green/red candle balance.",
+            "Trading stays disabled because this scan does not use a live price.",
+          ],
+          readouts: [
+            { label: "Chart source", value: "Uploaded image", bullish: null },
+            { label: "Green / red candles", value: green + " / " + red, bullish: signal === "BUY" },
+            { label: "Detected direction", value: signal, bullish: signal === "BUY" },
+          ],
+        });
+      } catch {
+        resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be analyzed."));
+      }
+    };
+    image.onerror = () => resolve(chartOnlyFallback(symbol, timeframe, "The uploaded chart could not be opened."));
+    image.src = source;
+  });
+}
 
 function detectTimeframe(file: File): ScannerTimeframe {
   const name = file.name.toLowerCase();
@@ -71,7 +330,7 @@ const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   "NO TRADE": "#9ca3af",
 };
 
-export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, accountId, region, onScanStart, onExecute }: Props) {
+export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props {
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
@@ -83,25 +342,19 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
   const [analysisError, setAnalysisError] = useState("");
   const [chartSrc, setChartSrc] = useState<string | null>(null);
   const [chartError, setChartError] = useState("");
+  const [dragging, setDragging] = useState(false);
   const [autoScanPending, setAutoScanPending] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const hasSymbols = symbols.length > 0;
   const lotValid = Number(lot) > 0;
-  // Scan lock: needs a mentor symbol, the chart screenshot, valid settings,
-  // and a connected MT5 account (live market data flows through it).
-  const scanLocked = !hasSymbols || !symbol || !chartSrc || !lotValid || trades < 1 || !accountId;
-  const lockReason = !hasSymbols
-    ? "Your mentor has not added symbols to this EA yet"
-    : !symbol
-      ? "Select a symbol first"
-      : !chartSrc
-        ? "Upload a chart screenshot first"
-        : !lotValid
-          ? "Set a lot size"
-          : !accountId
-            ? "Connect your MT5 account first — MetaTrader page"
-            : "";
+  // Chart scans only need an uploaded image and valid trade settings.
+  const scanLocked = !chartSrc || !lotValid || trades < 1;
+  const lockReason = !chartSrc
+    ? "Upload your chart first"
+    : !lotValid
+      ? "Set a lot size"
+      : "";
 
   // Preselect the first mentor symbol and its saved lot/trades once known.
   useEffect(() => {
@@ -143,7 +396,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
   };
 
   const runScan = async () => {
-    if (!symbol || !accountId || scanning) return;
+    if (!chartSrc || scanning) return;
     // One of the 5 daily scans is consumed here — the route blocks when out of scans.
     if (!onScanStart()) return;
     setScanning(true);
@@ -159,12 +412,8 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
       setStep(Math.min(index, SCAN_STEPS.length - 1));
     }, 650);
     try {
-      const result = await getScannerAnalysis({ data: { accountId, symbol, timeframe, ...(region ? { region } : {}) } });
-      if (result.ok) {
-        setAnalysis(result.analysis);
-      } else {
-        setAnalysisError(result.message);
-      }
+      const result = await analyzeUploadedChart(chartSrc, symbol || "CHART", timeframe);
+      setAnalysis(result);
     } catch {
       setAnalysisError("Could not run the market analysis. Check your connection and try again.");
     } finally {
@@ -199,7 +448,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
   };
 
   const statusLine = scanning
-    ? `Analyzing ${symbol}...`
+    ? "Analyzing uploaded chart..."
     : done
       ? analysis
         ? "Analysis complete"
@@ -218,7 +467,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
           <h1 className="text-2xl font-black tracking-tight text-white">Chart Scanner</h1>
           <p className="mt-1 flex items-center gap-1.5 text-[11px] font-bold tracking-[0.18em] text-white/40">
             <span className="inline-block size-2 rounded-full" style={{ background: accent }} />
-            LIVE MARKET DATA · MT5
+            UPLOAD A CHART · GET A SIGNAL
           </p>
         </div>
         <span className="rounded-full border border-white/15 px-4 py-2 text-sm font-bold text-white/70">
@@ -226,24 +475,50 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
         </span>
       </div>
 
-      {/* Chart box — uploaded screenshot, ✕ to clear, scan line while scanning */}
-      <div className="relative mx-3 h-[240px] overflow-hidden rounded-[24px] border border-white/10 bg-black">
-        {chartSrc ? (
-          <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
+      {/* Chart upload — chart-only scanner */}
+      <div
+        className="relative mx-3 min-h-[300px] overflow-hidden rounded-[26px] border-2 border-dashed"
+        style={{ borderColor: dragging ? "#ff334d" : "#9c1d2d", backgroundColor: "#180609" }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          pickChart(event.dataTransfer.files?.[0]);
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(event) => {
+            pickChart(event.target.files?.[0]);
+            event.target.value = "";
+          }}
+        />
+        {!chartSrc ? (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative z-10 flex min-h-[300px] w-full flex-col items-center justify-center gap-3 px-6 text-center"
+          >
+            <span className="flex size-[88px] items-center justify-center rounded-full border-2 border-[#ff233f] text-[#ff233f] shadow-[0_0_28px_rgba(255,35,63,0.2)]">
+              <svg viewBox="0 0 24 24" className="size-10" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
+              </svg>
+            </span>
+            <span className="text-[20px] font-black text-white">Upload your chart</span>
+            <span className="text-[14px] text-white/45">Screenshot your chart and drop it here</span>
+          </button>
         ) : (
-          <>
-            <div className="absolute inset-0 bg-[linear-gradient(90deg,transparent_49%,rgba(255,255,255,0.05)_50%,transparent_51%)] bg-[length:40px_100%]" />
-            <div className="absolute inset-0 bg-[linear-gradient(0deg,transparent_49%,rgba(255,255,255,0.04)_50%,transparent_51%)] bg-[length:100%_40px]" />
-          </>
+          <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
         )}
-        {scanning && (
-          <div
-            className="absolute inset-x-0 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite] shadow-[0_0_15px_white]"
-            style={{ backgroundColor: accent }}
-          />
-        )}
-
-        {/* ✕ clear — only when a chart is uploaded and not mid-scan */}
+        <div className="pointer-events-none absolute inset-0 opacity-30" style={{ backgroundImage: "linear-gradient(rgba(255,35,63,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,35,63,0.16) 1px, transparent 1px)", backgroundSize: "38px 38px" }} />
+        {scanning && <div className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite] bg-[#ff233f] shadow-[0_0_15px_#ff233f]" />}
         {chartSrc && !scanning && (
           <button
             type="button"
@@ -254,16 +529,18 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
               setAnalysis(null);
               setAnalysisError("");
             }}
-            className="absolute right-3 top-3 z-20 flex size-9 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur transition-colors hover:bg-black/80"
+            className="absolute right-3 top-3 z-20 flex size-9 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur transition-colors hover:bg-black/85"
           >
             ✕
           </button>
         )}
-
-        <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 text-[12px] font-semibold" style={{ color: accent }}>
-          <span className="text-[14px]">⌜⌝</span>
-          {statusLine}
-        </div>
+        {(chartSrc || scanning) && (
+          <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2 text-[12px] font-semibold text-[#ff5a6e]">
+            <span className="text-[14px]">⌜⌝</span>
+            {statusLine}
+          </div>
+        )}
+        {chartError && <p className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 text-center text-[12px] text-red-300">{chartError}</p>}
       </div>
 
       {!done ? (
@@ -408,7 +685,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
               {/* Chart read — real bias + indicator readouts */}
               <div className="rounded-[24px] border border-white/5 bg-[#151515] p-4">
                 <div className="flex justify-between">
-                  <span className="text-[11px] tracking-[0.18em] text-white/40">⌜⌝ MARKET READ · {analysis.timeframe}</span>
+                  <span className="text-[11px] tracking-[0.18em] text-white/40">⌜⌝ CHART SIGNAL · {analysis.timeframe}</span>
                   <span
                     className="rounded-full border px-3 py-1 text-[11px] font-bold"
                     style={{
@@ -475,7 +752,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
                   ))}
                 </div>
 
-                {/* Execute — trades the ANALYZED direction with the analyzed SL/TP */}
+                {/* Chart-only signals are informational; broker execution is disabled. */}
                 {analysis.signal === "NO TRADE" ? (
                   <button
                     type="button"
@@ -490,7 +767,7 @@ export default function ChartScanner({ symbols, pairs = [], accent, scansLeft, a
                     disabled
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 font-bold text-white/50"
                   >
-                    Live price unavailable — Execute disabled
+                    Chart signal only — Trading disabled
                   </button>
                 ) : (
                   <button
