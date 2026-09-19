@@ -44,6 +44,7 @@ function SignUp() {
   });
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -52,10 +53,12 @@ function SignUp() {
     <AuthShell active="signup">
       <form
         className="mt-8 space-y-5"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (saving) return;
           if (form.password !== form.confirm) return setError("Passwords do not match.");
           if (!agree) return setError("Please accept the terms to continue.");
+          setError("");
           const res = register({
             firstName: form.firstName,
             displayName: form.displayName,
@@ -65,10 +68,23 @@ function SignUp() {
             whatsapp: form.whatsapp,
           });
           if (res.error) return setError(res.error);
-          // Mirror the new account to the shared cloud store so it appears on
-          // the admin console in near-real time (no-op when KV not configured).
-          if (res.account) void syncRegister({ data: { account: res.account } });
-          navigate({ to: "/dashboard" });
+          setSaving(true);
+          try {
+            // Wait for the cross-device write before leaving the page. The old
+            // fire-and-forget call could be interrupted by the redirect in production.
+            if (res.account) {
+              const synced = await syncRegister({ data: { account: res.account } });
+              if (synced.enabled && !synced.ok) {
+                console.error("[signup] Shared registration sync failed");
+              }
+            }
+            navigate({ to: "/dashboard" });
+          } catch (syncError) {
+            console.error("[signup] Shared registration sync unavailable", syncError);
+            navigate({ to: "/dashboard" });
+          } finally {
+            setSaving(false);
+          }
         }}
       >
         <Field label="First name">
@@ -103,8 +119,8 @@ function SignUp() {
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
-          <UserPlus className="size-5" /> Create account
+        <Button type="submit" size="lg" disabled={saving} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          <UserPlus className="size-5" /> {saving ? "Saving account..." : "Create account"}
         </Button>
 
         <p className="text-center text-sm text-muted-foreground">
