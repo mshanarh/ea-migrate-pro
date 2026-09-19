@@ -33,9 +33,18 @@ function chartOnlyFallback(symbol: string, timeframe: string, reason: string): S
   };
 }
 
-async function analyzeMarket(accountId: string | undefined, region: string | undefined, symbol: string, timeframe: string): Promise<ScannerAnalysis> {
+async function analyzeMarket(
+  accountId: string | undefined,
+  region: string | undefined,
+  symbol: string,
+  timeframe: string,
+): Promise<ScannerAnalysis> {
   if (!accountId) {
-    return chartOnlyFallback(symbol, timeframe, "Connect your MT5 account to read live prices and calculate a trade setup.");
+    return chartOnlyFallback(
+      symbol,
+      timeframe,
+      "Connect your MT5 account to read live prices and calculate a trade setup.",
+    );
   }
 
   const result = await getScannerAnalysis({
@@ -75,7 +84,15 @@ type Props = {
   /** Called when the user taps Scan — registers the daily scan. Return false to block (limit reached). */
   onScanStart: () => boolean;
   /** Fires the top execution steps from the RESULT view only. */
-  onExecute: (details: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady: boolean; stopLoss?: string; takeProfit?: string }) => void;
+  onExecute: (details: {
+    symbol: string;
+    lot: string;
+    trades: number;
+    direction: "BUY" | "SELL";
+    executionReady: boolean;
+    stopLoss?: string;
+    takeProfit?: string;
+  }) => void;
 };
 
 const SCAN_STEPS = [
@@ -103,7 +120,16 @@ const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   "NO TRADE": "#9ca3af",
 };
 
-export default function ChartScanner({ symbols, accountId, region, pairs = [], accent, scansLeft, onScanStart, onExecute }: Props) {
+export default function ChartScanner({
+  symbols,
+  accountId,
+  region,
+  pairs = [],
+  accent,
+  scansLeft,
+  onScanStart,
+  onExecute,
+}: Props) {
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
@@ -215,25 +241,39 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
         : analysisError
           ? "Analysis unavailable"
           : "Chart read complete"
-        : chartSrc
-          ? "Live market ready · chart attached"
-          : "Live market ready to scan";
+      : chartSrc
+        ? "Live market ready · chart attached"
+        : "Live market ready to scan";
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col pb-[130px]" style={{ backgroundColor: "#090c10" }}>
+    <div
+      className="mx-auto flex w-full max-w-5xl flex-col pb-[130px]"
+      style={{ backgroundColor: "#090c10" }}
+    >
       {/* Header — title, scans-left badge */}
       <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-5 sm:px-6">
         <div>
           <div className="flex items-center gap-2">
-            <span className="size-2 rounded-full" style={{ background: accountId ? "#22c55e" : "#9ca3af" }} />
-            <span className="text-[10px] font-bold tracking-[0.2em] text-white/40">{accountId ? "MT5 CONNECTED" : "MT5 NOT CONNECTED"}</span>
+            <span
+              className="size-2 rounded-full"
+              style={{ background: accountId ? "#22c55e" : "#9ca3af" }}
+            />
+            <span className="text-[10px] font-bold tracking-[0.2em] text-white/40">
+              {accountId ? "MT5 CONNECTED" : "MT5 NOT CONNECTED"}
+            </span>
           </div>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">
+            Market scanner
+          </h1>
           <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
-            Live candles and broker quotes build the setup. A screenshot is optional context only.
+            Live broker quotes build executable setups. When a market session is closed, the latest
+            available candle still builds a conditional plan.
           </p>
         </div>
-        <span data-testid="text-scans-remaining" className="shrink-0 rounded-full border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm">
+        <span
+          data-testid="text-scans-remaining"
+          className="shrink-0 rounded-full border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
+        >
           {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
         </span>
       </div>
@@ -269,19 +309,47 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             onClick={() => fileInputRef.current?.click()}
             className="relative z-10 flex min-h-[300px] w-full flex-col items-center justify-center gap-3 px-6 text-center"
           >
-            <span className="flex size-[76px] items-center justify-center rounded-full border text-white/85" style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}33` }}>
-              <svg viewBox="0 0 24 24" className="size-10" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+            <span
+              className="flex size-[76px] items-center justify-center rounded-full border text-white/85"
+              style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}33` }}
+            >
+              <svg
+                viewBox="0 0 24 24"
+                className="size-10"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.2"
+                aria-hidden="true"
+              >
                 <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
               </svg>
             </span>
             <span className="text-[20px] font-black text-white">Attach a chart screenshot</span>
-            <span className="text-[14px] text-white/45">Optional — live MT5 data powers the signal</span>
+            <span className="text-[14px] text-white/45">
+              Optional — live MT5 data powers the signal
+            </span>
           </button>
         ) : (
-          <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
+          <img
+            src={chartSrc}
+            alt="Uploaded chart"
+            className="absolute inset-0 size-full object-cover"
+          />
         )}
-        <div className="pointer-events-none absolute inset-0 opacity-30" style={{ backgroundImage: "linear-gradient(rgba(255,35,63,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,35,63,0.16) 1px, transparent 1px)", backgroundSize: "38px 38px" }} />
-        {scanning && <div className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite]" style={{ background: accent, boxShadow: `0 0 15px ${accent}` }} />}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(255,35,63,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,35,63,0.16) 1px, transparent 1px)",
+            backgroundSize: "38px 38px",
+          }}
+        />
+        {scanning && (
+          <div
+            className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite]"
+            style={{ background: accent, boxShadow: `0 0 15px ${accent}` }}
+          />
+        )}
         {chartSrc && !scanning && (
           <button
             type="button"
@@ -303,7 +371,11 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             {statusLine}
           </div>
         )}
-        {chartError && <p className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 text-center text-[12px] text-red-300">{chartError}</p>}
+        {chartError && (
+          <p className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 text-center text-[12px] text-red-300">
+            {chartError}
+          </p>
+        )}
       </div>
 
       {!done ? (
@@ -327,7 +399,10 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             <div className="mt-4 space-y-2 px-6 sm:px-8">
               {SCAN_STEPS.slice(0, step + 1).map((text, index) => (
                 <div key={index} className="flex gap-2 text-[13px] text-white/70">
-                  <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: accent }} />
+                  <span
+                    className="mt-1.5 size-2 shrink-0 rounded-full"
+                    style={{ background: accent }}
+                  />
                   {text}
                 </div>
               ))}
@@ -347,7 +422,11 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
                   type="button"
                   onClick={() => selectSymbol(item)}
                   className="rounded-full px-5 py-2.5 text-[13px] font-bold transition-colors"
-                  style={symbol === item ? { background: accent, color: "#fff" } : { background: "#222", color: "rgba(255,255,255,0.5)" }}
+                  style={
+                    symbol === item
+                      ? { background: accent, color: "#fff" }
+                      : { background: "#222", color: "rgba(255,255,255,0.5)" }
+                  }
                 >
                   {item}
                 </button>
@@ -355,11 +434,12 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             </div>
             {!hasSymbols && (
               <p className="mt-3 text-[12px] font-semibold text-white/45">
-                No symbols on this EA yet — your mentor adds them on the portal when creating the EA. Until then scanning is locked.
+                No symbols on this EA yet — your mentor adds them on the portal when creating the
+                EA. Until then scanning is locked.
               </p>
             )}
             <div className="mt-3 flex items-center justify-between">
-             <p className="text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
+              <p className="text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-bold text-white/65">
                 {timeframe}
               </span>
@@ -409,7 +489,7 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             </div>
           </div>
 
-           {/* Scan button — locked until symbol + account + trade settings are set */}
+          {/* Scan button — locked until symbol + account + trade settings are set */}
           <button
             type="button"
             onClick={startScan}
@@ -418,10 +498,13 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
             className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60 sm:mx-6"
             style={{ background: accent, boxShadow: scanLocked ? "none" : `0 0 20px ${accent}66` }}
           >
-            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" />{" "}
+            {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
           </button>
           {scanLocked && !scanning && lockReason && (
-            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">Scanning locked · {lockReason}</p>
+            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">
+              Scanning locked · {lockReason}
+            </p>
           )}
         </>
       ) : (
@@ -441,13 +524,24 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
                 <div className="flex justify-between">
                   <span className="flex items-center gap-2 text-[11px] tracking-[0.18em] text-white/40">
                     <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
-                    LIVE MARKET SIGNAL · {analysis.timeframe}
+                    {analysis.executionReady ? "LIVE MARKET SIGNAL" : "CONDITIONAL SETUP"} ·{" "}
+                    {analysis.timeframe}
                   </span>
                   <span
                     className="rounded-full border px-3 py-1 text-[11px] font-bold"
                     style={{
-                      borderColor: analysis.bias === "BULLISH" ? "#22c55e55" : analysis.bias === "BEARISH" ? "#ef444455" : "#9ca3af55",
-                      color: analysis.bias === "BULLISH" ? "#22c55e" : analysis.bias === "BEARISH" ? "#ef4444" : "#9ca3af",
+                      borderColor:
+                        analysis.bias === "BULLISH"
+                          ? "#22c55e55"
+                          : analysis.bias === "BEARISH"
+                            ? "#ef444455"
+                            : "#9ca3af55",
+                      color:
+                        analysis.bias === "BULLISH"
+                          ? "#22c55e"
+                          : analysis.bias === "BEARISH"
+                            ? "#ef4444"
+                            : "#9ca3af",
                     }}
                   >
                     {analysis.bias}
@@ -455,11 +549,21 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
                 </div>
                 <div className="mt-4 space-y-2">
                   {analysis.readouts.map((readout) => (
-                    <div key={readout.label} className="flex items-center justify-between text-[12px]">
+                    <div
+                      key={readout.label}
+                      className="flex items-center justify-between text-[12px]"
+                    >
                       <span className="text-white/40">{readout.label}</span>
                       <span
                         className="font-bold"
-                        style={{ color: readout.bullish === true ? "#22c55e" : readout.bullish === false ? "#ef4444" : "rgba(255,255,255,0.85)" }}
+                        style={{
+                          color:
+                            readout.bullish === true
+                              ? "#22c55e"
+                              : readout.bullish === false
+                                ? "#ef4444"
+                                : "rgba(255,255,255,0.85)",
+                        }}
                       >
                         {readout.value}
                       </span>
@@ -469,10 +573,15 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
                 <div className="mt-4">
                   <div className="flex justify-between text-[11px]">
                     <span className="text-white/30">CONFIDENCE</span>
-                    <span data-testid="text-analysis-confidence" className="text-white">{analysis.confidence}%</span>
+                    <span data-testid="text-analysis-confidence" className="text-white">
+                      {analysis.confidence}%
+                    </span>
                   </div>
                   <div className="mt-2 h-2 rounded-full bg-[#222]">
-                    <div className="h-2 rounded-full" style={{ width: `${analysis.confidence}%`, background: accent }} />
+                    <div
+                      className="h-2 rounded-full"
+                      style={{ width: `${analysis.confidence}%`, background: accent }}
+                    />
                   </div>
                 </div>
               </div>
@@ -481,51 +590,98 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
               <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
-                    <h2 data-testid="text-analysis-symbol" className="mt-1 text-[22px] font-black text-white">{analysis.symbol}</h2>
+                    <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">
+                      TRADE PLAN
+                    </p>
+                    <h2
+                      data-testid="text-analysis-symbol"
+                      className="mt-1 text-[22px] font-black text-white"
+                    >
+                      {analysis.symbol}
+                    </h2>
                   </div>
-                  <span data-testid="status-analysis-signal" className="rounded-full px-6 py-2 text-[13px] font-bold text-white" style={{ background: SIGNAL_COLORS[analysis.signal] }}>
+                  <span
+                    data-testid="status-analysis-signal"
+                    className="rounded-full px-6 py-2 text-[13px] font-bold text-white"
+                    style={{ background: SIGNAL_COLORS[analysis.signal] }}
+                  >
                     {analysis.signal}
                   </span>
                 </div>
                 <div className="mt-3 flex items-center justify-between border-y border-white/5 py-2.5">
-                  <span className="text-[10px] font-bold tracking-[0.18em] text-white/35">EXECUTION STATUS</span>
+                  <span className="text-[10px] font-bold tracking-[0.18em] text-white/35">
+                    EXECUTION STATUS
+                  </span>
                   <span
                     data-testid="status-execution-ready"
                     className="text-[11px] font-bold"
-                    style={{ color: analysis.executionReady && analysis.signal !== "NO TRADE" ? "#4ade80" : "#9ca3af" }}
+                    style={{
+                      color:
+                        analysis.executionReady && analysis.signal !== "NO TRADE"
+                          ? "#4ade80"
+                          : "#9ca3af",
+                    }}
                   >
-                    {analysis.executionReady && analysis.signal !== "NO TRADE" ? "READY · LIVE QUOTE" : "LOCKED · ANALYSIS ONLY"}
+                    {analysis.executionReady && analysis.signal !== "NO TRADE"
+                      ? "READY · LIVE QUOTE"
+                      : "LOCKED · CONDITIONAL PLAN"}
                   </span>
                 </div>
                 <div className="mt-4 grid grid-cols-3 gap-2">
                   <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
-                    <p className="text-[10px]" style={{ color: accent }}>ENTRY</p>
-                    <p data-testid="text-analysis-entry" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.entry)}</p>
+                    <p className="text-[10px]" style={{ color: accent }}>
+                      ENTRY
+                    </p>
+                    <p
+                      data-testid="text-analysis-entry"
+                      className="mt-1 text-[12px] font-bold text-white"
+                    >
+                      {fmtSignalLevel(analysis.entry)}
+                    </p>
                   </div>
                   <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
                     <p className="text-[10px] text-red-400">STOP-LOSS</p>
-                    <p data-testid="text-analysis-stop-loss" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.stopLoss)}</p>
+                    <p
+                      data-testid="text-analysis-stop-loss"
+                      className="mt-1 text-[12px] font-bold text-white"
+                    >
+                      {fmtSignalLevel(analysis.stopLoss)}
+                    </p>
                   </div>
                   <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
                     <p className="text-[10px] text-green-400">TAKE-PROFIT</p>
-                    <p data-testid="text-analysis-take-profit" className="mt-1 text-[12px] font-bold text-white">{fmtSignalLevel(analysis.takeProfit)}</p>
+                    <p
+                      data-testid="text-analysis-take-profit"
+                      className="mt-1 text-[12px] font-bold text-white"
+                    >
+                      {fmtSignalLevel(analysis.takeProfit)}
+                    </p>
                   </div>
                 </div>
                 <div className="mt-3 flex items-center justify-between text-[11px]">
                   <span className="text-white/30">RISK : REWARD</span>
-                  <span data-testid="text-analysis-risk-reward" className="font-bold" style={{ color: accent }}>{analysis.riskReward}</span>
+                  <span
+                    data-testid="text-analysis-risk-reward"
+                    className="font-bold"
+                    style={{ color: accent }}
+                  >
+                    {analysis.riskReward}
+                  </span>
                 </div>
                 <div className="mt-3 space-y-1.5">
                   {analysis.reasons.map((reason, index) => (
                     <p key={index} className="flex gap-2 text-[12px] leading-relaxed text-white/50">
-                      <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: accent }} aria-hidden="true" />
+                      <span
+                        className="mt-1.5 size-1.5 shrink-0 rounded-full"
+                        style={{ background: accent }}
+                        aria-hidden="true"
+                      />
                       <span>{reason}</span>
                     </p>
                   ))}
                 </div>
 
-                 {/* Only live-quote signals can be executed. */}
+                {/* Conditional weekend/closed-session plans show levels but cannot execute until a live quote returns. */}
                 {analysis.signal === "NO TRADE" ? (
                   <button
                     type="button"
@@ -542,12 +698,22 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
                     data-testid="button-execute-disabled-not-ready"
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 px-4 text-center font-bold text-white/50"
                   >
-                     Live quote unavailable — Trading disabled
+                    Conditional setup only — live quote required to trade
                   </button>
                 ) : (
                   <button
                     type="button"
-                    onClick={() => onExecute({ symbol: analysis.symbol, lot, trades, direction: analysis.signal as "BUY" | "SELL", executionReady: analysis.executionReady, stopLoss: String(analysis.stopLoss), takeProfit: String(analysis.takeProfit) })}
+                    onClick={() =>
+                      onExecute({
+                        symbol: analysis.symbol,
+                        lot,
+                        trades,
+                        direction: analysis.signal as "BUY" | "SELL",
+                        executionReady: analysis.executionReady,
+                        stopLoss: String(analysis.stopLoss),
+                        takeProfit: String(analysis.takeProfit),
+                      })
+                    }
                     data-testid="button-execute-trade"
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full font-bold text-white"
                     style={{ background: accent }}
@@ -573,7 +739,9 @@ export default function ChartScanner({ symbols, accountId, region, pairs = [], a
 
           {!analysis && !analysisError && (
             <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4 text-center">
-              <p className="text-[13px] text-white/60">Scan finished without a result — try again.</p>
+              <p className="text-[13px] text-white/60">
+                Scan finished without a result — try again.
+              </p>
               <button
                 type="button"
                 onClick={() => setDone(false)}
