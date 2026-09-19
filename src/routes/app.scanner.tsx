@@ -1,10 +1,14 @@
 import { useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
+import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import ChartScanner from "@/components/app/ChartScanner";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
+import { executeLiveTrade } from "@/lib/metaapi";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -23,6 +27,9 @@ function AppScanner() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
+  const [details, setDetails] = useState<{ symbol: string; lot: string; trades: number } | null>(null);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
   const unlimited = isUnlimitedScanner(app.email);
   const scansLeft = unlimited ? Infinity : DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
 
@@ -42,18 +49,79 @@ function AppScanner() {
     return true;
   };
 
+  // Execute pressed — show the TOP execution toast, fire the real trade(s) on
+  // the connected MT5 account via MetaApi in the ANALYZED direction with the
+  // analyzed SL/TP attached, AND stream the logs into the floating bot popup.
+  // The toast's final line reflects the provider outcome.
+  const handleExecute = ({ symbol, lot, trades, direction, executionReady, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady: boolean; stopLoss?: string; takeProfit?: string }) => {
+    if (!executionReady) {
+      toast.error("Execution is locked until a live MT5 setup is ready.");
+      return;
+    }
+    window.triggerExecutionToast?.(robot?.name, robot?.image, {
+      symbol,
+      lot_size: lot,
+      max_trades: trades,
+    });
+    setDetails(null);
+    setToastTrades(Math.max(1, Math.min(trades, 20)));
+    setToastOpen(true);
+
+    const count = Math.max(1, Math.min(trades, 20));
+    if (!app.mt?.mcAccountId) {
+      toast.error("Connect your MT5 account first — MetaTrader page.");
+      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "No connected MT5 account — link it on the MetaTrader page" } }));
+      return;
+    }
+    Promise.all(
+      Array.from({ length: count }, () =>
+        executeLiveTrade({
+          data: {
+            accountId: app.mt?.mcAccountId ?? "",
+            eaName: robot?.name ?? "EA",
+            symbol,
+            direction,
+            lotSize: lot,
+            ...(stopLoss ? { stopLoss } : {}),
+            ...(takeProfit ? { takeProfit } : {}),
+          },
+        }),
+      ),
+    )
+      .then((results) => {
+        const ok = results.filter((item) => item.ok).length;
+        if (ok === count) {
+          toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
+          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: true, message: `${ok}/${count} trades executed on MT5` } }));
+        } else {
+          const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
+          toast.error(`${ok}/${count} executed — ${reason}`);
+          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: reason } }));
+        }
+      })
+      .catch(() => {
+        toast.error("Could not reach the execution provider.");
+        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "Could not reach the execution provider." } }));
+      });
+  };
+
   return (
     <div className="app-fullscreen bg-[#07090b] text-white">
       <div className="app-scroll-area">
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
+          {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
+          {...(app.mt?.environment ? { region: app.mt.environment } : {})}
           accent={accent}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}
+          onExecute={handleExecute}
         />
       </div>
       <FixedBottomNav />
+      <DraggableBotPopup />
+      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">
