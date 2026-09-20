@@ -40,21 +40,24 @@ import heroApp from "/ea-migrate-hero.jpg";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "EA Migrate Pro — Build Custom Forex Expert Advisors" },
+      { title: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
       {
         name: "description",
         content:
-          "Create, backtest and deploy custom MT4/MT5 Expert Advisors with a visual strategy builder. No coding required.",
+          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
       },
-      { property: "og:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
+      { name: "robots", content: "index, follow" },
+      { property: "og:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
       {
         property: "og:description",
         content:
-          "Visual strategy builder for MT4 and MT5 Expert Advisors. Build, test and deploy in minutes.",
+          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:url", content: "https://eamigratepro.vercel.app" },
       { name: "twitter:card", content: "summary_large_image" },
     ],
+    links: [{ rel: "canonical", href: "https://eamigratepro.vercel.app" }],
   }),
   component: Home,
 });

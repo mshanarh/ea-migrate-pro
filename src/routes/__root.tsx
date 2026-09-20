@@ -86,14 +86,31 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
       { name: "apple-mobile-web-app-title", content: "EA Migrate Pro" },
-      { title: "EA Migrate Pro — Build Custom Forex EAs" },
+      { title: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
       {
         name: "description",
         content:
-          "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
+          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
       },
+      { name: "robots", content: "index, follow" },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "EA Migrate Pro" },
+      { property: "og:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      {
+        property: "og:description",
+        content:
+          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+      },
+      { property: "og:url", content: "https://eamigratepro.vercel.app" },
+      { property: "og:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      {
+        name: "twitter:description",
+        content:
+          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+      },
+      { name: "twitter:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
     ],
     links: [
       {
