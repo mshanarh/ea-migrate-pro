@@ -681,7 +681,10 @@ export default function ChartScanner({
                   ))}
                 </div>
 
-                {/* Conditional weekend/closed-session plans show levels but cannot execute until a live quote returns. */}
+                {/* Conditional weekend/closed-session plans STILL execute —
+                    the user trades the available pairs even on weekends. If
+                    the broker refuses (market fully shut), its real error is
+                    surfaced instead of a silent block. */}
                 {analysis.signal === "NO TRADE" ? (
                   <button
                     type="button"
@@ -689,16 +692,27 @@ export default function ChartScanner({
                     data-testid="button-execute-disabled-no-trade"
                     className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 px-4 text-center font-bold text-white/50"
                   >
-                    No high-probability setup — Execute disabled
+                    No market data yet — a plan needs at least one candle
                   </button>
                 ) : !analysis.executionReady ? (
                   <button
                     type="button"
-                    disabled
-                    data-testid="button-execute-disabled-not-ready"
-                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full bg-white/10 px-4 text-center font-bold text-white/50"
+                    onClick={() =>
+                      onExecute({
+                        symbol: analysis.symbol,
+                        lot,
+                        trades,
+                        direction: analysis.signal as "BUY" | "SELL",
+                        executionReady: analysis.executionReady,
+                        stopLoss: String(analysis.stopLoss),
+                        takeProfit: String(analysis.takeProfit),
+                      })
+                    }
+                    data-testid="button-execute-conditional"
+                    className="mt-4 flex h-[56px] w-full items-center justify-center rounded-full px-4 text-center font-bold text-white"
+                    style={{ background: accent }}
                   >
-                    Conditional setup only — live quote required to trade
+                    Execute (closed-session plan) — {analysis.signal} {lot} Lot
                   </button>
                 ) : (
                   <button

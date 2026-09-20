@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import type { Account, PaymentRecord, PortalStatus } from "@/lib/auth-store";
+import { OWNER_EMAILS, type Account, type PaymentRecord, type PortalStatus } from "@/lib/auth-store";
 
 /**
  * Shared cloud account sync — makes registrations visible on the admin page
@@ -93,8 +93,26 @@ export const syncRegister = createServerFn({ method: "POST" })
     if (!cloudSyncConfigured()) return { enabled: false, ok: false };
     const account = data.account;
     if (!account?.email || typeof account.email !== "string") return { enabled: true, ok: false };
+    const email = account.email.trim().toLowerCase();
+    // MERGE, never clobber: admin-controlled fields (status, role, license
+    // limit, licenses) always win from the cloud copy, so a device holding a
+    // stale "pending" snapshot can never revert an approval when it mirrors
+    // its profile or EAs. Client fields (profile, EAs, website) win locally.
+    const existing = await readAccount(email);
+    let merged: Account = account;
+    if (existing) {
+      const licensesById = new Map(existing.licenses.map((license) => [license.id, license]));
+      for (const license of account.licenses) licensesById.set(license.id, license);
+      merged = {
+        ...account,
+        status: existing.status,
+        role: existing.role,
+        licenseLimit: existing.licenseLimit,
+        licenses: Array.from(licensesById.values()),
+      };
+    }
     const results = await pipeline([
-      ["HSET", ACCOUNTS_KEY, account.email.trim().toLowerCase(), JSON.stringify(account)],
+      ["HSET", ACCOUNTS_KEY, email, JSON.stringify(merged)],
     ]);
     return { enabled: true, ok: results !== null && !results[0]?.error };
   });
@@ -161,6 +179,22 @@ export const syncSignIn = createServerFn({ method: "POST" })
   });
 
 /* ------------------------------------------------------------------ */
+/* Status refresh — a signed-in device polls this so admin decisions   */
+/* (approve / reject / license limit) appear LIVE without signing out. */
+/* ------------------------------------------------------------------ */
+
+export type SyncGetAccountInput = { email: string };
+export type SyncGetAccountResult = { enabled: boolean; account: PublicAccount | null };
+
+export const syncGetAccount = createServerFn({ method: "POST" })
+  .validator((data: SyncGetAccountInput) => data)
+  .handler(async ({ data }): Promise<SyncGetAccountResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, account: null };
+    const account = await readAccount(data.email);
+    return { enabled: true, account: account ? toPublic(account) : null };
+  });
+
+/* ------------------------------------------------------------------ */
 /* Admin mutations — verified server-side against an admin account.   */
 /* ------------------------------------------------------------------ */
 
@@ -176,6 +210,11 @@ export type SyncAdminUpdateResult = { enabled: boolean; ok: boolean; error?: str
 async function requireAdmin(adminEmail: string): Promise<{ ok: true } | { ok: false; error: string }> {
   const clean = adminEmail.trim().toLowerCase();
   if (clean.length === 0) return { ok: false, error: "Sign in as an admin to make changes." };
+  // Platform owners are admins even when their account record was never
+  // mirrored into the cloud store (e.g. the seeded admin@eamigrate.pro login,
+  // which only ever existed in a device's localStorage). Without this, admin
+  // mutations silently failed and approvals never reached the mentor.
+  if (OWNER_EMAILS.includes(clean)) return { ok: true };
   const results = await pipeline([["HGET", ACCOUNTS_KEY, clean]]);
   const raw = results?.[0]?.result;
   const admin = typeof raw === "string" ? parseAccount(raw) : null;

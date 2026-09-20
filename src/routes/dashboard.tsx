@@ -1,8 +1,9 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { Clock, ShieldCheck, MessageCircle } from "lucide-react";
 import { PortalLayout } from "@/components/PortalLayout";
-import { useCurrentAccount } from "@/lib/auth-store";
+import { updateProfile, useCurrentAccount } from "@/lib/auth-store";
+import { syncGetAccount } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/dashboard")({
   ssr: false,
@@ -33,6 +34,38 @@ function DashboardLayout() {
   useEffect(() => {
     if (!account) navigate({ to: "/signin" });
   }, [account, navigate]);
+
+  // Live admin sync: the admin's decision (approve / reject / license limit)
+  // lands on this device within seconds via the shared cloud store — the
+  // mentor no longer has to sign out and back in to see the approval. Without
+  // this poll a device kept its stale "pending" status forever.
+  const accountRef = useRef(account);
+  accountRef.current = account;
+  const accountId = account?.id;
+  useEffect(() => {
+    if (!accountId) return;
+    let cancelled = false;
+    const pull = async () => {
+      const current = accountRef.current;
+      if (!current) return;
+      try {
+        const result = await syncGetAccount({ data: { email: current.email } });
+        if (cancelled || !result.enabled || !result.account) return;
+        const cloud = result.account;
+        if (cloud.status !== current.status || cloud.role !== current.role || cloud.licenseLimit !== current.licenseLimit) {
+          updateProfile(current.id, { status: cloud.status, role: cloud.role, licenseLimit: cloud.licenseLimit });
+        }
+      } catch {
+        /* transient network error — retried on the next tick */
+      }
+    };
+    void pull();
+    const timer = setInterval(() => void pull(), 4000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [accountId]);
 
   if (!account) return null;
 
