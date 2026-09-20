@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
+import { BrandLogo } from "@/components/BrandLogo";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
@@ -272,7 +273,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
               <MessageCircle className="size-5" />
             </button>
             <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-black/55 backdrop-blur-sm">
-              <img src="/botlogic-mascot.png" alt="" className="size-full rounded-full object-cover" />
+              <BrandLogo className="size-full rounded-full object-cover" />
               <span className="absolute -bottom-0.5 left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-black bg-[#22C55E]" />
             </span>
           </div>

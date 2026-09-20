@@ -1,11 +1,15 @@
-import { useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronRight } from "lucide-react";
+import { Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-react";
+import { toast } from "sonner";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
+import { BrandLogo } from "@/components/BrandLogo";
+import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
+import { saveImageBlob } from "@/lib/media-store";
 import {
   ACCENT_COLORS,
   FONT_OPTIONS,
@@ -230,11 +234,96 @@ function AppSettings() {
             <PillSection icon="🎵" label="Music" open={!!openSections["music"]} onToggle={() => toggleSection("music")}>
               <MusicSettingsSection />
             </PillSection>
+
+            <PillSection icon="🤖" label="App Logo" open={!!openSections["logo"]} onToggle={() => toggleSection("logo")}>
+              <AppLogoSection />
+            </PillSection>
           </div>
         </main>
       </div>
       <FixedBottomNav />
       <DraggableBotPopup />
+    </div>
+  );
+}
+
+/**
+ * App logo — upload the logo image once (e.g. the new EA Migrate robot from
+ * your phone gallery) and it replaces the logo on EVERY screen: landing page,
+ * auth pages, portal headers, admin console, welcome gate, chat bubble and
+ * the browser tab icon. Reset brings back the built-in mascot.
+ */
+function AppLogoSection() {
+  const { logoRef } = useBrand();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+
+  const handleUpload = (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) {
+      toast.error("Choose an image file (PNG or JPG).");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error("That image is larger than 10MB.");
+      return;
+    }
+    setBusy(true);
+    saveImageBlob(file)
+      .then((ref) => {
+        setCustomLogo(ref);
+        toast.success("Logo updated everywhere!");
+      })
+      .catch(() => toast.error("Could not save that image. Try again."))
+      .finally(() => setBusy(false));
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-4">
+        <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-black/60">
+          <BrandLogo className="size-full object-cover" />
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-bold">{logoRef ? "Custom logo active" : "Built-in mascot active"}</p>
+          <p className="mt-0.5 text-[12px] leading-relaxed text-white/50">
+            Upload your logo once — it appears on every page and in the tab icon.
+          </p>
+        </div>
+      </div>
+
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(event) => {
+          handleUpload(event.target.files?.[0]);
+          event.target.value = "";
+        }}
+      />
+      <div className="flex gap-2">
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={busy}
+          className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] text-sm font-bold text-white/85 transition-colors hover:bg-white/[0.1] disabled:opacity-60"
+        >
+          <ImagePlus className="size-4" /> {busy ? "Saving..." : "Upload logo"}
+        </button>
+        {logoRef && (
+          <button
+            type="button"
+            onClick={() => {
+              void clearCustomLogo();
+              toast.success("Back to the built-in mascot");
+            }}
+            className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] px-4 text-sm font-bold text-white/60 transition-colors hover:text-white"
+          >
+            <RotateCcw className="size-4" /> Reset
+          </button>
+        )}
+      </div>
     </div>
   );
 }

@@ -15,15 +15,18 @@
 const DB_NAME = "eamp-media";
 const STORE = "videos";
 const AUDIO_STORE = "audio";
+const IMAGE_STORE = "images";
 const REF_PREFIX = "idb-video:";
 const AUDIO_REF_PREFIX = "idb-audio:";
+const IMAGE_REF_PREFIX = "idb-image:";
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, 2);
+    const request = indexedDB.open(DB_NAME, 3);
     request.onupgradeneeded = () => {
       if (!request.result.objectStoreNames.contains(STORE)) request.result.createObjectStore(STORE);
       if (!request.result.objectStoreNames.contains(AUDIO_STORE)) request.result.createObjectStore(AUDIO_STORE);
+      if (!request.result.objectStoreNames.contains(IMAGE_STORE)) request.result.createObjectStore(IMAGE_STORE);
     };
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error("IndexedDB unavailable"));
@@ -158,6 +161,51 @@ export async function deleteAudioBlob(ref: string | undefined): Promise<void> {
   await new Promise<void>((resolve) => {
     const tx = db.transaction(AUDIO_STORE, "readwrite");
     tx.objectStore(AUDIO_STORE).delete(id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => resolve();
+  });
+  db.close();
+}
+
+/* ── Brand images (custom app logo) — same pattern, one more store ─────── */
+
+/** Saves an image file and returns the tiny reference string for localStorage. */
+export async function saveImageBlob(file: Blob): Promise<string> {
+  const id = `i_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const db = await openDb();
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, "readwrite");
+    tx.objectStore(IMAGE_STORE).put(file, id);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error("Could not store the image"));
+  });
+  db.close();
+  return IMAGE_REF_PREFIX + id;
+}
+
+/** Loads the image blob for a reference and hands back a display-ready object URL. */
+export async function loadImageUrl(ref: string): Promise<string | null> {
+  if (!ref.startsWith(IMAGE_REF_PREFIX)) return null; // plain http(s)/path passes through
+  const id = ref.slice(IMAGE_REF_PREFIX.length);
+  const db = await openDb();
+  const blob = await new Promise<Blob | undefined>((resolve, reject) => {
+    const tx = db.transaction(IMAGE_STORE, "readonly");
+    const request = tx.objectStore(IMAGE_STORE).get(id);
+    request.onsuccess = () => resolve(request.result as Blob | undefined);
+    request.onerror = () => reject(request.error ?? new Error("Could not load the image"));
+  });
+  db.close();
+  return blob ? URL.createObjectURL(blob) : null;
+}
+
+/** Deletes the image blob behind a reference (call when the logo is reset). */
+export async function deleteImageBlob(ref: string | undefined): Promise<void> {
+  if (!ref || !ref.startsWith(IMAGE_REF_PREFIX)) return;
+  const id = ref.slice(IMAGE_REF_PREFIX.length);
+  const db = await openDb();
+  await new Promise<void>((resolve) => {
+    const tx = db.transaction(IMAGE_STORE, "readwrite");
+    tx.objectStore(IMAGE_STORE).delete(id);
     tx.oncomplete = () => resolve();
     tx.onerror = () => resolve();
   });

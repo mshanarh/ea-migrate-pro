@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { BrandLogo } from "@/components/BrandLogo";
 import {
   Blocks,
   Cpu,
@@ -223,7 +224,7 @@ function LandingChatbot() {
       {open && (
         <div className="max-w-[360px] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
-            <img src="/botlogic-mascot.jpg?v=2" alt="EA Migrate bot" className="size-10 rounded-full border-2 border-primary object-cover shadow-glow" />
+            <BrandLogo className="size-10 rounded-full border-2 border-primary object-cover shadow-glow" alt="EA Migrate bot" />
             <div className="min-w-0 flex-1">
               <p className="font-bold">EA Migrate assistant</p>
               <p className="text-xs text-emerald-400">Online · Ask anything</p>
@@ -249,7 +250,7 @@ function LandingChatbot() {
         </div>
       )}
       <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
-        <img src="/botlogic-mascot.jpg?v=2" alt="" className="size-full rounded-full object-cover" />
+        <BrandLogo className="size-full rounded-full object-cover" />
         <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
         <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
       </motion.button>
@@ -537,7 +538,7 @@ function Home() {
           <div className="py-10">
             <div className="flex items-center gap-2">
               <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 glow-ring">
-                <img src="/botlogic-mascot.jpg?v=2" alt="" className="size-6 rounded-md object-cover" />
+                <BrandLogo className="size-6 rounded-md object-cover" />
               </span>
               <span className="text-base font-bold uppercase">
                 EA <span className="text-primary">Migrate</span> Pro

@@ -15,7 +15,7 @@ import { deleteAudioBlob } from "@/lib/media-store";
  *   page load, so playback always starts from an explicit user tap.
  */
 
-export type TrackSource = { kind: "upload"; ref: string; name: string } | { kind: "spotify"; url: string; name: string };
+export type TrackSource = { kind: "builtin"; id: string; name: string } | { kind: "upload"; ref: string; name: string } | { kind: "spotify"; url: string; name: string };
 
 type MusicState = {
   track: TrackSource | null;
@@ -85,6 +85,13 @@ export function setUploadedTrack(ref: string, name: string) {
 export function setSpotifyTrack(url: string, name: string) {
   load();
   state = { ...state, track: { kind: "spotify", url, name } };
+  persist();
+}
+
+/** Selects one of the built-in generated tracks (Settings → Music grid). */
+export function setBuiltinTrack(id: string, name: string) {
+  load();
+  state = { ...state, track: { kind: "builtin", id, name } };
   persist();
 }
 

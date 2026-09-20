@@ -1,20 +1,25 @@
 import { useEffect, useRef, useState } from "react";
 import { Music2, Pause, Play, Plus, Volume2, X } from "lucide-react";
 import { loadAudioUrl } from "@/lib/media-store";
-import { removeMusicTrack, setMusicPlaying, setMusicVolume, setSpotifyTrack, setUploadedTrack, useMusic } from "@/lib/music-store";
+import { removeMusicTrack, setBuiltinTrack, setMusicPlaying, setMusicVolume, setSpotifyTrack, setUploadedTrack, useMusic } from "@/lib/music-store";
+import { BUILTIN_TRACKS, playBuiltinTrack, setBuiltinVolume, stopBuiltinTrack } from "@/lib/piano-tracks";
 
 /**
  * Relaxation-music settings section (lives inside Settings → Music, not as a
  * floating pill on every screen).
  *
- * - Upload any audio file from the phone (mp3, m4a, wav, ogg…) — stored in
- *   IndexedDB via media-store, so it persists across visits.
- * - Or save a Spotify playlist/track link — a tap opens it in the Spotify app
- *   so playback keeps running while the user trades.
- * - Play/pause + volume. Playback is always started by an explicit user tap
- *   (browser autoplay policies block sound on load).
- * - The audio element lives at document level, so navigation between app
- *   screens never interrupts playback.
+ * - BUILT-IN TRACKS: press any track and it plays instantly — original
+ *   piano, amapiano and lofi grooves generated live in the browser (royalty
+ *   free, work offline, nothing to download).
+ * - UPLOAD: any audio file from the phone (mp3, m4a, wav, ogg…) — stored in
+ *   IndexedDB via media-store, so it persists across visits. This is where
+ *   artist songs (Chris Brown etc.) come in — they can't be bundled, but
+ *   upload + Spotify cover them.
+ * - SPOTIFY: a saved playlist/track link opens in the Spotify app so
+ *   playback keeps running while the user trades.
+ * - Play/pause + volume. Playback always starts from an explicit user tap
+ *   (browser autoplay policies block sound on load). The audio element lives
+ *   at document level, so navigation never interrupts playback.
  */
 
 function formatName(name: string) {
@@ -68,11 +73,12 @@ export function MusicSettingsSection() {
     };
   }, [track]);
 
-  // Keep element state in sync with the store.
+  // Keep element state in sync with the store (uploaded files only —
+  // built-in tracks run through the Web Audio engine instead).
   useEffect(() => {
     const el = audioRef.current;
     if (!el) return;
-    if (track?.kind === "spotify" || !resolvedUrl) {
+    if (track?.kind !== "upload" || !resolvedUrl) {
       el.pause();
       el.removeAttribute("src");
       return;
@@ -88,6 +94,35 @@ export function MusicSettingsSection() {
       el.pause();
     }
   }, [playing, volume, resolvedUrl, track]);
+
+  // Built-in generated tracks: drive the synth engine from the store.
+  // Volume is applied live by the effect below so it never restarts playback.
+  useEffect(() => {
+    if (track?.kind !== "builtin") {
+      stopBuiltinTrack();
+      return;
+    }
+    if (playing) playBuiltinTrack(track.id, volume);
+    else stopBuiltinTrack();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [track?.kind === "builtin" ? track.id : null, playing]);
+
+  useEffect(() => {
+    setBuiltinVolume(volume);
+  }, [volume]);
+
+  /** Press a built-in track: play it; press again to pause. */
+  const tapBuiltin = (id: string, name: string) => {
+    setError(null);
+    if (track?.kind === "builtin" && track.id === id) {
+      setMusicPlaying(!playing);
+      return;
+    }
+    setBuiltinTrack(id, name);
+    setMusicPlaying(true);
+  };
+
+  const activeBuiltinId = track?.kind === "builtin" ? track.id : null;
 
   const handleUpload = (file: File | undefined) => {
     setError(null);
@@ -124,6 +159,39 @@ export function MusicSettingsSection() {
 
   return (
     <div className="space-y-4">
+      {/* BUILT-IN TRACKS — press to play, press again to pause */}
+      <div>
+        <p className="mb-2 text-[10px] font-black tracking-[0.22em] text-white/40 uppercase">Tap a track to play</p>
+        <div className="grid grid-cols-2 gap-2">
+          {BUILTIN_TRACKS.map((item) => {
+            const active = activeBuiltinId === item.id;
+            const isPlaying = active && playing;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => tapBuiltin(item.id, item.name)}
+                className={`flex items-center gap-2.5 rounded-2xl border p-3 text-left transition-colors ${
+                  active ? "border-cyan-300/60 bg-cyan-300/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
+                }`}
+              >
+                <span
+                  className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors ${
+                    isPlaying ? "bg-cyan-300 text-black" : "bg-white/10 text-white/80"
+                  }`}
+                >
+                  {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+                </span>
+                <span className="min-w-0">
+                  <span className="block truncate text-[13px] font-bold text-white">{item.name}</span>
+                  <span className="block truncate text-[10px] text-white/40">{item.mood}</span>
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       {/* Now playing card */}
       <div className="flex items-center gap-3 rounded-3xl border border-white/10 bg-[#0f1a1a] p-4">
         <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/8">
@@ -132,9 +200,27 @@ export function MusicSettingsSection() {
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-white">{track ? formatName(track.name) : "No track yet"}</p>
           <p className="text-[11px] text-white/45">
-            {track ? (track.kind === "upload" ? "Uploaded track" : "Spotify link saved") : "Upload music or paste a Spotify link"}
+            {track
+              ? track.kind === "upload"
+                ? "Uploaded track"
+                : track.kind === "builtin"
+                  ? playing
+                    ? "Playing · built-in track"
+                    : "Built-in track · paused"
+                  : "Spotify link saved"
+              : "Press a track below to start the music"}
           </p>
         </div>
+        {track?.kind === "builtin" && (
+          <button
+            type="button"
+            aria-label={playing ? "Pause" : "Play"}
+            onClick={() => setMusicPlaying(!playing)}
+            className="flex size-11 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-cyan-300 transition-transform active:scale-95"
+          >
+            {playing ? <Pause className="size-5" /> : <Play className="size-5" />}
+          </button>
+        )}
         {track?.kind === "upload" && (
           <button
             type="button"
@@ -222,7 +308,7 @@ export function MusicSettingsSection() {
 
       {error && <p className="text-[12px] text-red-400">{error}</p>}
       <p className="text-[11px] leading-relaxed text-white/35">
-        Your music keeps playing across app screens. Spotify links open in the Spotify app so playback continues while you trade.
+        Built-in tracks are generated live in the app — original piano, amapiano and lofi grooves, so they're royalty-free and work offline. For artist songs (Chris Brown and more), upload them or paste a Spotify link. Your music keeps playing across app screens.
       </p>
     </div>
   );

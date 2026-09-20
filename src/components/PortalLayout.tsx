@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
+import { BrandLogo } from "@/components/BrandLogo";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -52,9 +53,7 @@ const sections: { label?: string; items: NavItem[] }[] = [
 ];
 
 function BrandMark({ size = "size-9" }: { size?: string }) {
-  return (
-    <img src="/botlogic-mascot.png" alt="" className={`${size} shrink-0 rounded-full object-cover`} />
-  );
+  return <BrandLogo className={`${size} shrink-0 rounded-full object-cover`} />;
 }
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {

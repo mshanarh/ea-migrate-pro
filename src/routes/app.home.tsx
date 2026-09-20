@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
+import { BrandLogo } from "@/components/BrandLogo";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
@@ -113,9 +114,7 @@ function WelcomeMaster() {
         className="absolute inset-0"
         style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
       />
-      <img
-        src="/botlogic-mascot.png"
-        alt=""
+      <BrandLogo
         className="relative size-24 rounded-[24px] object-cover"
         style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
       />
