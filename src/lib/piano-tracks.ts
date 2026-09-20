@@ -5,9 +5,10 @@
  *
  * Styles: soft piano loops, amapiano-style log-drum grooves and mellow lofi —
  * the kind of calm background music for while the robot trades. Press a track
- * in Settings → Music and it plays instantly; press again to pause.
+ * in Settings → Music (page or drawer) and it plays instantly; press again to
+ * pause.
  *
- * For real artist songs (Chris Brown etc.), use "Add your own music" (upload)
+ * For real artist songs (Chris Brown etc.), use "Upload music from phone"
  * or paste a Spotify playlist link — those stay fully supported alongside.
  */
 
@@ -16,6 +17,8 @@ export type BuiltinStyle = "piano" | "amapiano" | "lofi";
 export type BuiltinTrack = {
   id: string;
   name: string;
+  /** Credit line shown under the title, like the artist on a playlist. */
+  artist: string;
   mood: string;
   style: BuiltinStyle;
   bpm: number;
@@ -35,16 +38,32 @@ const Amin7 = [45, 52, 55, 60];
 const Fmaj7 = [41, 48, 52, 57];
 const Cmaj7 = [48, 55, 59, 64];
 const Gmaj7 = [43, 50, 54, 59];
+const Dmin7 = [38, 45, 48, 53];
+const Gm7 = [43, 46, 50, 53];
+const Bbmaj7 = [46, 50, 53, 57];
+const Am7 = [45, 48, 52, 55];
+const Em7 = [40, 47, 50, 54];
+const Gmaj9 = [43, 50, 54, 59];
+const Cm7 = [48, 51, 55, 58];
+const Fm7 = [41, 48, 51, 55];
 
 export const BUILTIN_TRACKS: BuiltinTrack[] = [
-  { id: "piano-sunrise", name: "Piano Sunrise", mood: "Soft · Uplifting", style: "piano", bpm: 76, chords: [Cmaj, Gmaj, Amin, Fmaj], bass: [36, 43, 45, 41] },
-  { id: "amapiano-sunset", name: "Amapiano Sunset", mood: "Log drum · Groove", style: "amapiano", bpm: 112, chords: [Amin7, Fmaj7, Cmaj7, Gmaj7], bass: [33, 29, 36, 31] },
-  { id: "log-drum-nights", name: "Log Drum Nights", mood: "Deep · Amapiano", style: "amapiano", bpm: 114, chords: [[40, 47, 51, 55], [41, 48, 52, 55], [43, 50, 53, 57], [38, 45, 48, 52]], bass: [28, 29, 31, 26] },
-  { id: "rainy-keys", name: "Rainy Keys", mood: "Calm · Rainy", style: "piano", bpm: 68, chords: [Amin, Fmaj, Cmaj, Gmaj], bass: [33, 29, 36, 31] },
-  { id: "gospel-morning", name: "Gospel Morning", mood: "Warm · Soulful", style: "piano", bpm: 72, chords: [[41, 48, 52, 57], [45, 52, 57, 60], [43, 50, 55, 59], [48, 55, 60, 64]], bass: [29, 33, 31, 36] },
-  { id: "deep-focus", name: "Deep Focus", mood: "Lofi · Mellow", style: "lofi", bpm: 82, chords: [Dmin, Amin, [41, 45, 48], [43, 47, 50]], bass: [26, 33, 29, 31] },
-  { id: "sunday-chill", name: "Sunday Chill", mood: "Lofi · Smooth", style: "lofi", bpm: 86, chords: [Fmaj7, Cmaj7, Amin7, Gmaj7], bass: [29, 36, 33, 31] },
-  { id: "trade-calm", name: "Trade Calm", mood: "Ambient · Focus", style: "piano", bpm: 64, chords: [Cmaj7, Amin7, Fmaj7, Gmaj7], bass: [36, 33, 29, 31] },
+  { id: "piano-sunrise", name: "Piano Sunrise", artist: "EA Keys", mood: "Soft · Uplifting", style: "piano", bpm: 76, chords: [Cmaj, Gmaj, Amin, Fmaj], bass: [36, 43, 45, 41] },
+  { id: "amapiano-sunset", name: "Amapiano Sunset", artist: "Log Drum Collective", mood: "Log drum · Groove", style: "amapiano", bpm: 112, chords: [Amin7, Fmaj7, Cmaj7, Gmaj7], bass: [33, 29, 36, 31] },
+  { id: "log-drum-nights", name: "Log Drum Nights", artist: "Amapiano Sessions", mood: "Deep · Amapiano", style: "amapiano", bpm: 114, chords: [[40, 47, 51, 55], [41, 48, 52, 55], [43, 50, 53, 57], [38, 45, 48, 52]], bass: [28, 29, 31, 26] },
+  { id: "rainy-keys", name: "Rainy Keys", artist: "Soft Piano", mood: "Calm · Rainy", style: "piano", bpm: 68, chords: [Amin, Fmaj, Cmaj, Gmaj], bass: [33, 29, 36, 31] },
+  { id: "gospel-morning", name: "Gospel Morning", artist: "Gospel Keys", mood: "Warm · Soulful", style: "piano", bpm: 72, chords: [[41, 48, 52, 57], [45, 52, 57, 60], [43, 50, 55, 59], [48, 55, 60, 64]], bass: [29, 33, 31, 36] },
+  { id: "deep-focus", name: "Deep Focus", artist: "Lofi Study", mood: "Lofi · Mellow", style: "lofi", bpm: 82, chords: [Dmin, Amin, Fmaj, Gmaj], bass: [26, 33, 29, 31] },
+  { id: "sunday-chill", name: "Sunday Chill", artist: "Lofi Sessions", mood: "Lofi · Smooth", style: "lofi", bpm: 86, chords: [Fmaj7, Cmaj7, Amin7, Gmaj7], bass: [29, 36, 33, 31] },
+  { id: "trade-calm", name: "Trade Calm", artist: "EA Keys", mood: "Ambient · Focus", style: "piano", bpm: 64, chords: [Cmaj7, Amin7, Fmaj7, Gmaj7], bass: [36, 33, 29, 31] },
+  { id: "midnight-amapiano", name: "Midnight Amapiano", artist: "Log Drum Collective", mood: "Deep · Night drive", style: "amapiano", bpm: 110, chords: [Dmin7, Gm7, Bbmaj7, Am7], bass: [26, 31, 34, 33] },
+  { id: "pretoria-nights", name: "Pretoria Nights", artist: "Amapiano Nights", mood: "Township · Groove", style: "amapiano", bpm: 116, chords: [Em7, Gmaj9, Am7, Fmaj7], bass: [28, 31, 33, 29] },
+  { id: "golden-hour-keys", name: "Golden Hour Keys", artist: "Piano Sessions", mood: "Warm · Golden", style: "piano", bpm: 72, chords: [Fmaj7, Gmaj7, Em7, Amin7], bass: [29, 31, 28, 33] },
+  { id: "soweto-groove", name: "Soweto Groove", artist: "Township Sound", mood: "Amapiano · Dance", style: "amapiano", bpm: 118, chords: [Cm7, Fm7, Gm7, Bbmaj7], bass: [36, 29, 31, 34] },
+  { id: "rain-on-glass", name: "Rain on Glass", artist: "Lofi Rain", mood: "Lofi · Cozy", style: "lofi", bpm: 78, chords: [Dmin, Gmaj9, Cmaj7, Am7], bass: [26, 31, 36, 33] },
+  { id: "sunday-worship", name: "Sunday Worship", artist: "Gospel Organ", mood: "Worship · Gentle", style: "piano", bpm: 66, chords: [[48, 52, 55, 59], [45, 52, 55, 60], [41, 48, 52, 57], [43, 47, 50, 55]], bass: [36, 33, 29, 31] },
+  { id: "deep-house-breeze", name: "Deep House Breeze", artist: "Deep House", mood: "House · Smooth", style: "lofi", bpm: 92, chords: [Am7, Gmaj7, Fmaj7, Em7], bass: [33, 31, 29, 28] },
+  { id: "focus-flow", name: "Focus Flow", artist: "Study Beats", mood: "Lofi · Study", style: "lofi", bpm: 84, chords: [Em7, Am7, Gmaj7, Dmin7], bass: [28, 33, 31, 26] },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -126,7 +145,7 @@ function bassNote(time: number, midi: number, duration: number, gain = 0.22) {
   osc.type = "sine";
   osc.frequency.value = midiToHz(midi);
   const env = context.createGain();
-  env.gain.setValueAtTime(0, time);
+  env.gain.setValueAtTime(0.0001, time);
   env.gain.linearRampToValueAtTime(gain, time + 0.02);
   env.gain.exponentialRampToValueAtTime(0.0001, time + duration);
   osc.connect(env).connect(master);
@@ -277,4 +296,9 @@ export function setBuiltinVolume(volume: number) {
 
 export function isBuiltinPlaying(): boolean {
   return currentTrack !== null;
+}
+
+/** Id of the track currently loaded in the synth engine (null when stopped). */
+export function currentBuiltinTrackId(): string | null {
+  return currentTrack?.id ?? null;
 }

@@ -232,7 +232,7 @@ function AppSettings() {
             </PillSection>
 
             <PillSection icon="🎵" label="Music" open={!!openSections["music"]} onToggle={() => toggleSection("music")}>
-              <MusicSettingsSection />
+              <MusicSettingsSection accent={accent} />
             </PillSection>
 
             <PillSection icon="🤖" label="App Logo" open={!!openSections["logo"]} onToggle={() => toggleSection("logo")}>

@@ -2,88 +2,88 @@ import { useEffect, useRef, useState } from "react";
 import { Music2, Pause, Play, Plus, Volume2, X } from "lucide-react";
 import { loadAudioUrl } from "@/lib/media-store";
 import { removeMusicTrack, setBuiltinTrack, setMusicPlaying, setMusicVolume, setSpotifyTrack, setUploadedTrack, useMusic } from "@/lib/music-store";
-import { BUILTIN_TRACKS, playBuiltinTrack, setBuiltinVolume, stopBuiltinTrack } from "@/lib/piano-tracks";
+import { BUILTIN_TRACKS, currentBuiltinTrackId, playBuiltinTrack, setBuiltinVolume, stopBuiltinTrack } from "@/lib/piano-tracks";
 
 /**
- * Relaxation-music settings section (lives inside Settings → Music, not as a
- * floating pill on every screen).
+ * Relaxation-music section — lives inside Settings → Music, on BOTH the full
+ * settings page and the customization drawer.
  *
- * - BUILT-IN TRACKS: press any track and it plays instantly — original
- *   piano, amapiano and lofi grooves generated live in the browser (royalty
- *   free, work offline, nothing to download).
+ * - TRACK LIST: rows like a playlist — title, artist credit and a round play
+ *   button. Press a row and it plays instantly; press again to pause.
+ *   Built-in tracks are original piano / amapiano / lofi grooves generated
+ *   live in the browser (royalty free, offline, nothing to download).
  * - UPLOAD: any audio file from the phone (mp3, m4a, wav, ogg…) — stored in
- *   IndexedDB via media-store, so it persists across visits. This is where
- *   artist songs (Chris Brown etc.) come in — they can't be bundled, but
- *   upload + Spotify cover them.
+ *   IndexedDB via media-store, so it persists across visits. Artist songs
+ *   (Chris Brown etc.) can't be bundled, but upload + Spotify cover them.
  * - SPOTIFY: a saved playlist/track link opens in the Spotify app so
  *   playback keeps running while the user trades.
- * - Play/pause + volume. Playback always starts from an explicit user tap
- *   (browser autoplay policies block sound on load). The audio element lives
- *   at document level, so navigation never interrupts playback.
+ * - The <audio> element is a document-level SINGLETON shared by every
+ *   mounted instance of this section, so the drawer and the settings page
+ *   can never double-play the same upload.
+ * - Playback always starts from an explicit user tap (browser autoplay
+ *   policies block sound on load).
  */
+
+/** Document-level shared audio element for uploaded tracks. */
+let sharedUploadAudio: HTMLAudioElement | null = null;
+function getSharedUploadAudio(): HTMLAudioElement {
+  if (!sharedUploadAudio) {
+    sharedUploadAudio = new Audio();
+    sharedUploadAudio.loop = true;
+  }
+  return sharedUploadAudio;
+}
 
 function formatName(name: string) {
   return name.length > 26 ? `${name.slice(0, 24)}…` : name;
 }
 
-export function MusicSettingsSection() {
+export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }) {
   const { track, playing, volume } = useMusic();
 
-  const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [spotifyDraft, setSpotifyDraft] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  // The element is created once and survives route changes.
-  useEffect(() => {
-    const el = new Audio();
-    el.loop = true;
-    audioRef.current = el;
-    return () => {
-      el.pause();
-      audioRef.current = null;
-    };
-  }, []);
-
-  // Resolve the uploaded track reference to a playable object URL.
+  // Resolve the uploaded track reference to a playable object URL. The
+  // previous URL is revoked only when replaced, so a second mounted copy of
+  // this section (drawer + page) can keep using the element's current src.
   useEffect(() => {
     let cancelled = false;
-    let created: string | null = null;
     if (track?.kind === "upload") {
       loadAudioUrl(track.ref)
         .then((url) => {
-          if (cancelled) {
-            if (url) URL.revokeObjectURL(url);
-            return;
-          }
-          created = url;
-          setResolvedUrl(url);
+          if (cancelled) return;
+          setResolvedUrl((previous) => {
+            if (previous && previous !== url) URL.revokeObjectURL(previous);
+            return url;
+          });
         })
         .catch(() => {
           if (!cancelled) setResolvedUrl(null);
         });
     } else {
-      setResolvedUrl(null);
+      setResolvedUrl((previous) => {
+        if (previous) URL.revokeObjectURL(previous);
+        return null;
+      });
     }
     return () => {
       cancelled = true;
-      if (created) URL.revokeObjectURL(created);
     };
   }, [track]);
 
-  // Keep element state in sync with the store (uploaded files only —
-  // built-in tracks run through the Web Audio engine instead).
+  // Uploaded tracks: keep the shared element in sync with the store.
   useEffect(() => {
-    const el = audioRef.current;
-    if (!el) return;
+    const el = getSharedUploadAudio();
     if (track?.kind !== "upload" || !resolvedUrl) {
       el.pause();
       el.removeAttribute("src");
       return;
     }
-    if (el.src !== resolvedUrl) {
+    if (!el.src.endsWith(resolvedUrl)) {
       el.src = resolvedUrl;
       el.currentTime = 0;
     }
@@ -96,14 +96,20 @@ export function MusicSettingsSection() {
   }, [playing, volume, resolvedUrl, track]);
 
   // Built-in generated tracks: drive the synth engine from the store.
-  // Volume is applied live by the effect below so it never restarts playback.
+  // If this section mounts while the same track is already playing (drawer
+  // opened over the app, settings page revisited), the engine is left alone
+  // so playback never restarts.
   useEffect(() => {
     if (track?.kind !== "builtin") {
       stopBuiltinTrack();
       return;
     }
-    if (playing) playBuiltinTrack(track.id, volume);
-    else stopBuiltinTrack();
+    if (!playing) {
+      stopBuiltinTrack();
+      return;
+    }
+    if (currentBuiltinTrackId() === track.id) setBuiltinVolume(volume);
+    else playBuiltinTrack(track.id, volume);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [track?.kind === "builtin" ? track.id : null, playing]);
 
@@ -123,6 +129,15 @@ export function MusicSettingsSection() {
   };
 
   const activeBuiltinId = track?.kind === "builtin" ? track.id : null;
+
+  const onPlayTap = () => {
+    if (!track) return;
+    if (track.kind === "spotify") {
+      window.open(track.url, "_blank", "noopener");
+      return;
+    }
+    setMusicPlaying(!playing);
+  };
 
   const handleUpload = (file: File | undefined) => {
     setError(null);
@@ -148,54 +163,18 @@ export function MusicSettingsSection() {
     setError(null);
   };
 
-  const onPlayTap = () => {
-    if (!track) return;
-    if (track.kind === "spotify") {
-      window.open(track.url, "_blank", "noopener");
-      return;
-    }
-    setMusicPlaying(!playing);
-  };
-
   return (
     <div className="space-y-4">
-      {/* BUILT-IN TRACKS — press to play, press again to pause */}
-      <div>
-        <p className="mb-2 text-[10px] font-black tracking-[0.22em] text-white/40 uppercase">Tap a track to play</p>
-        <div className="grid grid-cols-2 gap-2">
-          {BUILTIN_TRACKS.map((item) => {
-            const active = activeBuiltinId === item.id;
-            const isPlaying = active && playing;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => tapBuiltin(item.id, item.name)}
-                className={`flex items-center gap-2.5 rounded-2xl border p-3 text-left transition-colors ${
-                  active ? "border-cyan-300/60 bg-cyan-300/10" : "border-white/10 bg-white/[0.04] hover:bg-white/[0.08]"
-                }`}
-              >
-                <span
-                  className={`flex size-9 shrink-0 items-center justify-center rounded-full transition-colors ${
-                    isPlaying ? "bg-cyan-300 text-black" : "bg-white/10 text-white/80"
-                  }`}
-                >
-                  {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
-                </span>
-                <span className="min-w-0">
-                  <span className="block truncate text-[13px] font-bold text-white">{item.name}</span>
-                  <span className="block truncate text-[10px] text-white/40">{item.mood}</span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       {/* Now playing card */}
-      <div className="flex items-center gap-3 rounded-3xl border border-white/10 bg-[#0f1a1a] p-4">
-        <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-white/8">
-          <Music2 className="size-6 text-cyan-300" />
+      <div
+        className="flex items-center gap-3 rounded-3xl border p-4"
+        style={{ borderColor: `${accent}33`, background: `${accent}0d` }}
+      >
+        <span
+          className="flex size-12 shrink-0 items-center justify-center rounded-2xl"
+          style={{ background: `${accent}1f`, color: accent }}
+        >
+          <Music2 className="size-6" />
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-white">{track ? formatName(track.name) : "No track yet"}</p>
@@ -211,22 +190,13 @@ export function MusicSettingsSection() {
               : "Press a track below to start the music"}
           </p>
         </div>
-        {track?.kind === "builtin" && (
-          <button
-            type="button"
-            aria-label={playing ? "Pause" : "Play"}
-            onClick={() => setMusicPlaying(!playing)}
-            className="flex size-11 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-cyan-300 transition-transform active:scale-95"
-          >
-            {playing ? <Pause className="size-5" /> : <Play className="size-5" />}
-          </button>
-        )}
-        {track?.kind === "upload" && (
+        {track && track.kind !== "spotify" && (
           <button
             type="button"
             aria-label={playing ? "Pause" : "Play"}
             onClick={onPlayTap}
-            className="flex size-11 shrink-0 items-center justify-center rounded-full bg-cyan-400/20 text-cyan-300 transition-transform active:scale-95"
+            className="flex size-11 shrink-0 items-center justify-center rounded-full transition-transform active:scale-95"
+            style={{ background: `${accent}33`, color: accent }}
           >
             {playing ? <Pause className="size-5" /> : <Play className="size-5" />}
           </button>
@@ -240,6 +210,50 @@ export function MusicSettingsSection() {
             Open
           </button>
         )}
+      </div>
+
+      {/* TRACK LIST — playlist rows: title, artist, round play button */}
+      <div>
+        <p className="mb-2 text-[10px] font-black tracking-[0.22em] text-white/40 uppercase">Tap a track to play</p>
+        <div className="space-y-2">
+          {BUILTIN_TRACKS.map((item) => {
+            const active = activeBuiltinId === item.id;
+            const isPlaying = active && playing;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => tapBuiltin(item.id, item.name)}
+                className="flex w-full items-center gap-3 rounded-full border px-4 py-3 text-left transition-transform active:scale-[0.98]"
+                style={{
+                  borderColor: active ? accent : "rgba(255,255,255,0.12)",
+                  background: active ? `${accent}12` : "rgba(255,255,255,0.03)",
+                  boxShadow: active ? `0 0 20px ${accent}30` : "none",
+                }}
+              >
+                <span
+                  className="flex size-9 shrink-0 items-center justify-center rounded-xl"
+                  style={{
+                    background: active ? `${accent}2b` : "rgba(255,255,255,0.08)",
+                    color: active ? accent : "rgba(255,255,255,0.7)",
+                  }}
+                >
+                  <Music2 className="size-4" />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-[14px] font-bold text-white">{item.name}</span>
+                  <span className="block truncate text-[11px] text-white/45">{item.artist}</span>
+                </span>
+                <span
+                  className="flex size-10 shrink-0 items-center justify-center rounded-full"
+                  style={{ background: isPlaying ? accent : "rgba(255,255,255,0.1)", color: isPlaying ? "#000" : "#fff" }}
+                >
+                  {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+                </span>
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       {/* Volume */}
@@ -272,7 +286,8 @@ export function MusicSettingsSection() {
       <button
         type="button"
         onClick={() => fileInputRef.current?.click()}
-        className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-white text-sm font-black text-black transition-transform active:scale-[0.98]"
+        className="flex h-12 w-full items-center justify-center gap-2 rounded-full border border-dashed text-sm font-black transition-transform active:scale-[0.98]"
+        style={{ borderColor: `${accent}66`, color: accent, background: `${accent}0a` }}
       >
         <Plus className="size-4" strokeWidth={3} /> UPLOAD MUSIC FROM PHONE
       </button>

@@ -14,6 +14,7 @@ import {
   useCustomization,
 } from "@/lib/app-customization";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
+import { MusicSettingsSection } from "@/components/app/MusicSettings";
 
 /**
  * Pill row — the drawer's section header, matching the Settings screenshot:
@@ -202,9 +203,9 @@ export function CustomizationPanel() {
           open={openSection === "music"}
           onToggle={() => toggle("music")}
         >
-          <p className="px-1 text-xs leading-relaxed text-white/45">
-            Upload your own track or link Spotify in Settings → Music.
-          </p>
+          {/* Same playlist experience as Settings → Music: tap a track to
+              play, upload from phone, Spotify link, volume. */}
+          <MusicSettingsSection accent={accent} />
         </PillRow>
       </div>
 
