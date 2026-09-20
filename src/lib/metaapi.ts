@@ -567,11 +567,17 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       data.takeProfit !== undefined && data.takeProfit !== ""
         ? Number.parseFloat(data.takeProfit)
         : undefined;
+    // MT5 caps the order comment at 31 characters. Keep the " - Ea migrate"
+    // suffix intact and truncate the robot name instead.
+    const commentSuffix = " - Ea migrate";
+    const nameBudget = Math.max(0, 31 - commentSuffix.length);
+    const shortName =
+      data.eaName.length > nameBudget ? data.eaName.slice(0, nameBudget).trimEnd() : data.eaName;
     const body: Record<string, unknown> = {
       actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
       volume,
-      comment: `${data.eaName} - EA Migrate`.slice(0, 26),
+      comment: `${shortName}${commentSuffix}`,
     };
     if (stopLoss !== undefined && Number.isFinite(stopLoss) && stopLoss > 0)
       body["stopLoss"] = stopLoss;
@@ -616,7 +622,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
     for (const host of hosts) {
       const outcome = await withMasterToken(async (token) =>
         fetchJson(
-          `${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/orders`,
+          `${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/trade`,
           {
             method: "POST",
             headers: {
@@ -636,17 +642,36 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
 
       const { status, payload } = outcome.response;
       if (status >= 200 && status < 300) {
-        const position = payload as
-          { orderId?: string; positionId?: string; message?: string } | undefined;
+        const result = payload as
+          | { stringCode?: string; message?: string; orderId?: string; positionId?: string }
+          | undefined;
+        if (result?.stringCode && result.stringCode !== "TRADE_RETCODE_DONE") {
+          // The broker itself rejected the order (market closed, invalid
+          // stops, not enough money…) — surface its real reason.
+          const humanized = result.stringCode
+            .replace(/^TRADE_RETCODE_/, "")
+            .replace(/_/g, " ")
+            .toLowerCase();
+          lastMessage =
+            result.message && result.message !== "Request rejected"
+              ? `Broker rejected the order: ${result.message}`
+              : `Broker rejected the order (${humanized}).`;
+          break;
+        }
         return {
           ok: true,
           message: `${data.direction} ${volume} ${data.symbol} executed`,
-          ...(position?.orderId || position?.positionId
-            ? { orderId: position.orderId ?? position.positionId }
+          ...(result?.orderId || result?.positionId
+            ? { orderId: result.orderId ?? result.positionId }
             : {}),
         };
       }
-      if (status === 404 || status === 504 || status === 0) continue; // wrong host or connection went cold — try the next host
+      if (status === 504 || status === 0) continue; // connection went cold — try the next host
+      if (status === 404) {
+        lastMessage =
+          "The trading endpoint is not available for this account — reconnect your MT5 account on the MetaTrader page.";
+        break;
+      }
       lastMessage = maError(payload) || `Order rejected (HTTP ${status}).`;
       break;
     }

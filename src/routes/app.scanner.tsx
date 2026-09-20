@@ -61,6 +61,9 @@ function AppScanner() {
       symbol,
       lot_size: lot,
       max_trades: trades,
+      direction,
+      ...(stopLoss ? { stopLoss } : {}),
+      ...(takeProfit ? { takeProfit } : {}),
     });
     setDetails(null);
     setToastTrades(Math.max(1, Math.min(trades, 20)));
