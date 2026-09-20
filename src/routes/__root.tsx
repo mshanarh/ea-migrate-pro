@@ -93,6 +93,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
       },
       { name: "robots", content: "index, follow" },
+      { name: "google-site-verification", content: "Esn1A0ZxxRa8u19Awb2qk0qvS6LLV6wKrP7iFBLN74A" },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "EA Migrate Pro" },
       { property: "og:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
