@@ -358,8 +358,73 @@ export const connectMt5Account = createServerFn({ method: "POST" })
 
     const platform = body.platform as string;
 
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+    /** Current connection state + region of a hosted account. */
+    const inspectAccount = async (
+      accountId: string,
+    ): Promise<{ status: string; region?: string | undefined }> => {
+      const detail = await withMasterToken((token) =>
+        maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}`),
+      );
+      if (detail.kind === "ok" && detail.response.status === 200) {
+        const account = detail.response.payload as MaAccount | undefined;
+        return { status: String(account?.connectionStatus ?? ""), region: account?.region };
+      }
+      return { status: "" };
+    };
+
+    const deleteHosted = (accountId: string) =>
+      withMasterToken((token) =>
+        maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}`, {
+          method: "DELETE",
+        }),
+      );
+
+    /**
+     * Creates a hosted copy of this login on MetaApi with the requested
+     * infrastructure type, retrying while broker settings are detected.
+     */
+    const createHosted = async (
+      type: "cloud-g2" | "cloud-g1",
+    ): Promise<{ id?: string; error?: string }> => {
+      const transactionId = newTransactionId();
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const outcome = await withMasterToken((token) =>
+          maFetch(token, "/users/current/accounts", {
+            method: "POST",
+            json: { ...body, type },
+            transactionId,
+          }),
+        );
+        if (outcome.kind === "missing") return { error: "missing" };
+        if (outcome.kind === "rejected") return { error: "rejected" };
+        const { status, payload } = outcome.response;
+        const account = payload as (MaAccount & { message?: string }) | undefined;
+        if (status >= 200 && status < 300 && account?.id) return { id: account.id as string };
+        const message = maError(payload);
+        const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
+        if (retryMatch && Date.now() < deadline) {
+          await sleep(Math.min(Number(retryMatch[1]) + 2, 20) * 1000);
+          continue;
+        }
+        if (status === 202 && Date.now() < deadline) {
+          await sleep(15_000);
+          continue;
+        }
+        return { error: message || `HTTP ${status}` };
+      }
+    };
+
+    const connectOk = (accountId: string, region?: string): MtConnectResult =>
+      region ? { ok: true, accountId, environment: region } : { ok: true, accountId };
+
     // Reuse an already-hosted copy of this exact login+server instead of
-    // creating a duplicate when Connect is pressed twice.
+    // creating a duplicate when Connect is pressed twice — UNLESS its cloud
+    // terminal never attached. Some brokers refuse MetaApi's G2 terminal;
+    // in that case the hosted copy is rebuilt on the G1 infrastructure,
+    // which different broker stacks accept.
     const listOutcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
     if (listOutcome.kind === "ok" && Array.isArray(listOutcome.response.payload)) {
       const existing = (listOutcome.response.payload as MaAccount[]).find(
@@ -369,73 +434,68 @@ export const connectMt5Account = createServerFn({ method: "POST" })
           (account.platform ?? "mt5") === platform,
       );
       if (existing?.id) {
-        return existing.region
-          ? { ok: true, accountId: existing.id, environment: existing.region }
-          : { ok: true, accountId: existing.id };
+        const { status, region } = await inspectAccount(existing.id);
+        if (status === "CONNECTED") return connectOk(existing.id, region);
+        // Cold terminal — remove it and rebuild on the alternate type below.
+        await deleteHosted(existing.id);
       }
     }
 
-    // Broker settings detection can ask for retries — poll with the same
-    // transaction id until the account is created or a real error comes back.
-    const transactionId = newTransactionId();
-    const deadline = Date.now() + 90_000;
-    for (;;) {
-      const outcome = await withMasterToken((token) =>
-        maFetch(token, "/users/current/accounts", { method: "POST", json: body, transactionId }),
-      );
-      if (outcome.kind === "missing")
-        return { ok: false, code: "key_missing", message: missingKeyMessage() };
-      if (outcome.kind === "rejected")
-        return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+    type BuildOutcome =
+      | { ok: true; accountId: string; environment?: string }
+      | { ok: false; accountId?: string; message?: string };
 
-      const { status, payload } = outcome.response;
-      const account = payload as (MaAccount & { message?: string; error?: string }) | undefined;
-
-      if (status >= 200 && status < 300 && account?.id) {
-        // Created — fetch the region so trade orders hit the right API host.
-        const detail = await withMasterToken((token) =>
-          maFetch(token, `/users/current/accounts/${encodeURIComponent(account.id as string)}`),
-        );
-        const region =
-          detail.kind === "ok" && detail.response.status === 200
-            ? (detail.response.payload as MaAccount | undefined)?.region
-            : undefined;
-        return region
-          ? { ok: true, accountId: account.id, environment: region }
-          : { ok: true, accountId: account.id };
-      }
-
-      const message = maError(payload);
-      const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
-      if (retryMatch && Date.now() < deadline) {
-        // Cap each wait so several validation polls fit in the window —
-        // MetaApi shortens the retry time as its detection progresses.
-        const waitSeconds = Math.min(Number(retryMatch[1]) + 2, 20);
-        await new Promise((resolve) => setTimeout(resolve, waitSeconds * 1000));
-        continue;
-      }
-      if (status === 202 && Date.now() < deadline) {
-        await new Promise((resolve) => setTimeout(resolve, 15_000));
-        continue;
-      }
-      if (isAuthRejected(status, payload))
-        return { ok: false, code: "key_rejected", message: rejectedKeyMessage(status) };
-      if (Date.now() >= deadline) {
+    const buildAndSettle = async (type: "cloud-g2" | "cloud-g1"): Promise<BuildOutcome> => {
+      const created = await createHosted(type);
+      if (created.error === "missing")
+        return { ok: false, message: missingKeyMessage() };
+      if (created.error === "rejected")
+        return { ok: false, message: rejectedKeyMessage(401) };
+      if (!created.id) {
         return {
           ok: false,
-          code: "failed",
-          message:
-            "MetaApi is still detecting this broker's connection settings — press Connect Account again in a minute and it will link instantly.",
+          message: created.error
+            ? `MetaApi could not connect the account: ${created.error}. Check the login, password and exact server name (e.g. Headway-Demo).`
+            : "MetaApi is still detecting this broker's connection settings — press Connect Account again in a minute and it will link instantly.",
         };
       }
-      return {
-        ok: false,
-        code: "failed",
-        message:
-          message ||
-          `MetaApi could not connect the account (HTTP ${status}). Check the login, password and exact server name (e.g. Headway-Demo).`,
-      };
+      // Give the terminal a short window to attach to the broker.
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        await sleep(8_000);
+        const { status, region } = await inspectAccount(created.id);
+        if (status === "CONNECTED") return connectOk(created.id, region);
+      }
+      return { ok: false, accountId: created.id };
+    };
+
+    // First choice: G2 (recommended infrastructure). If its terminal can't
+    // attach to this broker, rebuild the very same login on G1.
+    const g2 = await buildAndSettle("cloud-g2");
+    if (g2.ok) return connectOk(g2.accountId, g2.environment);
+
+    const g2Id = g2.accountId;
+    const g1 = await buildAndSettle("cloud-g1");
+    if (g1.ok) {
+      // G1 works — remove the dead G2 copy so no duplicate lingers.
+      if (g2Id) await deleteHosted(g2Id);
+      return connectOk(g1.accountId, g1.environment);
     }
+
+    // Neither terminal attached inside the connect window. Keep the G1 copy
+    // (broader broker support) — it can still connect moments later, and the
+    // status check redeploys + trades wait for the connection automatically.
+    if (g2Id) await deleteHosted(g2Id);
+    if (g1.accountId) {
+      const { region } = await inspectAccount(g1.accountId);
+      return connectOk(g1.accountId, region);
+    }
+    return {
+      ok: false,
+      code: "failed",
+      message:
+        g1.message ||
+        "MetaApi could not connect the account. Check the login, password and exact server name (e.g. Headway-Demo).",
+    };
   });
 
 /** GET /accounts — lists this platform's connected accounts (diagnostics). */

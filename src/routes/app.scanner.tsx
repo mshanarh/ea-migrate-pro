@@ -75,36 +75,57 @@ function AppScanner() {
       window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "No connected MT5 account — link it on the MetaTrader page" } }));
       return;
     }
-    Promise.all(
-      Array.from({ length: count }, () =>
-        executeLiveTrade({
-          data: {
-            accountId: app.mt?.mcAccountId ?? "",
-            eaName: robot?.name ?? "EA",
-            symbol,
-            direction,
-            lotSize: lot,
-            ...(stopLoss ? { stopLoss } : {}),
-            ...(takeProfit ? { takeProfit } : {}),
-          },
-        }),
-      ),
-    )
-      .then((results) => {
-        const ok = results.filter((item) => item.ok).length;
-        if (ok === count) {
-          toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
-          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: true, message: `${ok}/${count} trades executed on MT5` } }));
-        } else {
-          const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
-          toast.error(`${ok}/${count} executed — ${reason}`);
-          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: reason } }));
-        }
-      })
-      .catch(() => {
-        toast.error("Could not reach the execution provider.");
-        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "Could not reach the execution provider." } }));
-      });
+
+    // Cold brokers get PERSISTENT retries: while MetaApi's terminal is still
+    // opening for the broker, Execute keeps retrying every 45s (up to 8
+    // times) and the trade fires the moment the connection opens — no need
+    // to press again. Any other broker rejection surfaces immediately.
+    const COLD_CONNECTION = /not connected to broker|robot is starting|connection is still opening|retry in a minute|still opening/i;
+    const runTrades = () =>
+      Promise.all(
+        Array.from({ length: count }, () =>
+          executeLiveTrade({
+            data: {
+              accountId: app.mt?.mcAccountId ?? "",
+              eaName: robot?.name ?? "EA",
+              symbol,
+              direction,
+              lotSize: lot,
+              ...(stopLoss ? { stopLoss } : {}),
+              ...(takeProfit ? { takeProfit } : {}),
+            },
+          }),
+        ),
+      );
+    const MAX_ATTEMPTS = 8;
+    const finish = (results: Awaited<ReturnType<typeof runTrades>>) => {
+      const ok = results.filter((item) => item.ok).length;
+      if (ok === count) {
+        toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
+        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: true, message: `${ok}/${count} trades executed on MT5` } }));
+      } else {
+        const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
+        toast.error(`${ok}/${count} executed — ${reason}`);
+        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: reason } }));
+      }
+    };
+    const attempt = (attemptNo: number) => {
+      runTrades()
+        .then((results) => {
+          const allCold = results.length > 0 && results.every((item) => !item.ok && COLD_CONNECTION.test(item.message));
+          if (allCold && attemptNo < MAX_ATTEMPTS) {
+            window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: `Broker connection opening — automatic retry ${attemptNo + 1}/${MAX_ATTEMPTS}...` } }));
+            setTimeout(() => attempt(attemptNo + 1), 45_000);
+            return;
+          }
+          finish(results);
+        })
+        .catch(() => {
+          toast.error("Could not reach the execution provider.");
+          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "Could not reach the execution provider." } }));
+        });
+    };
+    attempt(1);
   };
 
   return (
