@@ -53,11 +53,10 @@ function AppScanner() {
   // the connected MT5 account via MetaApi in the ANALYZED direction with the
   // analyzed SL/TP attached, AND stream the logs into the floating bot popup.
   // The toast's final line reflects the provider outcome.
-  const handleExecute = ({ symbol, lot, trades, direction, executionReady, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady: boolean; stopLoss?: string; takeProfit?: string }) => {
-    if (!executionReady) {
-      toast.error("Execution is locked until a live MT5 setup is ready.");
-      return;
-    }
+  const handleExecute = ({ symbol, lot, trades, direction, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady?: boolean; stopLoss?: string; takeProfit?: string }) => {
+    // Conditional plans (closed session / public-feed candles) are executable:
+    // the order fires through the connected MT5 account and any broker-side
+    // problem (offline terminal, closed market) comes back as a real error.
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
       lot_size: lot,
