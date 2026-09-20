@@ -786,6 +786,139 @@ function roundToTick(price: number, reference: number): number {
   return Math.round(price * factor) / factor;
 }
 
+/* ── Public feed fallback ────────────────────────────────────────────
+   The broker's market-data API only answers while MetaApi's cloud terminal
+   is attached to the broker. When it isn't (cold/offline terminal), the
+   scanner still needs a factual price reference — these helpers read real
+   candles from a free public chart feed via a symbol mapping. */
+
+const PUBLIC_SYMBOL_RULES: [RegExp, string][] = [
+  [/^(XAU|GOLD)/, "GC=F"],
+  [/^(XAG|SILVER)/, "SI=F"],
+  [/^(XPT|PLATIN)/, "PL=F"],
+  [/^(XPD|PALLAD)/, "PA=F"],
+  [/WTI|USOIL|USCRUDE|XTIUSD|CRUDE/, "CL=F"],
+  [/BRENT|UKOIL|UKCRUDE|XTBUSD/, "BZ=F"],
+  [/NATGAS|NATURALGAS|NGAS/, "NG=F"],
+  [/NAS100|USTEC|US100|USTECH|NDX100|NQ100|TECH100|HW100|^100$/, "NQ=F"],
+  [/US30|DJ30|DOW30|WALLSTREET|WS30|^DOW$|^30$/, "YM=F"],
+  [/US500|SPX500|SP500|GSPC|^SPX$|^500$/, "ES=F"],
+  [/GER40|GER30|GERMANY40|GERMANY30|DAX40|DAX30|DE40|^DAX$/, "^GDAXI"],
+  [/UK100|FTSE100|^FTSE$/, "^FTSE"],
+  [/JP225|JPN225|NIKKEI225|JAPAN225|^NIKKEI$/, "^N225"],
+  [/HK50|HANGSENG|^HSI$/, "^HSI"],
+  [/AUS200|ASX200/, "^AXJO"],
+  [/EU50|EURO50|STOXX50/, "^STOXX50E"],
+  [/BTC|XBT/, "BTC-USD"],
+  [/ETH/, "ETH-USD"],
+  [/SOL/, "SOL-USD"],
+  [/XRP/, "XRP-USD"],
+  [/DOGE/, "DOGE-USD"],
+  [/ADA/, "ADA-USD"],
+];
+
+const FX_CURRENCIES = new Set([
+  "USD", "EUR", "GBP", "JPY", "CHF", "AUD", "NZD", "CAD", "CNH", "SEK",
+  "NOK", "TRY", "ZAR", "MXN", "SGD", "HKD", "PLN",
+]);
+
+/** Maps a broker symbol (HW_100, XAUUSD.pro, BTCUSD.m, EURUSD…) to a public ticker. */
+function publicSymbolFor(raw: string): string | undefined {
+  const cleaned = raw.toUpperCase().replace(/[^A-Z0-9]/g, "");
+  if (!cleaned) return undefined;
+  for (const [pattern, ticker] of PUBLIC_SYMBOL_RULES) {
+    if (pattern.test(cleaned)) return ticker;
+  }
+  if (FX_CURRENCIES.has(cleaned.slice(0, 3)) && FX_CURRENCIES.has(cleaned.slice(3)))
+    return `${cleaned}=X`;
+  return undefined;
+}
+
+/** Yahoo chart intervals (no native 4h — the 1h series is aggregated instead). */
+function publicTimeframe(timeframe: string): { interval: string; range: string; agg: number } {
+  switch (timeframe) {
+    case "5m":
+      return { interval: "5m", range: "5d", agg: 1 };
+    case "15m":
+      return { interval: "15m", range: "1mo", agg: 1 };
+    case "4h":
+      return { interval: "1h", range: "6mo", agg: 4 };
+    case "1d":
+      return { interval: "1d", range: "2y", agg: 1 };
+    default:
+      return { interval: "1h", range: "3mo", agg: 1 };
+  }
+}
+
+function aggregateCandles(source: Candle[], group: number): Candle[] {
+  if (group <= 1) return source;
+  const merged: Candle[] = [];
+  for (let start = source.length % group; start + group <= source.length; start += group) {
+    const chunk = source.slice(start, start + group);
+    merged.push({
+      time: chunk[0]?.time ?? "",
+      open: chunk[0]?.open ?? 0,
+      high: Math.max(...chunk.map((candle) => candle.high)),
+      low: Math.min(...chunk.map((candle) => candle.low)),
+      close: chunk.at(-1)?.close ?? 0,
+    });
+  }
+  return merged;
+}
+
+/** Fetches real candles for a symbol from the public chart feed. */
+async function fetchPublicCandles(symbol: string, timeframe: string): Promise<Candle[]> {
+  const publicSymbol = publicSymbolFor(symbol);
+  if (!publicSymbol) return [];
+  const { interval, range, agg } = publicTimeframe(timeframe);
+  for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    try {
+      const response = await fetch(
+        `https://${host}/v8/finance/chart/${encodeURIComponent(publicSymbol)}?interval=${interval}&range=${range}`,
+        {
+          headers: { Accept: "application/json", "User-Agent": "Mozilla/5.0" },
+          signal: AbortSignal.timeout(6_000),
+        },
+      );
+      if (!response.ok) continue;
+      const payload = (await response.json()) as {
+        chart?: {
+          result?: {
+            timestamp?: number[];
+            indicators?: {
+              quote?: {
+                open?: (number | null)[];
+                high?: (number | null)[];
+                low?: (number | null)[];
+                close?: (number | null)[];
+              }[];
+            };
+          }[];
+        };
+      };
+      const result = payload.chart?.result?.[0];
+      const stamps = result?.timestamp ?? [];
+      const quote = result?.indicators?.quote?.[0];
+      if (!quote || stamps.length === 0) continue;
+      const candles: Candle[] = [];
+      for (let index = 0; index < stamps.length; index += 1) {
+        const stamp = stamps[index];
+        const open = quote.open?.[index];
+        const high = quote.high?.[index];
+        const low = quote.low?.[index];
+        const close = quote.close?.[index];
+        if (stamp === undefined) continue;
+        if (open == null || high == null || low == null || close == null) continue;
+        candles.push({ time: new Date(stamp * 1000).toISOString(), open, high, low, close });
+      }
+      return aggregateCandles(candles, agg).slice(-120);
+    } catch {
+      continue;
+    }
+  }
+  return [];
+}
+
 /**
  * Analyzes real market data for a symbol using the connected MT5 account:
  * trend (EMA21/50), momentum (RSI14), volatility (ATR14) and swing structure
@@ -828,16 +961,18 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       region && CLIENT_API_HOSTS[region]
         ? [CLIENT_API_HOSTS[region]]
         : Object.values(CLIENT_API_HOSTS);
+    const regions =
+      region && CLIENT_API_HOSTS[region] ? [region] : Object.keys(CLIENT_API_HOSTS);
 
     // Start the historical read alongside the live snapshot. History improves
     // the indicators but must never make a live signal wait on a cold endpoint.
     const historyPromise = (async (): Promise<Candle[]> => {
       const deadline = new Promise<Candle[]>((resolve) => setTimeout(() => resolve([]), 3_000));
       const request = (async (): Promise<Candle[]> => {
-        for (const host of hosts) {
+        for (const accountRegion of regions) {
           const historyResult = await withMasterToken((token) =>
             fetchJson(
-              `https://mt-market-data-client-api-v1.${region ?? "new-york"}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
+              `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
               { headers: { "auth-token": token, Accept: "application/json" } },
               5_000,
             ),
@@ -881,19 +1016,30 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     // Warm-up is only a fallback. Connected accounts get a signal from the
     // fast path immediately; cold accounts still receive a bounded retry.
     const { price } = await readMarketSnapshot();
-    const candles = await historyPromise;
+    let candles = await historyPromise;
+    let usedPublicFeed = false;
 
-    // If neither live price nor candle history exists, there is no factual
-    // market reference from which to calculate levels.
-    const lastCandle = candles.at(-1);
-    const referenceClose = price?.bid ?? lastCandle?.close ?? 0;
+    // When the broker returns neither a quote nor candle history (offline
+    // cloud terminal), read the public market feed so the scanner always has
+    // a factual reference to analyze instead of a dead end.
+    let lastCandle = candles.at(-1);
+    let referenceClose = price?.bid ?? lastCandle?.close ?? 0;
+    if (!referenceClose || !Number.isFinite(referenceClose)) {
+      const publicCandles = await fetchPublicCandles(symbol, timeframe);
+      if (publicCandles.length > 0) {
+        candles = publicCandles;
+        usedPublicFeed = true;
+        lastCandle = publicCandles.at(-1);
+        referenceClose = lastCandle?.close ?? 0;
+      }
+    }
     if (!referenceClose || !Number.isFinite(referenceClose)) {
       return {
         ok: true,
         analysis: buildUnavailableScannerAnalysis(
           symbol,
           timeframe,
-          `No live quote or candle history is available for ${symbol} yet — the broker may still be opening this symbol.`,
+          `No market data is available for ${symbol} — the broker terminal is offline and the public feed has no data for this symbol name. Try a standard symbol like EURUSD, XAUUSD, US100 or BTCUSD.`,
         ),
       };
     }
@@ -976,7 +1122,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     const reasons: string[] = [];
     if (!hasLiveQuote) {
       reasons.push(
-        `No current bid/ask is available for ${symbol}; this is a conditional setup from the latest broker candle and is not executable yet.`,
+        usedPublicFeed
+          ? `The broker terminal is offline, so candles came from the public market feed for ${symbol}. This conditional plan is ready to execute the moment the broker reconnects.`
+          : `No current bid/ask is available for ${symbol}; this is a conditional setup from the latest broker candle and is not executable yet.`,
       );
     }
     if (candles.length >= 50) {
@@ -1032,7 +1180,11 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         bullish: null,
       },
       {
-        label: hasLiveQuote ? "Live price (bid/ask)" : "Reference price (last close)",
+        label: hasLiveQuote
+          ? "Live price (bid/ask)"
+          : usedPublicFeed
+            ? "Public feed close"
+            : "Reference price (last close)",
         value: hasLiveQuote ? `${fmt(bid)} / ${fmt(ask)}` : fmt(close),
         bullish: null,
       },
