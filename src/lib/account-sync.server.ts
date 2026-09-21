@@ -224,6 +224,103 @@ export type AdminPatch = {
   licenses?: Account["licenses"];
 };
 
+/* ------------------------------------------------------------------ */
+/* Brevo welcome email — fired once when a mentor's status moves to   */
+/* "approved". Uses the raw Brevo v3 REST endpoint (no SDK needed).   */
+/* A missing BREVO_API_KEY or a Brevo failure never blocks approval.  */
+/* ------------------------------------------------------------------ */
+
+const PORTAL_URL = "https://eamigratepro.vercel.app/";
+
+async function sendApprovalEmail(userEmail: string, firstName: string): Promise<boolean> {
+  const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
+  if (apiKey.length === 0) {
+    console.error("[brevo] BREVO_API_KEY is not set — approval email skipped for", userEmail);
+    return false;
+  }
+  const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
+  const html = `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#0A0A0C;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 0 32px;">
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">Welcome to EA Migrate Pro, ${escapeHtml(name)}! 🔓</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px 0 32px;">
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Hi ${escapeHtml(name)},</p>
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Welcome to the EA Migrate Pro Portal! 🔓🎉</p>
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">We've confirmed your request and your access has been accepted.</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#C9C9D1;">Welcome to the team, Brother! 🤝</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 32px 32px 32px;">
+                <a href="${PORTAL_URL}" style="display:inline-block;background:#E03131;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
+                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span></p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+  const text = `Hi ${name},\n\nWelcome to the EA Migrate Pro Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
+  try {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: {
+        accept: "application/json",
+        "api-key": apiKey,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        sender: { name: "EA Migrate Pro", email: "ntobekotraders.official@gmail.com" },
+        to: [{ email: userEmail, name }],
+        subject: `Welcome to EA Migrate Pro, ${name}! 🔓`,
+        htmlContent: html,
+        textContent: text,
+      }),
+    });
+    if (!response.ok) {
+      const detail = await response.text().catch(() => "");
+      console.error(
+        `[brevo] send failed (${response.status}) for ${userEmail}:`,
+        detail.slice(0, 400),
+      );
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error("[brevo] request error for", userEmail, error);
+    return false;
+  }
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(/[&<>"']/g, (char) => {
+    switch (char) {
+      case "&":
+        return "&amp;";
+      case "<":
+        return "&lt;";
+      case ">":
+        return "&gt;";
+      case '"':
+        return "&quot;";
+      default:
+        return "&#39;";
+    }
+  });
+}
+
 export type SyncAdminUpdateInput = { adminEmail: string; targetEmail: string; patch: AdminPatch };
 export type SyncAdminUpdateResult = { enabled: boolean; ok: boolean; error?: string };
 
@@ -297,6 +394,20 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
       lastOk = results !== null && !results[0]?.error;
       if (lastOk) break;
       await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+    }
+    // Welcome email on the pending/rejected -> approved transition (never for
+    // a revoked admin, never re-sent when the status was already approved).
+    // Fire-and-forget: the approval itself must never wait on or fail because
+    // of the email provider.
+    if (
+      lastOk &&
+      patch.status === "approved" &&
+      base.status !== "approved" &&
+      !isRemovedAdmin(targetEmail)
+    ) {
+      void sendApprovalEmail(targetEmail, base.firstName).catch((error) =>
+        console.error("[brevo] unexpected failure:", error),
+      );
     }
     return {
       enabled: true,
