@@ -40,6 +40,17 @@ export function cloudSyncConfigured(): boolean {
   return restUrl() !== null && restToken() !== null;
 }
 
+/**
+ * Emails stripped of admin status by the platform owner. Any cloud/local
+ * account record for these emails is demoted to a regular mentor wherever it
+ * is loaded, and they can never sign in through the admin console path.
+ */
+export const REMOVED_ADMIN_EMAILS = ["lwethunkandi3@gmail.com"];
+
+function isRemovedAdmin(email: string): boolean {
+  return REMOVED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+}
+
 type PipelineResult = { result?: unknown; error?: string | null };
 
 /** Runs Redis commands via the REST pipeline endpoint. Returns null when not configured. */
@@ -111,6 +122,8 @@ export const syncRegister = createServerFn({ method: "POST" })
         licenses: Array.from(licensesById.values()),
       };
     }
+    // A removed admin must never (re)register as an admin through this path.
+    if (isRemovedAdmin(email)) merged = { ...merged, role: "mentor" };
     const results = await pipeline([
       ["HSET", ACCOUNTS_KEY, email, JSON.stringify(merged)],
     ]);
@@ -135,6 +148,9 @@ export const syncListAccounts = createServerFn({ method: "POST" }).handler(async
   const accounts = Object.values(accountsRaw)
     .map(parseAccount)
     .filter((account): account is Account => account !== null)
+    // A removed admin's stale cloud record is demoted wherever it is listed,
+    // so no device can ever hydrate them back into an admin role.
+    .map((account) => (isRemovedAdmin(account.email) ? { ...account, role: "mentor" as const } : account))
     .map(toPublic);
 
   const paymentsRaw = (results[1]?.result ?? {}) as Record<string, unknown>;
@@ -175,7 +191,9 @@ export const syncSignIn = createServerFn({ method: "POST" })
     if (account.password !== data.password) {
       return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
     }
-    return { enabled: true, ok: true, account: toPublic(account) };
+    // Removed admins keep their (mentor) access but never their admin role.
+    const resolved = isRemovedAdmin(email) ? { ...account, role: "mentor" as const } : account;
+    return { enabled: true, ok: true, account: toPublic(resolved) };
   });
 
 /* ------------------------------------------------------------------ */
@@ -191,7 +209,9 @@ export const syncGetAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SyncGetAccountResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, account: null };
     const account = await readAccount(data.email);
-    return { enabled: true, account: account ? toPublic(account) : null };
+    const resolved =
+      account && isRemovedAdmin(account.email) ? { ...account, role: "mentor" as const } : account;
+    return { enabled: true, account: resolved ? toPublic(resolved) : null };
   });
 
 /* ------------------------------------------------------------------ */

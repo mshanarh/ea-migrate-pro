@@ -155,11 +155,7 @@ export function sastToday(): string {
 }
 
 /** Platform admins — unlimited daily scans. */
-const ADMIN_EMAILS = new Set([
-  "biyasentobeko222@gmail.com",
-  "lwethunkandi3@gmail.com",
-  "ntobekotraders.official@gmail.com",
-]);
+const ADMIN_EMAILS = new Set(["biyasentobeko222@gmail.com", "ntobekotraders.official@gmail.com"]);
 
 export function isUnlimitedScanner(email: string | null | undefined): boolean {
   return Boolean(email && ADMIN_EMAILS.has(email.trim().toLowerCase()));

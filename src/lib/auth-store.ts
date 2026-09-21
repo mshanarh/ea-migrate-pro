@@ -126,16 +126,22 @@ const seedMentor: Account = {
 };
 
 /** Platform owner accounts — admins by definition, on every device. */
-export const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "lwethunkandi3@gmail.com", "admin@eamigrate.pro"];
+export const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "admin@eamigrate.pro"];
 
-export const PAYMENT_EXEMPT_EMAILS = [
-  "lwethunkandi3@gmail.com",
-  "biyasentobeko222@gmail",
-  "biyasentobeko222@gmail.com",
-];
+export const PAYMENT_EXEMPT_EMAILS = ["biyasentobeko222@gmail", "biyasentobeko222@gmail.com"];
+
+/**
+ * Emails that lost their platform privileges: they must ALWAYS go through
+ * payment, even when a device still holds a stale paid/admin record for them.
+ */
+export const REVOKED_PAYMENT_EMAILS = ["lwethunkandi3@gmail.com"];
 
 function cleanEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function isRevokedEmail(email: string) {
+  return REVOKED_PAYMENT_EMAILS.includes(cleanEmail(email));
 }
 
 export function isPaymentExemptEmail(email: string) {
@@ -145,6 +151,8 @@ export function isPaymentExemptEmail(email: string) {
 export function paymentStatusForEmail(email: string): PaymentStatus {
   load();
   const clean = cleanEmail(email);
+  // Revoked emails always require payment — stale records cannot help them.
+  if (isRevokedEmail(clean)) return "unpaid";
   if (isPaymentExemptEmail(clean)) return "admin";
   return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
 }
@@ -152,7 +160,7 @@ export function paymentStatusForEmail(email: string): PaymentStatus {
 export function markEmailPaid(email: string) {
   load();
   const clean = cleanEmail(email);
-  if (!clean || isPaymentExemptEmail(clean)) return;
+  if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
   const existing = state.payments.find((payment) => payment.email === clean);
   if (existing?.paid) return;
   state = {
@@ -165,7 +173,7 @@ export function markEmailPaid(email: string) {
 export function setEmailPaymentStatus(email: string, paid: boolean) {
   load();
   const clean = cleanEmail(email);
-  if (!clean || isPaymentExemptEmail(clean)) return;
+  if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
   const rest = state.payments.filter((payment) => payment.email !== clean);
   state = {
     ...state,
@@ -229,7 +237,10 @@ function normalise(store: Store): Store {
       licenses: Array.isArray(a.licenses) ? a.licenses : [],
       eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })),
     };
-    return OWNER_EMAILS.includes(a.email.trim().toLowerCase())
+    const email = a.email.trim().toLowerCase();
+    if (REVOKED_PAYMENT_EMAILS.includes(email))
+      return { ...account, role: "mentor" as const };
+    return OWNER_EMAILS.includes(email)
       ? { ...account, role: "admin" as const, status: "approved" as const }
       : account;
   });
