@@ -1,8 +1,22 @@
-import { useEffect, useRef, useState } from "react";
-import { Music2, Pause, Play, Plus, Volume2, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { Music2, Pause, Play, Plus, Search, Volume2, X } from "lucide-react";
 import { loadAudioUrl } from "@/lib/media-store";
-import { removeMusicTrack, setBuiltinTrack, setMusicPlaying, setMusicVolume, setSpotifyTrack, setUploadedTrack, useMusic } from "@/lib/music-store";
-import { BUILTIN_TRACKS, currentBuiltinTrackId, playBuiltinTrack, setBuiltinVolume, stopBuiltinTrack } from "@/lib/piano-tracks";
+import {
+  removeMusicTrack,
+  setBuiltinTrack,
+  setMusicPlaying,
+  setMusicVolume,
+  setSpotifyTrack,
+  setUploadedTrack,
+  useMusic,
+} from "@/lib/music-store";
+import {
+  BUILTIN_TRACKS,
+  currentBuiltinTrackId,
+  playBuiltinTrack,
+  setBuiltinVolume,
+  stopBuiltinTrack,
+} from "@/lib/piano-tracks";
 
 /**
  * Relaxation-music section — lives inside Settings → Music, on BOTH the full
@@ -38,6 +52,27 @@ function formatName(name: string) {
   return name.length > 26 ? `${name.slice(0, 24)}…` : name;
 }
 
+/** Deterministic album-art gradient per track id — every song gets its own cover colour. */
+function coverGradient(id: string) {
+  let hash = 0;
+  for (let index = 0; index < id.length; index += 1)
+    hash = (hash * 31 + id.charCodeAt(index)) % 360;
+  const second = (hash + 46) % 360;
+  return `linear-gradient(135deg, hsl(${hash} 65% 42%) 0%, hsl(${second} 72% 20%) 100%)`;
+}
+
+/** The explicit "E" badge, like streaming apps show. */
+function ExplicitBadge() {
+  return (
+    <span
+      aria-label="Explicit"
+      className="ml-1.5 inline-flex size-3.5 shrink-0 translate-y-[-1px] items-center justify-center rounded-[3px] bg-white/15 align-middle text-[8px] font-black text-white/70"
+    >
+      E
+    </span>
+  );
+}
+
 export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }) {
   const { track, playing, volume } = useMusic();
 
@@ -45,6 +80,7 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
 
   const [resolvedUrl, setResolvedUrl] = useState<string | null>(null);
   const [spotifyDraft, setSpotifyDraft] = useState("");
+  const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // Resolve the uploaded track reference to a playable object URL. The
@@ -130,6 +166,15 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
 
   const activeBuiltinId = track?.kind === "builtin" ? track.id : null;
 
+  const visibleTracks = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return BUILTIN_TRACKS;
+    return BUILTIN_TRACKS.filter((item) => `${item.name} ${item.artist}`.toLowerCase().includes(q));
+  }, [query]);
+
+  const activeTrack =
+    track?.kind === "builtin" ? BUILTIN_TRACKS.find((item) => item.id === track.id) : undefined;
+
   const onPlayTap = () => {
     if (!track) return;
     if (track.kind === "spotify") {
@@ -154,7 +199,10 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
 
   const handleSpotifySave = () => {
     const url = spotifyDraft.trim();
-    if (!/^https:\/\/(open\.)?spotify\.com\//.test(url) && !url.startsWith("https://spotify.link/")) {
+    if (
+      !/^https:\/\/(open\.)?spotify\.com\//.test(url) &&
+      !url.startsWith("https://spotify.link/")
+    ) {
       setError("Paste a spotify.com playlist or track link.");
       return;
     }
@@ -177,15 +225,16 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
           <Music2 className="size-6" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-bold text-white">{track ? formatName(track.name) : "No track yet"}</p>
+          <p className="truncate text-sm font-bold text-white">
+            {track ? formatName(track.name) : "No track yet"}
+            {activeTrack?.explicit && <ExplicitBadge />}
+          </p>
           <p className="text-[11px] text-white/45">
             {track
               ? track.kind === "upload"
                 ? "Uploaded track"
                 : track.kind === "builtin"
-                  ? playing
-                    ? "Playing · built-in track"
-                    : "Built-in track · paused"
+                  ? `${playing ? "Playing" : "Paused"}${activeTrack ? ` · ${activeTrack.artist}${activeTrack.duration ? ` · ${activeTrack.duration}` : ""}` : ""}`
                   : "Spotify link saved"
               : "Press a track below to start the music"}
           </p>
@@ -212,11 +261,35 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
         )}
       </div>
 
-      {/* TRACK LIST — playlist rows: title, artist, round play button */}
+      {/* SEARCH — like a music-app playlist header */}
+      <div className="flex h-11 items-center gap-2 rounded-2xl border border-white/10 bg-white/5 px-4">
+        <Search className="size-4 shrink-0 text-white/40" />
+        <input
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder="Search songs or artists…"
+          aria-label="Search music"
+          className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none placeholder:text-white/30"
+        />
+        {query && (
+          <button
+            type="button"
+            aria-label="Clear search"
+            onClick={() => setQuery("")}
+            className="shrink-0 text-white/40 transition-colors hover:text-white/80"
+          >
+            <X className="size-4" />
+          </button>
+        )}
+      </div>
+
+      {/* TRACK LIST — playlist rows: cover, title, artist · duration, round play button */}
       <div>
-        <p className="mb-2 text-[10px] font-black tracking-[0.22em] text-white/40 uppercase">Tap a track to play</p>
+        <p className="mb-2 text-[10px] font-black tracking-[0.22em] text-white/40 uppercase">
+          Tap a track to play
+        </p>
         <div className="space-y-2">
-          {BUILTIN_TRACKS.map((item) => {
+          {visibleTracks.map((item) => {
             const active = activeBuiltinId === item.id;
             const isPlaying = active && playing;
             return (
@@ -224,7 +297,7 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
                 key={item.id}
                 type="button"
                 onClick={() => tapBuiltin(item.id, item.name)}
-                className="flex w-full items-center gap-3 rounded-full border px-4 py-3 text-left transition-transform active:scale-[0.98]"
+                className="flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: active ? accent : "rgba(255,255,255,0.12)",
                   background: active ? `${accent}12` : "rgba(255,255,255,0.03)",
@@ -232,27 +305,39 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
                 }}
               >
                 <span
-                  className="flex size-9 shrink-0 items-center justify-center rounded-xl"
-                  style={{
-                    background: active ? `${accent}2b` : "rgba(255,255,255,0.08)",
-                    color: active ? accent : "rgba(255,255,255,0.7)",
-                  }}
+                  className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl"
+                  style={{ background: coverGradient(item.id) }}
                 >
-                  <Music2 className="size-4" />
+                  <Music2 className="size-4 text-white/85" />
+                  {isPlaying && <span className="absolute inset-0 bg-black/45" />}
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-[14px] font-bold text-white">{item.name}</span>
-                  <span className="block truncate text-[11px] text-white/45">{item.artist}</span>
+                  <span className="flex items-center truncate text-[14px] font-bold text-white">
+                    {item.name}
+                    {item.explicit && <ExplicitBadge />}
+                  </span>
+                  <span className="block truncate text-[11px] text-white/45">
+                    {item.artist}
+                    {item.duration ? ` • ${item.duration}` : ""}
+                  </span>
                 </span>
                 <span
                   className="flex size-10 shrink-0 items-center justify-center rounded-full"
-                  style={{ background: isPlaying ? accent : "rgba(255,255,255,0.1)", color: isPlaying ? "#000" : "#fff" }}
+                  style={{
+                    background: isPlaying ? accent : "rgba(255,255,255,0.1)",
+                    color: isPlaying ? "#000" : "#fff",
+                  }}
                 >
                   {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
                 </span>
               </button>
             );
           })}
+          {visibleTracks.length === 0 && (
+            <p className="rounded-2xl border border-white/10 bg-white/5 px-4 py-6 text-center text-sm text-white/40">
+              No songs match “{query}”.
+            </p>
+          )}
         </div>
       </div>
 
@@ -323,7 +408,9 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
 
       {error && <p className="text-[12px] text-red-400">{error}</p>}
       <p className="text-[11px] leading-relaxed text-white/35">
-        Built-in tracks are generated live in the app — original piano, amapiano and lofi grooves, so they're royalty-free and work offline. For artist songs (Chris Brown and more), upload them or paste a Spotify link. Your music keeps playing across app screens.
+        Built-in tracks are generated live in the app — original piano, amapiano and lofi grooves,
+        so they're royalty-free and work offline. For artist songs (Chris Brown and more), upload
+        them or paste a Spotify link. Your music keeps playing across app screens.
       </p>
     </div>
   );

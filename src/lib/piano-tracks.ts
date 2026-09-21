@@ -19,6 +19,10 @@ export type BuiltinTrack = {
   name: string;
   /** Credit line shown under the title, like the artist on a playlist. */
   artist: string;
+  /** Track length shown in the playlist, like "2:44". */
+  duration?: string;
+  /** Shows the explicit "E" badge like streaming apps. */
+  explicit?: boolean;
   mood: string;
   style: BuiltinStyle;
   bpm: number;
@@ -48,22 +52,372 @@ const Cm7 = [48, 51, 55, 58];
 const Fm7 = [41, 48, 51, 55];
 
 export const BUILTIN_TRACKS: BuiltinTrack[] = [
-  { id: "piano-sunrise", name: "Piano Sunrise", artist: "EA Keys", mood: "Soft · Uplifting", style: "piano", bpm: 76, chords: [Cmaj, Gmaj, Amin, Fmaj], bass: [36, 43, 45, 41] },
-  { id: "amapiano-sunset", name: "Amapiano Sunset", artist: "Log Drum Collective", mood: "Log drum · Groove", style: "amapiano", bpm: 112, chords: [Amin7, Fmaj7, Cmaj7, Gmaj7], bass: [33, 29, 36, 31] },
-  { id: "log-drum-nights", name: "Log Drum Nights", artist: "Amapiano Sessions", mood: "Deep · Amapiano", style: "amapiano", bpm: 114, chords: [[40, 47, 51, 55], [41, 48, 52, 55], [43, 50, 53, 57], [38, 45, 48, 52]], bass: [28, 29, 31, 26] },
-  { id: "rainy-keys", name: "Rainy Keys", artist: "Soft Piano", mood: "Calm · Rainy", style: "piano", bpm: 68, chords: [Amin, Fmaj, Cmaj, Gmaj], bass: [33, 29, 36, 31] },
-  { id: "gospel-morning", name: "Gospel Morning", artist: "Gospel Keys", mood: "Warm · Soulful", style: "piano", bpm: 72, chords: [[41, 48, 52, 57], [45, 52, 57, 60], [43, 50, 55, 59], [48, 55, 60, 64]], bass: [29, 33, 31, 36] },
-  { id: "deep-focus", name: "Deep Focus", artist: "Lofi Study", mood: "Lofi · Mellow", style: "lofi", bpm: 82, chords: [Dmin, Amin, Fmaj, Gmaj], bass: [26, 33, 29, 31] },
-  { id: "sunday-chill", name: "Sunday Chill", artist: "Lofi Sessions", mood: "Lofi · Smooth", style: "lofi", bpm: 86, chords: [Fmaj7, Cmaj7, Amin7, Gmaj7], bass: [29, 36, 33, 31] },
-  { id: "trade-calm", name: "Trade Calm", artist: "EA Keys", mood: "Ambient · Focus", style: "piano", bpm: 64, chords: [Cmaj7, Amin7, Fmaj7, Gmaj7], bass: [36, 33, 29, 31] },
-  { id: "midnight-amapiano", name: "Midnight Amapiano", artist: "Log Drum Collective", mood: "Deep · Night drive", style: "amapiano", bpm: 110, chords: [Dmin7, Gm7, Bbmaj7, Am7], bass: [26, 31, 34, 33] },
-  { id: "pretoria-nights", name: "Pretoria Nights", artist: "Amapiano Nights", mood: "Township · Groove", style: "amapiano", bpm: 116, chords: [Em7, Gmaj9, Am7, Fmaj7], bass: [28, 31, 33, 29] },
-  { id: "golden-hour-keys", name: "Golden Hour Keys", artist: "Piano Sessions", mood: "Warm · Golden", style: "piano", bpm: 72, chords: [Fmaj7, Gmaj7, Em7, Amin7], bass: [29, 31, 28, 33] },
-  { id: "soweto-groove", name: "Soweto Groove", artist: "Township Sound", mood: "Amapiano · Dance", style: "amapiano", bpm: 118, chords: [Cm7, Fm7, Gm7, Bbmaj7], bass: [36, 29, 31, 34] },
-  { id: "rain-on-glass", name: "Rain on Glass", artist: "Lofi Rain", mood: "Lofi · Cozy", style: "lofi", bpm: 78, chords: [Dmin, Gmaj9, Cmaj7, Am7], bass: [26, 31, 36, 33] },
-  { id: "sunday-worship", name: "Sunday Worship", artist: "Gospel Organ", mood: "Worship · Gentle", style: "piano", bpm: 66, chords: [[48, 52, 55, 59], [45, 52, 55, 60], [41, 48, 52, 57], [43, 47, 50, 55]], bass: [36, 33, 29, 31] },
-  { id: "deep-house-breeze", name: "Deep House Breeze", artist: "Deep House", mood: "House · Smooth", style: "lofi", bpm: 92, chords: [Am7, Gmaj7, Fmaj7, Em7], bass: [33, 31, 29, 28] },
-  { id: "focus-flow", name: "Focus Flow", artist: "Study Beats", mood: "Lofi · Study", style: "lofi", bpm: 84, chords: [Em7, Am7, Gmaj7, Dmin7], bass: [28, 33, 31, 26] },
+  {
+    id: "piano-sunrise",
+    name: "Piano Sunrise",
+    artist: "EA Keys",
+    mood: "Soft · Uplifting",
+    style: "piano",
+    bpm: 76,
+    chords: [Cmaj, Gmaj, Amin, Fmaj],
+    bass: [36, 43, 45, 41],
+  },
+  {
+    id: "amapiano-sunset",
+    name: "Amapiano Sunset",
+    artist: "Log Drum Collective",
+    mood: "Log drum · Groove",
+    style: "amapiano",
+    bpm: 112,
+    chords: [Amin7, Fmaj7, Cmaj7, Gmaj7],
+    bass: [33, 29, 36, 31],
+  },
+  {
+    id: "log-drum-nights",
+    name: "Log Drum Nights",
+    artist: "Amapiano Sessions",
+    mood: "Deep · Amapiano",
+    style: "amapiano",
+    bpm: 114,
+    chords: [
+      [40, 47, 51, 55],
+      [41, 48, 52, 55],
+      [43, 50, 53, 57],
+      [38, 45, 48, 52],
+    ],
+    bass: [28, 29, 31, 26],
+  },
+  {
+    id: "rainy-keys",
+    name: "Rainy Keys",
+    artist: "Soft Piano",
+    mood: "Calm · Rainy",
+    style: "piano",
+    bpm: 68,
+    chords: [Amin, Fmaj, Cmaj, Gmaj],
+    bass: [33, 29, 36, 31],
+  },
+  {
+    id: "gospel-morning",
+    name: "Gospel Morning",
+    artist: "Gospel Keys",
+    mood: "Warm · Soulful",
+    style: "piano",
+    bpm: 72,
+    chords: [
+      [41, 48, 52, 57],
+      [45, 52, 57, 60],
+      [43, 50, 55, 59],
+      [48, 55, 60, 64],
+    ],
+    bass: [29, 33, 31, 36],
+  },
+  {
+    id: "deep-focus",
+    name: "Deep Focus",
+    artist: "Lofi Study",
+    mood: "Lofi · Mellow",
+    style: "lofi",
+    bpm: 82,
+    chords: [Dmin, Amin, Fmaj, Gmaj],
+    bass: [26, 33, 29, 31],
+  },
+  {
+    id: "sunday-chill",
+    name: "Sunday Chill",
+    artist: "Lofi Sessions",
+    mood: "Lofi · Smooth",
+    style: "lofi",
+    bpm: 86,
+    chords: [Fmaj7, Cmaj7, Amin7, Gmaj7],
+    bass: [29, 36, 33, 31],
+  },
+  {
+    id: "trade-calm",
+    name: "Trade Calm",
+    artist: "EA Keys",
+    mood: "Ambient · Focus",
+    style: "piano",
+    bpm: 64,
+    chords: [Cmaj7, Amin7, Fmaj7, Gmaj7],
+    bass: [36, 33, 29, 31],
+  },
+  {
+    id: "midnight-amapiano",
+    name: "Midnight Amapiano",
+    artist: "Log Drum Collective",
+    mood: "Deep · Night drive",
+    style: "amapiano",
+    bpm: 110,
+    chords: [Dmin7, Gm7, Bbmaj7, Am7],
+    bass: [26, 31, 34, 33],
+  },
+  {
+    id: "pretoria-nights",
+    name: "Pretoria Nights",
+    artist: "Amapiano Nights",
+    mood: "Township · Groove",
+    style: "amapiano",
+    bpm: 116,
+    chords: [Em7, Gmaj9, Am7, Fmaj7],
+    bass: [28, 31, 33, 29],
+  },
+  {
+    id: "golden-hour-keys",
+    name: "Golden Hour Keys",
+    artist: "Piano Sessions",
+    mood: "Warm · Golden",
+    style: "piano",
+    bpm: 72,
+    chords: [Fmaj7, Gmaj7, Em7, Amin7],
+    bass: [29, 31, 28, 33],
+  },
+  {
+    id: "soweto-groove",
+    name: "Soweto Groove",
+    artist: "Township Sound",
+    mood: "Amapiano · Dance",
+    style: "amapiano",
+    bpm: 118,
+    chords: [Cm7, Fm7, Gm7, Bbmaj7],
+    bass: [36, 29, 31, 34],
+  },
+  {
+    id: "rain-on-glass",
+    name: "Rain on Glass",
+    artist: "Lofi Rain",
+    mood: "Lofi · Cozy",
+    style: "lofi",
+    bpm: 78,
+    chords: [Dmin, Gmaj9, Cmaj7, Am7],
+    bass: [26, 31, 36, 33],
+  },
+  {
+    id: "sunday-worship",
+    name: "Sunday Worship",
+    artist: "Gospel Organ",
+    mood: "Worship · Gentle",
+    style: "piano",
+    bpm: 66,
+    chords: [
+      [48, 52, 55, 59],
+      [45, 52, 55, 60],
+      [41, 48, 52, 57],
+      [43, 47, 50, 55],
+    ],
+    bass: [36, 33, 29, 31],
+  },
+  {
+    id: "deep-house-breeze",
+    name: "Deep House Breeze",
+    artist: "Deep House",
+    mood: "House · Smooth",
+    style: "lofi",
+    bpm: 92,
+    chords: [Am7, Gmaj7, Fmaj7, Em7],
+    bass: [33, 31, 29, 28],
+  },
+  {
+    id: "focus-flow",
+    name: "Focus Flow",
+    artist: "Study Beats",
+    mood: "Lofi · Study",
+    style: "lofi",
+    bpm: 84,
+    chords: [Em7, Am7, Gmaj7, Dmin7],
+    bass: [28, 33, 31, 26],
+  },
+
+  /* ---- Songs playlist (generated renditions of the requested songs) ---- */
+
+  {
+    id: "song-3am-in-paris",
+    name: "3 AM In Paris",
+    artist: "MPM Beats",
+    duration: "2:44",
+    mood: "Lofi · Late night",
+    style: "lofi",
+    bpm: 84,
+    chords: [Fmaj7, Em7, Dmin7, Gm7],
+    bass: [29, 28, 26, 31],
+  },
+  {
+    id: "song-insonamia",
+    name: "INSONAMIA - Slowed",
+    artist: "Ronald Figo",
+    duration: "3:23",
+    mood: "Slowed · Sleepy",
+    style: "lofi",
+    bpm: 70,
+    chords: [Am7, Fmaj7, Cmaj7, Em7],
+    bass: [33, 29, 36, 28],
+  },
+  {
+    id: "song-marcus",
+    name: "Marcus",
+    artist: "SEVER",
+    duration: "1:38",
+    mood: "Dark · Wave",
+    style: "lofi",
+    bpm: 76,
+    chords: [Dmin7, Bbmaj7, Gm7, Am7],
+    bass: [26, 34, 31, 33],
+  },
+  {
+    id: "song-snowfall",
+    name: "snowfall",
+    artist: "Øneheart, reidenshi",
+    duration: "2:04",
+    mood: "Ambient · Dreamy",
+    style: "piano",
+    bpm: 60,
+    chords: [Cmaj7, Em7, Fmaj7, Am7],
+    bass: [36, 28, 29, 33],
+  },
+  {
+    id: "song-champs",
+    name: "Champs",
+    artist: "Galaxy",
+    duration: "3:22",
+    mood: "Lofi · Smooth",
+    style: "lofi",
+    bpm: 80,
+    chords: [Em7, Am7, Dmin7, Gmaj7],
+    bass: [28, 33, 26, 31],
+  },
+  {
+    id: "song-frank-saint",
+    name: "Frank Saint - Slowed",
+    artist: "core²",
+    duration: "2:06",
+    explicit: true,
+    mood: "Slowed · Gqom-ish",
+    style: "amapiano",
+    bpm: 100,
+    chords: [Gm7, Cm7, Fm7, Bbmaj7],
+    bass: [31, 36, 29, 34],
+  },
+  {
+    id: "song-chances",
+    name: "CHANCES",
+    artist: "Trabbey",
+    duration: "3:06",
+    mood: "Amapiano · Groove",
+    style: "amapiano",
+    bpm: 112,
+    chords: [Am7, Fmaj7, Cmaj7, Gmaj7],
+    bass: [33, 29, 36, 31],
+  },
+  {
+    id: "song-mystery",
+    name: "Mystery",
+    artist: "ADTurnUp, neiren!",
+    duration: "3:04",
+    mood: "Amapiano · Night",
+    style: "amapiano",
+    bpm: 110,
+    chords: [Dmin7, Gm7, Am7, Bbmaj7],
+    bass: [26, 31, 33, 34],
+  },
+  {
+    id: "song-missing-pieces",
+    name: "Missing Pieces",
+    artist: "Flawed Mangoes",
+    duration: "3:21",
+    mood: "Emotional · Piano",
+    style: "piano",
+    bpm: 66,
+    chords: [Amin, Fmaj, Cmaj, Gmaj],
+    bass: [33, 29, 36, 31],
+  },
+  {
+    id: "song-win-again",
+    name: "win again (slowed)",
+    artist: "trucky",
+    duration: "1:19",
+    mood: "Slowed · Motivation",
+    style: "lofi",
+    bpm: 72,
+    chords: [Cm7, Fm7, Bbmaj7, Gm7],
+    bass: [36, 29, 34, 31],
+  },
+  {
+    id: "song-vengeance",
+    name: "Vengeance",
+    artist: "iwilldiehere",
+    duration: "2:14",
+    mood: "Phonk · Dark",
+    style: "lofi",
+    bpm: 76,
+    chords: [Em7, Cmaj7, Am7, Fmaj7],
+    bass: [28, 36, 33, 29],
+  },
+  {
+    id: "song-baiana",
+    name: "Baianá (Afro Remix)",
+    artist: "WISEKIDS",
+    duration: "3:01",
+    mood: "Afro · Dance",
+    style: "amapiano",
+    bpm: 118,
+    chords: [Cm7, Fm7, Gm7, Bbmaj7],
+    bass: [36, 29, 31, 34],
+  },
+  {
+    id: "song-home-super-slowed",
+    name: "home (Super Slowed)",
+    artist: ".diedlonely, Jay Karin",
+    duration: "1:25",
+    mood: "Super slowed · Warm",
+    style: "piano",
+    bpm: 58,
+    chords: [Cmaj, Gmaj, Amin, Fmaj],
+    bass: [36, 43, 45, 41],
+  },
+  {
+    id: "song-biting-bullets",
+    name: "biting bullets",
+    artist: "ridgeclub",
+    duration: "2:29",
+    mood: "Lofi · Brooding",
+    style: "lofi",
+    bpm: 80,
+    chords: [Am7, Dmin7, Gmaj7, Cmaj7],
+    bass: [33, 26, 31, 36],
+  },
+  {
+    id: "song-its-you",
+    name: "It's You (feat. Miss P)",
+    artist: "Black Motion",
+    duration: "8:28",
+    mood: "Afro house · Soulful",
+    style: "amapiano",
+    bpm: 122,
+    chords: [Fmaj7, Gmaj7, Em7, Am7],
+    bass: [29, 31, 28, 33],
+  },
+  {
+    id: "song-do-i-clench",
+    name: "do i clench my fists? (slowed + reverb)",
+    artist: "ridgeclub",
+    duration: "2:52",
+    mood: "Slowed · Reverb",
+    style: "piano",
+    bpm: 64,
+    chords: [Amin7, Fmaj7, Cmaj7, Gmaj7],
+    bass: [33, 29, 36, 31],
+  },
+  {
+    id: "song-leanin",
+    name: "Leanin (Slowed)",
+    artist: "CorMill",
+    duration: "2:24",
+    mood: "Slowed · Drive",
+    style: "lofi",
+    bpm: 70,
+    chords: [Dmin7, Gm7, Cmaj7, Fmaj7],
+    bass: [26, 31, 36, 29],
+  },
 ];
 
 /* ------------------------------------------------------------------ */
@@ -81,7 +435,9 @@ let nextBarTime = 0;
 
 function ensureContext(): AudioContext {
   if (!ctx) {
-    const Ctor = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    const Ctor =
+      window.AudioContext ??
+      (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     ctx = new Ctor();
     master = ctx.createGain();
     master.gain.value = 0.6;
@@ -178,7 +534,8 @@ function shaker(time: number, gain = 0.06) {
   const length = Math.floor(context.sampleRate * 0.06);
   const buffer = context.createBuffer(1, length, context.sampleRate);
   const data = buffer.getChannelData(0);
-  for (let index = 0; index < length; index += 1) data[index] = (Math.random() * 2 - 1) * (1 - index / length);
+  for (let index = 0; index < length; index += 1)
+    data[index] = (Math.random() * 2 - 1) * (1 - index / length);
   const src = context.createBufferSource();
   src.buffer = buffer;
   const filter = context.createBiquadFilter();
@@ -225,7 +582,8 @@ function scheduleBar(track: BuiltinTrack, bar: number, time: number) {
     bassNote(time, root, beat * 3.6, 0.16);
   } else if (track.style === "amapiano") {
     // Off-beat chord stabs + signature log-drum pattern + shakers.
-    const stab = (offset: number, index: number) => pluck(time + beat * offset, (chord[index] ?? chord[0] ?? 48) + 12, beat * 0.7, 0.13);
+    const stab = (offset: number, index: number) =>
+      pluck(time + beat * offset, (chord[index] ?? chord[0] ?? 48) + 12, beat * 0.7, 0.13);
     stab(0.5, 0);
     stab(1.5, 1);
     stab(2.5, 2);
