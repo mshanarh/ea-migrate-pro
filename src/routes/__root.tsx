@@ -86,30 +86,31 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
       { name: "apple-mobile-web-app-title", content: "EA Migrate Pro" },
-      { title: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      { title: "EA Hosting Platform for MT5 - EA Migrate Pro" },
+      { name: "application-name", content: "EA Migrate Pro" },
       {
         name: "description",
         content:
-          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
       },
       { name: "robots", content: "index, follow" },
       { name: "google-site-verification", content: "Esn1A0ZxxRa8u19Awb2qk0qvS6LLV6wKrP7iFBLN74A" },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "EA Migrate Pro" },
-      { property: "og:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      { property: "og:title", content: "EA Hosting Platform for MT5" },
       {
         property: "og:description",
         content:
-          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
       },
       { property: "og:url", content: "https://eamigratepro.vercel.app" },
       { property: "og:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      { name: "twitter:title", content: "EA Hosting Platform for MT5" },
       {
         name: "twitter:description",
         content:
-          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
       },
       { name: "twitter:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
     ],
