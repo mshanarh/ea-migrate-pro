@@ -345,8 +345,16 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
       // every EA that exists on either side, local fields winning per EA.
       const mergedEas = mergeEas(known.eas, cloud.eas);
       const easChanged = mergedEas.length !== known.eas.length || mergedEas.some((ea, index) => ea !== known.eas[index]);
-      existing.set(key, { ...known, ...cloud, password: known.password, eas: mergedEas });
-      if (easChanged || mergedEas.length !== cloud.eas.length) changed = true;
+      // Status reconciliation: a cloud "pending" must NEVER overwrite an admin
+      // decision (approved/rejected) held locally. This exact clobber made
+      // approved users reappear as pending after the admin re-logged in when
+      // the approval's cloud write had failed. Any other cloud status
+      // (approved/rejected) propagates across devices as the shared truth.
+      const status =
+        cloud.status === "pending" && known.status !== "pending" ? known.status : cloud.status;
+      existing.set(key, { ...known, ...cloud, status, password: known.password, eas: mergedEas });
+      if (easChanged || mergedEas.length !== cloud.eas.length || status !== known.status)
+        changed = true;
     } else if (cloud.role === "admin") {
       // Admin records sign in via the dedicated admin login only.
       continue;

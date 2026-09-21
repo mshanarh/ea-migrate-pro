@@ -258,17 +258,51 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
 
     const targetEmail = data.targetEmail.trim().toLowerCase();
     const account = await readAccount(targetEmail);
-    if (!account) return { enabled: true, ok: false, error: "Account not found in the cloud store yet." };
+    // Upsert: an approval MUST land in the shared store even when the mentor's
+    // registration never reached it (offline phone, dropped request) —
+    // otherwise every later poll resurrects the stale "pending" status.
+    const base: Account = account ?? {
+      id: "m-cloud-" + Date.now(),
+      firstName: "",
+      displayName: targetEmail,
+      email: targetEmail,
+      username: targetEmail.split("@")[0] ?? targetEmail,
+      password: "",
+      whatsapp: "",
+      role: "mentor",
+      status: "pending",
+      createdAt: new Date().toISOString(),
+      licenseLimit: 0,
+      licenses: [],
+      eas: [],
+    };
 
     const patch = data.patch;
     const updated: Account = {
-      ...account,
+      ...base,
       ...(patch.status !== undefined ? { status: patch.status } : {}),
-      ...(patch.licenseLimit !== undefined ? { licenseLimit: Math.max(0, Math.floor(patch.licenseLimit)) } : {}),
+      ...(patch.licenseLimit !== undefined
+        ? { licenseLimit: Math.max(0, Math.floor(patch.licenseLimit)) }
+        : {}),
       ...(patch.licenses !== undefined ? { licenses: patch.licenses } : {}),
     };
-    const results = await pipeline([["HSET", ACCOUNTS_KEY, targetEmail, JSON.stringify(updated)]]);
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    // Admin decisions MUST reach the shared store — a silently dropped write
+    // made approved users reappear as pending on the next poll/re-login.
+    // Retry the write a few times before giving up.
+    let lastOk = false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const results = await pipeline([
+        ["HSET", ACCOUNTS_KEY, targetEmail, JSON.stringify(updated)],
+      ]);
+      lastOk = results !== null && !results[0]?.error;
+      if (lastOk) break;
+      await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
+    }
+    return {
+      enabled: true,
+      ok: lastOk,
+      ...(lastOk ? {} : { error: "The shared store did not accept the update — try again." }),
+    };
   });
 
 export type SyncPaymentInput = { adminEmail: string; email: string; paid: boolean };
