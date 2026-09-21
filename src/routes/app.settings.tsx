@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
+import { NewsSection } from "@/components/app/NewsSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
@@ -27,7 +28,10 @@ export const Route = createFileRoute("/app/settings")({
   head: () => ({
     meta: [
       { title: "Settings — EA Migrate Pro" },
-      { name: "description", content: "Customize colors, interface style, fonts, background effects and music." },
+      {
+        name: "description",
+        content: "Customize colors, interface style, fonts, background effects and music.",
+      },
     ],
   }),
   component: AppSettings,
@@ -56,7 +60,12 @@ function PillSection({
   return (
     <section className="w-full max-w-full">
       <div className="flex items-center justify-between gap-3 rounded-full border border-white/10 bg-[#0f1a1a] px-5 py-3.5">
-        <button type="button" onClick={onToggle} aria-expanded={open} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        >
           <span className="text-xl" aria-hidden>
             {icon}
           </span>
@@ -157,7 +166,9 @@ function InterfaceSection({ accent }: { accent: string }) {
             <span className="block text-sm font-black tracking-wide text-white">{option.name}</span>
             <span className="block text-xs text-white/50">{option.description}</span>
           </span>
-          {theme === option.id && <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />}
+          {theme === option.id && (
+            <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+          )}
         </button>
       ))}
     </div>
@@ -186,7 +197,9 @@ function FontSection({ accent }: { accent: string }) {
             Aa
           </span>
           <span className="flex-1 text-sm font-bold text-white/85">{option.name}</span>
-          {font === option.id && <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />}
+          {font === option.id && (
+            <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+          )}
         </button>
       ))}
     </div>
@@ -198,7 +211,8 @@ function AppSettings() {
   const accent = accentColorValue(color);
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
-  const toggleSection = (key: string) => setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
+  const toggleSection = (key: string) =>
+    setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
     <div className="app-fullscreen bg-black text-white">
@@ -206,19 +220,36 @@ function AppSettings() {
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-10 pb-40">
           <div className="pb-5">
             <h1 className="text-3xl font-black tracking-tight">Settings</h1>
-            <p className="mt-2 text-sm text-white/55">Tap any section to open it. Changes apply instantly and are saved on this device.</p>
+            <p className="mt-2 text-sm text-white/55">
+              Tap any section to open it. Changes apply instantly and are saved on this device.
+            </p>
           </div>
 
           <div className="w-full max-w-full space-y-4">
-            <PillSection icon="🎨" label="Accent Colors" open={!!openSections["accent"]} onToggle={() => toggleSection("accent")}>
+            <PillSection
+              icon="🎨"
+              label="Accent Colors"
+              open={!!openSections["accent"]}
+              onToggle={() => toggleSection("accent")}
+            >
               <AccentSection accent={accent} />
             </PillSection>
 
-            <PillSection icon="🖼️" label="Interface Styles" open={!!openSections["interface"]} onToggle={() => toggleSection("interface")}>
+            <PillSection
+              icon="🖼️"
+              label="Interface Styles"
+              open={!!openSections["interface"]}
+              onToggle={() => toggleSection("interface")}
+            >
               <InterfaceSection accent={accent} />
             </PillSection>
 
-            <PillSection icon="🔤" label="Font Styles" open={!!openSections["font"]} onToggle={() => toggleSection("font")}>
+            <PillSection
+              icon="🔤"
+              label="Font Styles"
+              open={!!openSections["font"]}
+              onToggle={() => toggleSection("font")}
+            >
               <FontSection accent={accent} />
             </PillSection>
 
@@ -231,11 +262,30 @@ function AppSettings() {
               <BackAnimationSection />
             </PillSection>
 
-            <PillSection icon="🎵" label="Music" open={!!openSections["music"]} onToggle={() => toggleSection("music")}>
+            <PillSection
+              icon="🎵"
+              label="Music"
+              open={!!openSections["music"]}
+              onToggle={() => toggleSection("music")}
+            >
               <MusicSettingsSection accent={accent} />
             </PillSection>
 
-            <PillSection icon="🤖" label="App Logo" open={!!openSections["logo"]} onToggle={() => toggleSection("logo")}>
+            <PillSection
+              icon="📰"
+              label="News & Predictions"
+              open={!!openSections["news"]}
+              onToggle={() => toggleSection("news")}
+            >
+              <NewsSection accent={accent} />
+            </PillSection>
+
+            <PillSection
+              icon="🤖"
+              label="App Logo"
+              open={!!openSections["logo"]}
+              onToggle={() => toggleSection("logo")}
+            >
               <AppLogoSection />
             </PillSection>
           </div>
@@ -285,7 +335,9 @@ function AppLogoSection() {
           <BrandLogo className="size-full object-cover" />
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-bold">{logoRef ? "Custom logo active" : "Built-in mascot active"}</p>
+          <p className="text-sm font-bold">
+            {logoRef ? "Custom logo active" : "Built-in mascot active"}
+          </p>
           <p className="mt-0.5 text-[12px] leading-relaxed text-white/50">
             Upload your logo once — it appears on every page and in the tab icon.
           </p>

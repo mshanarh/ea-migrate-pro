@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
 import { isBotVoiceEnabled, setBotVoiceEnabled, warmBotVoice } from "@/lib/bot-voice";
 import { isRobotVideoAuto, requestVideoPlayback, setRobotVideoAuto } from "@/lib/video-playback";
 
-type RowKind = "canvas" | "matrix" | "robotVideo" | "botVoice";
+type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice";
 
 type EffectRow = {
   id: string;
@@ -24,13 +25,66 @@ type EffectRow = {
  * are independent features layered on top.
  */
 const ROWS: EffectRow[] = [
-  { id: "profit-rain", emoji: "💰", name: "Profit Rain", subtitle: "Raining symbols", kind: "canvas", canvasId: "dollars" },
-  { id: "lightning", emoji: "⚡", name: "Lightning", subtitle: "Electric storm effect", kind: "canvas", canvasId: "lightning" },
-  { id: "colour-matrix", emoji: "🎨", name: "Colour Matrix", subtitle: "Pulses image, button & name glows on & off", kind: "matrix" },
-  { id: "hackers", emoji: "🧑‍💻", name: "Hackers", subtitle: "Binary streams flowing behind the UI", kind: "canvas", canvasId: "binary" },
-  { id: "candle-chart", emoji: "📈", name: "Candle Chart", subtitle: "Animated candlestick chart backdrop in accent color", kind: "canvas", canvasId: "candles" },
-  { id: "robot-video", emoji: "🎞️", name: "Robot Video", subtitle: "Ask your mentor to upload a video on their EA to unlock this", kind: "robotVideo" },
-  { id: "bot-voice", emoji: "🎙️", name: "Bot Voice", subtitle: "Smooth male voice announces start/stop and reads live trade logs", kind: "botVoice" },
+  {
+    id: "profit-rain",
+    emoji: "💰",
+    name: "Profit Rain",
+    subtitle: "Raining symbols",
+    kind: "canvas",
+    canvasId: "dollars",
+  },
+  {
+    id: "lightning",
+    emoji: "⚡",
+    name: "Lightning",
+    subtitle: "Electric storm effect",
+    kind: "canvas",
+    canvasId: "lightning",
+  },
+  {
+    id: "colour-matrix",
+    emoji: "🎨",
+    name: "Colour Matrix",
+    subtitle: "Pulses image, button & name glows on & off",
+    kind: "matrix",
+  },
+  {
+    id: "hackers",
+    emoji: "🧑‍💻",
+    name: "Hackers",
+    subtitle: "Binary streams flowing behind the UI",
+    kind: "canvas",
+    canvasId: "binary",
+  },
+  {
+    id: "candle-chart",
+    emoji: "📈",
+    name: "Candle Chart",
+    subtitle: "Animated candlestick chart backdrop in accent color",
+    kind: "canvas",
+    canvasId: "candles",
+  },
+  {
+    id: "overlay",
+    emoji: "📱",
+    name: "Play Over Screen",
+    subtitle: "Floats the animation over cards and charts instead of behind them",
+    kind: "overlay",
+  },
+  {
+    id: "robot-video",
+    emoji: "🎞️",
+    name: "Robot Video",
+    subtitle: "Ask your mentor to upload a video on their EA to unlock this",
+    kind: "robotVideo",
+  },
+  {
+    id: "bot-voice",
+    emoji: "🎙️",
+    name: "Bot Voice",
+    subtitle: "Smooth male voice announces start/stop and reads live trade logs",
+    kind: "botVoice",
+  },
 ];
 
 const MATRIX_KEY = "eamp-colour-matrix";
@@ -63,6 +117,24 @@ function writeMatrix(on: boolean) {
   }
 }
 
+function readOverlay(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem(BG_OVERLAY_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeOverlay(on: boolean) {
+  try {
+    localStorage.setItem(BG_OVERLAY_KEY, on ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new Event("eamp:bg-effects"));
+}
+
 /** Re-applies the persisted Colour Matrix class (called on app screens). */
 export function applyColourMatrixFromStorage() {
   if (typeof window === "undefined") return;
@@ -77,7 +149,17 @@ export function applyColourMatrixFromStorage() {
   if (!glow) document.body.style.setProperty("--eamp-glow", "#ff2d78");
 }
 
-function Toggle({ on, accent, onToggle, disabled }: { on: boolean; accent: string; onToggle: () => void; disabled?: boolean }) {
+function Toggle({
+  on,
+  accent,
+  onToggle,
+  disabled,
+}: {
+  on: boolean;
+  accent: string;
+  onToggle: () => void;
+  disabled?: boolean;
+}) {
   return (
     <button
       type="button"
@@ -105,17 +187,23 @@ export function BackAnimationSection() {
   const [voice, setVoice] = useState(true);
   const [robotVideoAuto, setRobotVideoAutoState] = useState(false);
   const [hasRobotVideo, setHasRobotVideo] = useState(false);
+  const [overlay, setOverlayState] = useState(false);
 
   useEffect(() => {
     setCanvas(readCanvasConfig());
     setMatrix(readMatrix());
+    setOverlayState(readOverlay());
     setVoice(isBotVoiceEnabled());
     setRobotVideoAutoState(isRobotVideoAuto());
     warmBotVoice();
     try {
       const raw = localStorage.getItem("eamp.app.v3");
       const state = raw ? (JSON.parse(raw) as { robots?: { video?: string }[] }) : null;
-      setHasRobotVideo((state?.robots ?? []).some((robot) => typeof robot.video === "string" && robot.video.length > 0));
+      setHasRobotVideo(
+        (state?.robots ?? []).some(
+          (robot) => typeof robot.video === "string" && robot.video.length > 0,
+        ),
+      );
     } catch {
       setHasRobotVideo(false);
     }
@@ -125,7 +213,9 @@ export function BackAnimationSection() {
     if (row.kind === "canvas" && row.canvasId) {
       const isOn = canvas.enabled && canvas.type === row.canvasId;
       // Canvas animations are mutually exclusive — switching one on switches the rest off.
-      const next = isOn ? { enabled: false, type: canvas.type } : { enabled: true, type: row.canvasId };
+      const next = isOn
+        ? { enabled: false, type: canvas.type }
+        : { enabled: true, type: row.canvasId };
       setCanvas(next);
       writeCanvasConfig(next.enabled, next.type);
       return;
@@ -134,6 +224,12 @@ export function BackAnimationSection() {
       const next = !matrix;
       setMatrix(next);
       writeMatrix(next);
+      return;
+    }
+    if (row.kind === "overlay") {
+      const next = !overlay;
+      setOverlayState(next);
+      writeOverlay(next);
       return;
     }
     if (row.kind === "botVoice") {
@@ -161,9 +257,11 @@ export function BackAnimationSection() {
             ? canvas.enabled && canvas.type === row.canvasId
             : row.kind === "matrix"
               ? matrix
-              : row.kind === "botVoice"
-                ? voice
-                : robotVideoAuto;
+              : row.kind === "overlay"
+                ? overlay
+                : row.kind === "botVoice"
+                  ? voice
+                  : robotVideoAuto;
         const locked = row.kind === "robotVideo" && !hasRobotVideo;
         return (
           <div
@@ -183,7 +281,9 @@ export function BackAnimationSection() {
           </div>
         );
       })}
-      <p className="pt-1 text-center text-[11px] text-white/35">Toggles apply instantly across the app.</p>
+      <p className="pt-1 text-center text-[11px] text-white/35">
+        Toggles apply instantly across the app.
+      </p>
     </div>
   );
 }

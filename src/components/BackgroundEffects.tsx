@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 /**
  * Full-screen animated background effects engine.
@@ -62,13 +63,97 @@ const rand = (a: number, b: number) => a + Math.random() * (b - a);
 type Stepper = (dt: number) => void;
 type Factory = (ctx: CanvasRenderingContext2D, w: number, h: number) => Stepper;
 
+/* ---------- accent tinting ----------
+ * Every effect draws with hardcoded colours; instead of rewriting 40
+ * factories, the draw context is wrapped in a Proxy that rewrites any
+ * fillStyle / strokeStyle / shadowColor / gradient stop to the user's
+ * accent colour (alpha preserved). Near-white accents are left alone so
+ * lightning / snow / flashes keep their natural look.
+ */
+
+/** localStorage key for the overlay (play-over-screen) mode. */
+export const BG_OVERLAY_KEY = "bgEffectsOverlay";
+
+type Rgb = { r: number; g: number; b: number };
+
+function hexToRgb(hex: string): Rgb {
+  const clean = hex.replace("#", "");
+  const full =
+    clean.length === 3
+      ? clean
+          .split("")
+          .map((c) => c + c)
+          .join("")
+      : clean;
+  const n = parseInt(full, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+function isNearWhite({ r, g, b }: Rgb): boolean {
+  return r > 230 && g > 230 && b > 230;
+}
+
+/** Rewrites one CSS colour string to the accent colour, keeping its alpha. */
+function tint(color: string, accent: Rgb): string {
+  const c = color.trim();
+  const fn = c.match(/^rgba?\(\s*[\d.]+\s*,\s*[\d.]+\s*,\s*[\d.]+\s*(?:,\s*([\d.]+)\s*)?\)$/i);
+  if (fn) return `rgba(${accent.r},${accent.g},${accent.b},${fn[1] ?? "1"})`;
+  if (/^#([0-9a-f]{3}|[0-9a-f]{6})$/i.test(c)) return `rgba(${accent.r},${accent.g},${accent.b},1)`;
+  return c; // named colours etc. pass through
+}
+
+/** Wraps a draw context so every colour the effect paints becomes the accent. */
+function tintedCtx(ctx: CanvasRenderingContext2D, accent: Rgb): CanvasRenderingContext2D {
+  if (isNearWhite(accent)) return ctx;
+  const proxy = new Proxy(ctx, {
+    get(target, prop) {
+      if (prop === "createRadialGradient" || prop === "createLinearGradient") {
+        return (...args: unknown[]) => {
+          const grad = (target[prop] as (...a: unknown[]) => CanvasGradient)(...(args as []));
+          return new Proxy(grad, {
+            get(g, p) {
+              if (p === "addColorStop") {
+                return (offset: number, color: string) =>
+                  grad.addColorStop(offset, tint(String(color), accent));
+              }
+              const v = Reflect.get(g, p, g);
+              return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(grad) : v;
+            },
+          });
+        };
+      }
+      const v = Reflect.get(target, prop, target);
+      return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+    },
+    set(target, prop, value) {
+      if (
+        (prop === "fillStyle" || prop === "strokeStyle" || prop === "shadowColor") &&
+        typeof value === "string"
+      ) {
+        target[prop] = tint(value, accent);
+        return true;
+      }
+      return Reflect.set(target, prop, value);
+    },
+  });
+  return proxy;
+}
+
 const FACTORIES: Record<string, Factory> = {
   dollars: (ctx, w, h) => {
-    const ps = Array.from({ length: 40 }, () => ({ x: rand(0, w), y: rand(0, h), v: rand(50, 110), s: rand(12, 26) }));
+    const ps = Array.from({ length: 40 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      v: rand(50, 110),
+      s: rand(12, 26),
+    }));
     return (dt) => {
       for (const p of ps) {
         p.y += p.v * dt;
-        if (p.y > h + 30) { p.y = -30; p.x = rand(0, w); }
+        if (p.y > h + 30) {
+          p.y = -30;
+          p.x = rand(0, w);
+        }
         ctx.font = `bold ${p.s}px monospace`;
         ctx.fillStyle = "rgba(0, 210, 90, 0.85)";
         ctx.fillText("$", p.x, p.y);
@@ -104,7 +189,14 @@ const FACTORIES: Record<string, Factory> = {
     const mk = (x: number) => {
       const open = rand(0.25, 0.75);
       const close = rand(0.25, 0.75);
-      return { x, open, close, hi: Math.min(open, close) - rand(0.03, 0.14), lo: Math.max(open, close) + rand(0.03, 0.14), drift: rand(16, 36) };
+      return {
+        x,
+        open,
+        close,
+        hi: Math.min(open, close) - rand(0.03, 0.14),
+        lo: Math.max(open, close) + rand(0.03, 0.14),
+        drift: rand(16, 36),
+      };
     };
     const cs = Array.from({ length: count }, (_, i) => mk(i * cw));
     return (dt) => {
@@ -117,7 +209,10 @@ const FACTORIES: Record<string, Factory> = {
         const yH = c.hi * h * 0.8 + h * 0.1;
         const yL = c.lo * h * 0.8 + h * 0.1;
         ctx.strokeStyle = "rgba(255,255,255,0.35)";
-        ctx.beginPath(); ctx.moveTo(c.x + 4, yH); ctx.lineTo(c.x + 4, yL); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(c.x + 4, yH);
+        ctx.lineTo(c.x + 4, yL);
+        ctx.stroke();
         ctx.fillStyle = up ? "rgba(60,230,120,0.7)" : "rgba(255,85,85,0.7)";
         ctx.fillRect(c.x, Math.min(yO, yC), 8, Math.max(3, Math.abs(yC - yO)));
       }
@@ -125,14 +220,23 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   starfield: (ctx, w, h) => {
-    const cx = w / 2, cy = h / 2, maxR = Math.hypot(cx, cy);
-    const stars = Array.from({ length: 160 }, () => ({ a: rand(0, TAU), d: rand(0, maxR), s: rand(0.3, 1) }));
+    const cx = w / 2,
+      cy = h / 2,
+      maxR = Math.hypot(cx, cy);
+    const stars = Array.from({ length: 160 }, () => ({
+      a: rand(0, TAU),
+      d: rand(0, maxR),
+      s: rand(0.3, 1),
+    }));
     return (dt) => {
       for (const st of stars) {
         const px = cx + Math.cos(st.a) * st.d;
         const py = cy + Math.sin(st.a) * st.d;
         st.d += (40 + st.s * 120) * dt * (st.d / maxR + 0.12);
-        if (st.d > maxR * 1.1) { st.d = rand(0, 16); st.a = rand(0, TAU); }
+        if (st.d > maxR * 1.1) {
+          st.d = rand(0, 16);
+          st.a = rand(0, TAU);
+        }
         const size = 0.6 + (st.d / maxR) * 2.2;
         ctx.fillStyle = `rgba(255,255,255,${Math.min(0.9, 0.15 + st.d / 200)})`;
         ctx.fillRect(px, py, size, size);
@@ -155,7 +259,10 @@ const FACTORIES: Record<string, Factory> = {
         const t = ((i + offset) % 14) / 14;
         const y = horizon + Math.pow(t, 2.2) * (h - horizon);
         ctx.globalAlpha = Math.min(1, t * 2);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+        ctx.beginPath();
+        ctx.moveTo(0, y);
+        ctx.lineTo(w, y);
+        ctx.stroke();
       }
       ctx.globalAlpha = 1;
       ctx.strokeStyle = "rgba(255,0,229,0.5)";
@@ -177,7 +284,8 @@ const FACTORIES: Record<string, Factory> = {
       ctx.beginPath();
       for (let x = 0; x <= w; x += 6) {
         const y = h / 2 + Math.sin(x * 0.02 + phase) * h * 0.12 * Math.sin(x * 0.004 + phase * 0.6);
-        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
       ctx.stroke();
       ctx.lineWidth = 1;
@@ -185,10 +293,16 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   particles: (ctx, w, h) => {
-    const ps = Array.from({ length: 80 }, () => ({ x: rand(0, w), y: rand(0, h), vx: rand(-24, 24), vy: rand(-24, 24) }));
+    const ps = Array.from({ length: 80 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      vx: rand(-24, 24),
+      vy: rand(-24, 24),
+    }));
     return (dt) => {
       for (const p of ps) {
-        p.x += p.vx * dt; p.y += p.vy * dt;
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
         if (p.x < 0 || p.x > w) p.vx *= -1;
         if (p.y < 0 || p.y > h) p.vy *= -1;
       }
@@ -200,26 +314,44 @@ const FACTORIES: Record<string, Factory> = {
           const b = ps[j];
           if (!b) continue;
           const d = Math.hypot(a.x - b.x, a.y - b.y);
-          if (d < 90) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+          if (d < 90) {
+            ctx.beginPath();
+            ctx.moveTo(a.x, a.y);
+            ctx.lineTo(b.x, b.y);
+            ctx.stroke();
+          }
         }
       }
       for (const p of ps) {
         ctx.fillStyle = "rgba(120,220,255,0.85)";
-        ctx.beginPath(); ctx.arc(p.x, p.y, 1.8, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 1.8, 0, TAU);
+        ctx.fill();
       }
     };
   },
 
   snow: (ctx, w, h) => {
-    const fs = Array.from({ length: 90 }, () => ({ x: rand(0, w), y: rand(0, h), r: rand(1, 3.2), v: rand(16, 40), ph: rand(0, TAU) }));
+    const fs = Array.from({ length: 90 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      r: rand(1, 3.2),
+      v: rand(16, 40),
+      ph: rand(0, TAU),
+    }));
     let t = 0;
     return (dt) => {
       t += dt;
       for (const f of fs) {
         f.y += f.v * dt;
-        if (f.y > h + 4) { f.y = -4; f.x = rand(0, w); }
+        if (f.y > h + 4) {
+          f.y = -4;
+          f.x = rand(0, w);
+        }
         ctx.fillStyle = `rgba(255,255,255,${0.3 + f.r / 9})`;
-        ctx.beginPath(); ctx.arc(f.x + Math.sin(t * 0.8 + f.ph) * 14, f.y, f.r, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(f.x + Math.sin(t * 0.8 + f.ph) * 14, f.y, f.r, 0, TAU);
+        ctx.fill();
       }
     };
   },
@@ -231,15 +363,29 @@ const FACTORIES: Record<string, Factory> = {
       timer -= dt;
       if (timer <= 0 && ps.length < 60) {
         timer = 0.06;
-        ps.push({ x: rand(0, w), y: h + 6, v: rand(40, 90), life: 1, s: rand(1.2, 3), drift: rand(-14, 14) });
+        ps.push({
+          x: rand(0, w),
+          y: h + 6,
+          v: rand(40, 90),
+          life: 1,
+          s: rand(1.2, 3),
+          drift: rand(-14, 14),
+        });
       }
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         if (!p) continue;
-        p.y -= p.v * dt; p.x += p.drift * dt; p.life -= dt * 0.35;
-        if (p.life <= 0 || p.y < -6) { ps.splice(i, 1); continue; }
+        p.y -= p.v * dt;
+        p.x += p.drift * dt;
+        p.life -= dt * 0.35;
+        if (p.life <= 0 || p.y < -6) {
+          ps.splice(i, 1);
+          continue;
+        }
         ctx.fillStyle = `rgba(255,${120 + Math.floor(90 * p.life)},40,${p.life})`;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.s * p.life, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.s * p.life, 0, TAU);
+        ctx.fill();
       }
     };
   },
@@ -251,41 +397,67 @@ const FACTORIES: Record<string, Factory> = {
       timer -= dt;
       if (timer <= 0) {
         timer = 0.8;
-        if (rs.length < 10) rs.push({ x: rand(w * 0.15, w * 0.85), y: rand(h * 0.15, h * 0.85), r: 4, life: 1 });
+        if (rs.length < 10)
+          rs.push({ x: rand(w * 0.15, w * 0.85), y: rand(h * 0.15, h * 0.85), r: 4, life: 1 });
       }
       for (let i = rs.length - 1; i >= 0; i--) {
         const r = rs[i];
         if (!r) continue;
-        r.r += 70 * dt; r.life -= dt * 0.5;
-        if (r.life <= 0) { rs.splice(i, 1); continue; }
+        r.r += 70 * dt;
+        r.life -= dt * 0.5;
+        if (r.life <= 0) {
+          rs.splice(i, 1);
+          continue;
+        }
         ctx.strokeStyle = `rgba(0,229,255,${r.life * 0.7})`;
         ctx.lineWidth = 2;
-        ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.r, 0, TAU);
+        ctx.stroke();
       }
       ctx.lineWidth = 1;
     };
   },
 
   bubbles: (ctx, w, h) => {
-    const bs = Array.from({ length: 26 }, () => ({ x: rand(0, w), y: rand(0, h), r: rand(6, 22), v: rand(14, 34), ph: rand(0, TAU) }));
+    const bs = Array.from({ length: 26 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      r: rand(6, 22),
+      v: rand(14, 34),
+      ph: rand(0, TAU),
+    }));
     let t = 0;
     return (dt) => {
       t += dt;
       for (const b of bs) {
         b.y -= b.v * dt;
-        if (b.y < -b.r * 2) { b.y = h + b.r; b.x = rand(0, w); }
+        if (b.y < -b.r * 2) {
+          b.y = h + b.r;
+          b.x = rand(0, w);
+        }
         const x = b.x + Math.sin(t + b.ph) * 8;
         ctx.strokeStyle = "rgba(180,220,255,0.4)";
         ctx.fillStyle = "rgba(180,220,255,0.08)";
-        ctx.beginPath(); ctx.arc(x, b.y, b.r, 0, TAU); ctx.fill(); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x, b.y, b.r, 0, TAU);
+        ctx.fill();
+        ctx.stroke();
         ctx.strokeStyle = "rgba(255,255,255,0.35)";
-        ctx.beginPath(); ctx.arc(x - b.r * 0.3, b.y - b.r * 0.35, b.r * 0.28, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(x - b.r * 0.3, b.y - b.r * 0.35, b.r * 0.28, 0, TAU);
+        ctx.stroke();
       }
     };
   },
 
   fireflies: (ctx, w, h) => {
-    const fs = Array.from({ length: 40 }, () => ({ x: rand(0, w), y: rand(0, h), a: rand(0, TAU), ph: rand(0, TAU) }));
+    const fs = Array.from({ length: 40 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      a: rand(0, TAU),
+      ph: rand(0, TAU),
+    }));
     let t = 0;
     return (dt) => {
       t += dt;
@@ -295,23 +467,36 @@ const FACTORIES: Record<string, Factory> = {
         f.a += rand(-1.5, 1.5) * dt;
         f.x += Math.cos(f.a) * 22 * dt;
         f.y += Math.sin(f.a) * 22 * dt;
-        if (f.x < 0) f.x = w; if (f.x > w) f.x = 0;
-        if (f.y < 0) f.y = h; if (f.y > h) f.y = 0;
+        if (f.x < 0) f.x = w;
+        if (f.x > w) f.x = 0;
+        if (f.y < 0) f.y = h;
+        if (f.y > h) f.y = 0;
         const glow = Math.max(0.08, 0.4 + Math.sin(t * 2 + f.ph) * 0.35);
         ctx.fillStyle = `rgba(255,230,80,${glow})`;
-        ctx.beginPath(); ctx.arc(f.x, f.y, 2.2, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 2.2, 0, TAU);
+        ctx.fill();
       }
       ctx.shadowBlur = 0;
     };
   },
 
   rain: (ctx, w, h) => {
-    const ds = Array.from({ length: 90 }, () => ({ x: rand(-40, w), y: rand(-h, h), v: rand(480, 780), len: rand(10, 22) }));
+    const ds = Array.from({ length: 90 }, () => ({
+      x: rand(-40, w),
+      y: rand(-h, h),
+      v: rand(480, 780),
+      len: rand(10, 22),
+    }));
     return (dt) => {
       ctx.strokeStyle = "rgba(120,180,255,0.5)";
       for (const d of ds) {
-        d.y += d.v * dt; d.x += d.v * 0.18 * dt;
-        if (d.y > h + 20) { d.y = rand(-80, -10); d.x = rand(-40, w); }
+        d.y += d.v * dt;
+        d.x += d.v * 0.18 * dt;
+        if (d.y > h + 20) {
+          d.y = rand(-80, -10);
+          d.x = rand(-40, w);
+        }
         ctx.beginPath();
         ctx.moveTo(d.x, d.y);
         ctx.lineTo(d.x - d.len * 0.18, d.y - d.len);
@@ -321,17 +506,24 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   lightning: (ctx, w, h) => {
-    let timer = 1.5, flash = 0;
+    let timer = 1.5,
+      flash = 0;
     type Bolt = { x: number; y: number }[];
     let bolt: Bolt = [];
     return (dt) => {
       timer -= dt;
       if (timer <= 0) {
-        flash = 1; timer = 3;
+        flash = 1;
+        timer = 3;
         bolt = [];
-        let x = rand(w * 0.2, w * 0.8), y = 0;
+        let x = rand(w * 0.2, w * 0.8),
+          y = 0;
         bolt.push({ x, y });
-        while (y < h) { x += rand(-40, 40); y += rand(30, 70); bolt.push({ x, y }); }
+        while (y < h) {
+          x += rand(-40, 40);
+          y += rand(30, 70);
+          bolt.push({ x, y });
+        }
       }
       if (flash > 0) {
         ctx.fillStyle = `rgba(255,255,255,${flash * 0.4})`;
@@ -350,7 +542,11 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   constellations: (ctx, w, h) => {
-    const stars = Array.from({ length: 70 }, () => ({ x: rand(0, w), y: rand(0, h), ph: rand(0, TAU) }));
+    const stars = Array.from({ length: 70 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      ph: rand(0, TAU),
+    }));
     const links: { a: { x: number; y: number }; b: { x: number; y: number } }[] = [];
     for (let i = 0; i < stars.length; i++) {
       const a = stars[i];
@@ -365,17 +561,25 @@ const FACTORIES: Record<string, Factory> = {
     return (dt) => {
       t += dt;
       ctx.strokeStyle = "rgba(140,180,255,0.14)";
-      for (const { a, b } of links) { ctx.beginPath(); ctx.moveTo(a.x, a.y); ctx.lineTo(b.x, b.y); ctx.stroke(); }
+      for (const { a, b } of links) {
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
       for (const s of stars) {
         ctx.fillStyle = `rgba(255,255,255,${0.35 + Math.sin(t * 1.6 + s.ph) * 0.3})`;
-        ctx.beginPath(); ctx.arc(s.x, s.y, 1.6, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, 1.6, 0, TAU);
+        ctx.fill();
       }
     };
   },
 
   hexgrid: (ctx, w, h) => {
     const R = 26;
-    const dx = R * 1.5, dy = R * Math.sqrt(3);
+    const dx = R * 1.5,
+      dy = R * Math.sqrt(3);
     const centers: { x: number; y: number }[] = [];
     for (let col = 0; col * dx < w + R * 2; col++) {
       for (let row = 0; row * dy < h + R * 2; row++) {
@@ -393,9 +597,11 @@ const FACTORIES: Record<string, Factory> = {
           const a = (Math.PI / 3) * i;
           const px = c.x + Math.cos(a) * R * 0.85;
           const py = c.y + Math.sin(a) * R * 0.85;
-          if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
         }
-        ctx.closePath(); ctx.stroke();
+        ctx.closePath();
+        ctx.stroke();
       }
     };
   },
@@ -422,17 +628,27 @@ const FACTORIES: Record<string, Factory> = {
 
   currency: (ctx, w, h) => {
     const syms = ["$", "€", "£", "¥"];
-    const colors = ["rgba(0,229,255,0.8)", "rgba(60,230,120,0.8)", "rgba(255,200,60,0.8)", "rgba(255,120,200,0.8)"];
+    const colors = [
+      "rgba(0,229,255,0.8)",
+      "rgba(60,230,120,0.8)",
+      "rgba(255,200,60,0.8)",
+      "rgba(255,120,200,0.8)",
+    ];
     const cs = Array.from({ length: 30 }, () => ({
-      x: rand(0, w), y: rand(0, h),
+      x: rand(0, w),
+      y: rand(0, h),
       s: syms[Math.floor(rand(0, syms.length))] ?? "$",
       c: colors[Math.floor(rand(0, colors.length))] ?? "rgba(0,229,255,0.8)",
-      v: rand(14, 40), size: rand(14, 30),
+      v: rand(14, 40),
+      size: rand(14, 30),
     }));
     return (dt) => {
       for (const c of cs) {
         c.y -= c.v * dt;
-        if (c.y < -30) { c.y = h + 20; c.x = rand(0, w); }
+        if (c.y < -30) {
+          c.y = h + 20;
+          c.x = rand(0, w);
+        }
         ctx.font = `bold ${c.size}px serif`;
         ctx.fillStyle = c.c;
         ctx.fillText(c.s, c.x, c.y);
@@ -443,7 +659,8 @@ const FACTORIES: Record<string, Factory> = {
   circuit: (ctx, w, h) => {
     const traces = Array.from({ length: 12 }, () => {
       const pts: { x: number; y: number }[] = [];
-      let x = rand(0, w), y = rand(0, h);
+      let x = rand(0, w),
+        y = rand(0, h);
       pts.push({ x, y });
       const segs = 3 + Math.floor(rand(2, 5));
       for (let s = 0; s < segs; s++) {
@@ -461,12 +678,17 @@ const FACTORIES: Record<string, Factory> = {
         tr.pts.forEach((p, i) => (i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y)));
         ctx.stroke();
         ctx.fillStyle = "rgba(0,229,255,0.6)";
-        for (const p of tr.pts) { ctx.beginPath(); ctx.arc(p.x, p.y, 2.5, 0, TAU); ctx.fill(); }
+        for (const p of tr.pts) {
+          ctx.beginPath();
+          ctx.arc(p.x, p.y, 2.5, 0, TAU);
+          ctx.fill();
+        }
         tr.pulse = (tr.pulse + tr.speed * dt) % 1;
         const total = tr.pts.length - 1;
         const f = tr.pulse * total;
         const i = Math.min(Math.floor(f), total - 1);
-        const a = tr.pts[i], b = tr.pts[i + 1];
+        const a = tr.pts[i],
+          b = tr.pts[i + 1];
         if (a && b) {
           const t = f - i;
           ctx.fillStyle = "rgba(190,255,240,0.95)";
@@ -480,18 +702,30 @@ const FACTORIES: Record<string, Factory> = {
 
   orbs: (ctx, w, h) => {
     const cols = ["0,229,255", "40,120,255", "120,80,255"];
-    const os = Array.from({ length: 7 }, (_, i) => ({ x: rand(0, w), y: rand(0, h), r: rand(50, 110), vx: rand(-14, 14), vy: rand(-10, 10), c: cols[i % 3] ?? "0,229,255" }));
+    const os = Array.from({ length: 7 }, (_, i) => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      r: rand(50, 110),
+      vx: rand(-14, 14),
+      vy: rand(-10, 10),
+      c: cols[i % 3] ?? "0,229,255",
+    }));
     return (dt) => {
       ctx.globalCompositeOperation = "lighter";
       for (const o of os) {
-        o.x += o.vx * dt; o.y += o.vy * dt;
-        if (o.x < -o.r) o.x = w + o.r; if (o.x > w + o.r) o.x = -o.r;
-        if (o.y < -o.r) o.y = h + o.r; if (o.y > h + o.r) o.y = -o.r;
+        o.x += o.vx * dt;
+        o.y += o.vy * dt;
+        if (o.x < -o.r) o.x = w + o.r;
+        if (o.x > w + o.r) o.x = -o.r;
+        if (o.y < -o.r) o.y = h + o.r;
+        if (o.y > h + o.r) o.y = -o.r;
         const g = ctx.createRadialGradient(o.x, o.y, 0, o.x, o.y, o.r);
         g.addColorStop(0, `rgba(${o.c},0.35)`);
         g.addColorStop(1, `rgba(${o.c},0)`);
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(o.x, o.y, o.r, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(o.x, o.y, o.r, 0, TAU);
+        ctx.fill();
       }
       ctx.globalCompositeOperation = "source-over";
     };
@@ -499,7 +733,11 @@ const FACTORIES: Record<string, Factory> = {
 
   lava: (ctx, w, h) => {
     const bs = Array.from({ length: 9 }, (_, i) => ({
-      x: rand(0, w), base: rand(0, h), ph: rand(0, TAU), r: rand(40, 90), v: rand(10, 24),
+      x: rand(0, w),
+      base: rand(0, h),
+      ph: rand(0, TAU),
+      r: rand(40, 90),
+      v: rand(10, 24),
       c: ["255,90,40", "255,160,30", "255,60,120"][i % 3] ?? "255,90,40",
     }));
     let t = 0;
@@ -507,30 +745,43 @@ const FACTORIES: Record<string, Factory> = {
       t += dt;
       ctx.globalCompositeOperation = "lighter";
       for (const b of bs) {
-        const y = (b.base - t * b.v + h) % (h + b.r * 2) - b.r;
+        const y = ((b.base - t * b.v + h) % (h + b.r * 2)) - b.r;
         const x = b.x + Math.sin(t * 0.4 + b.ph) * 30;
         const g = ctx.createRadialGradient(x, y, 0, x, y, b.r);
         g.addColorStop(0, `rgba(${b.c},0.4)`);
         g.addColorStop(1, `rgba(${b.c},0)`);
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(x, y, b.r, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(x, y, b.r, 0, TAU);
+        ctx.fill();
       }
       ctx.globalCompositeOperation = "source-over";
     };
   },
 
   smoke: (ctx, w, h) => {
-    const ps = Array.from({ length: 12 }, () => ({ x: rand(0, w), y: rand(0, h), r: rand(30, 70), v: rand(8, 20) }));
+    const ps = Array.from({ length: 12 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      r: rand(30, 70),
+      v: rand(8, 20),
+    }));
     return (dt) => {
       for (const p of ps) {
         p.y -= p.v * dt;
         p.r += 12 * dt;
-        if (p.y + p.r < 0) { p.y = h + p.r; p.x = rand(0, w); p.r = rand(30, 70); }
+        if (p.y + p.r < 0) {
+          p.y = h + p.r;
+          p.x = rand(0, w);
+          p.r = rand(30, 70);
+        }
         const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.r);
         g.addColorStop(0, "rgba(160,160,170,0.1)");
         g.addColorStop(1, "rgba(160,160,170,0)");
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, TAU);
+        ctx.fill();
       }
     };
   },
@@ -538,13 +789,24 @@ const FACTORIES: Record<string, Factory> = {
   confetti: (ctx, w, h) => {
     const colors = ["#ff5252", "#ffd740", "#69f0ae", "#40c4ff", "#e040fb", "#ff6e40"];
     const cs = Array.from({ length: 60 }, () => ({
-      x: rand(0, w), y: rand(-h, 0), v: rand(60, 140), r: rand(0, TAU), vr: rand(-4, 4), a: rand(0, TAU),
-      c: colors[Math.floor(rand(0, colors.length))] ?? "#fff", s: rand(4, 8),
+      x: rand(0, w),
+      y: rand(-h, 0),
+      v: rand(60, 140),
+      r: rand(0, TAU),
+      vr: rand(-4, 4),
+      a: rand(0, TAU),
+      c: colors[Math.floor(rand(0, colors.length))] ?? "#fff",
+      s: rand(4, 8),
     }));
     return (dt) => {
       for (const c of cs) {
-        c.y += c.v * dt; c.r += c.vr * dt; c.x += Math.sin(c.a + c.r) * 20 * dt;
-        if (c.y > h + 10) { c.y = -10; c.x = rand(0, w); }
+        c.y += c.v * dt;
+        c.r += c.vr * dt;
+        c.x += Math.sin(c.a + c.r) * 20 * dt;
+        if (c.y > h + 10) {
+          c.y = -10;
+          c.x = rand(0, w);
+        }
         ctx.save();
         ctx.translate(c.x, c.y);
         ctx.rotate(c.r);
@@ -556,13 +818,25 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   arrows: (ctx, w, h) => {
-    const as = Array.from({ length: 28 }, () => ({ x: rand(0, w), y: rand(0, h), up: Math.random() < 0.5, v: rand(18, 40), s: rand(14, 24) }));
+    const as = Array.from({ length: 28 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      up: Math.random() < 0.5,
+      v: rand(18, 40),
+      s: rand(14, 24),
+    }));
     return (dt) => {
       ctx.textAlign = "center";
       for (const a of as) {
         a.y += (a.up ? -a.v : a.v) * dt;
-        if (a.y < -20) { a.y = h + 20; a.x = rand(0, w); }
-        if (a.y > h + 20) { a.y = -20; a.x = rand(0, w); }
+        if (a.y < -20) {
+          a.y = h + 20;
+          a.x = rand(0, w);
+        }
+        if (a.y > h + 20) {
+          a.y = -20;
+          a.x = rand(0, w);
+        }
         ctx.font = `bold ${a.s}px sans-serif`;
         ctx.fillStyle = a.up ? "rgba(60,230,120,0.75)" : "rgba(255,90,90,0.75)";
         ctx.fillText(a.up ? "↑" : "↓", a.x, a.y);
@@ -590,7 +864,8 @@ const FACTORIES: Record<string, Factory> = {
         let p = ((x + off) / 340) % 1;
         if (p < 0) p += 1;
         const y = h / 2 - ekg(p);
-        if (x === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+        if (x === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
       }
       ctx.stroke();
       ctx.lineWidth = 1;
@@ -601,7 +876,9 @@ const FACTORIES: Record<string, Factory> = {
     let t = 0;
     return (dt) => {
       t += dt * 0.5;
-      const cx = w / 2, cy = h / 2, maxR = Math.hypot(cx, cy);
+      const cx = w / 2,
+        cy = h / 2,
+        maxR = Math.hypot(cx, cy);
       for (let arm = 0; arm < 3; arm++) {
         for (let i = 0; i < 70; i++) {
           const d = (i / 70) * maxR;
@@ -610,7 +887,9 @@ const FACTORIES: Record<string, Factory> = {
           const y = cy + Math.sin(a) * d * 0.85;
           const alpha = (1 - d / maxR) * 0.8;
           ctx.fillStyle = arm === 1 ? `rgba(180,140,255,${alpha})` : `rgba(120,200,255,${alpha})`;
-          ctx.beginPath(); ctx.arc(x, y, 1.4 + (1 - d / maxR) * 1.6, 0, TAU); ctx.fill();
+          ctx.beginPath();
+          ctx.arc(x, y, 1.4 + (1 - d / maxR) * 1.6, 0, TAU);
+          ctx.fill();
         }
       }
     };
@@ -623,7 +902,10 @@ const FACTORIES: Record<string, Factory> = {
       const x2 = x + Math.cos(angle) * len;
       const y2 = y + Math.sin(angle) * len;
       ctx.strokeStyle = `rgba(120,255,160,${0.12 + depth * 0.06})`;
-      ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x2, y2); ctx.stroke();
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      ctx.lineTo(x2, y2);
+      ctx.stroke();
       const spread = 0.45 + Math.sin(t * 0.5) * 0.12;
       grow(x2, y2, len * 0.72, angle - spread, depth - 1);
       grow(x2, y2, len * 0.72, angle + spread, depth - 1);
@@ -647,10 +929,16 @@ const FACTORIES: Record<string, Factory> = {
       for (let i = rs.length - 1; i >= 0; i--) {
         const r = rs[i];
         if (!r) continue;
-        r.r += 55 * dt; r.life -= dt * 0.45;
-        if (r.life <= 0) { rs.splice(i, 1); continue; }
+        r.r += 55 * dt;
+        r.life -= dt * 0.45;
+        if (r.life <= 0) {
+          rs.splice(i, 1);
+          continue;
+        }
         ctx.strokeStyle = `rgba(160,220,255,${r.life * 0.5})`;
-        ctx.beginPath(); ctx.arc(r.x, r.y, r.r, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(r.x, r.y, r.r, 0, TAU);
+        ctx.stroke();
       }
     };
   },
@@ -677,7 +965,11 @@ const FACTORIES: Record<string, Factory> = {
       while (bars.length && (bars[0]?.x ?? 0) + (bars[0]?.wd ?? 0) < 0) bars.shift();
       const lastB = bars[bars.length - 1];
       if (!lastB || lastB.x + lastB.wd < w) {
-        bars.push({ x: (lastB ? lastB.x + lastB.wd : 0) + rand(8, 26), wd: rand(2, 9), a: rand(0.2, 0.85) });
+        bars.push({
+          x: (lastB ? lastB.x + lastB.wd : 0) + rand(8, 26),
+          wd: rand(2, 9),
+          a: rand(0.2, 0.85),
+        });
       }
       for (const b of bars) {
         ctx.fillStyle = `rgba(255,255,255,${b.a})`;
@@ -693,21 +985,35 @@ const FACTORIES: Record<string, Factory> = {
       timer -= dt;
       if (timer <= 0 && ps.length < 90) {
         timer = 0.03;
-        ps.push({ x: w / 2 + rand(-w * 0.18, w * 0.18), y: h + 6, v: rand(60, 130), life: 1, s: rand(3, 7), drift: rand(-20, 20) });
+        ps.push({
+          x: w / 2 + rand(-w * 0.18, w * 0.18),
+          y: h + 6,
+          v: rand(60, 130),
+          life: 1,
+          s: rand(3, 7),
+          drift: rand(-20, 20),
+        });
       }
       ctx.globalCompositeOperation = "lighter";
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         if (!p) continue;
-        p.y -= p.v * dt; p.x += p.drift * dt; p.life -= dt * 0.55;
-        if (p.life <= 0 || p.y < -8) { ps.splice(i, 1); continue; }
+        p.y -= p.v * dt;
+        p.x += p.drift * dt;
+        p.life -= dt * 0.55;
+        if (p.life <= 0 || p.y < -8) {
+          ps.splice(i, 1);
+          continue;
+        }
         const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, p.s * 2.4);
         if (p.life > 0.66) g.addColorStop(0, `rgba(255,230,80,${p.life})`);
         else if (p.life > 0.33) g.addColorStop(0, `rgba(255,140,40,${p.life})`);
         else g.addColorStop(0, `rgba(255,60,30,${p.life})`);
         g.addColorStop(1, "rgba(255,60,30,0)");
         ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(p.x, p.y, p.s * 2.4, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.s * 2.4, 0, TAU);
+        ctx.fill();
       }
       ctx.globalCompositeOperation = "source-over";
     };
@@ -722,14 +1028,24 @@ const FACTORIES: Record<string, Factory> = {
       if (timer <= 0 && ps.length < 22) {
         timer = 0.4;
         const v = vals[Math.floor(Math.random() * vals.length)] ?? "+1.0";
-        ps.push({ x: rand(16, Math.max(20, w - 60)), y: h + 10, v, up: v.startsWith("+"), life: 1 });
+        ps.push({
+          x: rand(16, Math.max(20, w - 60)),
+          y: h + 10,
+          v,
+          up: v.startsWith("+"),
+          life: 1,
+        });
       }
       ctx.font = "bold 14px monospace";
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         if (!p) continue;
-        p.y -= 28 * dt; p.life -= dt * 0.18;
-        if (p.life <= 0) { ps.splice(i, 1); continue; }
+        p.y -= 28 * dt;
+        p.life -= dt * 0.18;
+        if (p.life <= 0) {
+          ps.splice(i, 1);
+          continue;
+        }
         ctx.fillStyle = p.up ? `rgba(60,230,120,${p.life})` : `rgba(255,90,90,${p.life})`;
         ctx.fillText(p.v, p.x, p.y);
       }
@@ -737,7 +1053,13 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   bulls: (ctx, w, h) => {
-    const es = Array.from({ length: 14 }, () => ({ x: rand(0, w), y: rand(0, h), vx: rand(-16, 16), bull: Math.random() < 0.5, ph: rand(0, TAU) }));
+    const es = Array.from({ length: 14 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      vx: rand(-16, 16),
+      bull: Math.random() < 0.5,
+      ph: rand(0, TAU),
+    }));
     let t = 0;
     return (dt) => {
       t += dt;
@@ -754,12 +1076,20 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   trends: (ctx, w, h) => {
-    const ls = Array.from({ length: 8 }, (_, i) => ({ x: rand(-w, w), y: rand(0, h), up: i % 2 === 0, v: rand(30, 70) }));
+    const ls = Array.from({ length: 8 }, (_, i) => ({
+      x: rand(-w, w),
+      y: rand(0, h),
+      up: i % 2 === 0,
+      v: rand(30, 70),
+    }));
     return (dt) => {
       ctx.lineWidth = 2;
       for (const l of ls) {
         l.x += l.v * dt;
-        if (l.x > w + 200) { l.x = -200; l.y = rand(0, h); }
+        if (l.x > w + 200) {
+          l.x = -200;
+          l.y = rand(0, h);
+        }
         const len = 160;
         ctx.strokeStyle = l.up ? "rgba(60,230,120,0.45)" : "rgba(255,90,90,0.45)";
         ctx.beginPath();
@@ -775,7 +1105,9 @@ const FACTORIES: Record<string, Factory> = {
     let t = 0;
     return (dt) => {
       t += dt;
-      const rows = 12, rh = 12, gap = 6;
+      const rows = 12,
+        rh = 12,
+        gap = 6;
       const totalH = rows * (rh + gap);
       const startY = Math.max(20, (h - totalH) / 2);
       for (let i = 0; i < rows; i++) {
@@ -799,7 +1131,8 @@ const FACTORIES: Record<string, Factory> = {
     let t = 0;
     return (dt) => {
       t += dt;
-      const bw = 12, gap = 6;
+      const bw = 12,
+        gap = 6;
       const n = Math.ceil(w / (bw + gap));
       for (let i = 0; i < n; i++) {
         const pulse = Math.sin(t * (1 + (i % 5) * 0.2) + i * 12.9898) * 0.5 + 0.5;
@@ -815,7 +1148,8 @@ const FACTORIES: Record<string, Factory> = {
     const PHI = 1.618;
     return (dt) => {
       t += dt;
-      const cx = w * 0.2, cy = h * 0.5;
+      const cx = w * 0.2,
+        cy = h * 0.5;
       ctx.lineWidth = 1.5;
       for (let k = 0; k < 6; k++) {
         const r = 20 * Math.pow(PHI, k);
@@ -831,13 +1165,17 @@ const FACTORIES: Record<string, Factory> = {
   },
 
   tape: (ctx, w, h) => {
-    const quote = "EURUSD 1.0845   GBPUSD 1.2632   XAUUSD 2330.50   BTCUSD 67420   USDJPY 151.24   ";
+    const quote =
+      "EURUSD 1.0845   GBPUSD 1.2632   XAUUSD 2330.50   BTCUSD 67420   USDJPY 151.24   ";
     const row = quote.repeat(3);
-    let x1 = 0, x2 = w;
+    let x1 = 0,
+      x2 = w;
     ctx.font = "bold 13px monospace";
     return (dt) => {
-      x1 -= 45 * dt; if (x1 < -w) x1 += w;
-      x2 += 35 * dt; if (x2 > w) x2 -= w;
+      x1 -= 45 * dt;
+      if (x1 < -w) x1 += w;
+      x2 += 35 * dt;
+      if (x2 > w) x2 -= w;
       ctx.fillStyle = "rgba(0,229,255,0.7)";
       ctx.fillText(row, x1, h * 0.3);
       ctx.fillStyle = "rgba(255,255,255,0.5)";
@@ -854,14 +1192,24 @@ const FACTORIES: Record<string, Factory> = {
       if (timer <= 0 && ps.length < 22) {
         timer = 0.5;
         const v = vals[Math.floor(Math.random() * vals.length)] ?? "+$10";
-        ps.push({ x: rand(16, Math.max(20, w - 70)), y: h + 10, v, up: v.startsWith("+"), life: 1 });
+        ps.push({
+          x: rand(16, Math.max(20, w - 70)),
+          y: h + 10,
+          v,
+          up: v.startsWith("+"),
+          life: 1,
+        });
       }
       ctx.font = "bold 15px monospace";
       for (let i = ps.length - 1; i >= 0; i--) {
         const p = ps[i];
         if (!p) continue;
-        p.y -= 32 * dt; p.life -= dt * 0.2;
-        if (p.life <= 0) { ps.splice(i, 1); continue; }
+        p.y -= 32 * dt;
+        p.life -= dt * 0.2;
+        if (p.life <= 0) {
+          ps.splice(i, 1);
+          continue;
+        }
         ctx.fillStyle = p.up ? `rgba(60,230,120,${p.life})` : `rgba(255,90,90,${p.life})`;
         ctx.fillText(p.v, p.x, p.y);
       }
@@ -888,7 +1236,9 @@ const FACTORIES: Record<string, Factory> = {
       const head = pts[pts.length - 1];
       if (head) {
         ctx.fillStyle = "#00e5ff";
-        ctx.beginPath(); ctx.arc(head.x, head.y, 3.5, 0, TAU); ctx.fill();
+        ctx.beginPath();
+        ctx.arc(head.x, head.y, 3.5, 0, TAU);
+        ctx.fill();
       }
     };
   },
@@ -901,7 +1251,12 @@ const FACTORIES: Record<string, Factory> = {
       timer -= dt;
       if (timer <= 0) {
         timer = 0.35;
-        if (sparks.length < 14) sparks.push({ x: Math.floor(rand(0, w / gap)) * gap + gap / 2, y: Math.floor(rand(0, h / gap)) * gap + gap / 2, life: 1 });
+        if (sparks.length < 14)
+          sparks.push({
+            x: Math.floor(rand(0, w / gap)) * gap + gap / 2,
+            y: Math.floor(rand(0, h / gap)) * gap + gap / 2,
+            life: 1,
+          });
       }
       ctx.fillStyle = "rgba(255,255,255,0.14)";
       for (let x = gap / 2; x < w; x += gap) {
@@ -913,9 +1268,14 @@ const FACTORIES: Record<string, Factory> = {
         const s = sparks[i];
         if (!s) continue;
         s.life -= dt * 0.8;
-        if (s.life <= 0) { sparks.splice(i, 1); continue; }
+        if (s.life <= 0) {
+          sparks.splice(i, 1);
+          continue;
+        }
         ctx.strokeStyle = `rgba(0,229,255,${s.life})`;
-        ctx.beginPath(); ctx.arc(s.x, s.y, (1 - s.life) * 12 + 2, 0, TAU); ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, (1 - s.life) * 12 + 2, 0, TAU);
+        ctx.stroke();
         ctx.fillStyle = `rgba(0,229,255,${s.life})`;
         ctx.fillRect(s.x - 2, s.y - 2, 4, 4);
       }
@@ -926,7 +1286,29 @@ const FACTORIES: Record<string, Factory> = {
 export function BackgroundEffects() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [mounted, setMounted] = useState(false);
+  const [overlay, setOverlay] = useState(false);
+  const { color } = useCustomization();
   useEffect(() => setMounted(true), []);
+
+  // Overlay (play-over-screen) mode: same engine, canvas lifted above the app
+  // content so the animation floats over cards, charts and settings.
+  useEffect(() => {
+    const read = () => {
+      try {
+        return localStorage.getItem(BG_OVERLAY_KEY) === "true";
+      } catch {
+        return false;
+      }
+    };
+    setOverlay(read());
+    const refresh = () => setOverlay(read());
+    window.addEventListener("eamp:bg-effects", refresh);
+    window.addEventListener("storage", refresh);
+    return () => {
+      window.removeEventListener("eamp:bg-effects", refresh);
+      window.removeEventListener("storage", refresh);
+    };
+  }, []);
 
   useEffect(() => {
     if (!mounted) return;
@@ -934,6 +1316,9 @@ export function BackgroundEffects() {
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
+
+    const accentRgb = hexToRgb(accentColorValue(color));
+    const draw = tintedCtx(ctx, accentRgb);
 
     let raf = 0;
     let w = 0;
@@ -955,9 +1340,11 @@ export function BackgroundEffects() {
       if (enabled) {
         const type = readConfig().type;
         const glow =
-          type === "lightning" ? "rgba(255,255,255,0.35)" :
-          type === "candles" || type === "binary" ? "rgba(60,230,120,0.3)" :
-          "rgba(0,229,255,0.3)";
+          type === "lightning"
+            ? "rgba(255,255,255,0.35)"
+            : type === "candles" || type === "binary"
+              ? "rgba(60,230,120,0.3)"
+              : "rgba(0,229,255,0.3)";
         document.body.style.setProperty("--eamp-glow", glow);
       }
     };
@@ -982,10 +1369,10 @@ export function BackgroundEffects() {
       ctx.clearRect(0, 0, w, h);
       if (!enabled) return;
 
-      const key = `${type}@${w}x${h}`;
+      const key = `${type}@${w}x${h}@${color}`;
       if (key !== builtFor || !stepper) {
         const factory = FACTORIES[type];
-        stepper = factory ? factory(ctx, w, h) : null;
+        stepper = factory ? factory(draw, w, h) : null;
         builtFor = key;
       }
       stepper?.(dt);
@@ -1008,7 +1395,7 @@ export function BackgroundEffects() {
       window.removeEventListener("storage", refresh);
       document.body.classList.remove("eamp-bg-on");
     };
-  }, [mounted]);
+  }, [mounted, color]);
 
   if (!mounted) return null;
 
@@ -1017,7 +1404,16 @@ export function BackgroundEffects() {
       id="bg-effects-canvas"
       ref={canvasRef}
       aria-hidden
-      style={{ position: "fixed", top: 0, left: 0, width: "100%", height: "100%", zIndex: 0, pointerEvents: "none", opacity: 0.6 }}
+      style={{
+        position: "fixed",
+        top: 0,
+        left: 0,
+        width: "100%",
+        height: "100%",
+        zIndex: overlay ? 9990 : 0,
+        pointerEvents: "none",
+        opacity: overlay ? 0.5 : 0.6,
+      }}
     />
   );
 }
