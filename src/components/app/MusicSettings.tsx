@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Music2, Pause, Play, Plus, Search, Volume2, X } from "lucide-react";
+import { Loader2, Music2, Pause, Play, Plus, Search, Volume2, X } from "lucide-react";
 import { loadAudioUrl } from "@/lib/media-store";
 import {
   removeMusicTrack,
   setBuiltinTrack,
   setMusicPlaying,
   setMusicVolume,
+  setPreviewTrack,
   setSpotifyTrack,
   setUploadedTrack,
   useMusic,
 } from "@/lib/music-store";
+import { peekRealTrack, resolveRealTrack, type RealTrackInfo } from "@/lib/real-tracks";
 import {
   BUILTIN_TRACKS,
   currentBuiltinTrackId,
@@ -82,6 +84,8 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
   const [spotifyDraft, setSpotifyDraft] = useState("");
   const [query, setQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [resolvingId, setResolvingId] = useState<string | null>(null);
+  const [realInfo, setRealInfo] = useState<Record<string, RealTrackInfo>>({});
 
   // Resolve the uploaded track reference to a playable object URL. The
   // previous URL is revoked only when replaced, so a second mounted copy of
@@ -111,16 +115,22 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
     };
   }, [track]);
 
-  // Uploaded tracks: keep the shared element in sync with the store.
+  // Uploaded + preview (official recording) tracks: keep the shared element
+  // in sync with the store. Previews stream, so they never loop.
   useEffect(() => {
     const el = getSharedUploadAudio();
-    if (track?.kind !== "upload" || !resolvedUrl) {
+    const uploadSrc = track?.kind === "upload" ? resolvedUrl : null;
+    const previewSrc = track?.kind === "preview" ? track.url : null;
+    const src = uploadSrc ?? previewSrc;
+    if (!src) {
       el.pause();
       el.removeAttribute("src");
       return;
     }
-    if (!el.src.endsWith(resolvedUrl)) {
-      el.src = resolvedUrl;
+    el.loop = track?.kind === "upload";
+    el.onended = track?.kind === "preview" ? () => setMusicPlaying(false) : null;
+    if (!el.src.endsWith(src)) {
+      el.src = src;
       el.currentTime = 0;
     }
     el.volume = volume;
@@ -164,7 +174,35 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
     setMusicPlaying(true);
   };
 
-  const activeBuiltinId = track?.kind === "builtin" ? track.id : null;
+  const activeId = track && "id" in track ? track.id : null;
+
+  // Warm the official-recording cache: show cached real artwork instantly,
+  // then resolve the rest one-by-one (staggered) so taps start instantly.
+  useEffect(() => {
+    const songs = BUILTIN_TRACKS.filter((item) => item.id.startsWith("song-"));
+    const warmed: Record<string, RealTrackInfo> = {};
+    const pending: Array<{ id: string; name: string; artist: string }> = [];
+    for (const song of songs) {
+      const cached = peekRealTrack(song.name, song.artist);
+      if (cached) warmed[song.id] = cached;
+      else pending.push({ id: song.id, name: song.name, artist: song.artist });
+    }
+    if (Object.keys(warmed).length > 0) setRealInfo((previous) => ({ ...warmed, ...previous }));
+    if (pending.length === 0) return;
+    let cancelled = false;
+    void (async () => {
+      for (const song of pending) {
+        if (cancelled) return;
+        const info = await resolveRealTrack(song.name, song.artist);
+        if (cancelled) return;
+        if (info) setRealInfo((previous) => ({ ...previous, [song.id]: info }));
+        await new Promise((resolve) => setTimeout(resolve, 350));
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const visibleTracks = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -173,7 +211,34 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
   }, [query]);
 
   const activeTrack =
-    track?.kind === "builtin" ? BUILTIN_TRACKS.find((item) => item.id === track.id) : undefined;
+    track && "id" in track ? BUILTIN_TRACKS.find((item) => item.id === track.id) : undefined;
+  const nowPlayingArtwork = track?.kind === "preview" ? realInfo[track.id]?.artworkUrl : undefined;
+  const nowPlayingArtist =
+    track?.kind === "preview"
+      ? (realInfo[track.id]?.artistName ?? "Official recording")
+      : undefined;
+
+  /** Press a song row: play the OFFICIAL recording; press again to pause. */
+  const tapSong = async (id: string, name: string, artist: string) => {
+    setError(null);
+    if (activeId === id && (track?.kind === "preview" || track?.kind === "builtin")) {
+      setMusicPlaying(!playing);
+      return;
+    }
+    setResolvingId(id);
+    const info = await resolveRealTrack(name, artist);
+    setResolvingId(null);
+    if (info) {
+      setRealInfo((previous) => ({ ...previous, [id]: info }));
+      setPreviewTrack(id, name, info.previewUrl);
+      setMusicPlaying(true);
+    } else {
+      // No official recording on Apple — fall back to the in-app rendition.
+      setBuiltinTrack(id, name);
+      setMusicPlaying(true);
+      setError(`No official recording found for "${name}" — playing the in-app rendition.`);
+    }
+  };
 
   const onPlayTap = () => {
     if (!track) return;
@@ -219,10 +284,18 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
         style={{ borderColor: `${accent}33`, background: `${accent}0d` }}
       >
         <span
-          className="flex size-12 shrink-0 items-center justify-center rounded-2xl"
+          className="relative flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-2xl"
           style={{ background: `${accent}1f`, color: accent }}
         >
-          <Music2 className="size-6" />
+          {nowPlayingArtwork ? (
+            <img
+              src={nowPlayingArtwork}
+              alt=""
+              className="absolute inset-0 size-full object-cover"
+            />
+          ) : (
+            <Music2 className="size-6" />
+          )}
         </span>
         <div className="min-w-0 flex-1">
           <p className="truncate text-sm font-bold text-white">
@@ -233,9 +306,11 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
             {track
               ? track.kind === "upload"
                 ? "Uploaded track"
-                : track.kind === "builtin"
-                  ? `${playing ? "Playing" : "Paused"}${activeTrack ? ` · ${activeTrack.artist}${activeTrack.duration ? ` · ${activeTrack.duration}` : ""}` : ""}`
-                  : "Spotify link saved"
+                : track.kind === "preview"
+                  ? `${playing ? "Playing" : "Paused"} · ${nowPlayingArtist ?? "Official recording"} · official preview`
+                  : track.kind === "builtin"
+                    ? `${playing ? "Playing" : "Paused"}${activeTrack ? ` · ${activeTrack.artist}${activeTrack.duration ? ` · ${activeTrack.duration}` : ""}` : ""}`
+                    : "Spotify link saved"
               : "Press a track below to start the music"}
           </p>
         </div>
@@ -290,13 +365,19 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
         </p>
         <div className="space-y-2">
           {visibleTracks.map((item) => {
-            const active = activeBuiltinId === item.id;
+            const active = activeId === item.id;
             const isPlaying = active && playing;
+            const artwork = realInfo[item.id]?.artworkUrl;
+            const resolving = resolvingId === item.id;
             return (
               <button
                 key={item.id}
                 type="button"
-                onClick={() => tapBuiltin(item.id, item.name)}
+                onClick={() =>
+                  item.id.startsWith("song-")
+                    ? void tapSong(item.id, item.name, item.artist)
+                    : tapBuiltin(item.id, item.name)
+                }
                 className="flex w-full items-center gap-3 rounded-2xl border px-3 py-2.5 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: active ? accent : "rgba(255,255,255,0.12)",
@@ -308,7 +389,16 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
                   className="relative flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-xl"
                   style={{ background: coverGradient(item.id) }}
                 >
-                  <Music2 className="size-4 text-white/85" />
+                  {artwork ? (
+                    <img
+                      src={artwork}
+                      alt=""
+                      loading="lazy"
+                      className="absolute inset-0 size-full object-cover"
+                    />
+                  ) : (
+                    <Music2 className="size-4 text-white/85" />
+                  )}
                   {isPlaying && <span className="absolute inset-0 bg-black/45" />}
                 </span>
                 <span className="min-w-0 flex-1">
@@ -328,7 +418,13 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
                     color: isPlaying ? "#000" : "#fff",
                   }}
                 >
-                  {isPlaying ? <Pause className="size-4" /> : <Play className="size-4" />}
+                  {resolving ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : isPlaying ? (
+                    <Pause className="size-4" />
+                  ) : (
+                    <Play className="size-4" />
+                  )}
                 </span>
               </button>
             );
@@ -408,9 +504,9 @@ export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }
 
       {error && <p className="text-[12px] text-red-400">{error}</p>}
       <p className="text-[11px] leading-relaxed text-white/35">
-        Built-in tracks are generated live in the app — original piano, amapiano and lofi grooves,
-        so they're royalty-free and work offline. For artist songs (Chris Brown and more), upload
-        them or paste a Spotify link. Your music keeps playing across app screens.
+        Songs play the artists' official recordings streamed from Apple Music — same song, same
+        sound (30-second official previews). The 16 generated grooves are built in and work offline.
+        For full-length versions, upload them or paste a Spotify link.
       </p>
     </div>
   );

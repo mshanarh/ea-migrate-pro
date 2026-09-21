@@ -15,7 +15,11 @@ import { deleteAudioBlob } from "@/lib/media-store";
  *   page load, so playback always starts from an explicit user tap.
  */
 
-export type TrackSource = { kind: "builtin"; id: string; name: string } | { kind: "upload"; ref: string; name: string } | { kind: "spotify"; url: string; name: string };
+export type TrackSource =
+  | { kind: "builtin"; id: string; name: string }
+  | { kind: "preview"; id: string; name: string; url: string }
+  | { kind: "upload"; ref: string; name: string }
+  | { kind: "spotify"; url: string; name: string };
 
 type MusicState = {
   track: TrackSource | null;
@@ -92,6 +96,13 @@ export function setSpotifyTrack(url: string, name: string) {
 export function setBuiltinTrack(id: string, name: string) {
   load();
   state = { ...state, track: { kind: "builtin", id, name } };
+  persist();
+}
+
+/** Selects a real-recording preview (official Apple Music 30s stream). */
+export function setPreviewTrack(id: string, name: string, url: string) {
+  load();
+  state = { ...state, track: { kind: "preview", id, name, url } };
   persist();
 }
 
