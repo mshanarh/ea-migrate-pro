@@ -85,6 +85,25 @@ function isAuthRejected(status: number, payload: unknown): boolean {
   return raw.includes("unauthorizederror") || raw.includes("invalid auth-token");
 }
 
+/**
+ * True when MetaApi blocked the operation because the platform's MetaApi plan
+ * has no trading credits left (the free trial ran out). MetaApi answers with
+ * a ForbiddenError — "To allow trading account deployment please top up your
+ * account." — and undeploys hosted accounts until the account is topped up.
+ * This MUST surface to the user immediately: no amount of retrying executes
+ * a single trade while the provider plan is blocked.
+ */
+function billingBlockMessage(payload: unknown): string | undefined {
+  const raw = typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
+  const blocked =
+    /top up your account|insufficient (funds|credits)|upgrade.*plan|billing.*required/i.test(raw);
+  if (!blocked) return undefined;
+  return (
+    "MetaApi (the trade-execution provider) blocked this action: the platform's MetaApi plan has no trading credits left. " +
+    "The account owner must top up / upgrade the MetaApi account at app.metaapi.cloud — after that trades execute again without any app change."
+  );
+}
+
 /** Human-readable message from a MetaApi error payload. */
 function maError(payload: unknown): string | undefined {
   if (payload && typeof payload === "object") {
@@ -179,7 +198,7 @@ async function warmAccountConnection(
       const result = await fetchJson(
         `${host}/users/current/accounts/${encodeURIComponent(accountId)}/account-information`,
         { headers: { "auth-token": token, Accept: "application/json" } },
-        30_000,
+        15_000,
       );
       if (result.status === 200) return { status: 200, payload: result.payload };
       if (result.status === 404) continue; // wrong region host — try the next one
@@ -261,6 +280,8 @@ function rejectedKeyMessage(status: number): string {
 
 type MaAccount = {
   id?: string;
+  /** The provisioning API returns the account id as `_id` on list/detail payloads. */
+  _id?: string;
   login?: string;
   name?: string;
   server?: string;
@@ -273,6 +294,11 @@ type MaAccount = {
   type?: string;
   statusMessage?: string;
 };
+
+/** The account id arrives as `id` on some payloads and `_id` on others. */
+function accountIdOf(account: MaAccount | undefined | null): string | undefined {
+  return account?.id ?? account?._id ?? undefined;
+}
 
 export type MtConnectRequest = {
   /** The user's own MT5 account number — any login works, nothing is hardcoded. */
@@ -384,12 +410,14 @@ export const connectMt5Account = createServerFn({ method: "POST" })
     /**
      * Creates a hosted copy of this login on MetaApi with the requested
      * infrastructure type, retrying while broker settings are detected.
+     * The window is deliberately short — serverless functions are killed
+     * after ~60s, and a repeat press reuses the copy this created.
      */
     const createHosted = async (
       type: "cloud-g2" | "cloud-g1",
     ): Promise<{ id?: string; error?: string }> => {
       const transactionId = newTransactionId();
-      const deadline = Date.now() + 60_000;
+      const deadline = Date.now() + 25_000;
       for (;;) {
         const outcome = await withMasterToken((token) =>
           maFetch(token, "/users/current/accounts", {
@@ -402,15 +430,16 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         if (outcome.kind === "rejected") return { error: "rejected" };
         const { status, payload } = outcome.response;
         const account = payload as (MaAccount & { message?: string }) | undefined;
-        if (status >= 200 && status < 300 && account?.id) return { id: account.id as string };
+        const createdId = accountIdOf(account);
+        if (status >= 200 && status < 300 && createdId) return { id: createdId };
         const message = maError(payload);
         const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
         if (retryMatch && Date.now() < deadline) {
-          await sleep(Math.min(Number(retryMatch[1]) + 2, 20) * 1000);
+          await sleep(Math.min(Number(retryMatch[1]) + 2, 10) * 1000);
           continue;
         }
         if (status === 202 && Date.now() < deadline) {
-          await sleep(15_000);
+          await sleep(8_000);
           continue;
         }
         return { error: message || `HTTP ${status}` };
@@ -421,23 +450,32 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       region ? { ok: true, accountId, environment: region } : { ok: true, accountId };
 
     // Reuse an already-hosted copy of this exact login+server instead of
-    // creating a duplicate when Connect is pressed twice — UNLESS its cloud
-    // terminal never attached. Some brokers refuse MetaApi's G2 terminal;
-    // in that case the hosted copy is rebuilt on the G1 infrastructure,
-    // which different broker stacks accept.
+    // creating a duplicate when Connect is pressed twice. Stale duplicates
+    // also consume the platform's MetaApi account slots (which makes new
+    // creations fail), so every copy that is not reused is removed. Some
+    // brokers refuse MetaApi's G2 terminal; in that case the hosted copy is
+    // rebuilt on the G1 infrastructure, which different broker stacks accept.
     const listOutcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
     if (listOutcome.kind === "ok" && Array.isArray(listOutcome.response.payload)) {
-      const existing = (listOutcome.response.payload as MaAccount[]).find(
-        (account) =>
-          String(account.login ?? "") === login &&
-          account.server === server &&
-          (account.platform ?? "mt5") === platform,
-      );
-      if (existing?.id) {
-        const { status, region } = await inspectAccount(existing.id);
-        if (status === "CONNECTED") return connectOk(existing.id, region);
-        // Cold terminal — remove it and rebuild on the alternate type below.
-        await deleteHosted(existing.id);
+      const matchIds = (listOutcome.response.payload as MaAccount[])
+        .filter(
+          (account) =>
+            String(account.login ?? "") === login &&
+            account.server === server &&
+            (account.platform ?? "mt5") === platform,
+        )
+        .map(accountIdOf)
+        .filter((accountId): accountId is string => Boolean(accountId));
+      if (matchIds.length > 0) {
+        const states = await Promise.all(
+          matchIds.map(async (accountId) => ({ accountId, ...(await inspectAccount(accountId)) })),
+        );
+        const live = states.find((state) => state.status === "CONNECTED");
+        // Keep the one working copy (if any) and delete every other duplicate.
+        for (const accountId of matchIds) {
+          if (accountId !== live?.accountId) await deleteHosted(accountId);
+        }
+        if (live) return connectOk(live.accountId, live.region);
       }
     }
 
@@ -452,6 +490,8 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       if (created.error === "rejected")
         return { ok: false, message: rejectedKeyMessage(401) };
       if (!created.id) {
+        const billing = billingBlockMessage(created.error);
+        if (billing) return { ok: false, message: billing };
         return {
           ok: false,
           message: created.error
@@ -459,19 +499,31 @@ export const connectMt5Account = createServerFn({ method: "POST" })
             : "MetaApi is still detecting this broker's connection settings — press Connect Account again in a minute and it will link instantly.",
         };
       }
-      // Give the terminal a short window to attach to the broker.
+      const createdId = created.id;
+      // Give the terminal a short window to attach to the broker. Poking the
+      // client API both triggers MetaApi's lazy terminal attach and proves
+      // the broker connection is live (provisioning status alone can lag).
       for (let attempt = 0; attempt < 2; attempt += 1) {
         await sleep(8_000);
-        const { status, region } = await inspectAccount(created.id);
-        if (status === "CONNECTED") return connectOk(created.id, region);
+        const { region } = await inspectAccount(createdId);
+        const poke = await withMasterToken((token) =>
+          warmAccountConnection(token, createdId, region, 10_000),
+        );
+        const pokeOk = poke.kind === "ok" && poke.response.status === 200;
+        if (pokeOk) return connectOk(createdId, region);
       }
-      return { ok: false, accountId: created.id };
+      return { ok: false, accountId: createdId };
     };
 
     // First choice: G2 (recommended infrastructure). If its terminal can't
     // attach to this broker, rebuild the very same login on G1.
     const g2 = await buildAndSettle("cloud-g2");
     if (g2.ok) return connectOk(g2.accountId, g2.environment);
+    // The provider refused to even create/host the copy (e.g. the plan is out
+    // of trading credits) — retrying on G1 cannot help, report the real reason.
+    if (!g2.accountId && g2.message && billingBlockMessage(g2.message)) {
+      return { ok: false, code: "failed", message: g2.message };
+    }
 
     const g2Id = g2.accountId;
     const g1 = await buildAndSettle("cloud-g1");
@@ -481,13 +533,23 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       return connectOk(g1.accountId, g1.environment);
     }
 
-    // Neither terminal attached inside the connect window. Keep the G1 copy
-    // (broader broker support) — it can still connect moments later, and the
-    // status check redeploys + trades wait for the connection automatically.
+    // Neither terminal attached inside the connect window. Keep ONE copy (the
+    // status check redeploys it and trades wait for the connection) but report
+    // the truth: after two infrastructure rebuilds the broker's server is not
+    // accepting cloud trading terminals — the user must know, not see a fake
+    // "Connected" state that then never executes a single trade. A provider
+    // billing block also ends the flow immediately with its exact reason.
     if (g2Id) await deleteHosted(g2Id);
     if (g1.accountId) {
-      const { region } = await inspectAccount(g1.accountId);
-      return connectOk(g1.accountId, region);
+      const billing = g1.message ? billingBlockMessage(g1.message) : undefined;
+      return {
+        ok: false,
+        code: "failed",
+        message:
+          billing ||
+          g1.message ||
+          "The broker's server did not accept the cloud trading terminal (tried both infrastructure types). Double-check the password and exact server name (e.g. Headway-Demo). If they are right, this broker server blocks cloud terminals — connect a live (non-demo) server of the same broker or another broker. Your details are saved; press Connect again in a few minutes in case the broker was briefly offline.",
+      };
     }
     return {
       ok: false,
@@ -541,19 +603,33 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
     const account = payload as MaAccount;
 
     // Stay connected until the user presses Disconnect: if MetaApi undeployed
-    // the account for any reason, bring it straight back up.
+    // the account for any reason, bring it straight back up. When the provider
+    // refuses (e.g. the plan is out of trading credits), say so instead of
+    // showing a green "Connected" state that can never execute a trade.
+    let deployBlock: string | undefined;
     if (account.state !== "DEPLOYED") {
-      await withMasterToken((token) =>
+      const deployOutcome = await withMasterToken((token) =>
         maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, {
           method: "POST",
         }),
       );
+      if (
+        deployOutcome.kind === "ok" &&
+        deployOutcome.response.status >= 400 &&
+        deployOutcome.response.status < 500
+      ) {
+        const billing = billingBlockMessage(deployOutcome.response.payload);
+        if (billing) deployBlock = billing;
+      }
     }
+    const connected = account.state === "DEPLOYED" && !deployBlock;
 
-    // While deployed, treat the account as connected — MetaApi attaches the
-    // broker terminal lazily, so requiring CONNECTED here would show scary
-    // "not connected" states during normal operation.
-    const connected = account.state === "DEPLOYED";
+    // The status type carries statusMessage — reuse it to deliver the provider's
+    // refusal text to the MetaTrader page instead of a fake green state.
+    const statusMessages = [
+      ...(deployBlock ? [deployBlock] : []),
+      ...(account.statusMessage ? [account.statusMessage] : []),
+    ].join(" ");
 
     // Best-effort balance read within a short budget; the trade path waits longer.
     let balance: number | undefined;
@@ -578,7 +654,7 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
       ...(balance !== undefined ? { balance } : {}),
       ...(equity !== undefined ? { equity } : {}),
       ...(currency !== undefined ? { currency } : {}),
-      ...(account.statusMessage ? { statusMessage: account.statusMessage } : {}),
+      ...(statusMessages ? { statusMessage: statusMessages } : {}),
       ...(account.region ? { environment: account.region } : {}),
     };
   });
@@ -655,21 +731,45 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       const account = detail.response.payload as MaAccount | undefined;
       region = account?.region ?? region;
       if (account && account.state !== "DEPLOYED") {
-        await withMasterToken((token) =>
+        const deployOutcome = await withMasterToken((token) =>
           maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, {
             method: "POST",
           }),
         );
+        if (
+          deployOutcome.kind === "ok" &&
+          deployOutcome.response.status >= 400 &&
+          deployOutcome.response.status < 500
+        ) {
+          // MetaApi itself refused the deployment (billing block, account
+          // removed, no copy…) — that reason must reach the user verbatim.
+          const billing = billingBlockMessage(deployOutcome.response.payload);
+          if (billing) return { ok: false, code: "failed", message: billing };
+          const reason = maError(deployOutcome.response.payload);
+          if (reason)
+            return {
+              ok: false,
+              code: "failed",
+              message: `The trade provider refused to start this account: ${reason}`,
+            };
+        }
       }
     }
 
+    // Serverless-safe warm budget: the function dies after ~60s on Vercel, so
+    // waiting longer here means the order is NEVER sent. Cold brokers are
+    // handled by the client's persistent retry loop instead.
     const warmOutcome = await withMasterToken((token) =>
-      warmAccountConnection(token, data.accountId, region, 75_000),
+      warmAccountConnection(token, data.accountId, region, 30_000),
     );
     if (warmOutcome.kind === "missing")
       return { ok: false, code: "key_missing", message: missingKeyMessage() };
     if (warmOutcome.kind === "rejected")
       return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warmOutcome.status) };
+    if (warmOutcome.kind === "ok" && warmOutcome.response.status === 504) {
+      const billing = billingBlockMessage(warmOutcome.response.payload);
+      if (billing) return { ok: false, code: "failed", message: billing };
+    }
 
     // The client API host depends on the region the account was deployed to;
     // fall back to the known hosts when the region is unknown.
@@ -678,7 +778,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
         ? [CLIENT_API_HOSTS[region]]
         : Object.values(CLIENT_API_HOSTS);
     let lastMessage =
-      "Your robot is starting — the broker connection is still opening for your account. Press START again in a minute; the first connection after linking an account can take a few minutes. If it keeps failing, this broker may be blocking cloud trading terminals — a live (non-demo) server of the same broker usually works.";
+      "Your robot is starting — the broker connection is still opening for your account. Execute retries automatically until it opens.";
     for (const host of hosts) {
       const outcome = await withMasterToken(async (token) =>
         fetchJson(
@@ -705,7 +805,10 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
         const result = payload as
           | { stringCode?: string; message?: string; orderId?: string; positionId?: string }
           | undefined;
-        if (result?.stringCode && result.stringCode !== "TRADE_RETCODE_DONE") {
+        const accepted =
+          result?.stringCode === "TRADE_RETCODE_DONE" ||
+          result?.stringCode === "TRADE_RETCODE_PLACED";
+        if (result?.stringCode && !accepted) {
           // The broker itself rejected the order (market closed, invalid
           // stops, not enough money…) — surface its real reason.
           const humanized = result.stringCode

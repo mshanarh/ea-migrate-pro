@@ -79,8 +79,11 @@ function AppScanner() {
     // Cold brokers get PERSISTENT retries: while MetaApi's terminal is still
     // opening for the broker, Execute keeps retrying every 45s (up to 8
     // times) and the trade fires the moment the connection opens — no need
-    // to press again. Any other broker rejection surfaces immediately.
+    // to press again. Only TRANSIENT problems are retried: the billing block
+    // and other provider refusals surface immediately, because no amount of
+    // retrying can fix them.
     const COLD_CONNECTION = /not connected to broker|robot is starting|connection is still opening|retry in a minute|still opening/i;
+    const NOT_RETRYABLE = /metaapi .*blocked|top up .*metaapi|no trading credits|refused to start this account/i;
     const runTrades = () =>
       Promise.all(
         Array.from({ length: count }, () =>
@@ -112,10 +115,14 @@ function AppScanner() {
     const attempt = (attemptNo: number) => {
       runTrades()
         .then((results) => {
-          const allCold = results.length > 0 && results.every((item) => !item.ok && COLD_CONNECTION.test(item.message));
+          const allCold =
+            results.length > 0 &&
+            results.every(
+              (item) => !item.ok && COLD_CONNECTION.test(item.message) && !NOT_RETRYABLE.test(item.message),
+            );
           if (allCold && attemptNo < MAX_ATTEMPTS) {
             window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: `Broker connection opening — automatic retry ${attemptNo + 1}/${MAX_ATTEMPTS}...` } }));
-            setTimeout(() => attempt(attemptNo + 1), 45_000);
+            setTimeout(() => attempt(attemptNo + 1), 30_000);
             return;
           }
           finish(results);
