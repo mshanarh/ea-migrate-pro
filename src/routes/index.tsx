@@ -34,24 +34,21 @@ import { SiteHeader } from "@/components/SiteHeader";
 import { motion } from "framer-motion";
 import heroApp from "/ea-migrate-hero.jpg";
 
-
-
-
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      { title: "EA Hosting Platform for MT5 - EA Migrate Pro" },
       {
         name: "description",
         content:
-          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
       },
       { name: "robots", content: "index, follow" },
-      { property: "og:title", content: "EA Migrate Pro - Migrate MT4/MT5 EAs Instantly" },
+      { property: "og:title", content: "EA Hosting Platform for MT5" },
       {
         property: "og:description",
         content:
-          "The #1 platform to migrate and manage your Forex EAs. Secure license management, instant migration.",
+          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
       },
       { property: "og:type", content: "website" },
       { property: "og:url", content: "https://eamigratepro.vercel.app" },
@@ -218,7 +215,11 @@ function LandingChatbot() {
   const send = (value = input) => {
     const question = value.trim();
     if (!question) return;
-    setMessages((current) => [...current, { from: "user", text: question }, { from: "bot", text: answer(question) }]);
+    setMessages((current) => [
+      ...current,
+      { from: "user", text: question },
+      { from: "bot", text: answer(question) },
+    ]);
     setInput("");
   };
 
@@ -227,32 +228,81 @@ function LandingChatbot() {
       {open && (
         <div className="max-w-[360px] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
-            <BrandLogo className="size-10 rounded-full border-2 border-primary object-cover shadow-glow" alt="EA Migrate bot" />
+            <BrandLogo
+              className="size-10 rounded-full border-2 border-primary object-cover shadow-glow"
+              alt="EA Migrate bot"
+            />
             <div className="min-w-0 flex-1">
               <p className="font-bold">EA Migrate assistant</p>
               <p className="text-xs text-emerald-400">Online · Ask anything</p>
             </div>
-            <button type="button" aria-label="Close chatbot" onClick={() => setOpen(false)} className="text-xl text-muted-foreground hover:text-foreground">×</button>
+            <button
+              type="button"
+              aria-label="Close chatbot"
+              onClick={() => setOpen(false)}
+              className="text-xl text-muted-foreground hover:text-foreground"
+            >
+              ×
+            </button>
           </div>
           <div className="max-h-72 space-y-3 overflow-y-auto p-4" aria-live="polite">
             {messages.map((message, index) => (
-              <div key={index} className={message.from === "user" ? "ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-sm text-primary-foreground" : "mr-8 rounded-2xl rounded-bl-md bg-card px-3 py-2 text-sm text-foreground"}>
+              <div
+                key={index}
+                className={
+                  message.from === "user"
+                    ? "ml-8 rounded-2xl rounded-br-md bg-primary px-3 py-2 text-sm text-primary-foreground"
+                    : "mr-8 rounded-2xl rounded-bl-md bg-card px-3 py-2 text-sm text-foreground"
+                }
+              >
                 {message.text}
               </div>
             ))}
           </div>
           <div className="flex flex-wrap gap-2 px-4 pb-3">
             {["How does it work?", "MT5 support", "Chart scanner"].map((question) => (
-              <button key={question} type="button" onClick={() => send(question)} className="rounded-full border border-primary/30 px-3 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10">{question}</button>
+              <button
+                key={question}
+                type="button"
+                onClick={() => send(question)}
+                className="rounded-full border border-primary/30 px-3 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
+              >
+                {question}
+              </button>
             ))}
           </div>
-          <form className="flex gap-2 border-t border-border/60 p-3" onSubmit={(event) => { event.preventDefault(); send(); }}>
-            <input value={input} onChange={(event) => setInput(event.target.value)} placeholder="Ask about EA Migrate..." aria-label="Message the EA Migrate assistant" className="min-w-0 flex-1 rounded-full border border-border/70 bg-card/60 px-4 py-2 text-sm outline-none focus:border-primary" />
-            <button type="submit" aria-label="Send message" className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"><Send className="size-4" /></button>
+          <form
+            className="flex gap-2 border-t border-border/60 p-3"
+            onSubmit={(event) => {
+              event.preventDefault();
+              send();
+            }}
+          >
+            <input
+              value={input}
+              onChange={(event) => setInput(event.target.value)}
+              placeholder="Ask about EA Migrate..."
+              aria-label="Message the EA Migrate assistant"
+              className="min-w-0 flex-1 rounded-full border border-border/70 bg-card/60 px-4 py-2 text-sm outline-none focus:border-primary"
+            />
+            <button
+              type="submit"
+              aria-label="Send message"
+              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary text-primary-foreground"
+            >
+              <Send className="size-4" />
+            </button>
           </form>
         </div>
       )}
-      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
+      <motion.button
+        type="button"
+        aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"}
+        onClick={() => setOpen((value) => !value)}
+        whileHover={{ scale: 1.05 }}
+        whileTap={{ scale: 0.95 }}
+        className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]"
+      >
         <BrandLogo className="size-full rounded-full object-cover" />
         <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
         <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
@@ -297,8 +347,8 @@ function Home() {
               transition={{ duration: 0.6, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
               className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg"
             >
-              EA Migrate Pro turns your strategy into a working MT4 or MT5 Expert Advisor —
-              built visually, backtested in seconds and hosted around the clock.
+              EA Migrate Pro turns your strategy into a working MT4 or MT5 Expert Advisor — built
+              visually, backtested in seconds and hosted around the clock.
             </motion.p>
 
             <motion.div
@@ -316,7 +366,6 @@ function Home() {
                 variant="outline"
                 className="w-full max-w-full rounded-full sm:w-auto"
               >
-
                 <a href="#how">
                   <Download className="size-4" /> See how it works
                 </a>
@@ -360,8 +409,8 @@ function Home() {
             Everything you need to <span className="text-primary">automate</span>.
           </h2>
           <p className="mt-3 max-w-xl text-muted-foreground">
-            From your first idea to a live, risk-managed robot — the whole toolkit sits in
-            one platform.
+            From your first idea to a live, risk-managed robot — the whole toolkit sits in one
+            platform.
           </p>
 
           <div className="mt-10 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
@@ -379,9 +428,7 @@ function Home() {
                   <f.icon className="size-5 text-primary" />
                 </span>
                 <h3 className="mt-5 text-lg font-semibold">{f.title}</h3>
-                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                  {f.body}
-                </p>
+                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{f.body}</p>
               </motion.article>
             ))}
           </div>
@@ -465,20 +512,14 @@ function Home() {
 
         <section className="border-t border-border/60">
           <div className="mx-auto max-w-3xl px-5 py-20 text-center">
-            <p className="text-xs font-semibold tracking-[0.25em] text-primary uppercase">
-              FAQ
-            </p>
+            <p className="text-xs font-semibold tracking-[0.25em] text-primary uppercase">FAQ</p>
             <h2 className="mt-3 text-3xl font-bold sm:text-4xl">
               Have some <span className="text-primary">questions</span>?
             </h2>
 
             <Accordion type="single" collapsible className="mt-10 space-y-4 text-left">
               {faqs.map((f, i) => (
-                <AccordionItem
-                  key={f.q}
-                  value={`faq-${i}`}
-                  className="panel border-b-0 px-6"
-                >
+                <AccordionItem key={f.q} value={`faq-${i}`} className="panel border-b-0 px-6">
                   <AccordionTrigger className="w-full max-w-full py-6 text-left text-lg font-semibold break-words hover:no-underline">
                     {f.q}
                   </AccordionTrigger>
@@ -501,8 +542,7 @@ function Home() {
           >
             <h2 className="text-3xl font-bold sm:text-4xl">Put your EAs on autopilot.</h2>
             <p className="mx-auto mt-4 max-w-md text-base text-muted-foreground">
-              Install the app, link your MT account and let your strategies trade around the
-              clock.
+              Install the app, link your MT account and let your strategies trade around the clock.
             </p>
             <div className="mx-auto mt-8 flex max-w-sm flex-col gap-3">
               <Button size="lg" className="h-14 rounded-full text-base font-semibold">
@@ -529,11 +569,11 @@ function Home() {
                 Terms &amp; Conditions, Refund Policy and Legal
               </AccordionTrigger>
               <AccordionContent className="pb-6 text-sm leading-relaxed text-muted-foreground">
-                Trading foreign exchange carries a high level of risk and may not be suitable
-                for every investor. Past performance of an Expert Advisor does not guarantee
-                future results. Subscriptions renew automatically and may be cancelled at any
-                time; refunds are handled case by case within 14 days of purchase. Licence
-                keys are locked to one trading account and may not be resold or shared.
+                Trading foreign exchange carries a high level of risk and may not be suitable for
+                every investor. Past performance of an Expert Advisor does not guarantee future
+                results. Subscriptions renew automatically and may be cancelled at any time; refunds
+                are handled case by case within 14 days of purchase. Licence keys are locked to one
+                trading account and may not be resold or shared.
               </AccordionContent>
             </AccordionItem>
           </Accordion>
@@ -551,7 +591,9 @@ function Home() {
               © EA Migrate Pro {new Date().getFullYear()}. All rights reserved.
             </p>
             <div className="mt-5 flex flex-wrap gap-4 text-sm text-muted-foreground">
-              <Link to="/support" className="transition hover:text-primary">Support</Link>
+              <Link to="/support" className="transition hover:text-primary">
+                Support
+              </Link>
             </div>
             <div className="mt-6 flex gap-3">
               {[Youtube, Send, Instagram].map((Icon, i) => (
