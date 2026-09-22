@@ -267,7 +267,7 @@ async function sendBrevoEmail(options: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        sender: { name: "Ea migrate pro", email: "eamigratepro@gmail.com" },
+        sender: { name: "EA Migrate Pro", email: "eamigratepro@gmail.com" },
         to: [{ email: options.to, name: options.toName }],
         subject: options.subject,
         htmlContent: options.html,
@@ -362,28 +362,50 @@ async function sendApprovalEmail(userEmail: string, firstName: string): Promise<
 }
 
 /**
- * Registration received email — sent right after a successful registration,
- * telling the new mentor their account is awaiting admin approval.
+ * Registration received email — sent immediately when a user registers.
+ * Body/subject exactly as specified by the owner; approval email follows later.
  */
 async function sendPendingEmail(userEmail: string, firstName: string): Promise<boolean> {
   const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
-  const html = brandEmailHtml({
-    heading: `We received your request, ${escapeHtml(name)} ⏳`,
-    paragraphs: [
-      `Hi ${escapeHtml(name)},`,
-      "Your EA Migrate Pro Portal registration was received successfully. 🎉",
-      "Your account is now <strong style=\"color:#FFFFFF;\">pending approval</strong>. An administrator is reviewing your request and you will receive a second email the moment your access is accepted.",
-      "No action is needed from you right now — hang tight! 🤝",
-    ],
-    buttonText: "Open EA Migrate Pro Portal",
-    buttonColor: "#E7B53A",
-    footer: "— The EA Migrate Pro Team",
-  });
-  const text = `Hi ${name},\n\nYour EA Migrate Pro Portal registration was received successfully.\n\nYour account is now PENDING APPROVAL. An administrator is reviewing your request and you will receive a second email the moment your access is accepted.\n\nNo action is needed from you right now — hang tight!\n\nOpen your portal: ${PORTAL_URL}`;
+  const html = `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#0A0A0C;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 0 32px;">
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <h2 style="margin:12px 0 0 0;font-size:24px;line-height:1.3;color:#FFFFFF;">Welcome to EA Migrate Pro!</h2>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px 0 32px;">
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">We have successfully received your registration.</p>
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Your account is currently on our pending list. You will be approved once the admin reviews and approves your account.</p>
+                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">You will be notified via email once your account is approved.</p>
+                <br>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#C9C9D1;">Thank you,<br>EA Migrate Pro Team</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 32px 32px 32px;">
+                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
+                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span></p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+  const text = `Welcome to EA Migrate Pro!\n\nWe have successfully received your registration.\n\nYour account is currently on our pending list. You will be approved once the admin reviews and approves your account.\n\nYou will be notified via email once your account is approved.\n\nThank you,\nEA Migrate Pro Team\n\nOpen your portal: ${PORTAL_URL}`;
   return sendBrevoEmail({
     to: userEmail,
     toName: name,
-    subject: "We received your request — pending approval ⏳",
+    subject: "Registration Received - Pending Approval | EA Migrate Pro",
     html,
     text,
   });
