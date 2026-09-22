@@ -282,7 +282,7 @@ async function sendApprovalEmail(userEmail: string, firstName: string): Promise<
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        sender: { name: "EA Migrate Pro", email: "ntobekotraders.official@gmail.com" },
+        sender: { name: "Ea migrate pro", email: "eamigratepro@gmail.com" },
         to: [{ email: userEmail, name }],
         subject: `Welcome to EA Migrate Pro, ${name}! 🔓`,
         htmlContent: html,
