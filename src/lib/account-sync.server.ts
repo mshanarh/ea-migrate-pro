@@ -428,6 +428,162 @@ function escapeHtml(value: string): string {
   });
 }
 
+/* ------------------------------------------------------------------ */
+/* License key delivery — sent immediately after a key is generated.  */
+/* Mirrors the in-app result card (dark premium + gold).              */
+/* ------------------------------------------------------------------ */
+
+function licenseEmailHtml(options: {
+  licenseKey: string;
+  eaName: string;
+  expiry: string;
+  email: string;
+  imageUrl?: string | null;
+}): string {
+  const key = escapeHtml(options.licenseKey);
+  const ea = escapeHtml(options.eaName || "EA");
+  const expiry = escapeHtml(options.expiry || "Lifetime");
+  const email = escapeHtml(options.email);
+  // Only http(s) images render reliably in email clients — data URLs are
+  // stripped by most providers, so fall back to the key-icon tile instead.
+  const imageBlock =
+    options.imageUrl && /^https?:\/\//i.test(options.imageUrl)
+      ? `<tr>
+              <td align="center" style="padding:6px 32px 0 32px;">
+                <img src="${escapeHtml(options.imageUrl)}" alt="${ea}" width="240" style="display:block;width:240px;height:240px;object-fit:cover;border-radius:24px;border:1px solid #26262E;" />
+              </td>
+            </tr>`
+      : `<tr>
+              <td align="center" style="padding:6px 32px 0 32px;">
+                <table role="presentation" cellpadding="0" cellspacing="0"><tr><td align="center" valign="middle" width="240" height="240" style="width:240px;height:240px;border-radius:24px;border:1px solid #26262E;background:linear-gradient(180deg,#141821,#0D1017);font-size:96px;font-weight:bold;color:#2E7CD6;">🔑</td></tr></table>
+              </td>
+            </tr>`;
+  const pill = (label: string) =>
+    `<span style="display:inline-block;margin:4px;padding:9px 18px;border:1px solid #2E5FA3;border-radius:999px;background:#0E1522;color:#D7E4F5;font-size:13px;">${label}</span>`;
+  return `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#0A0A0C;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:24px;overflow:hidden;">
+            <tr>
+              <td align="center" style="padding:36px 32px 0 32px;">
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <h1 style="margin:14px 0 0 0;font-size:30px;line-height:1.2;color:#FFFFFF;">Generate License</h1>
+                <p style="margin:8px 0 0 0;font-size:12px;font-weight:bold;letter-spacing:0.3em;color:#8A8A96;text-transform:uppercase;">Key Created</p>
+              </td>
+            </tr>
+            ${imageBlock}
+            <tr>
+              <td align="center" style="padding:24px 32px 0 32px;">
+                <div style="border:2px solid #2E7CD6;border-radius:999px;padding:16px 26px;background:#0E1522;">
+                  <span style="font-family:'Courier New',Courier,monospace;font-size:21px;font-weight:bold;color:#FFFFFF;letter-spacing:0.14em;">${key}</span>
+                  <br />
+                  <span style="font-size:11px;color:#8A8A96;">Tap and hold the key, then choose Copy</span>
+                </div>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:18px 24px 0 24px;">
+                ${pill(email)}
+                ${pill(expiry)}
+                ${pill(ea)}
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:16px 32px 0 32px;">
+                <p style="margin:0;font-size:14px;font-weight:bold;color:#4DA3FF;">✉ Emailed to client</p>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px 0 32px;">
+                <p style="margin:0 0 12px 0;font-size:14px;line-height:1.6;color:#C9C9D1;"><strong style="color:#E7B53A;">How to activate:</strong></p>
+                <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">1. Open the EA Migrate Pro Portal and sign in with this email address.</p>
+                <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">2. In your trading app, open <strong>Activate</strong>.</p>
+                <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">3. Paste this exact license key. The key is linked to ${email} and expires: ${expiry}.</p>
+                <p style="margin:12px 0 0 0;font-size:13px;line-height:1.6;color:#8A8A96;">Keep this email safe — you will need the key whenever you reinstall the EA.</p>
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 32px 32px 32px;">
+                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
+                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />— The EA Migrate Pro Team</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/** Fire-and-return: awaited by the generator so the UI can confirm delivery. */
+async function sendLicenseEmail(options: {
+  to: string;
+  clientName: string;
+  licenseKey: string;
+  eaName: string;
+  expiry: string;
+  imageUrl?: string | null;
+}): Promise<boolean> {
+  const name = options.clientName.trim().length > 0 ? options.clientName.trim() : "Trader";
+  const eaName = options.eaName.trim().length > 0 ? options.eaName.trim() : "EA";
+  const expiry = options.expiry.trim().length > 0 ? options.expiry.trim() : "Lifetime";
+  return sendBrevoEmail({
+    to: options.to,
+    toName: name,
+    subject: `Your EA Migrate Pro License Key - ${eaName}`,
+    html: licenseEmailHtml({
+      licenseKey: options.licenseKey,
+      eaName,
+      expiry,
+      email: options.to,
+      imageUrl: options.imageUrl ?? null,
+    }),
+    text: `Your EA Migrate Pro license key: ${options.licenseKey}\n\nEA: ${eaName}\nExpiry: ${expiry}\nLinked to: ${options.to}\n\nActivate it in the EA Migrate Pro Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
+  });
+}
+
+export type SyncSendLicenseEmailInput = {
+  toEmail: string;
+  clientName: string;
+  licenseKey: string;
+  eaName: string;
+  expiry: string;
+  imageUrl?: string | null;
+};
+export type SyncSendLicenseEmailResult = { enabled: boolean; ok: boolean; error?: string };
+
+/**
+ * Called by the license generator right after the key is stored. The send is
+ * awaited so the UI can show a real "Emailed to client" confirmation.
+ */
+export const syncSendLicenseEmail = createServerFn({ method: "POST" })
+  .validator((data: SyncSendLicenseEmailInput) => data)
+  .handler(async ({ data }): Promise<SyncSendLicenseEmailResult> => {
+    const to = data.toEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { enabled: true, ok: false, error: "A valid recipient email is required." };
+    }
+    const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
+    if (apiKey.length === 0) {
+      return { enabled: true, ok: false, error: "BREVO_API_KEY is not set — add it in Settings → Environment." };
+    }
+    const sent = await sendLicenseEmail({
+      to,
+      clientName: data.clientName,
+      licenseKey: data.licenseKey,
+      eaName: data.eaName,
+      expiry: data.expiry,
+      imageUrl: data.imageUrl ?? null,
+    });
+    return sent
+      ? { enabled: true, ok: true }
+      : { enabled: true, ok: false, error: "Brevo rejected the send — check the key and verified sender." };
+  });
+
 export type SyncAdminUpdateInput = { adminEmail: string; targetEmail: string; patch: AdminPatch };
 export type SyncAdminUpdateResult = { enabled: boolean; ok: boolean; error?: string };
 

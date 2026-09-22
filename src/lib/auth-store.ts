@@ -539,13 +539,18 @@ export function removeLicense(accountId: string, licenseId: string) {
   }));
 }
 
+/** 16-character key in four groups — matches the XXXX-XXXX-XXXX-XXXX card format. */
 export function generateKey() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let suffix = "";
-  for (let index = 0; index < 12; index += 1) {
-    suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+  const groups: string[] = [];
+  for (let group = 0; group < 4; group += 1) {
+    let chunk = "";
+    for (let index = 0; index < 4; index += 1) {
+      chunk += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    groups.push(chunk);
   }
-  return "EMP-" + suffix;
+  return groups.join("-");
 }
 
 export function validateLicense(key: string, eaId: string, clientEmail?: string): { valid: boolean; error?: string; license?: License } {
