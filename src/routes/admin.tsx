@@ -6,6 +6,7 @@ import {
   ChevronRight,
   CreditCard,
   LogOut,
+  Plus,
   ShieldCheck,
   Trash2,
   Users,
@@ -14,6 +15,8 @@ import {
 import { toast } from "sonner";
 import {
   PAYMENT_EXEMPT_EMAILS,
+  addLicense,
+  generateKey,
   maskEaId,
   paymentStatusForEmail,
   removeLicense,
@@ -90,16 +93,27 @@ function AdminConsole() {
     if (cloud.accounts.length === 0) return; // wait for a real snapshot
     healed.current = true;
     for (const local of storeRef.current.accounts) {
-      if (local.role !== "mentor" || local.status === "pending") continue;
+      if (local.role !== "mentor") continue;
       const remote = cloud.accounts.find(
         (candidate) => candidate.email.toLowerCase() === local.email.toLowerCase(),
       );
-      if (remote && remote.status !== local.status) {
+      if (!remote) continue;
+      const patches: AdminPatch[] = [];
+      if (remote.status !== local.status) patches.push({ status: local.status });
+      // License limits saved before the sync fix never reached the shared
+      // store — re-push any disagreement so "save" stays saved.
+      if (remote.licenseLimit !== local.licenseLimit) {
+        patches.push({ licenseLimit: local.licenseLimit });
+      }
+      // Keys the admin created locally but that never landed in the cloud.
+      const missing = local.licenses.filter((license) => !remote.licenses.some((candidate) => candidate.id === license.id));
+      if (missing.length > 0) patches.push({ licenses: local.licenses, replaceLicenses: true });
+      for (const patch of patches) {
         void syncAdminUpdate({
           data: {
             adminEmail: account.email,
             targetEmail: local.email,
-            patch: { status: local.status },
+            patch,
           },
         });
       }
@@ -188,6 +202,47 @@ function AdminConsole() {
   const applyStatus = (mentor: AdminViewAccount, next: Account["status"]) => {
     setStatus(mentor.id, next);
     pushCloudUpdate(mentor.email, { status: next });
+  };
+  /** Pushes the FULL license list (pauses/removals included) to the cloud. */
+  const pushLicenses = (mentorEmail: string, next: Account["licenses"]) => {
+    const cloudMentor = cloud.accounts.find(
+      (candidate) => candidate.email.toLowerCase() === mentorEmail.toLowerCase(),
+    );
+    if (!cloudMentor) return; // mentor is local-only — nothing to sync
+    pushCloudUpdate(mentorEmail, { licenses: next, replaceLicenses: true });
+  };
+  const handleCreateKey = () => {
+    if (!selected) return;
+    if (!selected.eas.length) {
+      toast.error("This user has no Expert Advisors yet — they must create one first.");
+      return;
+    }
+    const firstEa = selected.eas[0];
+    if (!firstEa) {
+      toast.error("This user has no Expert Advisors yet — they must create one first.");
+      return;
+    }
+    const result = addLicense(selected.id, "portal", generateKey(), { eaId: firstEa.id, expiry: "Lifetime" }, { bypassLimit: true });
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    const created = result.license;
+    const after = storeRef.current.accounts.find((a) => a.id === selected.id);
+    if (created && after) pushLicenses(selected.email, after.licenses);
+    toast.success(`Key ${created?.key} created`);
+  };
+  const handleToggleLicense = (license: Account["licenses"][number]) => {
+    if (!selected) return;
+    toggleLicense(selected.id, license.id);
+    const after = storeRef.current.accounts.find((a) => a.id === selected.id);
+    if (after) pushLicenses(selected.email, after.licenses);
+  };
+  const handleRemoveLicense = (license: Account["licenses"][number]) => {
+    if (!selected) return;
+    removeLicense(selected.id, license.id);
+    const after = storeRef.current.accounts.find((a) => a.id === selected.id);
+    if (after) pushLicenses(selected.email, after.licenses);
   };
 
   return (
@@ -482,7 +537,21 @@ function AdminConsole() {
                 </div>
 
                 <div className="mt-5">
-                  <p className="text-sm font-semibold">License keys</p>
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="text-sm font-semibold">License keys</p>
+                    <button
+                      type="button"
+                      onClick={handleCreateKey}
+                      className="flex h-9 items-center gap-1.5 rounded-full bg-primary px-4 text-xs font-bold text-primary-foreground transition-transform active:scale-[0.98]"
+                    >
+                      <Plus className="size-4" /> Create key
+                    </button>
+                  </div>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {selected.eas.length === 0
+                      ? "The user must create an Expert Advisor first — keys link to an EA."
+                      : `Keys link to the user's first EA (${selected.eas.length} available).`}
+                  </p>
                   {selected.licenses.length === 0 ? (
                     <p className="mt-3 text-sm text-muted-foreground">No keys created.</p>
                   ) : (
@@ -510,14 +579,14 @@ function AdminConsole() {
                           <div className="mt-3 flex gap-3">
                             <button
                               type="button"
-                              onClick={() => toggleLicense(selected.id, license.id)}
+                              onClick={() => handleToggleLicense(license)}
                               className="text-xs font-semibold text-primary"
                             >
                               {license.active ? "Pause" : "Activate"}
                             </button>
                             <button
                               type="button"
-                              onClick={() => removeLicense(selected.id, license.id)}
+                              onClick={() => handleRemoveLicense(license)}
                               aria-label="Remove license"
                               className="text-muted-foreground hover:text-destructive"
                             >

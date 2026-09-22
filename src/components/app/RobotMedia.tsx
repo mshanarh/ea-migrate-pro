@@ -13,7 +13,9 @@ type RobotMediaProps = {
   /** "hero" = background layer (no controls); "avatar" = framed player with controls. */
   variant: "hero" | "avatar";
   className: string;
-  /** Prefer the picture until the user explicitly requests playback (circle themes). */
+  /** ALWAYS the picture — used by the circle/rounded interface styles, where
+   * the rounded slot keeps the photo and video playback happens elsewhere
+   * (the black background), never inside the circle. */
   preferImage?: boolean;
 };
 
@@ -121,8 +123,10 @@ export function RobotMedia({ image, video, variant, className, preferImage = fal
     };
   }, [activated, playableSrc]);
 
-  // Show the picture until playback is requested, or when no usable video exists.
-  if (preferImage && !activated) {
+  // Show the picture whenever the slot is a circle/rounded picture slot
+  // (preferImage) — the video belongs on the background layer, not here —
+  // or when no usable video exists.
+  if (preferImage) {
     return <img src={image} alt="" className={className} />;
   }
   if (!video || !playableSrc) {

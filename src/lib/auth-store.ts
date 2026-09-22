@@ -272,7 +272,13 @@ function load() {
 
 function persist() {
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(KEY, JSON.stringify(state));
+    // A blocked/evicted storage must never crash the click that made the
+    // change — in-memory state still wins for this session.
+    try {
+      window.localStorage.setItem(KEY, JSON.stringify(state));
+    } catch {
+      /* ignore */
+    }
   }
   listeners.forEach((l) => l());
 }
@@ -352,8 +358,34 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
       // (approved/rejected) propagates across devices as the shared truth.
       const status =
         cloud.status === "pending" && known.status !== "pending" ? known.status : cloud.status;
-      existing.set(key, { ...known, ...cloud, status, password: known.password, eas: mergedEas });
-      if (easChanged || mergedEas.length !== cloud.eas.length || status !== known.status)
+      // Admin-set license data must survive the poll too: the previous spread
+      // let a stale cloud copy overwrite a locally saved license limit and
+      // resurrect removed keys, so "save" appeared to undo itself.
+      const licensesById = new Map(known.licenses.map((license) => [license.id, license]));
+      let licensesChanged = false;
+      for (const license of cloud.licenses) {
+        if (!licensesById.has(license.id)) {
+          licensesById.set(license.id, license);
+          licensesChanged = true;
+        }
+      }
+      const licenseLimit = known.licenseLimit > 0 ? known.licenseLimit : cloud.licenseLimit;
+      existing.set(key, {
+        ...known,
+        ...cloud,
+        status,
+        password: known.password,
+        eas: mergedEas,
+        licenseLimit,
+        licenses: Array.from(licensesById.values()),
+      });
+      if (
+        easChanged ||
+        mergedEas.length !== cloud.eas.length ||
+        status !== known.status ||
+        licensesChanged ||
+        licenseLimit !== known.licenseLimit
+      )
         changed = true;
     } else if (cloud.role === "admin") {
       // Admin records sign in via the dedicated admin login only.
@@ -431,40 +463,43 @@ export function addLicense(
   plan: string,
   key: string,
   details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
-): { error?: string } {
+  /** The admin panel issues keys by its own authority — limit does not block it. */
+  opts: { bypassLimit?: boolean } = {},
+): { error?: string; license?: License } {
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
   if (!details.eaId) return { error: "Choose an Expert Advisor." };
-  if (account.licenseLimit <= 0) {
-    return { error: "The admin has not set a license limit for this account yet." };
-  }
-  if (account.licenses.length >= account.licenseLimit) {
-    return { error: "This account has reached its license limit." };
+  if (!opts.bypassLimit) {
+    if (account.licenseLimit <= 0) {
+      return { error: "The admin has not set a license limit for this account yet." };
+    }
+    if (account.licenses.length >= account.licenseLimit) {
+      return { error: "This account has reached its license limit." };
+    }
   }
   const linkedEa = account.eas.find((ea) => ea.id === details.eaId);
   const robotName = linkedEa?.name.trim() || details.expertAdvisor?.trim() || details.name?.trim() || "Private EA";
 
+  const license: License = {
+    id: "l-" + Date.now(),
+    key,
+    plan,
+    issuedAt: new Date().toISOString(),
+    active: true,
+    ...details,
+    robotName,
+    expertAdvisor: robotName,
+    eaId: details.eaId,
+    eaNameHash: details.eaNameHash,
+    expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "1 Week": 7, "1 Month": 30, "3 Months": 90, "6 Months": 180, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
+  };
+
   update(id, (a) => ({
     ...a,
-    licenses: [
-      ...a.licenses,
-      {
-        id: "l-" + Date.now(),
-        key,
-        plan,
-        issuedAt: new Date().toISOString(),
-        active: true,
-        ...details,
-        robotName,
-        expertAdvisor: robotName,
-        eaId: details.eaId,
-        eaNameHash: details.eaNameHash,
-         expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "1 Week": 7, "1 Month": 30, "3 Months": 90, "6 Months": 180, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
-      },
-    ],
+    licenses: [...a.licenses, license],
   }));
-  return {};
+  return { license };
 }
 
 export function renameEa(accountId: string, eaId: string, patch: { briefing?: string; symbols?: string[]; image?: string; video?: string }): { error?: string } {

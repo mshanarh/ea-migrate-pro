@@ -260,12 +260,15 @@ export function PabloElite(props: SignatureLayoutProps) {
   const running = robot?.running ?? false;
   const image = robot?.image || "/ea-migrate-platform-robot.jpg";
   return (
-    <div className="flex flex-col items-center gap-6 px-4 pt-4">
+    <div className="relative flex min-h-[68vh] w-full flex-col items-center gap-6 overflow-hidden bg-black px-4 pb-8 pt-4">
+      {/* Full-screen black backdrop — video playback happens here, never inside the circle */}
+      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-35" />
+      <div aria-hidden className="absolute inset-0" style={{ background: "radial-gradient(ellipse 85% 60% at 50% 30%, transparent 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.88) 100%)" }} />
       <motion.div
         initial={{ opacity: 0, scale: 0.94 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative mt-2 flex size-64 items-center justify-center"
+        className="relative z-10 mt-2 flex size-64 items-center justify-center"
       >
         {/* Sniper reticle rings */}
         <span className="absolute inset-0 rounded-full border border-white/10" />

@@ -112,6 +112,9 @@ export const syncRegister = createServerFn({ method: "POST" })
     const existing = await readAccount(email);
     let merged: Account = account;
     if (existing) {
+      // Union merge licenses by id so keys created on the admin device (which
+      // mirror back through this mentor's own profile sync) are never lost,
+      // and admin decisions (status/role/limit) always win from the cloud.
       const licensesById = new Map(existing.licenses.map((license) => [license.id, license]));
       for (const license of account.licenses) licensesById.set(license.id, license);
       merged = {
@@ -222,6 +225,8 @@ export type AdminPatch = {
   status?: PortalStatus;
   licenseLimit?: number;
   licenses?: Account["licenses"];
+  /** When true, `licenses` is the full replacement list — removals propagate. */
+  replaceLicenses?: boolean;
 };
 
 /* ------------------------------------------------------------------ */
@@ -375,13 +380,20 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
     };
 
     const patch = data.patch;
+    // Licenses union-merge by id so an approval push from a device holding a
+    // stale snapshot can never delete keys another session created; the admin
+    // panel passes replaceLicenses when it is pausing/removing keys.
+    const licensesById = new Map((patch.replaceLicenses ? [] : base.licenses).map((license) => [license.id, license]));
+    for (const license of patch.licenses ?? []) licensesById.set(license.id, license);
+    const mergedLicenses =
+      patch.licenses !== undefined ? Array.from(licensesById.values()) : base.licenses;
     const updated: Account = {
       ...base,
       ...(patch.status !== undefined ? { status: patch.status } : {}),
       ...(patch.licenseLimit !== undefined
         ? { licenseLimit: Math.max(0, Math.floor(patch.licenseLimit)) }
         : {}),
-      ...(patch.licenses !== undefined ? { licenses: patch.licenses } : {}),
+      licenses: mergedLicenses,
     };
     // Admin decisions MUST reach the shared store — a silently dropped write
     // made approved users reappear as pending on the next poll/re-login.
