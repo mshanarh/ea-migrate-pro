@@ -130,6 +130,14 @@ export const syncRegister = createServerFn({ method: "POST" })
     const results = await pipeline([
       ["HSET", ACCOUNTS_KEY, email, JSON.stringify(merged)],
     ]);
+    const writeOk = results !== null && !results[0]?.error;
+    // Registration-received email — only on the FIRST successful write of a
+    // brand-new account (never re-sent when a device re-mirrors its profile).
+    if (writeOk && !existing) {
+      void sendPendingEmail(email, merged.firstName).catch((error) =>
+        console.error("[brevo] pending email unexpected failure:", error),
+      );
+    }
     return { enabled: true, ok: results !== null && !results[0]?.error };
   });
 
@@ -237,47 +245,19 @@ export type AdminPatch = {
 
 const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
-async function sendApprovalEmail(userEmail: string, firstName: string): Promise<boolean> {
+/** Shared Brevo wiring for every portal email. */
+async function sendBrevoEmail(options: {
+  to: string;
+  toName: string;
+  subject: string;
+  html: string;
+  text: string;
+}): Promise<boolean> {
   const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
   if (apiKey.length === 0) {
-    console.error("[brevo] BREVO_API_KEY is not set — approval email skipped for", userEmail);
+    console.error("[brevo] BREVO_API_KEY is not set — email skipped for", options.to);
     return false;
   }
-  const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
-  const html = `<!DOCTYPE html>
-<html lang="en">
-  <body style="margin:0;padding:0;background:#0A0A0C;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
-      <tr>
-        <td align="center">
-          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
-            <tr>
-              <td style="padding:32px 32px 0 32px;">
-                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
-                <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">Welcome to EA Migrate Pro, ${escapeHtml(name)}! 🔓</h1>
-              </td>
-            </tr>
-            <tr>
-              <td style="padding:20px 32px 0 32px;">
-                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Hi ${escapeHtml(name)},</p>
-                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Welcome to the EA Migrate Pro Portal! 🔓🎉</p>
-                <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">We've confirmed your request and your access has been accepted.</p>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#C9C9D1;">Welcome to the team, Brother! 🤝</p>
-              </td>
-            </tr>
-            <tr>
-              <td align="center" style="padding:28px 32px 32px 32px;">
-                <a href="${PORTAL_URL}" style="display:inline-block;background:#E03131;color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
-                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span></p>
-              </td>
-            </tr>
-          </table>
-        </td>
-      </tr>
-    </table>
-  </body>
-</html>`;
-  const text = `Hi ${name},\n\nWelcome to the EA Migrate Pro Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -288,25 +268,125 @@ async function sendApprovalEmail(userEmail: string, firstName: string): Promise<
       },
       body: JSON.stringify({
         sender: { name: "Ea migrate pro", email: "eamigratepro@gmail.com" },
-        to: [{ email: userEmail, name }],
-        subject: `Welcome to EA Migrate Pro, ${name}! 🔓`,
-        htmlContent: html,
-        textContent: text,
+        to: [{ email: options.to, name: options.toName }],
+        subject: options.subject,
+        htmlContent: options.html,
+        textContent: options.text,
       }),
+      // Never let a slow email provider delay the approval/registration.
+      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
       const detail = await response.text().catch(() => "");
       console.error(
-        `[brevo] send failed (${response.status}) for ${userEmail}:`,
+        `[brevo] send failed (${response.status}) for ${options.to}:`,
         detail.slice(0, 400),
       );
       return false;
     }
     return true;
   } catch (error) {
-    console.error("[brevo] request error for", userEmail, error);
+    console.error("[brevo] request error for", options.to, error);
     return false;
   }
+}
+
+/** Dark brand HTML shared by the approval and pending emails. */
+function brandEmailHtml(options: {
+  heading: string;
+  paragraphs: string[];
+  buttonText: string;
+  buttonColor: string;
+  footer: string;
+}): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#0A0A0C;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <tr>
+        <td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
+            <tr>
+              <td style="padding:32px 32px 0 32px;">
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">${options.heading}</h1>
+              </td>
+            </tr>
+            <tr>
+              <td style="padding:20px 32px 0 32px;">
+                ${options.paragraphs
+                  .map(
+                    (p) =>
+                      `<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${p}</p>`,
+                  )
+                  .join("\n                ")}
+              </td>
+            </tr>
+            <tr>
+              <td align="center" style="padding:28px 32px 32px 32px;">
+                <a href="${PORTAL_URL}" style="display:inline-block;background:${options.buttonColor};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">${options.buttonText}</a>
+                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />${options.footer}</p>
+              </td>
+            </tr>
+          </table>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>`;
+}
+
+/** Welcome email — sent once when a mentor's status moves to "approved". */
+async function sendApprovalEmail(userEmail: string, firstName: string): Promise<boolean> {
+  const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
+  const html = brandEmailHtml({
+    heading: `Welcome to EA Migrate Pro, ${escapeHtml(name)}! 🔓`,
+    paragraphs: [
+      `Hi ${escapeHtml(name)},`,
+      "Welcome to the EA Migrate Pro Portal! 🔓🎉",
+      "We've confirmed your request and your access has been accepted.",
+      "Welcome to the team, Brother! 🤝",
+    ],
+    buttonText: "Open EA Migrate Pro Portal",
+    buttonColor: "#E03131",
+    footer: "— The EA Migrate Pro Team",
+  });
+  const text = `Hi ${name},\n\nWelcome to the EA Migrate Pro Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
+  return sendBrevoEmail({
+    to: userEmail,
+    toName: name,
+    subject: `Welcome to EA Migrate Pro, ${name}! 🔓`,
+    html,
+    text,
+  });
+}
+
+/**
+ * Registration received email — sent right after a successful registration,
+ * telling the new mentor their account is awaiting admin approval.
+ */
+async function sendPendingEmail(userEmail: string, firstName: string): Promise<boolean> {
+  const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
+  const html = brandEmailHtml({
+    heading: `We received your request, ${escapeHtml(name)} ⏳`,
+    paragraphs: [
+      `Hi ${escapeHtml(name)},`,
+      "Your EA Migrate Pro Portal registration was received successfully. 🎉",
+      "Your account is now <strong style=\"color:#FFFFFF;\">pending approval</strong>. An administrator is reviewing your request and you will receive a second email the moment your access is accepted.",
+      "No action is needed from you right now — hang tight! 🤝",
+    ],
+    buttonText: "Open EA Migrate Pro Portal",
+    buttonColor: "#E7B53A",
+    footer: "— The EA Migrate Pro Team",
+  });
+  const text = `Hi ${name},\n\nYour EA Migrate Pro Portal registration was received successfully.\n\nYour account is now PENDING APPROVAL. An administrator is reviewing your request and you will receive a second email the moment your access is accepted.\n\nNo action is needed from you right now — hang tight!\n\nOpen your portal: ${PORTAL_URL}`;
+  return sendBrevoEmail({
+    to: userEmail,
+    toName: name,
+    subject: "We received your request — pending approval ⏳",
+    html,
+    text,
+  });
 }
 
 function escapeHtml(value: string): string {
