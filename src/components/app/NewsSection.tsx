@@ -1,14 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Clock, RefreshCw } from "lucide-react";
-import { fetchUpcomingNews, type NewsEvent } from "@/lib/news.server";
+import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
+  Check,
+  Clock,
+  Crosshair,
+  Minus,
+  RefreshCw,
+} from "lucide-react";
+import { fetchUpcomingNews, type NewsEvent, type TradeDirection } from "@/lib/news.server";
 
 /**
  * Settings → News & Predictions.
  *
  * Shows the upcoming economic calendar (the news that moves the market) with
- * the consensus forecast for each release and a plain-language prediction of
- * what it means. Data is the public ForexFactory weekly calendar, fetched
- * through a server function and cached for 5 minutes.
+ * the consensus forecast, a plain-language prediction, and an **Execute**
+ * button that reveals the predicted trade direction — BUY/SELL for the event
+ * currency plus concrete liquid pairs with per-pair directions.
  */
 
 const IMPACT_STYLE: Record<string, { bg: string; label: string }> = {
@@ -35,9 +44,77 @@ function timeLabel(iso: string): string {
   return d.toLocaleString(undefined, { weekday: "short", hour: "2-digit", minute: "2-digit" });
 }
 
+const DIR_META: Record<
+  TradeDirection,
+  { color: string; icon: typeof ArrowUpRight; label: string }
+> = {
+  BUY: { color: "#34d399", icon: ArrowUpRight, label: "BUY" },
+  SELL: { color: "#f87171", icon: ArrowDownRight, label: "SELL" },
+  NEUTRAL: { color: "#facc15", icon: Minus, label: "WAIT" },
+};
+
+function DirectionCard({ event, accent }: { event: NewsEvent; accent: string }) {
+  const meta = DIR_META[event.direction];
+  const Icon = meta.icon;
+
+  return (
+    <div
+      className="mt-2.5 rounded-2xl border p-3"
+      style={{ borderColor: `${meta.color}44`, background: `${meta.color}0d` }}
+    >
+      <div className="flex items-center gap-2.5">
+        <span
+          className="flex size-9 shrink-0 items-center justify-center rounded-full"
+          style={{ background: `${meta.color}1f`, color: meta.color }}
+        >
+          <Icon className="size-5" strokeWidth={3} />
+        </span>
+        <span className="min-w-0">
+          <span className="block text-[13px] font-black" style={{ color: meta.color }}>
+            {event.directionHeadline}
+          </span>
+          <span className="block text-[10.5px] leading-snug text-white/50">
+            {event.directionReason}
+          </span>
+        </span>
+      </div>
+
+      {event.pairs.length > 0 && (
+        <div className="mt-2.5 grid gap-1.5">
+          {event.pairs.map((suggestion) => {
+            const pairMeta = DIR_META[suggestion.direction];
+            const PairIcon = pairMeta.icon;
+            return (
+              <div
+                key={suggestion.pair}
+                className="flex items-center gap-2 rounded-xl bg-white/[0.04] px-3 py-1.5"
+              >
+                <span className="text-[12px] font-bold text-white/90">{suggestion.pair}</span>
+                <span
+                  className="ml-auto flex items-center gap-1 text-[11px] font-black"
+                  style={{ color: pairMeta.color }}
+                >
+                  <PairIcon className="size-3.5" strokeWidth={3} />
+                  {pairMeta.label}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      <p className="mt-2.5 flex items-start gap-1.5 text-[11px] leading-relaxed text-white/55">
+        <Crosshair className="mt-0.5 size-3 shrink-0" style={{ color: accent }} />
+        {event.scenarios}
+      </p>
+    </div>
+  );
+}
+
 export function NewsSection({ accent }: { accent: string }) {
   const [events, setEvents] = useState<NewsEvent[]>([]);
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
+  const [executed, setExecuted] = useState<Record<string, boolean>>({});
 
   const load = useCallback(() => {
     setState("loading");
@@ -84,6 +161,7 @@ export function NewsSection({ accent }: { accent: string }) {
         const style = IMPACT_STYLE[event.impact] ?? { bg: "rgba(120,200,255,0.14)", label: "LOW" };
         const countdown = countdownLabel(event.date);
         const soon = countdown === "now" || countdown.endsWith("m");
+        const open = executed[event.id] === true;
         return (
           <div
             key={event.id}
@@ -128,13 +206,41 @@ export function NewsSection({ accent }: { accent: string }) {
             >
               {event.prediction}
             </p>
+
+            {open ? (
+              <DirectionCard event={event} accent={accent} />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setExecuted((current) => ({ ...current, [event.id]: true }))}
+                className="mt-2.5 flex w-full items-center justify-center gap-2 rounded-xl border py-2.5 text-[12px] font-black tracking-wide transition-transform active:scale-[0.98]"
+                style={{
+                  borderColor: `${accent}55`,
+                  color: accent,
+                  background: `${accent}14`,
+                }}
+              >
+                <Crosshair className="size-3.5" />
+                EXECUTE PREDICTION
+              </button>
+            )}
+
+            {open && (
+              <button
+                type="button"
+                onClick={() => setExecuted((current) => ({ ...current, [event.id]: false }))}
+                className="mt-2 flex w-full items-center justify-center gap-1.5 text-[11px] font-bold text-white/40"
+              >
+                <Check className="size-3" /> Close prediction
+              </button>
+            )}
           </div>
         );
       })}
 
       <p className="pt-1 text-center text-[11px] text-white/35">
-        Calendar data: ForexFactory weekly schedule · forecasts are market consensus, not
-        guarantees.
+        Calendar data: ForexFactory weekly schedule · predictions are consensus-based analysis, not
+        financial advice.
       </p>
     </div>
   );
