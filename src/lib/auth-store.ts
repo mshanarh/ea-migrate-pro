@@ -539,11 +539,11 @@ export function removeLicense(accountId: string, licenseId: string) {
   }));
 }
 
-/** 16-character key in four groups — matches the XXXX-XXXX-XXXX-XXXX card format. */
+/** EMP-prefixed key — EMP-XXXX-XXXX-XXXX (three random groups). */
 export function generateKey() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const groups: string[] = [];
-  for (let group = 0; group < 4; group += 1) {
+  const groups: string[] = ["EMP"];
+  for (let group = 0; group < 3; group += 1) {
     let chunk = "";
     for (let index = 0; index < 4; index += 1) {
       chunk += alphabet[Math.floor(Math.random() * alphabet.length)];

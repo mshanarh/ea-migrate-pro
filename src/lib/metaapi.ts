@@ -7,10 +7,11 @@ import { createServerFn } from "@tanstack/react-start";
  * frontend never sees it and never calls MetaApi directly — it calls the server
  * functions below (this stack's edge functions), which attach the token.
  *
- * Master token resolution: every candidate — METAAPI_TOKEN, METAAPI_API_TOKEN,
- * METAAPI_MASTER_TOKEN in process.env and import.meta.env, plus the built-in
- * fallback constant — is tried against MetaApi in order, and the first token
- * the API accepts is used.
+ * Master token resolution: METAAPI_TOKEN in process.env — the ONLY source.
+ * The value is trimmed (no stray spaces/newlines) and sent under the
+ * "auth-token" header (never Authorization/Bearer). When it is missing the
+ * functions fail fast with an explicit "METAAPI_TOKEN missing" message
+ * instead of probing a dead baked-in token.
  *
  * Endpoints (verified live against MetaApi's official API):
  * - List accounts:   GET  https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai/users/current/accounts
@@ -45,15 +46,10 @@ const CLIENT_API_HOSTS: Record<string, string> = {
 };
 
 /**
- * Built-in platform token — the last-resort candidate so Connect works on every
- * deployment with zero setup. Everything configured at runtime (env vars) takes
- * priority, so rotating the platform token later only means setting the new
- * value in the environment — no code change.
+ * Strips whitespace and quote wrappers that env settings screens sometimes add
+ * — a token pasted with a trailing newline or quotes is otherwise rejected by
+ * MetaApi with 401 even though it is valid.
  */
-const BUILTIN_MASTER_TOKEN =
-  "eyJhbGciOiJSUzUxMiIsInR5cCI6IkpXVCJ9.eyJfaWQiOiJjYTU1ZTRlNWU5NjZhM2ViNmEzZjAwYWQ1NDhhNmNjYyIsImFjY2Vzc1J1bGVzIjpbeyJpZCI6InRyYWRpbmctYWNjb3VudC1tYW5hZ2VtZW50LWFwaSIsIm1ldGhvZHMiOlsidHJhZGluZy1hY2NvdW50LW1hbmFnZW1lbnQtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVzdC1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcnBjLWFwaSIsIm1ldGhvZHMiOlsibWV0YWFwaS1hcGk6d3M6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6Im1ldGFhcGktcmVhbC10aW1lLXN0cmVhbWluZy1hcGkiLCJtZXRob2RzIjpbIm1ldGFhcGktYXBpOndzOnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJtZXRhc3RhdHMtYXBpIiwibWV0aG9kcyI6WyJtZXRhc3RhdHMtYXBpOnJlc3Q6cHVibGljOio6KiJdLCJyb2xlcyI6WyJyZWFkZXIiLCJ3cml0ZXIiXSwicmVzb3VyY2VzIjpbIio6JFVTRVJfSUQkOioiXX0seyJpZCI6InJpc2stbWFuYWdlbWVudC1hcGkiLCJtZXRob2RzIjpbInJpc2stbWFuYWdlbWVudC1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoiY29weWZhY3RvcnktYXBpIiwibWV0aG9kcyI6WyJjb3B5ZmFjdG9yeS1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciIsIndyaXRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfSx7ImlkIjoibXQtbWFuYWdlci1hcGkiLCJtZXRob2RzIjpbIm10LW1hbmFnZXItYXBpOnJlc3Q6ZGVhbGluZzoqOioiLCJtdC1tYW5hZ2VyLWFwaTpyZXN0OnB1YmxpYzoqOioiXSwicm9sZXMiOlsicmVhZGVyIiwid3JpdGVyIl0sInJlc291cmNlcyI6WyIqOiRVU0VSX0lEJDoqIl19LHsiaWQiOiJiaWxsaW5nLWFwaSIsIm1ldGhvZHMiOlsiYmlsbGluZy1hcGk6cmVzdDpwdWJsaWM6KjoqIl0sInJvbGVzIjpbInJlYWRlciJdLCJyZXNvdXJjZXMiOlsiKjokVVNFUl9JRCQ6KiJdfV0sImlnbm9yZVJhdGVMaW1pdHMiOmZhbHNlLCJ0b2tlbklkIjoiMjAyMTAyMTMiLCJpbXBlcnNvbmF0ZWQiOmZhbHNlLCJyZWFsVXNlcklkIjoiY2E1NWU0ZTVlOTY2YTNlYjZhM2YwMGFkNTQ4YTZjY2MiLCJpYXQiOjE3ODk3MzYwODV9.YURNWRrIP55llsfztF7p0FfL-ftOL6Rh9V0eMGePn4IAX494Xf-zAxhPF3i0roXa9wSNcBvKwrM5-MJQtob6hKOQEDTTZgwiaZbpHnJmwe7GRgbaai44ZQp2l0R0_LjQ8iGcv2QVTu7_hvazj3gTt8FYEjqxCePU45Mx0VWKghtJ8lAiLZyyCouGwNEKPZns00q3KFysO_gdhDWkFlzylBn0yztH20ST3Ghvap7CPSbNoZ8-eon3TvUL4ARWnXRtDA4OYty3MHPidXFqUxn_WLFvL1rwQL1RH86v_KOGoSLlp0Di3TyIlv0bU9zlTTT_vovPibGL-cxLO4muWnJcqZYJxASySy2sgN0F4X5CsPACzyFF54STrUKJlJElPh_q55QEZqd0wT7q-aQF760RPou6NTMmJQQ5BpH9nIFnGJ-ITC_k0tEifw0531hSFDna5HYsUfVHTfnlr4D2rsxDMpqMp-75AZA5umV1UJxgm_Kt7GfWqGZA0nVKkDX8G1WCxjlAEJEanzYp4QCGPeAxEnYQ1wJmXqfKuKvWC_N6_EI3e7BU1Li8KsKrHamJSVzsAA3aHGfUanyL9nyQC5IlBiDqqum9qDdGBxo1mdIk4jHg7rHJRZbHDGzZljWfu74uE8Br_04NLvYaLVRfZCmwvhX1GKC5UW3dXRJC4i0ci2c";
-
-/** Strips whitespace and quote wrappers that env settings screens sometimes add. */
 function cleanKey(raw: string | undefined | null): string {
   return (raw ?? "")
     .trim()
@@ -61,19 +57,16 @@ function cleanKey(raw: string | undefined | null): string {
     .replace(/["'`]+$/, "");
 }
 
-/** Every candidate master token, deduped: process env, build env, then built-in. */
+/**
+ * The platform master token — read from the environment ONLY (trimmed).
+ * A stale token baked into source is what produced silent 401s before: when
+ * no METAAPI_TOKEN is configured the app must say so instead of probing a
+ * dead built-in key.
+ */
 function candidateTokens(): string[] {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
-  const viteEnv =
-    (import.meta as unknown as { env?: Record<string, string | undefined> }).env ?? {};
-  const tokens: string[] = [];
-  for (const name of ["METAAPI_TOKEN", "METAAPI_API_TOKEN", "METAAPI_MASTER_TOKEN"]) {
-    for (const value of [cleanKey(env[name]), cleanKey(viteEnv[name])]) {
-      if (value.length > 0) tokens.push(value);
-    }
-  }
-  tokens.push(BUILTIN_MASTER_TOKEN);
-  return [...new Set(tokens)];
+  const token = cleanKey(env["METAAPI_TOKEN"]);
+  return token.length > 0 ? [token] : [];
 }
 
 type MaResponse = { status: number; payload?: unknown; retryAfterSeconds?: number };
@@ -268,9 +261,9 @@ async function maFetch(
 
 export type MtFailureCode = "key_missing" | "key_rejected" | "failed";
 
-/** Defensive only — the built-in fallback makes this effectively unreachable. */
+/** Defensive only — this makes the missing env var explicit for the user. */
 function missingKeyMessage(): string {
-  return "Live connection isn't enabled on this deployment yet. The owner enables it once in the hosting cloud settings — then Connect works instantly.";
+  return "METAAPI_TOKEN is missing in the server environment — add it once in Settings → Environment (it is trimmed automatically), then Connect works instantly.";
 }
 
 /** The token is present but MetaApi rejected it. */
