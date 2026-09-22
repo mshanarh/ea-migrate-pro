@@ -2,7 +2,7 @@ import { useEffect, useRef } from "react";
 import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { Clock, ShieldCheck, MessageCircle } from "lucide-react";
 import { PortalLayout } from "@/components/PortalLayout";
-import { updateProfile, useCurrentAccount } from "@/lib/auth-store";
+import { OWNER_EMAILS, updateProfile, useCurrentAccount } from "@/lib/auth-store";
 import { syncGetAccount } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/dashboard")({
@@ -52,8 +52,15 @@ function DashboardLayout() {
         const result = await syncGetAccount({ data: { email: current.email } });
         if (cancelled || !result.enabled || !result.account) return;
         const cloud = result.account;
-        if (cloud.status !== current.status || cloud.role !== current.role || cloud.licenseLimit !== current.licenseLimit) {
-          updateProfile(current.id, { status: cloud.status, role: cloud.role, licenseLimit: cloud.licenseLimit });
+        // The owner can only be upgraded by the poll, never downgraded — a
+        // stale cloud record must not kick the admin off the console.
+        const ownerUpgrade =
+          OWNER_EMAILS.includes(cloud.email.toLowerCase())
+            ? { role: "admin" as const, status: "approved" as const, licenseLimit: Math.max(cloud.licenseLimit, 2000) }
+            : {};
+        const next = { ...cloud, ...ownerUpgrade };
+        if (next.status !== current.status || next.role !== current.role || next.licenseLimit !== current.licenseLimit) {
+          updateProfile(current.id, { status: next.status, role: next.role, licenseLimit: next.licenseLimit });
         }
       } catch {
         /* transient network error — retried on the next tick */

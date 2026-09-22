@@ -373,6 +373,10 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
       existing.set(key, {
         ...known,
         ...cloud,
+        // The owner is ALWAYS an admin locally — a stale cloud copy must never
+        // demote them (this is what made owner sign-ins land on a pending
+        // mentor portal instead of the admin console).
+        role: OWNER_EMAILS.includes(cloud.email.toLowerCase()) ? "admin" : cloud.role,
         status,
         password: known.password,
         eas: mergedEas,
@@ -388,8 +392,12 @@ export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
       )
         changed = true;
     } else if (cloud.role === "admin") {
-      // Admin records sign in via the dedicated admin login only.
-      continue;
+      // Admin records DO hydrate now: the platform owner can sign in on any
+      // device directly into the admin console. normalise() re-asserts the
+      // owner's admin role, and a removed admin cannot be reintroduced by
+      // this path because the server layer strips them before returning.
+      existing.set(key, { ...cloud, password: "" } as Account);
+      changed = true;
     } else {
       existing.set(key, { ...cloud, password: "" } as Account);
       changed = true;
@@ -426,17 +434,21 @@ export function register(
   data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas" | "website">,
 ): { error?: string; account?: Account } {
   load();
-  if (state.accounts.some((a) => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
+  const email = data.email.trim().toLowerCase();
+  if (state.accounts.some((a) => a.email.toLowerCase() === email)) {
     return { error: "That email is already registered." };
   }
+  // Platform owners are admins the moment they sign up — no pending gate,
+  // no admin approval loop, on any device.
+  const isOwner = OWNER_EMAILS.includes(email);
   const account: Account = {
     ...data,
-    email: data.email.trim().toLowerCase(),
+    email,
     id: "m-" + Date.now(),
-    role: "mentor",
-    status: "pending",
+    role: isOwner ? "admin" : "mentor",
+    status: isOwner ? "approved" : "pending",
     createdAt: new Date().toISOString(),
-    licenseLimit: 0,
+    licenseLimit: isOwner ? 2000 : 0,
     licenses: [],
     eas: [],
   };

@@ -127,13 +127,25 @@ export const syncRegister = createServerFn({ method: "POST" })
     }
     // A removed admin must never (re)register as an admin through this path.
     if (isRemovedAdmin(email)) merged = { ...merged, role: "mentor" };
+    // The platform owner is an admin BY SERVER ENFORCEMENT: any registration
+    // (or profile re-mirror) carrying their email is stored as admin/approved
+    // regardless of what the client sent — a stale client snapshot can never
+    // demote them in the shared store.
+    if (OWNER_EMAILS.includes(email)) {
+      merged = {
+        ...merged,
+        role: "admin",
+        status: "approved",
+        ...(merged.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}),
+      };
+    }
     const results = await pipeline([
       ["HSET", ACCOUNTS_KEY, email, JSON.stringify(merged)],
     ]);
     const writeOk = results !== null && !results[0]?.error;
     // Registration-received email — only on the FIRST successful write of a
-    // brand-new account (never re-sent when a device re-mirrors its profile).
-    if (writeOk && !existing) {
+    // brand-new account, and never for the owner (they approve themselves).
+    if (writeOk && !existing && !OWNER_EMAILS.includes(email)) {
       void sendPendingEmail(email, merged.firstName).catch((error) =>
         console.error("[brevo] pending email unexpected failure:", error),
       );
@@ -220,8 +232,20 @@ export const syncGetAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SyncGetAccountResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, account: null };
     const account = await readAccount(data.email);
-    const resolved =
+    const cleanEmail = data.email.trim().toLowerCase();
+    let resolved =
       account && isRemovedAdmin(account.email) ? { ...account, role: "mentor" as const } : account;
+    // The owner is an admin by server enforcement — even a stale pre-fix cloud
+    // record (or a mirror from an old device) can never downgrade them, which
+    // is exactly what made the admin land on a pending mentor portal.
+    if (resolved && OWNER_EMAILS.includes(cleanEmail)) {
+      resolved = {
+        ...resolved,
+        role: "admin",
+        status: "approved",
+        ...(resolved.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}),
+      };
+    }
     return { enabled: true, account: resolved ? toPublic(resolved) : null };
   });
 

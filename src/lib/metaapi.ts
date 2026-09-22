@@ -31,7 +31,7 @@ import { createServerFn } from "@tanstack/react-start";
 const PROVISIONING_BASE = "https://mt-provisioning-api-v1.agiliumtrade.agiliumtrade.ai";
 
 /** Client API hosts per region (the trade execution plane). */
-const CLIENT_API_HOSTS: Record<string, string> = {
+export const CLIENT_API_HOSTS: Record<string, string> = {
   "new-york": "https://mt-client-api-v1.new-york.agiliumtrade.ai",
   london: "https://mt-client-api-v1.london.agiliumtrade.ai",
   singapore: "https://mt-client-api-v1.singapore.agiliumtrade.ai",
@@ -142,7 +142,7 @@ async function withMasterToken(
 }
 
 /** fetch with JSON parsing and a hard timeout — the client API can hang for minutes when cold. */
-async function fetchJson(
+export async function fetchJson(
   url: string,
   init: RequestInit,
   timeoutMs: number,
@@ -216,7 +216,7 @@ function newTransactionId(): string {
 }
 
 /** Runs one MetaApi provisioning request. */
-async function maFetch(
+export async function maFetch(
   token: string,
   path: string,
   init: { method?: string; json?: unknown; transactionId?: string } = {},
@@ -262,7 +262,7 @@ async function maFetch(
 export type MtFailureCode = "key_missing" | "key_rejected" | "failed";
 
 /** Defensive only — this makes the missing env var explicit for the user. */
-function missingKeyMessage(): string {
+export function missingKeyMessage(): string {
   return "METAAPI_TOKEN is missing in the server environment — add it once in Settings → Environment (it is trimmed automatically), then Connect works instantly.";
 }
 
@@ -271,7 +271,7 @@ function rejectedKeyMessage(status: number): string {
   return `MetaApi rejected the platform's access token (HTTP ${status}). The token is set but invalid, expired, or lacks permissions — generate a new one in the MetaApi dashboard and update the server setting.`;
 }
 
-type MaAccount = {
+export type MaAccount = {
   id?: string;
   /** The provisioning API returns the account id as `_id` on list/detail payloads. */
   _id?: string;
