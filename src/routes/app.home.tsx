@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -135,6 +135,7 @@ function WelcomeMaster() {
 }
 
 function AppHome() {
+  const navigate = useNavigate();
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -204,7 +205,7 @@ function AppHome() {
 
   const handleQuotes = () => {
     if (!robot) return;
-    toast.info(`Quotes for ${robot.name} are on the way.`);
+    navigate({ to: "/app/trading-pairs" });
   };
 
   const handleRemove = () => {
