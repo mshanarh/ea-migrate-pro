@@ -19,6 +19,7 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  const [showLicenseViewOverride, setShowLicenseViewOverride] = useState(false);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -49,7 +50,9 @@ function AppAccess() {
 
   const activeEmail = app.email || email.trim().toLowerCase();
   const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
-  const showLicenseView = successReturn || paymentStatus !== "unpaid";
+  // Override lets the no-license path keep the user on the licence view inside
+  // the app instead of bouncing them to an external checkout page.
+  const showLicenseView = successReturn || paymentStatus !== "unpaid" || showLicenseViewOverride;
 
   const continueWithEmail = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -84,14 +87,17 @@ function AppAccess() {
     }
     // Local payment memory is empty — check the shared store before charging
     // anyone twice: an active license for this email IS proof of payment, so
-    // the restore both unlocks the app and skips Whop entirely.
+    // the restore both unlocks the app and skips Whop entirely. With no cloud
+    // license either, the user STAYS IN THE APP on the licence screen — the
+    // old auto-bounce to the Whop checkout yanked people out of the app
+    // whenever they pressed play/connect with no key yet.
     void restoreRobotsFromCloud().then(({ robots }) => {
-      if (robots > 0) {
-        window.location.replace("/app/home");
-        return;
+      if (robots > 0) window.location.replace("/app/home");
+      else {
+        setRedirecting(false);
+        setShowLicenseViewOverride(true);
+        toast.info("Enter your licence key to unlock the robot.");
       }
-      setRedirecting(true);
-      window.location.assign(WHOP_CHECKOUT_URL);
     });
   };
 

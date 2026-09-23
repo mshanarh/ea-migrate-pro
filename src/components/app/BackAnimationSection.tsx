@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
+import { BG_EFFECTS, BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
 import { isBotVoiceEnabled, setBotVoiceEnabled, warmBotVoice } from "@/lib/bot-voice";
 import { isRobotVideoAuto, requestVideoPlayback, setRobotVideoAuto } from "@/lib/video-playback";
 
@@ -23,6 +23,10 @@ type EffectRow = {
  * Canvas rows drive the full-screen background engine (mutually exclusive —
  * one animation plays at a time). Colour Matrix, Robot Video and Bot Voice
  * are independent features layered on top.
+ */
+/**
+ * Curated quick picks shown as the main rows — the full 40+ effect library is
+ * exposed below them in a tappable "All effects" grid.
  */
 const ROWS: EffectRow[] = [
   {
@@ -281,9 +285,94 @@ export function BackAnimationSection() {
           </div>
         );
       })}
+      <AllEffectsGrid
+        accent={accent}
+        enabled={canvas.enabled}
+        activeType={canvas.enabled ? canvas.type : null}
+        onPick={(type) => {
+          setCanvas({ enabled: true, type });
+          writeCanvasConfig(true, type);
+        }}
+        onClear={() => {
+          setCanvas({ enabled: false, type: canvas.type });
+          writeCanvasConfig(false, canvas.type);
+        }}
+      />
       <p className="pt-1 text-center text-[11px] text-white/35">
         Toggles apply instantly across the app.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The complete background-effect library. Every animation the engine can draw
+ * is listed here and applies on tap — tapping the active one switches the
+ * background off.
+ */
+function AllEffectsGrid({
+  accent,
+  enabled,
+  activeType,
+  onPick,
+  onClear,
+}: {
+  accent: string;
+  enabled: boolean;
+  activeType: string | null;
+  onPick: (type: string) => void;
+  onClear: () => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <div className="rounded-[22px] border border-white/[0.06] bg-[#121212] px-5 py-4">
+      <button
+        type="button"
+        onClick={() => setExpanded((value) => !value)}
+        className="flex w-full items-center justify-between gap-3"
+        aria-expanded={expanded}
+      >
+        <div className="flex min-w-0 items-center gap-3.5">
+          <span className="text-[22px] leading-none" aria-hidden>
+            🌌
+          </span>
+          <div className="min-w-0 text-left">
+            <p className="text-[15px] font-black text-white">All Effects</p>
+            <p className="mt-0.5 text-xs leading-snug text-white/45">
+              {BG_EFFECTS.length} animations — tap one to play it
+            </p>
+          </div>
+        </div>
+        <span
+          className="shrink-0 text-lg transition-transform duration-200"
+          style={{ color: accent, transform: expanded ? "rotate(180deg)" : "none" }}
+          aria-hidden
+        >
+          ⌄
+        </span>
+      </button>
+      {expanded && (
+        <div className="mt-4 grid grid-cols-2 gap-2">
+          {BG_EFFECTS.map((effect) => {
+            const active = enabled && activeType === effect.id;
+            return (
+              <button
+                key={effect.id}
+                type="button"
+                onClick={() => (active ? onClear() : onPick(effect.id))}
+                className="rounded-2xl border px-3 py-2.5 text-left transition-transform active:scale-[0.98]"
+                style={{
+                  borderColor: active ? accent : "rgba(255,255,255,0.08)",
+                  backgroundColor: active ? `${accent}1f` : "rgba(255,255,255,0.03)",
+                }}
+              >
+                <p className="truncate text-[13px] font-bold text-white">{effect.name}</p>
+                <p className="mt-0.5 truncate text-[10px] text-white/40">{effect.subtitle}</p>
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

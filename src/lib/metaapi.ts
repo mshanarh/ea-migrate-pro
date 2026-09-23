@@ -83,8 +83,20 @@ function candidateTokens(): string[] {
 
 type MaResponse = { status: number; payload?: unknown; retryAfterSeconds?: number };
 
+/** True when the payload is a MetaApi billing block (auth PASSED, plan empty). */
+function isBillingBlock(payload: unknown): boolean {
+  const raw = typeof payload === "string" ? payload : JSON.stringify(payload ?? {});
+  return /top up your account|insufficient (funds|credits)|no trading credits|billing.*required|upgrade.*plan/i.test(
+    raw,
+  );
+}
+
 /** True when MetaApi rejected our authorization (the platform's master token). */
 function isAuthRejected(status: number, payload: unknown): boolean {
+  // A 403 Forbidden billing block means the request reached MetaApi with VALID
+  // auth — the plan is simply out of credits. Classifying it as a token
+  // rejection produced the false "invalid token" banner and hid the real fix.
+  if (isBillingBlock(payload)) return false;
   if (status === 401 || status === 403) return true;
   const raw = JSON.stringify(payload ?? {}).toLowerCase();
   return raw.includes("unauthorizederror") || raw.includes("invalid auth-token");
