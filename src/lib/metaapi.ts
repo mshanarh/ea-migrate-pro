@@ -66,7 +66,19 @@ function cleanKey(raw: string | undefined | null): string {
 function candidateTokens(): string[] {
   const env = typeof process !== "undefined" ? (process?.env ?? {}) : {};
   const token = cleanKey(env["METAAPI_TOKEN"]);
-  return token.length > 0 ? [token] : [];
+  if (token.length > 0) {
+    // Masked fingerprint (sha256, first 10 hex chars) — lets support prove
+    // WHICH token the running process holds without ever printing the secret.
+    try {
+      const { createHash } = require("node:crypto") as typeof import("node:crypto");
+      const fingerprint = createHash("sha256").update(token).digest("hex").slice(0, 10);
+      console.log("[metaapi] METAAPI_TOKEN fingerprint:", fingerprint, "len", token.length);
+    } catch {
+      // logging must never break the flow
+    }
+    return [token];
+  }
+  return [];
 }
 
 type MaResponse = { status: number; payload?: unknown; retryAfterSeconds?: number };
