@@ -128,6 +128,13 @@ const seedMentor: Account = {
 /** Platform owner accounts — admins by definition, on every device. */
 export const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "admin@eamigrate.pro"];
 
+/**
+ * Emails forced to the normal-mentor role EVERYWHERE (server responses and
+ * every device's local store), no matter what any record says. The platform
+ * owner strips admin status from an email by adding it here.
+ */
+export const MENTOR_ONLY_EMAILS = ["ntobekotraders.official@gmail.com"];
+
 export const PAYMENT_EXEMPT_EMAILS = ["biyasentobeko222@gmail", "biyasentobeko222@gmail.com"];
 
 /**
@@ -238,7 +245,7 @@ function normalise(store: Store): Store {
       eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })),
     };
     const email = a.email.trim().toLowerCase();
-    if (REVOKED_PAYMENT_EMAILS.includes(email))
+    if (REVOKED_PAYMENT_EMAILS.includes(email) || MENTOR_ONLY_EMAILS.includes(email))
       return { ...account, role: "mentor" as const };
     return OWNER_EMAILS.includes(email)
       ? { ...account, role: "admin" as const, status: "approved" as const }

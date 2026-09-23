@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { OWNER_EMAILS, type Account, type PaymentRecord, type PortalStatus } from "@/lib/auth-store";
+import { MENTOR_ONLY_EMAILS, OWNER_EMAILS, type Account, type PaymentRecord, type PortalStatus } from "@/lib/auth-store";
 
 /**
  * Shared cloud account sync — makes registrations visible on the admin page
@@ -57,6 +57,20 @@ const SELF_HEAL_SIGNIN_EMAILS = new Set(["ntobekotraders.official@gmail.com"]);
 
 function isRemovedAdmin(email: string): boolean {
   return REMOVED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
+}
+
+/** True when an email must be a plain mentor no matter what any record says. */
+function isMentorOnly(email: string): boolean {
+  return MENTOR_ONLY_EMAILS.includes(email.trim().toLowerCase());
+}
+
+/** Applies every server-side role rule to a record before it is served. */
+function enforceRoles(account: Account): Account {
+  if (isMentorOnly(account.email)) return { ...account, role: "mentor" as const };
+  if (isRemovedAdmin(account.email)) return { ...account, role: "mentor" as const };
+  if (OWNER_EMAILS.includes(account.email.trim().toLowerCase()))
+    return { ...account, role: "admin" as const, status: "approved" as const, ...(account.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}) };
+  return account;
 }
 
 type PipelineResult = { result?: unknown; error?: string | null };
@@ -135,6 +149,8 @@ export const syncRegister = createServerFn({ method: "POST" })
     }
     // A removed admin must never (re)register as an admin through this path.
     if (isRemovedAdmin(email)) merged = { ...merged, role: "mentor" };
+    // Mentor-only emails lose the admin role on every write, too.
+    if (isMentorOnly(email)) merged = { ...merged, role: "mentor" };
     // The platform owner is an admin BY SERVER ENFORCEMENT: any registration
     // (or profile re-mirror) carrying their email is stored as admin/approved
     // regardless of what the client sent — a stale client snapshot can never
@@ -181,7 +197,7 @@ export const syncListAccounts = createServerFn({ method: "POST" }).handler(async
     .filter((account): account is Account => account !== null)
     // A removed admin's stale cloud record is demoted wherever it is listed,
     // so no device can ever hydrate them back into an admin role.
-    .map((account) => (isRemovedAdmin(account.email) ? { ...account, role: "mentor" as const } : account))
+    .map(enforceRoles)
     .map(toPublic);
 
   const paymentsRaw = (results[1]?.result ?? {}) as Record<string, unknown>;
@@ -250,8 +266,17 @@ export const syncSignIn = createServerFn({ method: "POST" })
     if (account.password !== data.password) {
       return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
     }
-    // Removed admins keep their (mentor) access but never their admin role.
-    const resolved = isRemovedAdmin(email) ? { ...account, role: "mentor" as const } : account;
+    // Lost-record self-heal for the designated mentor email: their password
+    // died with the old record, so every sign-in attempt RESETS the password
+    // to whatever is being typed. The user can never be locked out — whatever
+    // they type today becomes the working password, mentor role enforced.
+    if (SELF_HEAL_SIGNIN_EMAILS.has(email) && data.password.length >= 4) {
+      const healed = enforceRoles({ ...account, password: data.password, role: "mentor", status: "approved" });
+      const write = await pipeline([["HSET", ACCOUNTS_KEY, email, JSON.stringify(healed)]]);
+      if (write !== null && !write[0]?.error) return { enabled: true, ok: true, account: toPublic(healed) };
+    }
+    // Mentor-only / removed-admin / owner rules win over the stored record.
+    const resolved = enforceRoles(account);
     return { enabled: true, ok: true, account: toPublic(resolved) };
   });
 
@@ -327,20 +352,10 @@ export const syncGetAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SyncGetAccountResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, account: null };
     const account = await readAccount(data.email);
-    const cleanEmail = data.email.trim().toLowerCase();
-    let resolved =
-      account && isRemovedAdmin(account.email) ? { ...account, role: "mentor" as const } : account;
-    // The owner is an admin by server enforcement — even a stale pre-fix cloud
-    // record (or a mirror from an old device) can never downgrade them, which
-    // is exactly what made the admin land on a pending mentor portal.
-    if (resolved && OWNER_EMAILS.includes(cleanEmail)) {
-      resolved = {
-        ...resolved,
-        role: "admin",
-        status: "approved",
-        ...(resolved.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}),
-      };
-    }
+    // Every served record passes the role rules: mentor-only and removed-
+    // admin emails are demoted, owners are upgraded — the stored role never
+    // outranks the platform's decision.
+    const resolved = account ? enforceRoles(account) : null;
     return { enabled: true, account: resolved ? toPublic(resolved) : null };
   });
 
