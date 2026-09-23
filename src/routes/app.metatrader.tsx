@@ -168,6 +168,7 @@ function AppMetatrader() {
           loginId: record.loginId,
           mcAccountId: record.mcAccountId,
           ...(record.environment ? { environment: record.environment } : {}),
+          ...(record.kind === "demo" || record.kind === "live" ? { kind: record.kind } : {}),
         };
         connectMt(account);
         setBroker(account.broker);
@@ -224,6 +225,7 @@ function AppMetatrader() {
         loginId: loginId.trim(),
         mcAccountId: result.accountId,
         ...(result.environment ? { environment: result.environment } : {}),
+        ...(result.kind ? { kind: result.kind } : {}),
       };
       connectMt(account);
       writeMt5Ui({ login: account.loginId, server: account.server, connected: true });
@@ -239,6 +241,7 @@ function AppMetatrader() {
               broker: account.broker,
               mcAccountId: result.accountId,
               environment: result.environment,
+              ...(result.kind ? { kind: result.kind } : {}),
               isConnected: true,
               connectedAt: new Date().toISOString(),
             },
@@ -336,13 +339,19 @@ function AppMetatrader() {
             >
               <div className="flex items-center justify-between">
                 <p className="text-[11px] font-bold tracking-[0.28em] uppercase" style={{ color: accent }}>Connected</p>
-                <span className="flex items-center gap-1.5 rounded-full bg-emerald-400/10 px-3 py-1 text-[10px] font-bold text-emerald-300">
-                  <Check className="size-3" strokeWidth={3} /> LIVE LINK
+                <span
+                  className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold ${
+                    mt.kind === "demo"
+                      ? "bg-sky-400/10 text-sky-300"
+                      : "bg-emerald-400/10 text-emerald-300"
+                  }`}
+                >
+                  <Check className="size-3" strokeWidth={3} /> {mt.kind === "demo" ? "DEMO LINK" : "LIVE LINK"}
                 </span>
               </div>
               <p className="mt-3 text-xl font-black">Connected ✓ — Account {mt.loginId}</p>
               <p className="mt-1 text-sm text-white/60">{mt.server} · {mt.broker}</p>
-              <p className="mt-1 text-xs text-white/40">{mt.accountType}{mt.environment ? ` · detected ${mt.environment.toLowerCase()}` : ""}</p>
+              <p className="mt-1 text-xs text-white/40">{mt.accountType}{mt.environment ? ` · region ${mt.environment}` : ""}{mt.kind ? ` · ${mt.kind === "demo" ? "DEMO" : "LIVE"} account` : ""}</p>
               <div className="mt-4 flex gap-3">
                 <button
                   type="button"
@@ -492,7 +501,7 @@ function AppMetatrader() {
                 )}
               </button>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-white/30">
-                MT5 only. Your credentials go straight to the hosting provider over an encrypted connection and are never stored on this device.
+                MT5 only — live and demo accounts both connect. Your credentials go straight to the hosting provider over an encrypted connection and are never stored on this device.
               </p>
             </motion.div>
           </form>

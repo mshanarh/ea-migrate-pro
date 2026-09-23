@@ -901,6 +901,8 @@ export type Mt5AccountRecord = {
   /** The MetaApi-hosted account id used for live execution. */
   mcAccountId: string;
   environment?: string | undefined;
+  /** live or demo — detected from the broker server name at connect time. */
+  kind?: "live" | "demo" | undefined;
   isConnected: boolean;
   connectedAt: string;
 };

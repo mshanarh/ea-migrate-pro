@@ -28,8 +28,10 @@ export type MtAccount = {
   loginId: string;
   /** The user's own MetaApi account id (created under the platform token). */
   mcAccountId?: string;
-  /** LIVE or DEMO as detected by MetaApi at connect time. */
+  /** MetaApi region returned at connect time (used to pick the trade API host). */
   environment?: string;
+  /** live or demo — detected from the broker server name (demo/trial servers). */
+  kind?: "live" | "demo";
 };
 
 export type AppSettings = {
@@ -230,6 +232,7 @@ export async function restoreRobotsFromCloud(): Promise<{ robots: number; mt5: b
         loginId: record.loginId,
         mcAccountId: record.mcAccountId,
         ...(record.environment ? { environment: record.environment } : {}),
+        ...(record.kind === "demo" || record.kind === "live" ? { kind: record.kind } : {}),
       },
     };
     mt5Restored = true;

@@ -317,6 +317,17 @@ function accountIdOf(account: MaAccount | undefined | null): string | undefined 
   return account?.id ?? account?._id ?? undefined;
 }
 
+/**
+ * Demo accounts are first-class: MetaApi hosts them exactly like live ones.
+ * The platform has no explicit live/demo flag, so the kind is inferred from
+ * the broker server name (the industry convention — demo/trial/contest
+ * servers are named that way on every major broker).
+ */
+export function accountKindFor(server: string, login?: string): "live" | "demo" {
+  const text = `${server} ${login ?? ""}`.toLowerCase();
+  return /demo|trial|contest|practice|virtual|simulated|ptr\b|"test"/.test(text) ? "demo" : "live";
+}
+
 export type MtConnectRequest = {
   /** The user's own MT5 account number — any login works, nothing is hardcoded. */
   login: string;
@@ -333,7 +344,7 @@ export type MtConnectRequest = {
 export type MtFailure = { ok: false; code: MtFailureCode; message: string };
 
 export type MtConnectResult =
-  | { ok: true; accountId: string; environment?: string; balance?: number; currency?: string }
+  | { ok: true; accountId: string; environment?: string; kind?: "live" | "demo" }
   | MtFailure;
 
 export type MtDisconnectRequest = { accountId: string };
@@ -463,8 +474,10 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       }
     };
 
-    const connectOk = (accountId: string, region?: string): MtConnectResult =>
-      region ? { ok: true, accountId, environment: region } : { ok: true, accountId };
+    const connectOk = (accountId: string, region?: string): MtConnectResult => {
+      const kind = accountKindFor(server, login);
+      return { ok: true, accountId, ...(region ? { environment: region } : {}), kind };
+    };
 
     // Reuse an already-hosted copy of this exact login+server instead of
     // creating a duplicate when Connect is pressed twice. Stale duplicates
@@ -565,7 +578,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         message:
           billing ||
           g1.message ||
-          "The broker's server did not accept the cloud trading terminal (tried both infrastructure types). Double-check the password and exact server name (e.g. Headway-Demo). If they are right, this broker server blocks cloud terminals — connect a live (non-demo) server of the same broker or another broker. Your details are saved; press Connect again in a few minutes in case the broker was briefly offline.",
+          "The broker's server did not accept the cloud trading terminal (tried both infrastructure types). Double-check the password and exact server name (e.g. Headway-Demo). If they are right, this broker server blocks cloud terminals — try the same broker's live or demo server, or another broker. Your details are saved; press Connect again in a few minutes in case the broker was briefly offline.",
       };
     }
     return {
