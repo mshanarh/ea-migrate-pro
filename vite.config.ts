@@ -28,4 +28,12 @@ export default defineConfig({
     // nitro/vite builds from this
     server: { entry: "server" },
   },
+  nitro: {
+    // Production deploys run on Vercel (Build Output API): the app is full-stack
+    // (TanStack Start server functions for auth sync, MetaApi trading, Brevo
+    // emails), so a static-only host cannot serve it. The Lovable wrapper only
+    // applies this outside its sandbox — the Freebuff preview keeps its own
+    // cloudflare/dev setup and is unaffected.
+    preset: "vercel",
+  },
 });
