@@ -417,13 +417,17 @@ export const connectMt5Account = createServerFn({ method: "POST" })
     /** Current connection state + region of a hosted account. */
     const inspectAccount = async (
       accountId: string,
-    ): Promise<{ status: string; region?: string | undefined }> => {
+    ): Promise<{ status: string; state?: string | undefined; region?: string | undefined }> => {
       const detail = await withMasterToken((token) =>
         maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}`),
       );
       if (detail.kind === "ok" && detail.response.status === 200) {
         const account = detail.response.payload as MaAccount | undefined;
-        return { status: String(account?.connectionStatus ?? ""), region: account?.region };
+        return {
+          status: String(account?.connectionStatus ?? ""),
+          state: account?.state,
+          region: account?.region,
+        };
       }
       return { status: "" };
     };
@@ -438,14 +442,16 @@ export const connectMt5Account = createServerFn({ method: "POST" })
     /**
      * Creates a hosted copy of this login on MetaApi with the requested
      * infrastructure type, retrying while broker settings are detected.
-     * The window is deliberately short — serverless functions are killed
-     * after ~60s, and a repeat press reuses the copy this created.
+     * First-time broker validation takes 60–90s and MetaApi answers early
+     * polls with 202 "retry in N seconds" — the deadline honors that instead
+     * of giving up mid-validation (the copy keeps building either way; a
+     * repeat press continues it).
      */
     const createHosted = async (
       type: "cloud-g2" | "cloud-g1",
     ): Promise<{ id?: string; error?: string }> => {
       const transactionId = newTransactionId();
-      const deadline = Date.now() + 25_000;
+      const deadline = Date.now() + 90_000;
       for (;;) {
         const outcome = await withMasterToken((token) =>
           maFetch(token, "/users/current/accounts", {
@@ -463,11 +469,11 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         const message = maError(payload);
         const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
         if (retryMatch && Date.now() < deadline) {
-          await sleep(Math.min(Number(retryMatch[1]) + 2, 10) * 1000);
+          await sleep(Math.min(Number(retryMatch[1]) + 2, 15) * 1000);
           continue;
         }
         if (status === 202 && Date.now() < deadline) {
-          await sleep(8_000);
+          await sleep(10_000);
           continue;
         }
         return { error: message || `HTTP ${status}` };
@@ -480,11 +486,14 @@ export const connectMt5Account = createServerFn({ method: "POST" })
     };
 
     // Reuse an already-hosted copy of this exact login+server instead of
-    // creating a duplicate when Connect is pressed twice. Stale duplicates
-    // also consume the platform's MetaApi account slots (which makes new
-    // creations fail), so every copy that is not reused is removed. Some
-    // brokers refuse MetaApi's G2 terminal; in that case the hosted copy is
-    // rebuilt on the G1 infrastructure, which different broker stacks accept.
+    // creating a duplicate when Connect is pressed twice. A copy that is
+    // still attaching to the broker (first-time validation can take a
+    // couple of minutes) is WAITED ON here — never deleted — so a retry
+    // continues where the last attempt left off. Stale duplicates beyond
+    // the chosen copy are removed so the platform's MetaApi slots don't
+    // fill up. Some brokers refuse MetaApi's G2 terminal; in that case the
+    // hosted copy is rebuilt on the G1 infrastructure, which different
+    // broker stacks accept.
     const listOutcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
     if (listOutcome.kind === "ok" && Array.isArray(listOutcome.response.payload)) {
       const matchIds = (listOutcome.response.payload as MaAccount[])
@@ -501,11 +510,36 @@ export const connectMt5Account = createServerFn({ method: "POST" })
           matchIds.map(async (accountId) => ({ accountId, ...(await inspectAccount(accountId)) })),
         );
         const live = states.find((state) => state.status === "CONNECTED");
-        // Keep the one working copy (if any) and delete every other duplicate.
+        const pending =
+          states.find((state) => state.state === "DEPLOYED" && state.status !== "CONNECTED") ??
+          states[0];
+        const keep = live?.accountId ?? pending?.accountId;
+        // Keep the one copy being reused/waited on; delete every other duplicate.
         for (const accountId of matchIds) {
-          if (accountId !== live?.accountId) await deleteHosted(accountId);
+          if (accountId !== keep) await deleteHosted(accountId);
         }
         if (live) return connectOk(live.accountId, live.region);
+        if (keep) {
+          // The copy exists but hasn't attached yet. Nudge it with a deploy
+          // (best-effort — an already-deployed copy may refuse) and give it a
+          // patient window to come up. This is the "it was taking time" case:
+          // the previous press already did the hard part; this one waits it out.
+          await withMasterToken((token) =>
+            maFetch(token, `/users/current/accounts/${encodeURIComponent(keep)}/deploy`, {
+              method: "POST",
+            }),
+          ).catch(() => undefined);
+          const region = states.find((state) => state.accountId === keep)?.region;
+          const warm = await withMasterToken((token) =>
+            warmAccountConnection(token, keep, region, 75_000),
+          );
+          if (warm.kind === "ok" && warm.response.status === 200) {
+            return connectOk(keep, region);
+          }
+          // Still not up after the patient window — fall through to a rebuild
+          // on the other infrastructure type, but leave this copy in place so
+          // a later retry can keep waiting on it.
+        }
       }
     }
 
@@ -530,18 +564,19 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         };
       }
       const createdId = created.id;
-      // Give the terminal a short window to attach to the broker. Poking the
+      // Give the terminal a real window to attach to the broker. Poking the
       // client API both triggers MetaApi's lazy terminal attach and proves
       // the broker connection is live (provisioning status alone can lag).
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        await sleep(8_000);
-        const { region } = await inspectAccount(createdId);
-        const poke = await withMasterToken((token) =>
-          warmAccountConnection(token, createdId, region, 10_000),
-        );
-        const pokeOk = poke.kind === "ok" && poke.response.status === 200;
-        if (pokeOk) return connectOk(createdId, region);
-      }
+      // First attach commonly needs 60–90s — one full patient window here;
+      // if the broker refuses this infrastructure type, the G1 rebuild gets
+      // its own window instead of double-waiting on a doomed one.
+      await sleep(8_000);
+      const { region } = await inspectAccount(createdId);
+      const poke = await withMasterToken((token) =>
+        warmAccountConnection(token, createdId, region, 75_000),
+      );
+      const pokeOk = poke.kind === "ok" && poke.response.status === 200;
+      if (pokeOk) return connectOk(createdId, region);
       return { ok: false, accountId: createdId };
     };
 

@@ -494,14 +494,14 @@ function AppMetatrader() {
                 {connecting ? (
                   <span className="flex items-center gap-3">
                     <span className="size-5 animate-spin rounded-full border-[3px] border-black/70 border-t-transparent" />
-                    CONNECTING...
+                    CONNECTING — CAN TAKE 1–2 MIN
                   </span>
                 ) : (
                   "Connect Account"
                 )}
               </button>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-white/30">
-                MT5 only — live and demo accounts both connect. Your credentials go straight to the hosting provider over an encrypted connection and are never stored on this device.
+                First-time connections take 1–2 minutes while the broker is validated — keep this screen open. Live and demo accounts both connect. Credentials go straight to the hosting provider over an encrypted connection and are never stored on this device.
               </p>
             </motion.div>
           </form>
