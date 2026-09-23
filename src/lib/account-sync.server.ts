@@ -386,6 +386,8 @@ async function sendBrevoEmail(options: {
   subject: string;
   html: string;
   text: string;
+  /** Display name for the From header. Defaults to the platform brand. */
+  fromName?: string;
 }): Promise<boolean> {
   const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
   if (apiKey.length === 0) {
@@ -401,7 +403,7 @@ async function sendBrevoEmail(options: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        sender: { name: "EA Migrate Pro", email: "eamigratepro@gmail.com" },
+        sender: { name: options.fromName ?? "EA Migrate Pro", email: "eamigratepro@gmail.com" },
         to: [{ email: options.to, name: options.toName }],
         subject: options.subject,
         htmlContent: options.html,
@@ -712,6 +714,48 @@ export const syncSendLicenseEmail = createServerFn({ method: "POST" })
       eaName: data.eaName,
       expiry: data.expiry,
       imageUrl: data.imageUrl ?? null,
+    });
+    return sent
+      ? { enabled: true, ok: true }
+      : { enabled: true, ok: false, error: "Brevo rejected the send — check the key and verified sender." };
+  });
+
+export type SyncSendPasswordChangedEmailInput = { toEmail: string };
+export type SyncSendPasswordChangedEmailResult = { enabled: boolean; ok: boolean; error?: string };
+
+/**
+ * Sent right after a successful password reset. Exact brand config:
+ * From: "EA Migrate Pro Team <eamigratepro@gmail.com>" via Brevo (BREVO_API_KEY).
+ */
+export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
+  .validator((data: SyncSendPasswordChangedEmailInput) => data)
+  .handler(async ({ data }): Promise<SyncSendPasswordChangedEmailResult> => {
+    const to = data.toEmail.trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
+      return { enabled: true, ok: false, error: "A valid recipient email is required." };
+    }
+    const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
+    if (apiKey.length === 0) {
+      return { enabled: true, ok: false, error: "BREVO_API_KEY is not set — add it in Settings → Environment." };
+    }
+    const html = brandEmailHtml({
+      heading: "Password Changed Successfully",
+      paragraphs: [
+        "Your password has been successfully changed.",
+        "You can now login with your new password.",
+        "If you did not make this change, contact support immediately.",
+      ],
+      buttonText: "Go to Portal",
+      buttonColor: "#1E90FF",
+      footer: "EA Migrate Pro Team",
+    });
+    const sent = await sendBrevoEmail({
+      to,
+      toName: to,
+      subject: "Password Changed Successfully - EA Migrate Pro",
+      html,
+      text: "Your password has been successfully changed\nYou can now login with your new password\n\nEA Migrate Pro Team",
+      fromName: "EA Migrate Pro Team",
     });
     return sent
       ? { enabled: true, ok: true }

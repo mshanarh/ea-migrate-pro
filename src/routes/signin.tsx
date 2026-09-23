@@ -6,7 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AuthShell, Field } from "@/components/AuthShell";
-import { resetPassword, signIn, useStore } from "@/lib/auth-store";
+import {
+  resetPassword,
+  signIn,
+  useStore,
+} from "@/lib/auth-store";
+import { syncSendPasswordChangedEmail } from "@/lib/account-sync.server";
 import { syncSignIn } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/signin")({
@@ -157,6 +162,10 @@ function SignIn() {
                 setResetError(result.error);
                 return;
               }
+              // Fire-and-forget confirmation (never block the reset on SMTP).
+              void syncSendPasswordChangedEmail({
+                data: { toEmail: resetEmail.trim() },
+              }).catch(() => undefined);
               setEmail(resetEmail.trim());
               setPassword("");
               setResetOpen(false);
