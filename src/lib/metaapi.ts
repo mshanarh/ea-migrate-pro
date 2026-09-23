@@ -768,17 +768,14 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       data.takeProfit !== undefined && data.takeProfit !== ""
         ? Number.parseFloat(data.takeProfit)
         : undefined;
-    // MT5 caps the order comment at 31 characters. Keep the " - Ea migrate"
-    // suffix intact and truncate the robot name instead.
-    const commentSuffix = " - Ea migrate";
-    const nameBudget = Math.max(0, 31 - commentSuffix.length);
-    const shortName =
-      data.eaName.length > nameBudget ? data.eaName.slice(0, nameBudget).trimEnd() : data.eaName;
+    // MT5 caps the order comment at 31 characters. The comment carries the
+    // full EA name only (no brand suffix) — truncated to the cap when needed.
+    const comment = data.eaName.slice(0, 31).trimEnd();
     const body: Record<string, unknown> = {
       actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
       volume,
-      comment: `${shortName}${commentSuffix}`,
+      comment,
     };
     if (stopLoss !== undefined && Number.isFinite(stopLoss) && stopLoss > 0)
       body["stopLoss"] = stopLoss;
@@ -970,6 +967,26 @@ function buildUnavailableScannerAnalysis(
 
 type Candle = { time: string; open: number; high: number; low: number; close: number };
 
+/**
+ * The scanner UI speaks "1h"/"4h"/"15m"; MetaApi's market-data API expects
+ * "h1"/"h4"/"m15". This mapping was previously missing, so broker candle
+ * history always 400-ed and the scanner silently ran on the public fallback
+ * feed — signals were computed from the wrong data entirely.
+ */
+function metaApiTimeframe(timeframe: string): string {
+  const compact = timeframe.trim().toLowerCase();
+  const direct = new Set(["m1", "m5", "m15", "m30", "h1", "h4", "d1", "w1", "mn1"]);
+  if (direct.has(compact)) return compact;
+  const match = /^(\d+)(m|h|d|w|mn)$/.exec(compact);
+  if (!match) return "h1";
+  const [, amount, unit] = match;
+  if (unit === "m") return `m${amount}`;
+  if (unit === "h") return `h${amount}`;
+  if (unit === "d") return "d1";
+  if (unit === "w") return "w1";
+  return "mn1";
+}
+
 /** EMA over closing prices (seeded with an SMA for stability). */
 function ema(values: number[], period: number): number {
   if (values.length < period) return values.at(-1) ?? 0;
@@ -978,6 +995,30 @@ function ema(values: number[], period: number): number {
   for (let index = period; index < values.length; index += 1)
     running = (values[index] ?? running) * k + running * (1 - k);
   return running;
+}
+
+/** Full EMA series (same length as the input; seeded with an SMA). */
+function emaSeries(values: number[], period: number): number[] {
+  const k = 2 / (period + 1);
+  const output: number[] = [];
+  let running = values[0] ?? 0;
+  for (let index = 0; index < values.length; index += 1) {
+    const value = values[index] ?? running;
+    running = index === 0 ? value : value * k + running * (1 - k);
+    output.push(running);
+  }
+  return output;
+}
+
+/** MACD histogram (12/26/9) — momentum in price units, positive = bullish. */
+function macdHistogram(closes: number[]): number {
+  if (closes.length < 35) return 0;
+  const fast = emaSeries(closes, 12);
+  const slow = emaSeries(closes, 26);
+  const macdLine = fast.map((value, index) => value - (slow[index] ?? value));
+  const signal = emaSeries(macdLine, 9);
+  const histogram = macdLine.map((value, index) => value - (signal[index] ?? value));
+  return histogram.at(-1) ?? 0;
 }
 
 /** Wilder's RSI. */
@@ -1030,6 +1071,12 @@ function swings(candles: Candle[], lookback = 20): { high: number; low: number }
     high: slice.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY),
     low: slice.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY),
   };
+}
+
+/** Price formatter for narrative text (adaptive decimals). */
+function fmtPrice(value: number): string {
+  const magnitude = Math.abs(value);
+  return value.toFixed(magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : 5);
 }
 
 function roundToTick(price: number, reference: number): number {
@@ -1225,7 +1272,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         for (const accountRegion of regions) {
           const historyResult = await withMasterToken((token) =>
             fetchJson(
-              `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${timeframe}/candles?limit=120`,
+              `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${metaApiTimeframe(timeframe)}/candles?limit=300`,
               { headers: { "auth-token": token, Accept: "application/json" } },
               5_000,
             ),
@@ -1317,58 +1364,102 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         : { high: close + atrValue * 2, low: close - atrValue * 2 };
 
     const trendUp = ema21 > ema50;
-    const trendStrength = Math.abs(ema21 - ema50);
-    const trendFactor = Math.min(trendStrength / (atrValue || 1e-9), 1);
     const priceAboveEma = close > ema21;
-    const rsiBull = rsiValue > 52;
-    const rsiBear = rsiValue < 48;
 
-    // Score in [-3, +3]: trend ×2, price vs EMA, RSI momentum.
-    let score = 0;
-    score += (trendUp ? 2 : -2) * (0.5 + 0.5 * trendFactor);
-    score += priceAboveEma ? 0.75 : -0.75;
-    score += rsiValue >= 50 ? (rsiBull ? 0.6 : 0.2) : rsiBear ? -0.6 : -0.2;
+    // ── Confluence engine ─────────────────────────────────────────────
+    // A signal is only issued when INDEPENDENT evidence agrees. The old
+    // engine force-picked a direction when the filter was neutral — that
+    // fallback is exactly how losing signals happened, so it is gone: a
+    // conflicted market now reports NO TRADE and the trader waits.
+    const macroCloses = candles.map((item) => item.close);
+    const macroFast = emaSeries(macroCloses, 21);
+    const macroSlow = emaSeries(macroCloses, 50);
+    const macroUp = (macroFast.at(-1) ?? 0) > (macroSlow.at(-1) ?? 0);
+    const histogram = macdHistogram(closes);
+    const bodyRatio =
+      lastCandle && lastCandle.high - lastCandle.low > 0
+        ? Math.abs(lastCandle.close - lastCandle.open) / (lastCandle.high - lastCandle.low)
+        : 0;
+    const higherLows =
+      candles.length >= 30 &&
+      (() => {
+        const half = Math.floor(candles.length / 2);
+        const earlier = candles.slice(0, half);
+        const later = candles.slice(half);
+        const earlierLow = earlier.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
+        const laterLow = later.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
+        return laterLow > earlierLow;
+      })();
+    const lowerHighs =
+      candles.length >= 30 &&
+      (() => {
+        const half = Math.floor(candles.length / 2);
+        const earlier = candles.slice(0, half);
+        const later = candles.slice(half);
+        const earlierHigh = earlier.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
+        const laterHigh = later.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
+        return laterHigh < earlierHigh;
+      })();
 
-    const initialBias: ScannerAnalysis["bias"] =
-      score > 0.6 ? "BULLISH" : score < -0.6 ? "BEARISH" : "NEUTRAL";
-    const initialSignal: ScannerAnalysis["signal"] =
-      initialBias === "NEUTRAL"
-        ? "NO TRADE"
-        : trendUp === priceAboveEma || Math.abs(score) >= 1.5
-          ? score > 0
-            ? "BUY"
-            : "SELL"
-          : "NO TRADE";
+    const bullChecks = {
+      /** Entry timeframe trend: EMA21 above EMA50. */
+      trend: trendUp,
+      /** Macro (chart) trend agrees — 4× the entry timeframe. */
+      macroTrend: macroUp,
+      /** Price on the right side of the fast EMA. */
+      position: priceAboveEma,
+      /** MACD histogram positive — momentum confirms the trend. */
+      momentum: histogram > 0,
+      /** RSI in the bullish band but NOT overbought (chasing tops loses). */
+      rsi: rsiValue > 52 && rsiValue < 72,
+      /** Market structure: higher lows on the second half of the window. */
+      structure: higherLows,
+      /** Decisive candle: body ≥ 40% of the bar's range. */
+      conviction: bodyRatio >= 0.4,
+    };
+    const bearChecks = {
+      trend: !trendUp,
+      macroTrend: !macroUp,
+      position: !priceAboveEma,
+      momentum: histogram < 0,
+      rsi: rsiValue < 48 && rsiValue > 28,
+      structure: lowerHighs,
+      conviction: bodyRatio >= 0.4,
+    };
+    const bullScore = Object.values(bullChecks).filter(Boolean).length;
+    const bearScore = Object.values(bearChecks).filter(Boolean).length;
 
-    // A scanner result must still give the trader a directional plan when
-    // candle history exists. If the normal high-probability filter is neutral,
-    // use a deterministic directional tie-breaker rather than inventing a
-    // price: score, price-vs-EMA, then the latest candle body.
-    const candleBullish = lastCandle ? lastCandle.close >= lastCandle.open : trendUp;
-    const fallbackSignal: "BUY" | "SELL" =
-      score > 0
-        ? "BUY"
-        : score < 0
-          ? "SELL"
-          : priceAboveEma
-            ? "BUY"
-            : candleBullish
-              ? "BUY"
-              : "SELL";
-    const signal: ScannerAnalysis["signal"] =
-      initialSignal === "NO TRADE" ? fallbackSignal : initialSignal;
-    const bias: ScannerAnalysis["bias"] = signal === "BUY" ? "BULLISH" : "BEARISH";
-    const conditionalSetup = initialSignal === "NO TRADE" || !hasLiveQuote;
+    // 6 of 7 confluences must agree — that is the bar for "accurate".
+    const CONFLUENCE_REQUIRED = 6;
+    let signal: ScannerAnalysis["signal"] = "NO TRADE";
+    let bias: ScannerAnalysis["bias"] = "NEUTRAL";
+    if (bullScore >= CONFLUENCE_REQUIRED && bullScore > bearScore) {
+      signal = "BUY";
+      bias = "BULLISH";
+    } else if (bearScore >= CONFLUENCE_REQUIRED && bearScore > bullScore) {
+      signal = "SELL";
+      bias = "BEARISH";
+    }
 
-    const confidenceBase = Math.round(Math.min(95, Math.max(55, 55 + Math.abs(score) * 14)));
+    const conditionalSetup = !hasLiveQuote;
+
+    // Confidence mirrors the confluence actually achieved (7 checks, each
+    // worth ~9%) and is capped hard for conditional (no-live-quote) plans.
+    const achieved = Math.max(bullScore, bearScore);
+    const confidenceBase = Math.round(Math.min(95, 38 + achieved * 9));
     const confidence = conditionalSetup ? Math.min(52, confidenceBase) : confidenceBase;
     const entry = signal === "BUY" ? ask : bid;
-    // SL beyond the recent swing (buffered by 0.5 ATR), TP at ≥2R.
+
+    // Stops: spread-aware. The spread is a real cost — the SL must clear it
+    // on the broker side or the trade can be stopped out by the cost alone.
+    const spread = Math.max(ask - bid, atrValue * 0.05);
     const direction = signal === "SELL" ? -1 : 1;
     const swingStop = signal === "SELL" ? swing.high + atrValue * 0.5 : swing.low - atrValue * 0.5;
     const atrStop = entry - direction * atrValue * 1.5;
     const stopLoss =
-      signal === "SELL" ? Math.max(swingStop, atrStop) : Math.min(swingStop, atrStop);
+      signal === "SELL"
+        ? Math.max(swingStop, atrStop)
+        : Math.min(swingStop, atrStop);
     const risk = Math.abs(entry - stopLoss);
     const takeProfit = entry + direction * risk * 2;
 
@@ -1388,6 +1479,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 60 ? "strong bullish momentum" : rsiValue > 52 ? "mild bullish momentum" : rsiValue < 40 ? "strong bearish momentum" : rsiValue < 48 ? "mild bearish momentum" : "momentum neutral"}.`,
       );
       reasons.push(
+        `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression"}. Confluence: ${Math.max(bullScore, bearScore)}/7 — ${signal === "NO TRADE" ? "below the 6/7 bar, honest call is NO TRADE" : signal + " confirmed"}.`,
+      );
+      reasons.push(
         `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level.`,
       );
       if (conditionalSetup) {
@@ -1404,9 +1498,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         `Limited history for ${symbol} — levels are built from live price and ATR fallbacks.`,
       );
     }
-    if (initialSignal === "NO TRADE") {
+    if (signal !== "NO TRADE") {
       reasons.push(
-        `The standard filter was neutral, so direction was selected from ${score !== 0 ? "the indicator score" : "price structure"} to provide a conditional plan.`,
+        `Plan: ${signal} at entry ${fmtPrice(entry)}, stop ${fmtPrice(stopLoss)}, target ${fmtPrice(takeProfit)} at 2R — the stop already covers the spread.`,
       );
     }
 
@@ -1425,6 +1519,11 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
             ? `${rsiValue.toFixed(1)} ${rsiValue > 52 ? "· Bullish" : rsiValue < 48 ? "· Bearish" : "· Neutral"}`
             : "n/a",
         bullish: closes.length >= 15 ? (rsiValue > 52 ? true : rsiValue < 48 ? false : null) : null,
+      },
+      {
+        label: "MACD (12/26/9)",
+        value: (histogram >= 0 ? "+" : "") + histogram.toFixed(Math.abs(histogram) >= 1 ? 2 : 5) + (histogram > 0 ? " · Bullish" : histogram < 0 ? " · Bearish" : " · Flat"),
+        bullish: histogram > 0 ? true : histogram < 0 ? false : null,
       },
       { label: "Volatility (ATR 14)", value: fmt(atrValue), bullish: null },
       {
