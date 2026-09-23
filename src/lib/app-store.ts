@@ -299,8 +299,12 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
   // Tolerant normalisation: trim, uppercase and strip any spaces the user pasted.
   const clean = key.trim().toUpperCase().replace(/\s+/g, "");
   console.log("[key-activation] Checking key:", clean);
-  if (!clean.startsWith("EMP-") || clean.length !== 16) {
-    return { error: "That license key is invalid. It should look like EMP-XXXXXXXXXXXX (no spaces)." };
+  // Format check: the current generator issues EMP-XXXX-XXXX-XXXX; older
+  // legacy keys were EMP- + 12 chars. Both are accepted, any other shape is
+  // rejected before it ever reaches the license lookup.
+  const validFormat = /^EMP-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(clean) || /^EMP-[A-Z0-9]{12}$/.test(clean);
+  if (!validFormat) {
+    return { error: "That license key is invalid. It should look like EMP-XXXX-XXXX-XXXX (no spaces)." };
   }
   if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
   if (!state.email) return { error: "Sign in with your email before activating a key." };
