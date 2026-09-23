@@ -378,7 +378,9 @@ export type LiveTradeRequest = {
   region?: string;
 };
 
-export type LiveTradeResult = { ok: true; message: string; orderId?: string } | MtFailure;
+export type LiveTradeResult =
+  | { ok: true; message: string; orderId?: string; /** Filled price when the broker echoes it. */ executionPrice?: number }
+  | MtFailure;
 
 /**
  * Connect the END USER's MT5 account under the platform's MetaApi account.
@@ -667,34 +669,12 @@ export const getMtAccountStatus = createServerFn({ method: "POST" })
     }
     const account = payload as MaAccount;
 
-    // Stay connected until the user presses Disconnect: if MetaApi undeployed
-    // the account for any reason, bring it straight back up. When the provider
-    // refuses (e.g. the plan is out of trading credits), say so instead of
-    // showing a green "Connected" state that can never execute a trade.
-    let deployBlock: string | undefined;
-    if (account.state !== "DEPLOYED") {
-      const deployOutcome = await withMasterToken((token) =>
-        maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, {
-          method: "POST",
-        }),
-      );
-      if (
-        deployOutcome.kind === "ok" &&
-        deployOutcome.response.status >= 400 &&
-        deployOutcome.response.status < 500
-      ) {
-        const billing = billingBlockMessage(deployOutcome.response.payload);
-        if (billing) deployBlock = billing;
-      }
-    }
-    const connected = account.state === "DEPLOYED" && !deployBlock;
+    // ON-DEMAND MODEL: the status function is a read-only probe — it must
+    // never deploy the terminal or keep a broker connection alive. An
+    // undeployed account simply reports "not connected".
+    const connected = account.state === "DEPLOYED";
 
-    // The status type carries statusMessage — reuse it to deliver the provider's
-    // refusal text to the MetaTrader page instead of a fake green state.
-    const statusMessages = [
-      ...(deployBlock ? [deployBlock] : []),
-      ...(account.statusMessage ? [account.statusMessage] : []),
-    ].join(" ");
+    const statusMessages = account.statusMessage ? account.statusMessage : "";
 
     // Best-effort balance read within a short budget; the trade path waits longer.
     let balance: number | undefined;
@@ -865,7 +845,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       const { status, payload } = outcome.response;
       if (status >= 200 && status < 300) {
         const result = payload as
-          | { stringCode?: string; message?: string; orderId?: string; positionId?: string }
+          | { stringCode?: string; message?: string; orderId?: string; positionId?: string; price?: number }
           | undefined;
         const accepted =
           result?.stringCode === "TRADE_RETCODE_DONE" ||
@@ -888,6 +868,9 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
           message: `${data.direction} ${volume} ${data.symbol} executed`,
           ...(result?.orderId || result?.positionId
             ? { orderId: result.orderId ?? result.positionId }
+            : {}),
+          ...(Number.isFinite(result?.price) && (result?.price ?? 0) > 0
+            ? { executionPrice: result?.price as number }
             : {}),
         };
       }
@@ -933,6 +916,16 @@ export type ScannerAnalysis = {
   reasons: string[];
   /** Structured scan log lines (shown as the narrated steps). */
   readouts: { label: string; value: string; bullish: boolean | null }[];
+  /** "no-data" | "live" | "candle" | "public" — how the price reference was obtained. */
+  dataStatus: "no-data" | "live" | "candle" | "public";
+  /** Human-readable data source, e.g. "MT5 live quote" / "MT5 candle history" / "Public feed". */
+  dataSource: string;
+  /** The live price actually received from the broker (0 when none). */
+  livePrice: number;
+  /** Latest broker candle (time + OHLC) — proves real candle data reached the scanner. */
+  lastCandle: { time: string; open: number; high: number; low: number; close: number } | null;
+  /** Number of candles the broker/history feed returned. */
+  candleCount: number;
 };
 
 function buildUnavailableScannerAnalysis(
@@ -953,6 +946,11 @@ function buildUnavailableScannerAnalysis(
     executionReady: false,
     atr: 0,
     rsi: 50,
+    dataStatus: "no-data",
+    dataSource: "No broker data",
+    livePrice: 0,
+    lastCandle: null,
+    candleCount: 0,
     reasons: [
       reason,
       "No conditional setup can be calculated until the broker returns candle history.",
@@ -1248,13 +1246,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     if (detail.kind === "ok" && detail.response.status === 200) {
       const account = detail.response.payload as MaAccount | undefined;
       region = account?.region ?? region;
-      if (account && account.state !== "DEPLOYED") {
-        await withMasterToken((token) =>
-          maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, {
-            method: "POST",
-          }),
-        );
-      }
+      // ON-DEMAND MODEL: analysis never deploys the terminal. When the broker
+      // terminal is offline the public-feed fallback supplies factual candles,
+      // so scanning keeps working while the account stays disconnected.
     }
 
     const hosts =
@@ -1564,6 +1558,375 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         rsi: rsiValue,
         reasons,
         readouts,
+        dataStatus: hasLiveQuote ? ("live" as const) : usedPublicFeed ? ("public" as const) : ("candle" as const),
+        dataSource: hasLiveQuote ? "MT5 live quote + candle history" : usedPublicFeed ? "Public market feed (conditional)" : `MT5 candle history (${timeframe})`,
+        livePrice: referenceClose,
+        lastCandle: lastCandle ? { time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close } : null,
+        candleCount: candles.length,
       },
+    };
+  });
+
+/* ------------------------------------------------------------------ */
+/* On-demand broker connection — credentials are saved ONCE (MetaApi   */
+/* pre-provisions a hosted copy WITHOUT attaching to the broker), the  */
+/* status stays Disconnected/Offline, and a verified connection is     */
+/* opened only while a trade executes — closed right afterwards.       */
+/* ------------------------------------------------------------------ */
+
+export type MtSaveRequest = {
+  login: string;
+  password: string;
+  server: string;
+  alias?: string;
+  accountType?: string;
+};
+
+export type MtSaveResult =
+  | { ok: true; accountId: string; environment?: string; kind: "live" | "demo" }
+  | MtFailure;
+
+/**
+ * SAVE ONLY — creates (or reuses) MetaApi's hosted copy of this login WITHOUT
+ * deploying it. No cloud terminal attaches to the broker, so no broker
+ * connection exists after saving: the account stays offline until an
+ * execution needs it. The MT5 password is handed to MetaApi once here (over
+ * the server) and is never stored by the platform or shown in any UI.
+ */
+export const saveMt5Connection = createServerFn({ method: "POST" })
+  .validator((data: MtSaveRequest) => data)
+  .handler(async ({ data }): Promise<MtSaveResult> => {
+    const login = data.login.trim();
+    const password = data.password.trim();
+    const server = data.server.trim();
+    if (!login || !password || !server)
+      return {
+        ok: false,
+        code: "failed",
+        message: "Enter your login, password and server before saving.",
+      };
+
+    // Reuse an existing hosted copy of the exact same login+server — saving
+    // twice must not stack duplicates (and must not deploy anything).
+    const listOutcome = await withMasterToken((token) => maFetch(token, "/users/current/accounts"));
+    if (listOutcome.kind === "missing")
+      return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (listOutcome.kind === "rejected")
+      return { ok: false, code: "key_rejected", message: rejectedKeyMessage(listOutcome.status) };
+    if (
+      listOutcome.kind === "ok" &&
+      listOutcome.response.status === 200 &&
+      Array.isArray(listOutcome.response.payload)
+    ) {
+      const match = (listOutcome.response.payload as MaAccount[]).find(
+        (account) =>
+          String(account.login ?? "") === login &&
+          account.server === server &&
+          (account.platform ?? "mt5") === "mt5",
+      );
+      const reusedId = accountIdOf(match);
+      if (reusedId && match) {
+        return {
+          ok: true,
+          accountId: reusedId,
+          ...(match.region ? { environment: match.region } : {}),
+          kind: accountKindFor(server, login),
+        };
+      }
+    }
+
+    // Create the hosted copy (validates the broker server name) but NEVER
+    // deploy it here — the terminal only attaches when a trade executes.
+    const body = {
+      login,
+      password,
+      name: (data.alias ?? login).slice(0, 100),
+      server,
+      platform: "mt5",
+      magic: 100001,
+      type: "cloud-g2",
+      region: "new-york",
+    };
+    const transactionId = newTransactionId();
+    const deadline = Date.now() + 90_000;
+    for (;;) {
+      const outcome = await withMasterToken((token) =>
+        maFetch(token, "/users/current/accounts", { method: "POST", json: body, transactionId }),
+      );
+      if (outcome.kind === "missing")
+        return { ok: false, code: "key_missing", message: missingKeyMessage() };
+      if (outcome.kind === "rejected")
+        return { ok: false, code: "key_rejected", message: rejectedKeyMessage(outcome.status) };
+      const { status, payload } = outcome.response;
+      const account = payload as (MaAccount & { message?: string }) | undefined;
+      const createdId = accountIdOf(account);
+      if (status >= 200 && status < 300 && createdId) {
+        return {
+          ok: true,
+          accountId: createdId,
+          ...(account?.region ? { environment: account.region } : {}),
+          kind: accountKindFor(server, login),
+        };
+      }
+      const message = maError(payload);
+      const retryMatch = /retry in (\d+) seconds/i.exec(message ?? "");
+      if (retryMatch && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, Math.min(Number(retryMatch[1]) + 2, 15) * 1000));
+        continue;
+      }
+      if (status === 202 && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 10_000));
+        continue;
+      }
+      const billing = billingBlockMessage(message);
+      if (billing) return { ok: false, code: "failed", message: billing };
+      return {
+        ok: false,
+        code: "failed",
+        message: message
+          ? `MetaApi could not prepare the connection: ${message}. Check the login, password and exact server name (e.g. Headway-Demo).`
+          : `MetaApi could not prepare the connection (HTTP ${status}).`,
+      };
+    }
+  });
+
+export type MtConnectionRequest = { accountId: string; connected: boolean };
+export type MtConnectionResult =
+  | {
+      ok: true;
+      connected: boolean;
+      environment?: string;
+      balance?: number;
+      equity?: number;
+      currency?: string;
+      message?: string;
+    }
+  | MtFailure;
+
+/**
+ * Connection switch for the on-demand model.
+ *  connected=true  → deploys the hosted terminal and VERIFIES the live broker
+ *                    session (balance read) before any order is sent.
+ *  connected=false → undeploys the terminal so no broker connection keeps
+ *                    running in the background.
+ */
+export const setMtAccountConnection = createServerFn({ method: "POST" })
+  .validator((data: MtConnectionRequest) => data)
+  .handler(async ({ data }): Promise<MtConnectionResult> => {
+    if (!data.accountId)
+      return {
+        ok: false,
+        code: "failed",
+        message: "No saved MT5 connection. Save your details on the MetaTrader page first.",
+      };
+
+    const detail = await withMasterToken((token) =>
+      maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`),
+    );
+    if (detail.kind === "missing")
+      return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (detail.kind === "rejected")
+      return { ok: false, code: "key_rejected", message: rejectedKeyMessage(detail.status) };
+    if (detail.kind !== "ok" || detail.response.status !== 200)
+      return {
+        ok: false,
+        code: "failed",
+        message:
+          maError(detail.kind === "ok" ? detail.response.payload : undefined) ||
+          "The saved connection no longer exists on the hosting provider — save your details again on the MetaTrader page.",
+      };
+    const account = detail.response.payload as MaAccount | undefined;
+
+    if (data.connected) {
+      // Deploy + verify: poll account-information until the broker session is
+      // live (first attach commonly needs 30–90s) or the budget runs out.
+      if (account && account.state !== "DEPLOYED") {
+        const deployOutcome = await withMasterToken((token) =>
+          maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/deploy`, {
+            method: "POST",
+          }),
+        );
+        if (deployOutcome.kind === "ok" && deployOutcome.response.status >= 400) {
+          const billing = billingBlockMessage(deployOutcome.response.payload);
+          if (billing) return { ok: false, code: "failed", message: billing };
+          return {
+            ok: false,
+            code: "failed",
+            message:
+              maError(deployOutcome.response.payload) ||
+              `The provider refused to start the connection (HTTP ${deployOutcome.response.status}).`,
+          };
+        }
+      }
+      const warm = await withMasterToken((token) =>
+        warmAccountConnection(token, data.accountId, account?.region, 75_000),
+      );
+      if (warm.kind === "missing")
+        return { ok: false, code: "key_missing", message: missingKeyMessage() };
+      if (warm.kind === "rejected")
+        return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warm.status) };
+      if (warm.kind !== "ok" || warm.response.status !== 200)
+        return {
+          ok: false,
+          code: "failed",
+          message:
+            "The broker did not accept the connection in time — check the saved login, password and exact server name, then try again.",
+        };
+      const info = warm.response.payload as
+        | { balance?: number; equity?: number; currency?: string }
+        | undefined;
+      return {
+        ok: true,
+        connected: true,
+        ...(account?.region ? { environment: account.region } : {}),
+        ...(info?.balance !== undefined ? { balance: info.balance } : {}),
+        ...(info?.equity !== undefined ? { equity: info.equity } : {}),
+        ...(info?.currency !== undefined ? { currency: info.currency } : {}),
+      };
+    }
+
+    // Disconnect: undeploy the terminal. An already-undeployed copy answers
+    // 4xx — that still means "not connected", so the result stays a success.
+    const undeploy = await withMasterToken((token) =>
+      maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}/undeploy`, {
+        method: "POST",
+      }),
+    );
+    if (undeploy.kind === "missing")
+      return { ok: false, code: "key_missing", message: missingKeyMessage() };
+    if (undeploy.kind === "rejected")
+      return { ok: false, code: "key_rejected", message: rejectedKeyMessage(undeploy.status) };
+    const note =
+      undeploy.kind === "ok" && undeploy.response.status >= 300
+        ? maError(undeploy.response.payload) ?? "Already disconnected."
+        : undefined;
+    return {
+      ok: true,
+      connected: false,
+      ...(account?.region ? { environment: account.region } : {}),
+      ...(note ? { message: note } : {}),
+    };
+  });
+
+export type OnDemandTradeRequest = {
+  /** The user's saved (hosted, non-deployed) MetaApi account id. */
+  accountId: string;
+  eaName: string;
+  symbol: string;
+  direction: "BUY" | "SELL";
+  lotSize: string;
+  stopLoss?: string;
+  takeProfit?: string;
+  region?: string;
+  /** How many identical orders to fire inside this one connection session. */
+  tradeCount?: number;
+};
+
+export type OnDemandTradeResult =
+  | {
+      ok: true;
+      message: string;
+      orderId?: string;
+      executionPrice?: number;
+      /** True once the broker terminal was undeployed after the trade. */
+      disconnectedAfter: boolean;
+    }
+  | { ok: false; code: MtFailureCode; message: string; disconnectedAfter: boolean };
+
+/** Deploy the hosted terminal and verify the live broker session. */
+async function openConnection(
+  accountId: string,
+  regionHint?: string,
+): Promise<{ ok: true; region?: string } | { ok: false; code: MtFailureCode; message: string }> {
+  const detail = await withMasterToken((token) =>
+    maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}`),
+  );
+  if (detail.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+  if (detail.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(detail.status) };
+  if (detail.kind !== "ok" || detail.response.status !== 200)
+    return {
+      ok: false,
+      code: "failed",
+      message: "The saved connection no longer exists on the hosting provider — save your MT5 details again on the MetaTrader page.",
+    };
+  const account = detail.response.payload as MaAccount | undefined;
+
+  if (account && account.state !== "DEPLOYED") {
+    const deployOutcome = await withMasterToken((token) =>
+      maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}/deploy`, { method: "POST" }),
+    );
+    if (deployOutcome.kind === "ok" && deployOutcome.response.status >= 400) {
+      const billing = billingBlockMessage(deployOutcome.response.payload);
+      if (billing) return { ok: false, code: "failed", message: billing };
+      return {
+        ok: false,
+        code: "failed",
+        message: maError(deployOutcome.response.payload) || `The provider refused to start the connection (HTTP ${deployOutcome.response.status}).`,
+      };
+    }
+  }
+
+  const warm = await withMasterToken((token) =>
+    warmAccountConnection(token, accountId, account?.region ?? regionHint, 75_000),
+  );
+  if (warm.kind === "missing") return { ok: false, code: "key_missing", message: missingKeyMessage() };
+  if (warm.kind === "rejected") return { ok: false, code: "key_rejected", message: rejectedKeyMessage(warm.status) };
+  if (warm.kind !== "ok" || warm.response.status !== 200)
+    return {
+      ok: false,
+      code: "failed",
+      message: "The broker did not accept the connection in time — check the saved login, password and exact server name on the MetaTrader page, then try again.",
+    };
+  return { ok: true, ...(account?.region ? { region: account.region } : {}) };
+}
+
+/** Undeploy the hosted terminal — best effort, always called after execution. */
+async function closeConnection(accountId: string): Promise<boolean> {
+  const undeploy = await withMasterToken((token) =>
+    maFetch(token, `/users/current/accounts/${encodeURIComponent(accountId)}/undeploy`, { method: "POST" }),
+  );
+  if (undeploy.kind === "missing" || undeploy.kind === "rejected") return false;
+  return undeploy.kind === "ok" && undeploy.response.status < 300;
+}
+
+/**
+ * On-demand execution: opens the broker connection ONLY for this order.
+ *  1. deploy + verify the live broker session (connection must be proven)
+ *  2. send the market order with the analyzed SL/TP
+ *  3. ALWAYS undeploy afterwards — success, failure or error — so no broker
+ *     connection keeps running in the background.
+ */
+export const executeLiveTradeOnDemand = createServerFn({ method: "POST" })
+  .validator((data: OnDemandTradeRequest) => data)
+  .handler(async ({ data }): Promise<OnDemandTradeResult> => {
+    const open = await openConnection(data.accountId);
+    if (!open.ok) return { ok: false, code: open.code, message: open.message, disconnectedAfter: true };
+
+    // All orders fire inside this ONE verified connection session.
+    const count = Math.max(1, Math.min(Math.floor(data.tradeCount ?? 1), 20));
+    const results = await Promise.all(
+      Array.from({ length: count }, () => executeLiveTrade({ data: { ...data } })),
+    );
+    // Close the connection no matter how the orders landed.
+    const closed = await closeConnection(data.accountId);
+
+    const okResults = results.filter((item) => item.ok);
+    if (okResults.length === count && okResults[0]) {
+      const first = okResults[0];
+      return {
+        ok: true,
+        message: count > 1 ? `${count}/${count} ${data.symbol} trades executed on MT5` : first.message,
+        ...(first?.orderId ? { orderId: first.orderId } : {}),
+        ...(first?.executionPrice !== undefined ? { executionPrice: first.executionPrice } : {}),
+        disconnectedAfter: closed,
+      };
+    }
+    const reason =
+      results.find((item) => !item.ok)?.message ?? "The broker did not accept the order.";
+    return {
+      ok: false,
+      code: "failed",
+      message: `${okResults.length}/${count} executed — ${reason}`,
+      disconnectedAfter: closed,
     };
   });

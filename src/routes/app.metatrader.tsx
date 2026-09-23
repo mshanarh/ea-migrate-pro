@@ -7,7 +7,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { connectMt5Account, disconnectMt5Account, getMtAccountStatus } from "@/lib/metaapi";
+import { saveMt5Connection, setMtAccountConnection, disconnectMt5Account } from "@/lib/metaapi";
 import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -15,7 +15,7 @@ export const Route = createFileRoute("/app/metatrader")({
   head: () => ({
     meta: [
       { title: "MetaTrader — EA Migrate Pro" },
-      { name: "description", content: "Link your MT5 account to your hosted robot." },
+      { name: "description", content: "Save your MT5 account for on-demand trading." },
     ],
   }),
   component: AppMetatrader,
@@ -99,10 +99,10 @@ function Mt5Logo() {
   );
 }
 
-/** Local, instant UI mirror of the connection (cloud keeps the durable copy). */
-const MT5_UI_KEY = "mt5_connected_state";
+/** Local, instant UI mirror of the SAVED connection (cloud keeps the durable copy). */
+const MT5_UI_KEY = "mt5_saved_state";
 
-type Mt5UiState = { login: string; server: string; connected: boolean };
+type Mt5UiState = { login: string; server: string; saved: boolean };
 
 function readMt5Ui(): Mt5UiState | null {
   if (typeof window === "undefined") return null;
@@ -136,10 +136,11 @@ function AppMetatrader() {
   const [loginId, setLoginId] = useState(mt?.loginId ?? "");
   const [password, setPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [connecting, setConnecting] = useState(false);
-  const [checking, setChecking] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testing, setTesting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [keyNotice, setKeyNotice] = useState(false);
+  const [testResult, setTestResult] = useState<string | null>(null);
 
   const servers = broker ? (BROKER_SERVERS[broker] ?? []) : Object.values(BROKER_SERVERS).flat();
 
@@ -148,17 +149,19 @@ function AppMetatrader() {
   const clearError = () => {
     if (errorMessage) setErrorMessage(null);
     if (keyNotice) setKeyNotice(false);
+    if (testResult) setTestResult(null);
   };
 
-  // On page load: if this user already has a connected account in the cloud
-  // store (and this device lost its local copy), restore it and show Connected.
+  // On page load: if this user already has a saved connection in the cloud
+  // store (and this device lost its local copy), restore the metadata and
+  // show the SAVED/OFFLINE card. No deploy happens on load — ever.
   useEffect(() => {
     if (!app.email || mt) return;
     let cancelled = false;
     void (async () => {
       try {
         const cloud = await syncGetMt5Account({ data: { userId: app.email! } });
-        if (cancelled || !cloud.enabled || !cloud.record || !cloud.record.isConnected) return;
+        if (cancelled || !cloud.enabled || !cloud.record) return;
         const record = cloud.record;
         const account: MtAccount = {
           platform: "MT5",
@@ -185,20 +188,25 @@ function AppMetatrader() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [app.email]);
 
+  /**
+   * SAVE DETAILS — stores the credentials ONLY. The server creates (or
+   * reuses) MetaApi's hosted copy of the account WITHOUT deploying it, so no
+   * broker connection is opened. The saved status shows Disconnected/Offline.
+   */
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (connecting) return;
+    if (saving) return;
     if (!loginId.trim() || !password.trim() || !server.trim()) {
       toast.error("Fill in server, login ID and password.");
       return;
     }
-    setConnecting(true);
+    setSaving(true);
     setErrorMessage(null);
     setKeyNotice(false);
     try {
-      // The server attaches the platform's master MetaApi token — the user
-      // only ever supplies their own MT5 credentials here. Any login works.
-      const result = await connectMt5Account({
+      // The server validates the details with the provider and keeps the
+      // hosted copy UNDEPLOYED — saving never connects to the broker.
+      const result = await saveMt5Connection({
         data: {
           login: loginId.trim(),
           password: password.trim(),
@@ -208,9 +216,6 @@ function AppMetatrader() {
         },
       });
       if (!result.ok) {
-        // key_missing → amber banner with the exact admin fix (was the endless
-        // "missing platform API key" loop). key_rejected → real provider
-        // status. failed → the real provider error (login/server/password).
         setKeyNotice(result.code === "key_missing");
         setErrorMessage(result.message);
         toast.error(result.message);
@@ -228,8 +233,8 @@ function AppMetatrader() {
         ...(result.kind ? { kind: result.kind } : {}),
       };
       connectMt(account);
-      writeMt5Ui({ login: account.loginId, server: account.server, connected: true });
-      // Durable cloud copy — survives clearing browser data and new devices.
+      writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
+      // Durable cloud copy — credentials live ONLY in the server-side store.
       if (app.email) {
         void syncSaveMt5Account({
           data: {
@@ -242,53 +247,65 @@ function AppMetatrader() {
               mcAccountId: result.accountId,
               environment: result.environment,
               ...(result.kind ? { kind: result.kind } : {}),
-              isConnected: true,
-              connectedAt: new Date().toISOString(),
+              isConnected: false,
+              connectedAt: "",
+              mtPassword: password.trim(),
             },
           },
         }).catch(() => {});
       }
-      toast.success(`Connected ✓ — Account ${account.loginId} · ${account.server}`);
+      toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server} (offline until a trade executes)`);
       setPassword("");
     } catch {
-      const message = "Could not reach the execution provider. Check your internet connection and try again.";
+      const message = "Could not reach the connection provider. Check your internet connection and try again.";
       setErrorMessage(message);
       toast.error(message);
     } finally {
-      setConnecting(false);
+      setSaving(false);
     }
   };
 
+  /**
+   * TEST CONNECTION — the ONLY manual connect path: temporarily opens the
+   * broker connection, verifies it, then ALWAYS disconnects again.
+   */
   const checkStatus = async () => {
-    if (!mt?.mcAccountId || checking) return;
-    setChecking(true);
+    if (!mt?.mcAccountId || testing) return;
+    setTesting(true);
+    setTestResult(null);
+    setErrorMessage(null);
     try {
-      const status = await getMtAccountStatus({ data: { accountId: mt.mcAccountId } });
-      if (!status.ok) {
-        toast.error(status.message);
+      const open = await setMtAccountConnection({ data: { accountId: mt.mcAccountId, connected: true } });
+      if (!open.ok) {
+        setErrorMessage(open.message);
+        toast.error(open.message);
         return;
       }
-      if (status.connected) {
-        toast.success(`Connected · ${status.currency ?? ""} ${status.balance?.toFixed(2) ?? "?"} balance`);
-      } else {
-        toast.warning(status.statusMessage ? `Not connected — ${status.statusMessage}` : "Not connected yet — retry in a moment");
-      }
+      // Verified — now disconnect so nothing stays running in the background.
+      const close = await setMtAccountConnection({ data: { accountId: mt.mcAccountId, connected: false } });
+      toast.success(
+        `Connection verified ✓ — ${open.currency ?? ""} ${open.balance?.toFixed(2) ?? "?"} balance${close.ok ? " · disconnected again" : ""}`,
+      );
+      setTestResult(
+        `Verified: ${open.currency ?? ""} ${open.balance?.toFixed(2) ?? "?"} balance — connection closed again.`,
+      );
     } finally {
-      setChecking(false);
+      setTesting(false);
     }
   };
 
   const removeConnection = async () => {
     if (!mt) return;
-    if (!window.confirm(`Disconnect ${mt.loginId} from this device and the hosting platform?`)) return;
+    if (!window.confirm(`Delete the saved details for ${mt.loginId} on this device and the hosting platform?`)) return;
     if (mt.mcAccountId) {
+      // Best-effort undeploy (offline anyway), then remove the hosted copy.
       const result = await disconnectMt5Account({ data: { accountId: mt.mcAccountId } });
       if (!result.ok) toast.warning(result.message);
     }
     disconnectMt();
     writeMt5Ui(null);
     if (app.email) void syncDeleteMt5Account({ data: { userId: app.email } }).catch(() => {});
-    toast.success("MT5 account disconnected.");
+    toast.success("Saved MT5 details removed.");
   };
 
   const stagger = {
@@ -328,7 +345,7 @@ function AppMetatrader() {
             <Mt5Logo />
           </motion.div>
 
-          {/* Connected card */}
+          {/* Saved card — always OFFLINE until a trade executes */}
           {mt ? (
             <motion.div
               initial={{ opacity: 0, y: 18 }}
@@ -338,37 +355,49 @@ function AppMetatrader() {
               style={{ borderColor: `${accent}59`, background: `linear-gradient(180deg, ${accent}14, rgba(0,0,0,0.5))` }}
             >
               <div className="flex items-center justify-between">
-                <p className="text-[11px] font-bold tracking-[0.28em] uppercase" style={{ color: accent }}>Connected</p>
+                <p className="text-[11px] font-bold tracking-[0.28em] uppercase" style={{ color: accent }}>Saved details</p>
                 <span
                   className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold ${
-                    mt.kind === "demo"
-                      ? "bg-sky-400/10 text-sky-300"
-                      : "bg-emerald-400/10 text-emerald-300"
+                    mt.kind === "demo" ? "bg-sky-400/10 text-sky-300" : "bg-white/10 text-white/70"
                   }`}
                 >
-                  <Check className="size-3" strokeWidth={3} /> {mt.kind === "demo" ? "DEMO LINK" : "LIVE LINK"}
+                  {mt.kind === "demo" ? "DEMO" : "SAVED"}
                 </span>
               </div>
-              <p className="mt-3 text-xl font-black">Connected ✓ — Account {mt.loginId}</p>
-              <p className="mt-1 text-sm text-white/60">{mt.server} · {mt.broker}</p>
-              <p className="mt-1 text-xs text-white/40">{mt.accountType}{mt.environment ? ` · region ${mt.environment}` : ""}{mt.kind ? ` · ${mt.kind === "demo" ? "DEMO" : "LIVE"} account` : ""}</p>
+              <p className="mt-3 flex items-center gap-2 text-xl font-black">
+                <span className="inline-block size-2.5 rounded-full bg-white/25" aria-hidden="true" />
+                Disconnected / Offline
+              </p>
+              <p className="mt-1 text-sm text-white/60">Account {mt.loginId} · {mt.server}</p>
+              <p className="mt-1 text-xs text-white/40">
+                {mt.accountType}{mt.environment ? ` · region ${mt.environment}` : ""}{mt.kind ? ` · ${mt.kind === "demo" ? "DEMO" : "LIVE"} account` : ""}
+              </p>
+              <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-[12px] leading-relaxed text-white/55">
+                The broker connection opens automatically ONLY while a trade executes, and closes right afterwards. Nothing
+                connects in the background.
+              </p>
               <div className="mt-4 flex gap-3">
                 <button
                   type="button"
                   onClick={() => void checkStatus()}
-                  disabled={checking}
+                  disabled={testing}
                   className="h-11 flex-1 rounded-2xl bg-white/[0.05] text-xs font-bold text-emerald-300 transition-transform active:scale-[0.97] disabled:opacity-60"
                 >
-                  {checking ? "CHECKING..." : "CHECK STATUS"}
+                  {testing ? "TESTING..." : "TEST CONNECTION"}
                 </button>
                 <button
                   type="button"
                   onClick={() => void removeConnection()}
                   className="h-11 flex-1 rounded-2xl bg-white/[0.05] text-xs font-bold text-white/60 transition-transform active:scale-[0.97] hover:text-red-300"
                 >
-                  DISCONNECT
+                  REMOVE DETAILS
                 </button>
               </div>
+              {testResult && (
+                <p className="mt-3 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-[12px] text-emerald-200">
+                  {testResult}
+                </p>
+              )}
             </motion.div>
           ) : null}
 
@@ -455,7 +484,7 @@ function AppMetatrader() {
                   placeholder="••••••••"
                   aria-label="Password"
                   type={showPassword ? "text" : "password"}
-                  autoComplete="off"
+                  autoComplete="new-password"
                   className={`${fieldClass} pr-14`}
                 />
                 <button
@@ -487,21 +516,23 @@ function AppMetatrader() {
               )}
               <button
                 type="submit"
-                disabled={connecting}
+                disabled={saving}
                 className="flex h-16 w-full items-center justify-center gap-2 rounded-[28px] text-lg font-black text-black transition-all duration-200 active:scale-[0.98] disabled:opacity-60"
                 style={{ background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 14px 44px ${accent}66` }}
               >
-                {connecting ? (
+                {saving ? (
                   <span className="flex items-center gap-3">
                     <span className="size-5 animate-spin rounded-full border-[3px] border-black/70 border-t-transparent" />
-                    CONNECTING — CAN TAKE 1–2 MIN
+                    SAVING...
                   </span>
                 ) : (
-                  "Connect Account"
+                  "Save Details"
                 )}
               </button>
               <p className="mt-3 text-center text-[11px] leading-relaxed text-white/30">
-                First-time connections take 1–2 minutes while the broker is validated — keep this screen open. Live and demo accounts both connect. Credentials go straight to the hosting provider over an encrypted connection and are never stored on this device.
+                Saving does NOT connect to the broker. Your credentials are stored securely on the server and are used only
+                to open a verified connection at the moment a trade executes — the connection closes immediately afterwards.
+                Passwords are never displayed, logged, or stored on this device.
               </p>
             </motion.div>
           </form>

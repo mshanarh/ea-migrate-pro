@@ -905,6 +905,13 @@ export type Mt5AccountRecord = {
   kind?: "live" | "demo" | undefined;
   isConnected: boolean;
   connectedAt: string;
+  /**
+   * SERVER-ONLY credential store for the on-demand connection model: the MT5
+   * password is kept in the cloud record so a trade can open a verified
+   * connection at execution time. It is stripped from every read response
+   * and is never sent to the browser, logged, or exposed in any UI.
+   */
+  mtPassword?: string | undefined;
 };
 
 function parseMt5Record(raw: unknown): Mt5AccountRecord | null {
@@ -940,17 +947,32 @@ export const syncGetMt5Account = createServerFn({ method: "POST" })
     if (!cloudSyncConfigured()) return { enabled: false, record: null };
     const results = await pipeline([["HGET", MT5_KEY, data.userId.trim().toLowerCase()]]);
     const raw = results?.[0]?.result;
-    return { enabled: true, record: parseMt5Record(raw) };
+    const stored = parseMt5Record(raw);
+    // The saved MT5 password NEVER leaves the server — strip it before serving.
+    if (!stored) return { enabled: true, record: null };
+    const { mtPassword: _secret, ...safeRecord } = stored;
+    return { enabled: true, record: safeRecord };
   });
 
-export type Mt5DeleteInput = { userId: string };
+export type Mt5DeleteInput = { userId: string; /** "all" removes the record; "password" wipes only the saved credential. */ mode?: "all" | "password" };
 export type Mt5DeleteResult = { enabled: boolean; ok: boolean };
 
 export const syncDeleteMt5Account = createServerFn({ method: "POST" })
   .validator((data: Mt5DeleteInput) => data)
   .handler(async ({ data }): Promise<Mt5DeleteResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, ok: false };
-    const results = await pipeline([["HDEL", MT5_KEY, data.userId.trim().toLowerCase()]]);
+    const key = data.userId.trim().toLowerCase();
+    if (data.mode === "password") {
+      // Wipe only the credential — connection metadata survives (offline).
+      const results = await pipeline([["HGET", MT5_KEY, key]]);
+      const raw = results?.[0]?.result;
+      const stored = parseMt5Record(raw);
+      if (!stored) return { enabled: true, ok: true };
+      const { mtPassword: _removed, ...rest } = stored;
+      const write = await pipeline([["HSET", MT5_KEY, key, JSON.stringify(rest)]]);
+      return { enabled: true, ok: write !== null && !write[0]?.error };
+    }
+    const results = await pipeline([["HDEL", MT5_KEY, key]]);
     return { enabled: true, ok: results !== null && !results[0]?.error };
   });
 

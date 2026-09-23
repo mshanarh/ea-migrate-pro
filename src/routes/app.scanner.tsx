@@ -4,11 +4,12 @@ import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import ChartScanner from "@/components/app/ChartScanner";
+import type { ExecutionOutcome, ExecutionPlan } from "@/components/app/ChartScanner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { executeLiveTrade } from "@/lib/metaapi";
+import { executeLiveTradeOnDemand } from "@/lib/metaapi";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -27,7 +28,6 @@ function AppScanner() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
-  const [details, setDetails] = useState<{ symbol: string; lot: string; trades: number } | null>(null);
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const unlimited = isUnlimitedScanner(app.email);
@@ -35,8 +35,6 @@ function AppScanner() {
 
   // The active robot — its symbols come from the mentor portal (EA creation).
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
-  // Per-symbol lot/max trades saved on the robot itself (mentor defaults, user-editable).
-  const robotPairs = robot?.pairs ?? [];
 
   // Register one of the 5 daily SAST scans (unlimited for admins). Returns
   // false (and shows the limit modal) when the user has used all of today's scans.
@@ -49,90 +47,74 @@ function AppScanner() {
     return true;
   };
 
-  // Execute pressed — show the TOP execution toast, fire the real trade(s) on
-  // the connected MT5 account via MetaApi in the ANALYZED direction with the
-  // analyzed SL/TP attached, AND stream the logs into the floating bot popup.
-  // The toast's final line reflects the provider outcome.
-  const handleExecute = ({ symbol, lot, trades, direction, stopLoss, takeProfit }: { symbol: string; lot: string; trades: number; direction: "BUY" | "SELL"; executionReady?: boolean; stopLoss?: string; takeProfit?: string }) => {
-    // Conditional plans (closed session / public-feed candles) are executable:
-    // the order fires through the connected MT5 account and any broker-side
-    // problem (offline terminal, closed market) comes back as a real error.
+  /**
+   * Execute pressed (after the user CONFIRMED in the popup) — the server
+   * opens the broker connection ONLY for this order: deploy → verify the
+   * live session → send the order(s) with the analyzed SL/TP → ALWAYS
+   * undeploy. Statuses stream to the UI as Offline → Connecting → Connected
+   * → Executing → Trade Executed / error → Disconnected.
+   */
+  const handleExecute = async (
+    plan: ExecutionPlan,
+    onProgress: (message: string) => void,
+  ): Promise<ExecutionOutcome> => {
+    const { symbol, lot, trades, direction, stopLoss, takeProfit } = plan;
+
+    if (!app.mt?.mcAccountId) {
+      toast.error("Save your MT5 details first — MetaTrader page.");
+      window.dispatchEvent(
+        new CustomEvent("eamp:execution-result", {
+          detail: { ok: false, message: "No saved MT5 details — save them on the MetaTrader page" },
+        }),
+      );
+      return { ok: false, message: "No saved MT5 details — save them on the MetaTrader page first." };
+    }
+
+    // Top execution toast + floating bot popup get the REAL analyzed values.
     window.triggerExecutionToast?.(robot?.name, robot?.image, {
       symbol,
       lot_size: lot,
-      max_trades: trades,
+      max_trades: Math.max(1, Math.min(trades, 20)),
       direction,
       ...(stopLoss ? { stopLoss } : {}),
       ...(takeProfit ? { takeProfit } : {}),
     });
-    setDetails(null);
     setToastTrades(Math.max(1, Math.min(trades, 20)));
     setToastOpen(true);
+    onProgress("Connecting to broker...");
+    window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "CONNECTING TO BROKER..." } }));
 
-    const count = Math.max(1, Math.min(trades, 20));
-    if (!app.mt?.mcAccountId) {
-      toast.error("Connect your MT5 account first — MetaTrader page.");
-      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "No connected MT5 account — link it on the MetaTrader page" } }));
-      return;
-    }
-
-    // Cold brokers get PERSISTENT retries: while MetaApi's terminal is still
-    // opening for the broker, Execute keeps retrying every 45s (up to 8
-    // times) and the trade fires the moment the connection opens — no need
-    // to press again. Only TRANSIENT problems are retried: the billing block
-    // and other provider refusals surface immediately, because no amount of
-    // retrying can fix them.
-    const COLD_CONNECTION = /not connected to broker|robot is starting|connection is still opening|retry in a minute|still opening/i;
-    const NOT_RETRYABLE = /metaapi .*blocked|top up .*metaapi|no trading credits|refused to start this account/i;
-    const runTrades = () =>
-      Promise.all(
-        Array.from({ length: count }, () =>
-          executeLiveTrade({
-            data: {
-              accountId: app.mt?.mcAccountId ?? "",
-              eaName: robot?.name ?? "EA",
-              symbol,
-              direction,
-              lotSize: lot,
-              ...(stopLoss ? { stopLoss } : {}),
-              ...(takeProfit ? { takeProfit } : {}),
-            },
-          }),
-        ),
+    try {
+      const outcome = await executeLiveTradeOnDemand({
+        data: {
+          accountId: app.mt.mcAccountId,
+          eaName: robot?.name ?? "EA",
+          symbol,
+          direction,
+          lotSize: lot,
+          ...(stopLoss ? { stopLoss } : {}),
+          ...(takeProfit ? { takeProfit } : {}),
+          ...(app.mt.environment ? { region: app.mt.environment } : {}),
+          tradeCount: Math.max(1, Math.min(trades, 20)),
+        },
+      });
+      onProgress("Disconnecting...");
+      window.dispatchEvent(
+        new CustomEvent("eamp:execution-result", {
+          detail: {
+            ok: outcome.ok,
+            message: outcome.ok
+              ? outcome.message.toUpperCase()
+              : `${outcome.message.toUpperCase()} — CONNECTION CLOSED`,
+          },
+        }),
       );
-    const MAX_ATTEMPTS = 8;
-    const finish = (results: Awaited<ReturnType<typeof runTrades>>) => {
-      const ok = results.filter((item) => item.ok).length;
-      if (ok === count) {
-        toast.success(`${ok}/${count} ${symbol} trades executed on MT5`);
-        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: true, message: `${ok}/${count} trades executed on MT5` } }));
-      } else {
-        const reason = results.find((item) => !item.ok)?.message ?? "Execution failed";
-        toast.error(`${ok}/${count} executed — ${reason}`);
-        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: reason } }));
-      }
-    };
-    const attempt = (attemptNo: number) => {
-      runTrades()
-        .then((results) => {
-          const allCold =
-            results.length > 0 &&
-            results.every(
-              (item) => !item.ok && COLD_CONNECTION.test(item.message) && !NOT_RETRYABLE.test(item.message),
-            );
-          if (allCold && attemptNo < MAX_ATTEMPTS) {
-            window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: `Broker connection opening — automatic retry ${attemptNo + 1}/${MAX_ATTEMPTS}...` } }));
-            setTimeout(() => attempt(attemptNo + 1), 30_000);
-            return;
-          }
-          finish(results);
-        })
-        .catch(() => {
-          toast.error("Could not reach the execution provider.");
-          window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "Could not reach the execution provider." } }));
-        });
-    };
-    attempt(1);
+      return outcome;
+    } catch {
+      const message = "Could not reach the execution service.";
+      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+      return { ok: false, message };
+    }
   };
 
   return (
@@ -140,7 +122,7 @@ function AppScanner() {
       <div className="app-scroll-area">
         <ChartScanner
           symbols={robot?.symbols ?? []}
-          pairs={robotPairs.map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
+          pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
           {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
           {...(app.mt?.environment ? { region: app.mt.environment } : {})}
           accent={accent}

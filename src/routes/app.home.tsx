@@ -16,7 +16,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
-import { executeLiveTrade } from "@/lib/metaapi";
+import { executeLiveTradeOnDemand } from "@/lib/metaapi";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -188,17 +188,21 @@ function AppHome() {
     if (!app.mt?.mcAccountId) return;
     const firstPair = robot.pairs?.[0];
     const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
-    void executeLiveTrade({
+    // On-demand connection: the broker link opens for this order, is verified,
+    // fires the trade, and is closed again — nothing stays connected.
+    void executeLiveTradeOnDemand({
       data: {
         accountId: app.mt.mcAccountId,
         eaName: robot.name,
         symbol,
         direction: "BUY",
         lotSize: String(firstPair?.lotSize ?? 0.01),
+        ...(app.mt.environment ? { region: app.mt.environment } : {}),
+        tradeCount: 1,
       },
     })
       .then((result) => {
-        if (!result.ok) console.warn("[start] live execution skipped:", result.message);
+        if (!result.ok) console.warn("[start] on-demand execution skipped:", result.message);
       })
       .catch(() => {});
   };
