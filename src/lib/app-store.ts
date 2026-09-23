@@ -168,6 +168,82 @@ function getDeviceId() {
   return generated;
 }
 
+/**
+ * Restore everything a user had on another device/deployment, straight from
+ * the shared cloud store: robots rebuilt from their active license keys (with
+ * the EA's live name/symbols/image/video), the MT5 connection memory, and
+ * payment memory (an active license already proves payment — no second Whop
+ * charge for the same EA).
+ */
+export async function restoreRobotsFromCloud(): Promise<{ robots: number; mt5: boolean }> {
+  load();
+  if (typeof window === "undefined" || !state.email) return { robots: 0, mt5: false };
+  const email = state.email;
+  const { syncRestoreLicenses, syncGetMt5Account } = await import("@/lib/account-sync.server");
+  const [licenseResult, mt5Result] = await Promise.allSettled([
+    syncRestoreLicenses({ data: { email } }),
+    syncGetMt5Account({ data: { userId: email } }),
+  ]);
+
+  let restoredCount = 0;
+  if (licenseResult.status === "fulfilled" && licenseResult.value.enabled) {
+    const robots: Robot[] = [];
+    for (const license of licenseResult.value.licenses) {
+      const clean = license.key.trim().toUpperCase().replace(/\s+/g, "");
+      if (!clean || robots.some((robot) => robot.key === clean)) continue;
+      // Paused or expired keys restore, but the home screen shows them via the
+      // license state — robots only come from active licenses.
+      if (!license.active) continue;
+      if (license.expiresAt && new Date(license.expiresAt).getTime() <= Date.now()) continue;
+      robots.push({
+        id: "r-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 6),
+        key: clean,
+        name: license.eaName || "Private EA",
+        symbols: license.symbols,
+        pairs: license.symbols.map((symbol) => ({ symbol, lotSize: state.settings.lotSize || "0.01", maxTrades: "0" })),
+        ...(license.eaId ? { eaId: license.eaId } : {}),
+        ...(license.image ? { image: license.image } : {}),
+        ...(license.video ? { video: license.video } : {}),
+        running: false,
+      });
+      restoredCount += 1;
+    }
+    if (restoredCount > 0) {
+      // Merge with anything already on this device, cloud robots taking
+      // precedence by key, then keep existing local-only robots.
+      const existing = state.robots.filter((robot) => !robots.some((fresh) => fresh.key === robot.key));
+      state = { ...state, activeRobotId: state.activeRobotId ?? robots[0]?.id ?? null, robots: [...robots, ...existing] };
+      persist();
+    }
+  }
+
+  let mt5Restored = false;
+  if (mt5Result.status === "fulfilled" && mt5Result.value.enabled && mt5Result.value.record && !state.mt) {
+    const record = mt5Result.value.record;
+    state = {
+      ...state,
+      mt: {
+        platform: "MT5",
+        broker: record.broker,
+        server: record.server,
+        accountType: record.accountType,
+        loginId: record.loginId,
+        mcAccountId: record.mcAccountId,
+        ...(record.environment ? { environment: record.environment } : {}),
+      },
+    };
+    mt5Restored = true;
+  }
+
+  // An active license is itself proof of payment — restore payment memory so
+  // the user is never charged twice for the same EA on a new deployment.
+  if (restoredCount > 0 && state.email && paymentStatusForEmail(state.email) === "unpaid") {
+    markEmailPaid(state.email);
+  }
+
+  return { robots: restoredCount, mt5: mt5Restored };
+}
+
 export function appSignIn(email: string): { error?: string } {
   load();
   const clean = email.trim().toLowerCase();

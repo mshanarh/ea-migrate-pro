@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, useAppState } from "@/lib/app-store";
+import { activateKey, appSignIn, restoreRobotsFromCloud, useAppState } from "@/lib/app-store";
 import { isPaymentExemptEmail, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/app/")({
@@ -33,6 +33,20 @@ function AppAccess() {
     if (app.email && app.robots.length > 0 && !successReturn) window.location.replace("/app/home");
   }, [app.email, app.robots.length, successReturn]);
 
+  // Returning on this device with a session but no robots (fresh browser,
+  // cleared storage): pull robots + MT5 + payment memory from the cloud
+  // exactly like a fresh sign-in would.
+  useEffect(() => {
+    if (!app.email || app.robots.length > 0 || successReturn) return;
+    let cancelled = false;
+    void restoreRobotsFromCloud().then(({ robots }) => {
+      if (!cancelled && robots > 0) window.location.replace("/app/home");
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email, app.robots.length, successReturn]);
+
   const activeEmail = app.email || email.trim().toLowerCase();
   const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
   const showLicenseView = successReturn || paymentStatus !== "unpaid";
@@ -57,11 +71,28 @@ function AppAccess() {
     }
     if (isPaymentExemptEmail(clean)) {
       toast.success("Admin access enabled — no payment is required.");
+      void restoreRobotsFromCloud().then(({ robots }) => {
+        if (robots > 0) window.location.replace("/app/home");
+      });
       return;
     }
-    if (paymentStatusForEmail(clean) === "paid") return;
-    setRedirecting(true);
-    window.location.assign(WHOP_CHECKOUT_URL);
+    if (paymentStatusForEmail(clean) === "paid") {
+      void restoreRobotsFromCloud().then(({ robots }) => {
+        if (robots > 0) window.location.replace("/app/home");
+      });
+      return;
+    }
+    // Local payment memory is empty — check the shared store before charging
+    // anyone twice: an active license for this email IS proof of payment, so
+    // the restore both unlocks the app and skips Whop entirely.
+    void restoreRobotsFromCloud().then(({ robots }) => {
+      if (robots > 0) {
+        window.location.replace("/app/home");
+        return;
+      }
+      setRedirecting(true);
+      window.location.assign(WHOP_CHECKOUT_URL);
+    });
   };
 
   const submitLicense = (event: FormEvent<HTMLFormElement>) => {

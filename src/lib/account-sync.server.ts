@@ -227,6 +227,65 @@ export const syncSignIn = createServerFn({ method: "POST" })
 export type SyncGetAccountInput = { email: string };
 export type SyncGetAccountResult = { enabled: boolean; account: PublicAccount | null };
 
+/* ------------------------------------------------------------------ */
+/* App restore — the trading app rebuilds a user's robots from their   */
+/* active licenses so switching devices/deployments feels seamless.    */
+/* ------------------------------------------------------------------ */
+
+export type RestoredLicense = {
+  key: string;
+  eaId?: string;
+  eaName: string;
+  symbols: string[];
+  image?: string;
+  video?: string;
+  active: boolean;
+  expiresAt?: string;
+};
+
+export type SyncRestoreResult = { enabled: boolean; licenses: RestoredLicense[] };
+
+/**
+ * Returns every license key issued to this email together with the linked
+ * EA's live details (name, symbols, image, video) from the mentor record in
+ * the shared store. The app uses this to rebuild robots automatically on a
+ * new device — the user signs in and their EA is simply there.
+ */
+export const syncRestoreLicenses = createServerFn({ method: "POST" })
+  .validator((data: { email: string }) => data)
+  .handler(async ({ data }): Promise<SyncRestoreResult> => {
+    if (!cloudSyncConfigured()) return { enabled: false, licenses: [] };
+    const email = data.email.trim().toLowerCase();
+    if (!email) return { enabled: true, licenses: [] };
+    // A key belongs to whichever mentor account carries it — scan all records.
+    const results = await pipeline([["HGETALL", ACCOUNTS_KEY]]);
+    if (!results) return { enabled: true, licenses: [] };
+    const accountsRaw = (results[0]?.result ?? {}) as Record<string, unknown>;
+    const restored: RestoredLicense[] = [];
+    for (const raw of Object.values(accountsRaw)) {
+      const account = parseAccount(raw);
+      if (!account) continue;
+      const eaById = new Map(account.eas.map((ea) => [ea.id, ea]));
+      for (const license of account.licenses) {
+        if (String(license.clientEmail ?? "").trim().toLowerCase() !== email) continue;
+        const ea = license.eaId ? eaById.get(license.eaId) : undefined;
+        const image = ea?.image ?? license.image;
+        const video = ea?.video ?? license.video;
+        restored.push({
+          key: license.key,
+          ...(license.eaId ? { eaId: license.eaId } : {}),
+          eaName: ea?.name || license.robotName || license.expertAdvisor || license.name || "Private EA",
+          symbols: (ea?.symbols ?? license.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
+          ...(image ? { image } : {}),
+          ...(video ? { video } : {}),
+          active: license.active === true,
+          ...(license.expiresAt ? { expiresAt: license.expiresAt } : {}),
+        });
+      }
+    }
+    return { enabled: true, licenses: restored };
+  });
+
 export const syncGetAccount = createServerFn({ method: "POST" })
   .validator((data: SyncGetAccountInput) => data)
   .handler(async ({ data }): Promise<SyncGetAccountResult> => {
