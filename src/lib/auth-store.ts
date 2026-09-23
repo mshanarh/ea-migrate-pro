@@ -126,12 +126,7 @@ const seedMentor: Account = {
 };
 
 /** Platform owner accounts — admins by definition, on every device. */
-export const OWNER_EMAILS = [
-  "biyasentobeko222@gmail.com",
-  "biyasentobeko222@gmail",
-  "ntobekotraders.official@gmail.com",
-  "admin@eamigrate.pro",
-];
+export const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "admin@eamigrate.pro"];
 
 export const PAYMENT_EXEMPT_EMAILS = ["biyasentobeko222@gmail", "biyasentobeko222@gmail.com"];
 
@@ -433,6 +428,21 @@ export function signOut() {
   load();
   state = { ...state, currentId: null };
   persist();
+}
+
+/**
+ * After a successful CLOUD sign-in, adopt the just-verified password into
+ * this device's local record. Without this, a device holding a stale
+ * password fails local sign-in first on every visit and always needs the
+ * cloud fallback (the record even kept a dead password after the account
+ * was healed in the shared store).
+ */
+export function adoptCloudPassword(email: string, password: string) {
+  load();
+  const clean = email.trim().toLowerCase();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === clean);
+  if (!account || account.password === password) return;
+  update(account.id, (a) => ({ ...a, password }));
 }
 
 export function register(

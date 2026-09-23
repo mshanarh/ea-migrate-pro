@@ -64,8 +64,9 @@ function SignIn() {
             const cloud = await syncSignIn({ data: { email, password } });
             if (cloud.enabled && cloud.ok) {
               // Seed this device with the cloud account and sign in locally.
-              const { hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+              const { adoptCloudPassword, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
               hydrateFromCloud([cloud.account]);
+              adoptCloudPassword(email, password);
               setCurrentAccount(email);
               sessionStorage.setItem("eamp_pending_welcome", "1");
               navigate({ to: cloud.account.role === "admin" ? "/admin" : "/dashboard" });

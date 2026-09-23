@@ -47,6 +47,14 @@ export function cloudSyncConfigured(): boolean {
  */
 export const REMOVED_ADMIN_EMAILS = ["lwethunkandi3@gmail.com"];
 
+/**
+ * Emails whose cloud record was lost (registered during the old sync-bug
+ * era and never mirrored). The first sign-in attempt for one of these
+ * recreates the account with the password being typed — normal mentor,
+ * pre-approved — instead of showing "wrong email or password" forever.
+ */
+const SELF_HEAL_SIGNIN_EMAILS = new Set(["ntobekotraders.official@gmail.com"]);
+
 function isRemovedAdmin(email: string): boolean {
   return REMOVED_ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
@@ -210,7 +218,35 @@ export const syncSignIn = createServerFn({ method: "POST" })
     const results = await pipeline([["HGET", ACCOUNTS_KEY, email]]);
     const raw = results?.[0]?.result;
     const account = typeof raw === "string" ? parseAccount(raw) : null;
-    if (!account) return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
+    if (!account) {
+      // Lost-record self-heal for platform-designated emails: an account
+      // registered during the old sync-bug era may exist on no device and in
+      // no cloud copy, so "wrong email or password" would be shown forever.
+      // The first sign-in for a designated email recreates it with the
+      // password being typed (normal mentor, pre-approved) — after that it
+      // behaves like any other account.
+      if (SELF_HEAL_SIGNIN_EMAILS.has(email) && data.password.length >= 4) {
+        const username = email.split("@")[0] ?? email;
+        const healed: Account = {
+          id: "m-heal-" + Date.now(),
+          firstName: "",
+          displayName: username,
+          email,
+          username,
+          password: data.password,
+          whatsapp: "",
+          role: "mentor",
+          status: "approved",
+          createdAt: new Date().toISOString(),
+          licenseLimit: 0,
+          licenses: [],
+          eas: [],
+        };
+        const write = await pipeline([["HSET", ACCOUNTS_KEY, email, JSON.stringify(healed)]]);
+        if (write !== null && !write[0]?.error) return { enabled: true, ok: true, account: toPublic(healed) };
+      }
+      return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
+    }
     if (account.password !== data.password) {
       return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
     }
