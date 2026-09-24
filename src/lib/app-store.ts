@@ -1,6 +1,30 @@
 import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 
+/** Same checkout the app login redirects unpaid users to. */
+export const WHOP_CHECKOUT_URL =
+  (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+
+/**
+ * Route-guard outcome from the app access rules (same gates the /app login
+ * view enforces): an unsigned-in visitor goes to the app login, an unpaid
+ * email goes to checkout, and paid/admin emails pass through.
+ */
+export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
+
+export function requireAppAccess(email: string | null): AppAccessCheck {
+  if (!email) return { action: "signin" };
+  const status = paymentStatusForEmail(email);
+  if (status === "unpaid") return { action: "pay" };
+  return { action: "pass" };
+}
+
+/** Non-hook snapshot of the app state — safe inside route beforeLoad guards. */
+export function getAppState(): AppState {
+  load();
+  return state;
+}
+
 export type Robot = {
   id: string;
   name: string;

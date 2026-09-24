@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
@@ -8,12 +8,20 @@ import type { ExecutionOutcome, ExecutionPlan } from "@/components/app/ChartScan
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { useAppState } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
+import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { executeLiveTradeOnDemand } from "@/lib/metaapi";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
+  beforeLoad: () => {
+    // Same gates the /app login view enforces: no email → app login,
+    // unpaid → Whop checkout. Paid/admin emails pass through.
+    const access = requireAppAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+  },
   head: () => ({
     meta: [
       { title: "AI Scanner — EA Migrate Pro" },

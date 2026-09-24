@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -12,13 +12,20 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, activateKey, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
 import { executeLiveTrade } from "@/lib/metaapi";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
+  beforeLoad: () => {
+    // Same gates the /app login view enforces — mirrors the Next.js
+    // middleware pattern: no email → app login, unpaid → Whop checkout.
+    const access = requireAppAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+  },
   head: () => ({
     meta: [
       { title: "Robot Dashboard — EA Migrate Pro" },
@@ -116,7 +123,7 @@ function WelcomeMaster() {
       <img
         src="/ea-migrate-pro-icon.png"
         alt=""
-        className="relative size-24 rounded-[24px] object-cover"
+        className="relative size-24 rounded-[24px] bg-white/5 object-contain p-1"
         style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
       />
       <h1

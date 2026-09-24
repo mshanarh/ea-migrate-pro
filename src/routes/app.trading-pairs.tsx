@@ -1,13 +1,20 @@
 import { useMemo, useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Plus, RefreshCw, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { setRobotPairs, useAppState } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, setRobotPairs, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 export const Route = createFileRoute("/app/trading-pairs")({
   ssr: false,
+  beforeLoad: () => {
+    // Same gates the /app login view enforces: no email → app login,
+    // unpaid → Whop checkout. Paid/admin emails pass through.
+    const access = requireAppAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+  },
   head: () => ({
     meta: [
       { title: "Trading Pairs — EA Migrate Pro" },

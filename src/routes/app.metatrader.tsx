@@ -1,17 +1,24 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { connectMt, disconnectMt, useAppState, type MtAccount } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { saveMt5Connection, setMtAccountConnection, disconnectMt5Account } from "@/lib/metaapi";
 import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
+  beforeLoad: () => {
+    // Same gates the /app login view enforces: no email → app login,
+    // unpaid → Whop checkout. Paid/admin emails pass through.
+    const access = requireAppAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+  },
   head: () => ({
     meta: [
       { title: "MetaTrader — EA Migrate Pro" },

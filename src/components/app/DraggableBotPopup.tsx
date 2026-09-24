@@ -28,7 +28,7 @@ declare global {
     /** Kept for compatibility: no-op — popup state is driven by the app store. */
     showBotStarted?: (name?: string, status?: "started" | "stopped") => void;
     /** Open the popup and stream execution logs for a scanned pair. */
-    triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => void;
+    triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: string; stopLoss?: string | number; takeProfit?: string | number }) => void;
     closeExecutionToast?: () => void;
   }
 }
@@ -74,12 +74,17 @@ export default function DraggableBotPopup() {
 
   // Scanner Execute → stream the trade logs into the popup.
   useEffect(() => {
-    window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => {
+    window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: string; stopLoss?: string | number; takeProfit?: string | number }) => {
       const p = pairData ?? { symbol: "XAUUSD", lot_size: 0.01, max_trades: 5 };
+      // The scanner ALWAYS sends a direction and SL/TP with the plan — no
+      // placeholder signal text here; fall back only if a caller omits them.
+      const direction = p.direction === "SELL" ? "SELL" : "BUY";
       const stream: LogLine[] = [
-        { text: `NEW SIGNAL: ${p.symbol} BUY`, kind: "cmd" },
-        { text: `OPEN BUY: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
-        { text: "TP: 4330.36 | SL: 4260.01", kind: "info" },
+        { text: `NEW SIGNAL: ${p.symbol} ${direction}`, kind: "cmd" },
+        { text: `OPEN ${direction}: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
+        p.stopLoss != null && p.takeProfit != null
+          ? { text: `TP: ${p.takeProfit} | SL: ${p.stopLoss}`, kind: "info" }
+          : { text: "SL/TP attached by the trade plan", kind: "info" },
         { text: `SENDING ${p.max_trades} TRADES TO MT5...`, kind: "info" },
         { text: `${p.max_trades}/${p.max_trades} TRADES EXECUTED ON MT5`, kind: "last" },
       ];
