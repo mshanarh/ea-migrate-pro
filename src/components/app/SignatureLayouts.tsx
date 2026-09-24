@@ -95,7 +95,7 @@ function ConsoleHeader({ label, accent, font, running }: { label: string; accent
 export function CrimsonNavigator(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-5">
       <ConsoleHeader label="CRIMSON NAVIGATOR" accent={accent} font={font} running={robot?.running ?? false} />
@@ -143,7 +143,7 @@ export function CrimsonNavigator(props: SignatureLayoutProps) {
 export function NavigatorPlus(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="relative flex min-h-[64vh] w-full flex-col items-center justify-center gap-6 overflow-hidden bg-black px-5 py-10">
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-30" />
@@ -203,7 +203,7 @@ export function NavigatorPlus(props: SignatureLayoutProps) {
 export function PabloCrimson(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-5">
       <motion.section
@@ -258,17 +258,14 @@ export function PabloElite(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
   const running = robot?.running ?? false;
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
-    <div className="relative flex min-h-[68vh] w-full flex-col items-center gap-6 overflow-hidden bg-black px-4 pb-8 pt-4">
-      {/* Full-screen black backdrop — video playback happens here, never inside the circle */}
-      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-35" />
-      <div aria-hidden className="absolute inset-0" style={{ background: "radial-gradient(ellipse 85% 60% at 50% 30%, transparent 0%, rgba(0,0,0,0.55) 60%, rgba(0,0,0,0.88) 100%)" }} />
+    <div className="flex flex-col items-center gap-6 px-4 pt-4">
       <motion.div
         initial={{ opacity: 0, scale: 0.94 }}
         animate={{ opacity: 1, scale: 1 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 mt-2 flex size-64 items-center justify-center"
+        className="relative mt-2 flex size-64 items-center justify-center"
       >
         {/* Sniper reticle rings */}
         <span className="absolute inset-0 rounded-full border border-white/10" />
@@ -311,7 +308,7 @@ export function PabloElite(props: SignatureLayoutProps) {
 export function QuantumBlue(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="relative flex min-h-[74vh] w-full flex-col items-center gap-6 overflow-hidden bg-black px-5 pb-8 pt-6">
       {/* Full-bleed media wash behind everything, tinted by the accent */}
@@ -392,7 +389,7 @@ export function QuantumBlue(props: SignatureLayoutProps) {
 export function BlackStudioLayout({ label, ...props }: SignatureLayoutProps & { label: string }) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="relative flex min-h-[70vh] w-full flex-col items-center justify-center gap-7 px-5 pb-10 pt-8">
       {/* Full-screen video backdrop — the small rounded screen is NOT used here */}
@@ -460,7 +457,7 @@ export function BlackStudioLayout({ label, ...props }: SignatureLayoutProps & { 
 export function SupremeEquinox(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-5">
       <ConsoleHeader label="SUPREME EQUINOX" accent={accent} font={font} running={robot?.running ?? false} />
@@ -511,7 +508,7 @@ export function SupremeEquinox(props: SignatureLayoutProps) {
 export function EaCloud(props: SignatureLayoutProps) {
   const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
   const actions = useActionDefs(props);
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-5">
       <ConsoleHeader label="EA CLOUD" accent={accent} font={font} running={robot?.running ?? false} />

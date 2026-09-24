@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, restoreRobotsFromCloud, useAppState } from "@/lib/app-store";
+import { activateKey, appSignIn, useAppState } from "@/lib/app-store";
 import { isPaymentExemptEmail, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 
 export const Route = createFileRoute("/app/")({
@@ -19,7 +19,6 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
-  const [showLicenseViewOverride, setShowLicenseViewOverride] = useState(false);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -34,25 +33,9 @@ function AppAccess() {
     if (app.email && app.robots.length > 0 && !successReturn) window.location.replace("/app/home");
   }, [app.email, app.robots.length, successReturn]);
 
-  // Returning on this device with a session but no robots (fresh browser,
-  // cleared storage): pull robots + MT5 + payment memory from the cloud
-  // exactly like a fresh sign-in would.
-  useEffect(() => {
-    if (!app.email || app.robots.length > 0 || successReturn) return;
-    let cancelled = false;
-    void restoreRobotsFromCloud().then(({ robots }) => {
-      if (!cancelled && robots > 0) window.location.replace("/app/home");
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [app.email, app.robots.length, successReturn]);
-
   const activeEmail = app.email || email.trim().toLowerCase();
   const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
-  // Override lets the no-license path keep the user on the licence view inside
-  // the app instead of bouncing them to an external checkout page.
-  const showLicenseView = successReturn || paymentStatus !== "unpaid" || showLicenseViewOverride;
+  const showLicenseView = successReturn || paymentStatus !== "unpaid";
 
   const continueWithEmail = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -74,31 +57,11 @@ function AppAccess() {
     }
     if (isPaymentExemptEmail(clean)) {
       toast.success("Admin access enabled — no payment is required.");
-      void restoreRobotsFromCloud().then(({ robots }) => {
-        if (robots > 0) window.location.replace("/app/home");
-      });
       return;
     }
-    if (paymentStatusForEmail(clean) === "paid") {
-      void restoreRobotsFromCloud().then(({ robots }) => {
-        if (robots > 0) window.location.replace("/app/home");
-      });
-      return;
-    }
-    // Local payment memory is empty — check the shared store before charging
-    // anyone twice: an active license for this email IS proof of payment, so
-    // the restore both unlocks the app and skips Whop entirely. With no cloud
-    // license either, the user STAYS IN THE APP on the licence screen — the
-    // old auto-bounce to the Whop checkout yanked people out of the app
-    // whenever they pressed play/connect with no key yet.
-    void restoreRobotsFromCloud().then(({ robots }) => {
-      if (robots > 0) window.location.replace("/app/home");
-      else {
-        setRedirecting(false);
-        setShowLicenseViewOverride(true);
-        toast.info("Enter your licence key to unlock the robot.");
-      }
-    });
+    if (paymentStatusForEmail(clean) === "paid") return;
+    setRedirecting(true);
+    window.location.assign(WHOP_CHECKOUT_URL);
   };
 
   const submitLicense = (event: FormEvent<HTMLFormElement>) => {
@@ -127,7 +90,7 @@ function AppAccess() {
 function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-[2rem] bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/ea-migrate-platform-robot.jpg" alt="EA Migrate Pro" className="size-full object-cover object-[50%_18%]" />
+      <img src="/ea-migrate-platform-robot.png" alt="EA Migrate Pro" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>

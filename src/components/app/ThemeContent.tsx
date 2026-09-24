@@ -1,6 +1,5 @@
 import { motion } from "framer-motion";
 import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
-import { BrandLogo } from "@/components/BrandLogo";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
@@ -74,7 +73,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
 /* ---------------- NOVA CORE ---------------- */
 
 function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -126,7 +125,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
 /* ---------------- PHANTOM PULSE ---------------- */
 
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="relative flex min-h-[62vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-black px-5 py-10">
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
@@ -186,7 +185,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
 /* ---------------- TITAN EDGE ---------------- */
 
 function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenScanner: () => void }) {
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -249,7 +248,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
 /* ---------------- PRIME FORGE (key-activation classic) ---------------- */
 
 function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
-  const image = robot?.image || "/ea-migrate-platform-robot.jpg";
+  const image = robot?.image || "/ea-migrate-platform-robot.png";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -273,7 +272,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
               <MessageCircle className="size-5" />
             </button>
             <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-black/55 backdrop-blur-sm">
-              <BrandLogo className="size-full rounded-full object-cover" />
+              <img src="/botlogic-mascot.png" alt="" className="size-full rounded-full object-cover" />
               <span className="absolute -bottom-0.5 left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-black bg-[#22C55E]" />
             </span>
           </div>

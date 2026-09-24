@@ -3,7 +3,6 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Menu, ChevronDown, Smartphone, Apple } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { BrandLogo } from "@/components/BrandLogo";
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
@@ -20,7 +19,11 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
         <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
-          <BrandLogo className="size-10 min-w-[32px] shrink-0 object-contain" alt="EA Migrate Pro" />
+          <img
+            src="/ea-migrate-platform-robot.png"
+            alt="EA Migrate Pro"
+            className="size-10 min-w-[32px] shrink-0 object-contain"
+          />
           <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span> Pro
           </span>

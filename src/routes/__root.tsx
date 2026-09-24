@@ -86,33 +86,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
       { name: "apple-mobile-web-app-title", content: "EA Migrate Pro" },
-      { title: "EA Hosting Platform for MT5 - EA Migrate Pro" },
-      { name: "application-name", content: "EA Migrate Pro" },
+      { title: "EA Migrate Pro — Build Custom Forex EAs" },
       {
         name: "description",
         content:
-          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
+          "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
       },
-      { name: "robots", content: "index, follow" },
-      { name: "google-site-verification", content: "Esn1A0ZxxRa8u19Awb2qk0qvS6LLV6wKrP7iFBLN74A" },
       { property: "og:type", content: "website" },
-      { property: "og:site_name", content: "EA Migrate Pro" },
-      { property: "og:title", content: "EA Hosting Platform for MT5" },
-      {
-        property: "og:description",
-        content:
-          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
-      },
-      { property: "og:url", content: "https://eamigratepro.vercel.app" },
-      { property: "og:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:title", content: "EA Hosting Platform for MT5" },
-      {
-        name: "twitter:description",
-        content:
-          "The #1 EA Hosting Platform for MT5. Host, migrate and manage your Forex EAs instantly on MT5.",
-      },
-      { name: "twitter:image", content: "https://eamigratepro.vercel.app/ea-migrate-hero.jpg" },
     ],
     links: [
       {
@@ -120,14 +101,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "manifest", href: "/manifest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/botlogic-mascot.png" },
+      { rel: "apple-touch-icon", href: "/ea-migrate-platform-robot.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=DM+Sans:wght@400;500&display=swap",
       },
-      { rel: "icon", href: "/favicon.ico", type: "image/x-icon" },
+      { rel: "icon", href: "/ea-migrate-platform-robot.png", type: "image/png" },
     ],
   }),
 
