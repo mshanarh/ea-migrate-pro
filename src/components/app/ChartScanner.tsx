@@ -8,13 +8,12 @@ type ScannerTimeframe = "15m" | "1h" | "4h";
  * Scanner lifecycle states (per product spec):
  *  loading  — waiting for market data
  *  no-data  — broker data unavailable
- *  no-trade — conditions are not satisfied
- *  ready    — valid setup with Entry/SL/TP
+ *  ready    — valid setup with Entry/SL/TP (the scanner ALWAYS returns BUY or SELL)
  *  executing— order is being submitted
  *  executed — order successfully placed
  *  error    — backend/broker error
  */
-export type ScannerPhase = "idle" | "loading" | "no-data" | "no-trade" | "ready" | "executing" | "executed" | "error";
+export type ScannerPhase = "idle" | "loading" | "no-data" | "ready" | "executing" | "executed" | "error";
 
 export type ExecutionPlan = {
   symbol: string;
@@ -96,7 +95,6 @@ function fmtSignalLevel(value: number): string {
 const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   BUY: "#22c55e",
   SELL: "#ef4444",
-  "NO TRADE": "#9ca3af",
 };
 
 /** Derives the visible scanner phase from the analysis + execution state. */
@@ -112,11 +110,9 @@ function phaseOf(
   if (scanning) return "loading";
   if (analysisError) return "error";
   if (!analysis) return "idle";
-  if (analysis.signal === "NO TRADE") {
-    // The server distinguishes "no data at all" from "data but no setup".
-    return analysis.dataStatus === "no-data" ? "no-data" : "no-trade";
-  }
-  return "ready";
+  // No NO TRADE state: the server always returns BUY or SELL. The only
+  // non-ready outcome is genuinely unavailable broker data.
+  return analysis.dataStatus === "no-data" ? "no-data" : "ready";
 }
 
 const PHASE_META: Record<
@@ -125,8 +121,7 @@ const PHASE_META: Record<
 > = {
   loading: { label: "LOADING", color: "#facc15", hint: "Reading live broker data..." },
   "no-data": { label: "NO DATA", color: "#f87171", hint: "Broker data unavailable for this symbol." },
-  "no-trade": { label: "NO TRADE", color: "#9ca3af", hint: "Conditions not satisfied — waiting for a cleaner setup." },
-  ready: { label: "READY TO EXECUTE", color: "#22c55e", hint: "Valid setup with Entry, Stop-Loss and Take-Profit." },
+  ready: { label: "READY TO EXECUTE", color: "#22c55e", hint: "Signal with Entry, Stop-Loss and Take-Profit." },
   executing: { label: "EXECUTING", color: "#facc15", hint: "Sending the order through the secure server link..." },
   executed: { label: "EXECUTED", color: "#22c55e", hint: "Order placed with the broker." },
   error: { label: "ERROR", color: "#f87171", hint: "The provider reported a problem — details below." },
@@ -285,7 +280,7 @@ export default function ChartScanner({
 
   // EXECUTE pressed → open the confirmation popup with the full plan.
   const openConfirm = () => {
-    if (!analysis || analysis.signal === "NO TRADE" || executing) return;
+    if (!analysis || analysis.dataStatus === "no-data" || executing) return;
     resetResult();
     setConfirmOpen(true);
   };
@@ -328,8 +323,11 @@ export default function ChartScanner({
         setExecuted(true);
         setExecStage("EXECUTED");
       } else {
+        // The order did NOT go through — the chain must reflect that the
+        // connection opened, was verified and then closed, never that the
+        // trade was executed.
         setExecError(outcome.message);
-        setExecStage("EXECUTED");
+        setExecStage("DISCONNECTED");
       }
       // The server closed the temporary connection — reflect it, then rest offline.
       window.setTimeout(() => setExecStage((stage) => (stage === "EXECUTED" ? "DISCONNECTED" : stage)), 1600);
@@ -343,7 +341,6 @@ export default function ChartScanner({
   }, [analysis, executing, lot, onExecute, trades]);
 
   const phase = phaseOf(scanning, analysis, analysisError, executing, execError);
-  const planVisible = Boolean(analysis && analysis.signal !== "NO TRADE");
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col pb-[130px]" style={{ backgroundColor: "#090c10" }}>
@@ -465,7 +462,7 @@ export default function ChartScanner({
         )}
       </div>
 
-      {!analysis || analysis.signal === "NO TRADE" ? (
+      {!analysis || analysis.dataStatus === "no-data" ? (
         <>
           {/* Upload row — hidden while scanning */}
           {!scanning && (
@@ -743,7 +740,7 @@ export default function ChartScanner({
                 const order = ["OFFLINE", "CONNECTING", "CONNECTED", "EXECUTING", "EXECUTED", "DISCONNECTED"] as const;
                 const currentIndex = order.indexOf(execStage);
                 const stageIndex = order.indexOf(stage.label);
-                const done = stageIndex < currentIndex || (executed && stage.label !== "DISCONNECTED");
+                const done = stageIndex < currentIndex;
                 const active = stageIndex === currentIndex && !executed;
                 const color = done || active ? accent : "rgba(255,255,255,0.25)";
                 return (

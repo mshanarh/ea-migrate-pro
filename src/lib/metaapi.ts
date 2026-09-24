@@ -53,8 +53,8 @@ export const CLIENT_API_HOSTS: Record<string, string> = {
 function cleanKey(raw: string | undefined | null): string {
   return (raw ?? "")
     .trim()
-    .replace(/^["'`]+/, "")
-    .replace(/["'`]+$/, "");
+    .replace(/^[\"'`]+/, "")
+    .replace(/[\"'`]+$/, "");
 }
 
 /**
@@ -325,7 +325,7 @@ function accountIdOf(account: MaAccount | undefined | null): string | undefined 
  */
 export function accountKindFor(server: string, login?: string): "live" | "demo" {
   const text = `${server} ${login ?? ""}`.toLowerCase();
-  return /demo|trial|contest|practice|virtual|simulated|ptr\b|"test"/.test(text) ? "demo" : "live";
+  return /demo|trial|contest|practice|virtual|simulated|ptr\b|\"test\"/.test(text) ? "demo" : "live";
 }
 
 export type MtConnectRequest = {
@@ -818,7 +818,7 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
     const hosts =
       region && CLIENT_API_HOSTS[region]
         ? [CLIENT_API_HOSTS[region]]
-        : Object.values(CLIENT_API_HOSTS);
+        : (Object.values(CLIENT_API_HOSTS) as string[]);
     let lastMessage =
       "Your robot is starting — the broker connection is still opening for your account. Execute retries automatically until it opens.";
     for (const host of hosts) {
@@ -902,7 +902,7 @@ export type ScannerAnalysis = {
   symbol: string;
   timeframe: string;
   bias: "BULLISH" | "BEARISH" | "NEUTRAL";
-  signal: "BUY" | "SELL" | "NO TRADE";
+  signal: "BUY" | "SELL";
   confidence: number;
   entry: number;
   stopLoss: number;
@@ -937,7 +937,9 @@ function buildUnavailableScannerAnalysis(
     symbol,
     timeframe,
     bias: "NEUTRAL",
-    signal: "NO TRADE",
+    // dataStatus "no-data" keeps the UI on the NO DATA panel — this field is
+    // never rendered as a trade plan when there is no market data at all.
+    signal: "BUY",
     confidence: 0,
     entry: 0,
     stopLoss: 0,
@@ -958,7 +960,7 @@ function buildUnavailableScannerAnalysis(
     readouts: [
       { label: "Market data", value: "Unavailable", bullish: null },
       { label: "Live price", value: "—", bullish: null },
-      { label: "Signal", value: "NO TRADE", bullish: null },
+      { label: "Signal", value: "No data", bullish: null },
     ],
   };
 }
@@ -1251,38 +1253,65 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       // so scanning keeps working while the account stays disconnected.
     }
 
-    const hosts =
-      region && CLIENT_API_HOSTS[region]
-        ? [CLIENT_API_HOSTS[region]]
-        : Object.values(CLIENT_API_HOSTS);
+    // Bounded fan-out: at most 3 hosts/regions are probed so even a broken
+    // region hint cannot stretch the scan past a few seconds per read.
+    const regionHost = region ? CLIENT_API_HOSTS[region] : undefined;
+    const hosts: string[] = regionHost
+      ? [regionHost]
+      : (Object.values(CLIENT_API_HOSTS) as string[]).slice(0, 3);
     const regions =
-      region && CLIENT_API_HOSTS[region] ? [region] : Object.keys(CLIENT_API_HOSTS);
+      region && regionHost ? [region] : Object.keys(CLIENT_API_HOSTS).slice(0, 3);
 
-    // Start the historical read alongside the live snapshot. History improves
-    // the indicators but must never make a live signal wait on a cold endpoint.
-    const historyPromise = (async (): Promise<Candle[]> => {
-      const deadline = new Promise<Candle[]>((resolve) => setTimeout(() => resolve([]), 3_000));
-      const request = (async (): Promise<Candle[]> => {
-        for (const accountRegion of regions) {
-          const historyResult = await withMasterToken((token) =>
-            fetchJson(
-              `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${metaApiTimeframe(timeframe)}/candles?limit=300`,
-              { headers: { "auth-token": token, Accept: "application/json" } },
-              5_000,
-            ),
-          );
-          if (
-            historyResult.kind === "ok" &&
-            historyResult.response.status === 200 &&
-            Array.isArray(historyResult.response.payload)
-          ) {
-            return historyResult.response.payload as Candle[];
-          }
-        }
-        return [];
-      })();
-      return Promise.race([request, deadline]);
-    })();
+    // FAST SCAN: never deploy the cloud terminal or wait for a broker attach
+    // here — that made every scan sit 30–90 seconds. Candle history and
+    // quotes are read immediately; when the terminal is cold the public
+    // market feed tops the data up inside runScannerAnalysis. The broker
+    // connection is opened ONLY when a trade executes
+    // (executeLiveTradeOnDemand) and is closed right after.
+    return runScannerAnalysis(data, { regions, hosts });
+  });
+
+/**
+ * The analysis core, split out of the server function so the on-demand
+ * deploy/undeploy wrapper stays readable. Everything below reads REAL broker
+ * data: candle history for the indicators, bid/ask for the executable price.
+ */
+async function runScannerAnalysis(
+  data: ScannerAnalysisRequest,
+  context: { regions: string[]; hosts: string[] },
+): Promise<{ ok: true; analysis: ScannerAnalysis } | MtFailure> {
+  const { regions, hosts } = context;
+  const symbol = data.symbol.trim().toUpperCase();
+  const timeframe = data.timeframe ?? "1h";
+
+  // Start the historical read alongside the live snapshot. History improves
+  // the indicators but must never make a live signal wait on a cold endpoint.
+  const readHistory = async (): Promise<Candle[]> => {
+    for (const accountRegion of regions) {
+      const historyResult = await withMasterToken((token) =>
+        fetchJson(
+          `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${metaApiTimeframe(timeframe)}/candles?limit=300`,
+          { headers: { "auth-token": token, Accept: "application/json" } },
+          8_000,
+        ),
+      );
+      if (
+        historyResult.kind === "ok" &&
+        historyResult.response.status === 200 &&
+        Array.isArray(historyResult.response.payload)
+      ) {
+        const payload = historyResult.response.payload as Candle[];
+        // An empty array on a cold terminal usually means "not ready yet", not
+        // "symbol has no candles" — treat it as a miss so the next region and
+        // the public-feed top-up still get a chance.
+        if (payload.length > 0) return payload;
+      }
+    }
+    return [];
+  };
+  // Both reads start NOW and run concurrently — the awaited pair below waits
+  // for the slower of the two, not their sum.
+  const historyPromise = readHistory();
 
     // A live bid/ask is preferred for an executable setup. When a symbol is
     // available but its session is closed (common on Saturday/Sunday), use the
@@ -1307,10 +1336,14 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
       return { price };
     };
 
-    // Warm-up is only a fallback. Connected accounts get a signal from the
-    // fast path immediately; cold accounts still receive a bounded retry.
-    const { price } = await readMarketSnapshot();
-    let candles = await historyPromise;
+    // Quote + history resolve together (Promise.all) — the scan waits for the
+    // SLOWER of the two, not their sum. Every read is time-boxed, so a cold
+    // broker cannot stall the scan: the public feed takes over below.
+    const [{ price }, brokerCandles] = await Promise.all([
+      readMarketSnapshot(),
+      historyPromise.catch(() => [] as Candle[]),
+    ]);
+    let candles = brokerCandles;
     let usedPublicFeed = false;
 
     // When the broker returns neither a quote nor candle history (offline
@@ -1361,10 +1394,11 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     const priceAboveEma = close > ema21;
 
     // ── Confluence engine ─────────────────────────────────────────────
-    // A signal is only issued when INDEPENDENT evidence agrees. The old
-    // engine force-picked a direction when the filter was neutral — that
-    // fallback is exactly how losing signals happened, so it is gone: a
-    // conflicted market now reports NO TRADE and the trader waits.
+    // The scanner ALWAYS returns a direction — BUY or SELL, never "NO
+    // TRADE". The 7 confluence checks drive confidence; the dominant side
+    // of the bull/bear score drives the direction, and a rare exact tie
+    // falls back to RSI (above 50 = bullish), then the last candle's own
+    // direction, so every scan ends with an executable plan.
     const macroCloses = candles.map((item) => item.close);
     const macroFast = emaSeries(macroCloses, 21);
     const macroSlow = emaSeries(macroCloses, 50);
@@ -1423,17 +1457,14 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
     const bullScore = Object.values(bullChecks).filter(Boolean).length;
     const bearScore = Object.values(bearChecks).filter(Boolean).length;
 
-    // 6 of 7 confluences must agree — that is the bar for "accurate".
-    const CONFLUENCE_REQUIRED = 6;
-    let signal: ScannerAnalysis["signal"] = "NO TRADE";
-    let bias: ScannerAnalysis["bias"] = "NEUTRAL";
-    if (bullScore >= CONFLUENCE_REQUIRED && bullScore > bearScore) {
-      signal = "BUY";
-      bias = "BULLISH";
-    } else if (bearScore >= CONFLUENCE_REQUIRED && bearScore > bullScore) {
-      signal = "SELL";
-      bias = "BEARISH";
-    }
+    // Direction: the stronger confluence side wins. A rare exact tie is
+    // broken by RSI (above 50 = bullish), then by the latest candle's own
+    // direction — the scanner never answers "NO TRADE".
+    const tieBreakRsi =
+      rsiValue !== 50 ? rsiValue > 50 : (lastCandle?.close ?? close) >= (lastCandle?.open ?? close);
+    const bullishLead = bullScore > bearScore || (bullScore === bearScore && tieBreakRsi);
+    const signal: ScannerAnalysis["signal"] = bullishLead ? "BUY" : "SELL";
+    const bias: ScannerAnalysis["bias"] = bullishLead ? "BULLISH" : "BEARISH";
 
     const conditionalSetup = !hasLiveQuote;
 
@@ -1473,7 +1504,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 60 ? "strong bullish momentum" : rsiValue > 52 ? "mild bullish momentum" : rsiValue < 40 ? "strong bearish momentum" : rsiValue < 48 ? "mild bearish momentum" : "momentum neutral"}.`,
       );
       reasons.push(
-        `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression"}. Confluence: ${Math.max(bullScore, bearScore)}/7 — ${signal === "NO TRADE" ? "below the 6/7 bar, honest call is NO TRADE" : signal + " confirmed"}.`,
+        `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression"}. Confluence ${bullScore}–${bearScore} (bull–bear) — ${signal} leads the score.`,
       );
       reasons.push(
         `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level.`,
@@ -1492,11 +1523,9 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         `Limited history for ${symbol} — levels are built from live price and ATR fallbacks.`,
       );
     }
-    if (signal !== "NO TRADE") {
-      reasons.push(
-        `Plan: ${signal} at entry ${fmtPrice(entry)}, stop ${fmtPrice(stopLoss)}, target ${fmtPrice(takeProfit)} at 2R — the stop already covers the spread.`,
-      );
-    }
+    reasons.push(
+      `Plan: ${signal} at entry ${fmtPrice(entry)}, stop ${fmtPrice(stopLoss)}, target ${fmtPrice(takeProfit)} at 2R — the stop already covers the spread.`,
+    );
 
     const fmt = (value: number) =>
       value.toFixed(Math.abs(value) >= 1000 ? 2 : Math.abs(value) >= 10 ? 3 : 5);
@@ -1565,7 +1594,7 @@ export const getScannerAnalysis = createServerFn({ method: "POST" })
         candleCount: candles.length,
       },
     };
-  });
+}
 
 /* ------------------------------------------------------------------ */
 /* On-demand broker connection — credentials are saved ONCE (MetaApi   */

@@ -2,7 +2,9 @@
  * Offline confluence-engine test — synthetic candle series must yield:
  *   clean uptrend  → BUY
  *   clean downtrend→ SELL
- *   chop/neutral   → NO TRADE
+ *   chop/neutral   → a direction too (BUY or SELL) — the scanner never
+ *                    withholds a signal; the dominant score side wins and
+ *                    exact ties fall back to RSI then candle direction.
  * Mirrors the scanner's logic inline (same formulas). Run: bun scripts/test-scanner-engine.mjs
  */
 function emaSeries(values, period) {
@@ -69,10 +71,12 @@ function analyze(candles) {
   const bear = [!trendUp, !macroUp, !priceAboveEma, histogram < 0, rsiValue < 48 && rsiValue > 28, lowerHighs, bodyRatio >= 0.4];
   const bullScore = bull.filter(Boolean).length;
   const bearScore = bear.filter(Boolean).length;
-  const REQUIRED = 6;
-  if (bullScore >= REQUIRED && bullScore > bearScore) return { signal: "BUY", bullScore, bearScore, rsiValue, histogram };
-  if (bearScore >= REQUIRED && bearScore > bullScore) return { signal: "SELL", bullScore, bearScore, rsiValue, histogram };
-  return { signal: "NO TRADE", bullScore, bearScore, rsiValue, histogram };
+  // Mirror of the live engine: ALWAYS a direction. Dominant score side wins;
+  // an exact tie falls back to RSI (above 50 = bullish), then the last
+  // candle's own direction. No "NO TRADE" outcome exists.
+  const tieBreakRsi = rsiValue !== 50 ? rsiValue > 50 : (lastCandle?.close ?? close) >= (lastCandle?.open ?? close);
+  const bullishLead = bullScore > bearScore || (bullScore === bearScore && tieBreakRsi);
+  return { signal: bullishLead ? "BUY" : "SELL", bullScore, bearScore, rsiValue, histogram };
 }
 
 // ── Synthetic series (with pullbacks/noise so RSI stays in-band) ──────
@@ -124,6 +128,6 @@ console.log("chop     →", chopResult.signal, `(bull ${chopResult.bullScore}/7,
 let failed = 0;
 if (upResult.signal !== "BUY") { console.error("FAIL: uptrend should be BUY"); failed += 1; }
 if (downResult.signal !== "SELL") { console.error("FAIL: downtrend should be SELL"); failed += 1; }
-if (chopResult.signal !== "NO TRADE") { console.error("FAIL: chop should be NO TRADE"); failed += 1; }
-console.log(failed === 0 ? "RESULT: OK — confluence engine behaves correctly" : `RESULT: ${failed} failures`);
+if (chopResult.signal !== "BUY" && chopResult.signal !== "SELL") { console.error("FAIL: chop must still yield a direction"); failed += 1; }
+console.log(failed === 0 ? "RESULT: OK — engine always returns a direction" : `RESULT: ${failed} failures`);
 process.exit(failed === 0 ? 0 : 1);
