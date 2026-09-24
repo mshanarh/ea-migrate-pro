@@ -23,7 +23,7 @@ export const Route = createFileRoute("/app/home")({
     // Same gates the /app login view enforces — mirrors the Next.js
     // middleware pattern: no email → app login, unpaid → Whop checkout.
     const access = requireAppAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },
   head: () => ({

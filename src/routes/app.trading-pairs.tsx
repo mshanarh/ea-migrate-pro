@@ -12,7 +12,7 @@ export const Route = createFileRoute("/app/trading-pairs")({
     // Same gates the /app login view enforces: no email → app login,
     // unpaid → Whop checkout. Paid/admin emails pass through.
     const access = requireAppAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },
   head: () => ({

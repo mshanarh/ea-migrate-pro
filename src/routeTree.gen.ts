@@ -18,6 +18,7 @@ import { Route as SupportRouteImport } from './routes/support'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
 import { Route as AppHomeRouteImport } from './routes/app.home'
+import { Route as AppLoginRouteImport } from './routes/app.login'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
 import { Route as AppScannerRouteImport } from './routes/app.scanner'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
@@ -76,6 +77,11 @@ const AppActivateRoute = AppActivateRouteImport.update({
 const AppHomeRoute = AppHomeRouteImport.update({
   id: '/app/home',
   path: '/app/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppLoginRoute = AppLoginRouteImport.update({
+  id: '/app/login',
+  path: '/app/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppMetatraderRoute = AppMetatraderRouteImport.update({
@@ -158,6 +164,7 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
@@ -182,6 +189,7 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
@@ -208,6 +216,7 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
@@ -235,6 +244,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
@@ -259,6 +269,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
@@ -284,6 +295,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
     | '/app/scanner'
     | '/app/settings'
@@ -310,6 +322,7 @@ export interface RootRouteChildren {
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
   AppHomeRoute: typeof AppHomeRoute
+  AppLoginRoute: typeof AppLoginRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
   AppScannerRoute: typeof AppScannerRoute
   AppSettingsRoute: typeof AppSettingsRoute
@@ -381,6 +394,13 @@ declare module '@tanstack/react-router' {
       path: '/app/home'
       fullPath: '/app/home'
       preLoaderRoute: typeof AppHomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/login': {
+      id: '/app/login'
+      path: '/app/login'
+      fullPath: '/app/login'
+      preLoaderRoute: typeof AppLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/metatrader': {
@@ -521,6 +541,7 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
   AppHomeRoute: AppHomeRoute,
+  AppLoginRoute: AppLoginRoute,
   AppMetatraderRoute: AppMetatraderRoute,
   AppScannerRoute: AppScannerRoute,
   AppSettingsRoute: AppSettingsRoute,
