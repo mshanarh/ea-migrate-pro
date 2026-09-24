@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
 import { motion } from "framer-motion";
-import { BrandLogo } from "@/components/BrandLogo";
 import {
   ArrowLeftRight,
   BarChart3,
@@ -53,7 +52,9 @@ const sections: { label?: string; items: NavItem[] }[] = [
 ];
 
 function BrandMark({ size = "size-9" }: { size?: string }) {
-  return <BrandLogo className={`${size} shrink-0 rounded-full object-cover`} />;
+  return (
+    <img src="/ea-migrate-pro-icon.png" alt="EA Migrate Pro" className={`${size} shrink-0 rounded-full object-contain`} />
+  );
 }
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -10,13 +10,12 @@ import {
 } from "@/components/ui/dialog";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
-import { BrandLogo } from "@/components/BrandLogo";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { activateKey, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
-import { executeLiveTradeOnDemand } from "@/lib/metaapi";
+import { executeLiveTrade } from "@/lib/metaapi";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -114,7 +113,9 @@ function WelcomeMaster() {
         className="absolute inset-0"
         style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
       />
-      <BrandLogo
+      <img
+        src="/ea-migrate-pro-icon.png"
+        alt=""
         className="relative size-24 rounded-[24px] object-cover"
         style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
       />
@@ -135,7 +136,6 @@ function WelcomeMaster() {
 }
 
 function AppHome() {
-  const navigate = useNavigate();
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -188,28 +188,24 @@ function AppHome() {
     if (!app.mt?.mcAccountId) return;
     const firstPair = robot.pairs?.[0];
     const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
-    // On-demand connection: the broker link opens for this order, is verified,
-    // fires the trade, and is closed again — nothing stays connected.
-    void executeLiveTradeOnDemand({
+    void executeLiveTrade({
       data: {
         accountId: app.mt.mcAccountId,
         eaName: robot.name,
         symbol,
         direction: "BUY",
         lotSize: String(firstPair?.lotSize ?? 0.01),
-        ...(app.mt.environment ? { region: app.mt.environment } : {}),
-        tradeCount: 1,
       },
     })
       .then((result) => {
-        if (!result.ok) console.warn("[start] on-demand execution skipped:", result.message);
+        if (!result.ok) console.warn("[start] live execution skipped:", result.message);
       })
       .catch(() => {});
   };
 
   const handleQuotes = () => {
     if (!robot) return;
-    navigate({ to: "/app/trading-pairs" });
+    toast.info(`Quotes for ${robot.name} are on the way.`);
   };
 
   const handleRemove = () => {

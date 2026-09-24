@@ -86,6 +86,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
       { name: "apple-mobile-web-app-capable", content: "yes" },
       { name: "apple-mobile-web-app-status-bar-style", content: "black-translucent" },
       { name: "apple-mobile-web-app-title", content: "EA Migrate Pro" },
+      { name: "application-name", content: "EA Migrate Pro" },
       { title: "EA Migrate Pro — Build Custom Forex EAs" },
       {
         name: "description",
@@ -93,7 +94,21 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
           "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
       },
       { property: "og:type", content: "website" },
+      { property: "og:site_name", content: "EA Migrate Pro" },
+      { property: "og:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
+      {
+        property: "og:description",
+        content: "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
+      },
+      { property: "og:image", content: "/ea-migrate-pro-icon.png" },
+      { property: "og:image:alt", content: "EA Migrate Pro robot logo" },
       { name: "twitter:card", content: "summary_large_image" },
+      { name: "twitter:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
+      {
+        name: "twitter:description",
+        content: "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
+      },
+      { name: "twitter:image", content: "/ea-migrate-pro-icon.png" },
     ],
     links: [
       {
@@ -101,14 +116,14 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         href: appCss,
       },
       { rel: "manifest", href: "/manifest.webmanifest" },
-      { rel: "apple-touch-icon", href: "/ea-migrate-platform-robot.png" },
+      { rel: "apple-touch-icon", href: "/ea-migrate-pro-icon.png" },
       { rel: "preconnect", href: "https://fonts.googleapis.com" },
       { rel: "preconnect", href: "https://fonts.gstatic.com", crossOrigin: "anonymous" },
       {
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=DM+Sans:wght@400;500&display=swap",
       },
-      { rel: "icon", href: "/ea-migrate-platform-robot.png", type: "image/png" },
+      { rel: "icon", href: "/ea-migrate-pro-icon.png", type: "image/png" },
     ],
   }),
 

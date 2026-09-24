@@ -1,5 +1,4 @@
 import { Link } from "@tanstack/react-router";
-import { BrandLogo } from "@/components/BrandLogo";
 
 export function AuthShell({
   active,
@@ -29,7 +28,11 @@ export function AuthShell({
             to="/"
             className="flex size-20 items-center justify-center rounded-3xl border border-[#38BDF8]/25 bg-[#0f1820] p-1 shadow-[0_0_36px_rgb(0_168_255_/_0.28)] transition-transform duration-300 hover:scale-105"
           >
-            <BrandLogo className="size-full rounded-[1.35rem] object-cover" />
+            <img
+              src="/ea-migrate-pro-icon.png"
+              alt="EA Migrate Pro"
+              className="size-full rounded-[1.35rem] object-cover"
+            />
           </Link>
           <h1 className="mt-6 text-4xl font-bold tracking-tight text-white">
             EA <span className="text-[#38BDF8]">Migrate</span> Pro

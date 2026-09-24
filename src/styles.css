@@ -13,7 +13,7 @@
 
 /* Keep legacy admin markup on the transparent platform logo during upgrades. */
 img[src="/ea-migrate-platform-robot.jpg"] {
-  content: url("/ea-migrate-platform-robot.png");
+  content: url("/ea-migrate-pro-icon.png");
   object-fit: contain;
 }
 

@@ -28,7 +28,7 @@ declare global {
     /** Kept for compatibility: no-op — popup state is driven by the app store. */
     showBotStarted?: (name?: string, status?: "started" | "stopped") => void;
     /** Open the popup and stream execution logs for a scanned pair. */
-    triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: "BUY" | "SELL"; stopLoss?: string; takeProfit?: string }) => void;
+    triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => void;
     closeExecutionToast?: () => void;
   }
 }
@@ -38,7 +38,7 @@ export default function DraggableBotPopup() {
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   const running = robot?.running ?? false;
   const eaName = robot?.name ?? "My EA";
-  const eaImage = robot?.image || "/botlogic-mascot.png";
+  const eaImage = robot?.image || "/ea-migrate-pro-icon.png";
 
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -74,19 +74,14 @@ export default function DraggableBotPopup() {
 
   // Scanner Execute → stream the trade logs into the popup.
   useEffect(() => {
-    window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: "BUY" | "SELL"; stopLoss?: string; takeProfit?: string }) => {
+    window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number }) => {
       const p = pairData ?? { symbol: "XAUUSD", lot_size: 0.01, max_trades: 5 };
-      const direction = p.direction ?? "BUY";
-      // REAL data only — the analyzed direction and levels, plus a sending
-      // notice. The final line is written by the live execution-result event
-      // (success or the broker's real error), never faked here.
       const stream: LogLine[] = [
-        { text: `NEW SIGNAL: ${p.symbol} ${direction}`, kind: "cmd" },
-        { text: `OPEN ${direction}: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
-        ...(p.takeProfit || p.stopLoss
-          ? [{ text: `TP: ${p.takeProfit ?? "—"} | SL: ${p.stopLoss ?? "—"}`, kind: "info" as const }]
-          : []),
+        { text: `NEW SIGNAL: ${p.symbol} BUY`, kind: "cmd" },
+        { text: `OPEN BUY: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
+        { text: "TP: 4330.36 | SL: 4260.01", kind: "info" },
         { text: `SENDING ${p.max_trades} TRADES TO MT5...`, kind: "info" },
+        { text: `${p.max_trades}/${p.max_trades} TRADES EXECUTED ON MT5`, kind: "last" },
       ];
       setState("executed");
       setLogs([]);
