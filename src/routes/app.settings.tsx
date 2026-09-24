@@ -1,5 +1,5 @@
 import { useRef, useState, type ReactNode } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
 import { Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
@@ -9,6 +9,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
+import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess } from "@/lib/app-store";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
 import {
@@ -25,6 +26,13 @@ import {
 
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
+  beforeLoad: () => {
+    // Same gates the /app login view enforces: no email → app login,
+    // unpaid → Whop checkout. Paid/admin emails pass through.
+    const access = requireAppAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app" });
+    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+  },
   head: () => ({
     meta: [
       { title: "Settings — EA Migrate Pro" },
@@ -331,8 +339,8 @@ function AppLogoSection() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
-        <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-black/60">
-          <BrandLogo className="size-full object-cover" />
+        <span className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-white/15 bg-white/10">
+          <BrandLogo className="size-full object-contain" />
         </span>
         <div className="min-w-0">
           <p className="text-sm font-bold">

@@ -26,12 +26,12 @@ export function AuthShell({
         <div className="flex flex-col items-center text-center">
           <Link
             to="/"
-            className="flex size-20 items-center justify-center rounded-3xl border border-[#38BDF8]/25 bg-[#0f1820] p-1 shadow-[0_0_36px_rgb(0_168_255_/_0.28)] transition-transform duration-300 hover:scale-105"
+            className="flex size-20 items-center justify-center rounded-3xl border border-[#38BDF8]/25 bg-white/5 p-2 shadow-[0_0_36px_rgb(0_168_255_/_0.28)] transition-transform duration-300 hover:scale-105"
           >
             <img
               src="/ea-migrate-pro-icon.png"
               alt="EA Migrate Pro"
-              className="size-full rounded-[1.35rem] object-cover"
+              className="size-full object-contain"
             />
           </Link>
           <h1 className="mt-6 text-4xl font-bold tracking-tight text-white">

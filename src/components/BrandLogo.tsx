@@ -11,6 +11,11 @@ import { loadImageUrl } from "@/lib/media-store";
  *   shown everywhere, instantly, on this device.
  * - Otherwise the built-in mascot renders, so nothing ever looks broken.
  * - Also keeps the browser tab icon in sync with whatever is displayed.
+ *
+ * Rendering: the logo renders BARE (plain <img>, no background chip). The
+ * mascot PNG is fully transparent — any dark box behind it shows as a black
+ * square "stuck" to the logo. Callers decide the fit (object-cover /
+ * object-contain) through className, exactly like a plain image.
  */
 
 export function BrandLogo({
@@ -59,5 +64,13 @@ export function BrandLogo({
     applyFavicon(errored ? null : customUrl);
   }, [customUrl, errored]);
 
-  return <img src={src} alt={alt} className={className} style={style} onError={() => setErrored(true)} />;
+  return (
+    <img
+      src={src}
+      alt={alt}
+      className={className}
+      style={style}
+      onError={() => setErrored(true)}
+    />
+  );
 }

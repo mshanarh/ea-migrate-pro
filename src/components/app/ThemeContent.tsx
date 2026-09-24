@@ -136,7 +136,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className="flex size-52 items-center justify-center rounded-full border-4 bg-black p-1.5"
+          className="flex size-52 items-center justify-center rounded-full border-4 bg-white/10 p-2"
           style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}59` }}
         >
           <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
@@ -271,8 +271,8 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
             >
               <MessageCircle className="size-5" />
             </button>
-            <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-black/55 backdrop-blur-sm">
-              <img src="/ea-migrate-pro-icon.png" alt="EA Migrate Pro" className="size-full rounded-full object-contain" />
+            <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm">
+              <img src="/ea-migrate-pro-icon.png" alt="EA Migrate Pro" className="size-full object-contain" />
               <span className="absolute -bottom-0.5 left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-black bg-[#22C55E]" />
             </span>
           </div>

@@ -251,7 +251,7 @@ function AdminConsole() {
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-2 px-4">
           <Link to="/" className="flex min-w-0 items-center gap-2">
             <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-primary/15 glow-ring">
-              <BrandLogo className="size-full object-cover object-[50%_18%]" />
+              <BrandLogo className="size-full object-contain" />
             </span>
             <span className="truncate text-sm font-bold uppercase sm:text-base">
               EA <span className="text-primary">Migrate</span> Admin

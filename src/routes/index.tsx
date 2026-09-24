@@ -253,8 +253,8 @@ function LandingChatbot() {
           </form>
         </div>
       )}
-      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-black p-1 shadow-[0_0_28px_rgba(37,99,235,.55)]">
-        <img src="/ea-migrate-pro-icon.png" alt="" className="size-full rounded-full object-contain" />
+      <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-white/5 p-1.5 shadow-[0_0_28px_rgba(37,99,235,.55)] backdrop-blur-sm">
+        <img src="/ea-migrate-pro-icon.png" alt="" className="size-full object-contain" />
         <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
         <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
       </motion.button>
