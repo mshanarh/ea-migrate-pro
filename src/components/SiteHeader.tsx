@@ -22,7 +22,7 @@ export function SiteHeader() {
           <img
             src="/logo.svg"
             alt="EA Migrate Pro"
-            className="size-10 min-w-[32px] shrink-0 object-contain"
+            className="size-12 min-w-[40px] shrink-0 object-contain"
           />
           <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span> Pro

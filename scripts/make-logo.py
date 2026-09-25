@@ -22,8 +22,8 @@ GREEN = (46, 90, 11, 255)  # #2E5A0B
 
 S = 4  # supersample factor for smooth antialiased edges
 INNER = 1024.0  # coordinate space of the mark itself
-MARGIN = 40.0  # breathing room inside the final canvas
-SIZE = int(INNER + MARGIN * 2)  # 1104 logical units
+MARGIN = 12.0  # tiny breathing room — the mark fills the canvas so it never renders small
+SIZE = int(INNER + MARGIN * 2)  # 1048 logical units
 
 
 def mirror(points):
@@ -83,8 +83,19 @@ def main():
     poly(left)
     poly(right)
 
-    # Antialiased masters
-    master = big.resize((SIZE, SIZE), Image.LANCZOS)  # 1104
+    # Antialiased master, then TIGHT-CROP to the ink so the mark fills the
+    # whole canvas (a padded canvas renders the logo visually small).
+    master = big.resize((SIZE, SIZE), Image.LANCZOS)
+    ink = master.split()[3].getbbox()
+    pad = 10  # hairline of transparency so edges never touch the frame
+    l, t, r, b = ink
+    l, t = max(0, l - pad), max(0, t - pad)
+    r, b = min(SIZE, r + pad), min(SIZE, b + pad)
+    side = max(r - l, b - t)  # square canvas, mark centered
+    cx, cy = (l + r) // 2, (t + b) // 2
+    half = side // 2
+    box = (cx - half, cy - half, cx + half, cy + half)
+    master = master.crop(box)
     logo = master.resize((1024, 1024), Image.LANCZOS)
     favicon = master.resize((512, 512), Image.LANCZOS)
 
@@ -93,13 +104,17 @@ def main():
     favicon.save("public/favicon.png")
 
     # True vector SVG (same coordinates as the raster, exact brand green).
+    # The viewBox mirrors the raster's tight square crop so the SVG renders
+    # exactly as large as the PNG at equal CSS size.
+    # SVG viewBox wants "minX minY width height" — box holds (l, t, r, b).
+    svg_box = f"{int(box[0])} {int(box[1])} {int(box[2] - box[0])} {int(box[3] - box[1])}"
     def path_of(points):
         d = f"M {MARGIN + points[0][0]:.0f} {MARGIN + points[0][1]:.0f} "
         d += " ".join(f"L {MARGIN + x:.0f} {MARGIN + y:.0f}" for x, y in points[1:])
         return d + " Z"
 
     svg = (
-        '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1104 1104">'
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="{svg_box}">'
         f'<path fill="#2E5A0B" d="{path_of(left)}"/>'
         f'<path fill="#2E5A0B" d="{path_of(right)}"/>'
         "</svg>\n"
