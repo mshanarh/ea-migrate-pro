@@ -3,10 +3,25 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { getAppState, requireAppAccess, useAppState, WHOP_CHECKOUT_URL } from "@/lib/app-store";
-import { getUserByEmail } from "@/lib/supabase-users";
+import { OWNER_EMAILS } from "@/lib/auth-store";
+import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
 import { supabaseConfigured } from "@/lib/supabase";
 import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin, adminSetUserPaid } from "@/lib/supabase.server";
 import type { UserRow } from "@/lib/supabase";
+
+/**
+ * Run a server function, falling back to the direct anon-key call when the
+ * server side is unreachable — production builds this app as a STATIC Vite
+ * site where TanStack Start server functions do not exist (the fetch 404s
+ * and throws). The anon fallbacks keep the admin page fully working there.
+ */
+async function withAnonFallback<T>(serverCall: () => Promise<T>, anonCall: () => Promise<T>): Promise<T> {
+  try {
+    return await serverCall();
+  } catch {
+    return anonCall();
+  }
+}
 
 export const Route = createFileRoute("/app/admin")({
   ssr: false,
@@ -40,7 +55,13 @@ function AppAdmin() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const result = await adminListUsers();
+    const result = await withAnonFallback(
+      () => adminListUsers(),
+      async () => {
+        const anon = await listUsersAnon();
+        return { enabled: supabaseConfigured, users: anon.users, ...(anon.error ? { error: anon.error } : {}) };
+      },
+    );
     if (result.enabled && !result.error) {
       setUsers(result.users);
       setError(null);
@@ -70,7 +91,10 @@ function AppAdmin() {
 
   const setPaid = async (user: UserRow, value: boolean) => {
     setBusyEmail(user.email);
-    const result = await adminSetUserPaid({ data: { email: user.email, value } });
+    const result = await withAnonFallback(
+      () => adminSetUserPaid({ data: { email: user.email, value } }),
+      () => setUserFlagAnon(user.email, { is_paid: value }),
+    );
     setBusyEmail(null);
     if (!result.ok) {
       toast.error(result.error ?? "Could not update user");
@@ -82,7 +106,10 @@ function AppAdmin() {
 
   const setAdmin = async (user: UserRow, value: boolean) => {
     setBusyEmail(user.email);
-    const result = await adminSetUserAdmin({ data: { email: user.email, value } });
+    const result = await withAnonFallback(
+      () => adminSetUserAdmin({ data: { email: user.email, value } }),
+      () => setUserFlagAnon(user.email, { is_admin: value }),
+    );
     setBusyEmail(null);
     if (!result.ok) {
       toast.error(result.error ?? "Could not update user");
@@ -201,7 +228,14 @@ function OwnerBootstrap({ email, onClaimed }: { email: string | null; onClaimed:
   if (!email) return null;
   const claim = async () => {
     setBusy(true);
-    const result = await adminClaimFirstAdmin({ data: { email } });
+    const result = await withAnonFallback(
+      () => adminClaimFirstAdmin({ data: { email } }),
+      async () => {
+        if (!OWNER_EMAILS.includes(email.toLowerCase())) return { ok: false, error: "Only the platform owner can bootstrap the first admin" };
+        if ((await countAdminsAnon()) > 0) return { ok: false, error: "An admin already exists" };
+        return setUserFlagAnon(email, { is_admin: true });
+      },
+    );
     setBusy(false);
     if (!result.ok) {
       toast.error(result.error ?? "Could not claim admin");

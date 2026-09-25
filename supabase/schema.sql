@@ -72,10 +72,15 @@ create policy "anon can read sessions"
   on public.user_sessions for select to anon, authenticated
   using (true);
 
--- ── OPTIONAL: fully open write mode (no server functions needed) ──
--- Uncomment to let the admin page's Approve / Make Admin buttons work
--- straight from the browser with just the anon key. Less safe.
+-- ── Admin flag updates from the browser (anon key) ──────────────────────
+-- Production builds this app as a STATIC site where the server functions
+-- do not exist, so the admin page's Approve / Make Admin buttons fall back
+-- to direct anon-key updates. Registration still cannot grant itself
+-- privileges: the insert policy above forces new rows to unpaid/non-admin.
 --
--- create policy "anon can update users"
---   on public.users for update to anon, authenticated
---   using (true) with check (true);
+-- NOTE: this means the anon key can flip paid/admin flags by design —
+-- that is the user's chosen "never block the admin page" trade-off.
+-- Tighten later with Supabase Auth claims if the project outgrows it.
+create policy "anon can update users"
+  on public.users for update to anon, authenticated
+  using (true) with check (true);

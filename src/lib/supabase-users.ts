@@ -99,3 +99,48 @@ export async function getUserByEmail(email: string): Promise<UserRow | null> {
     .maybeSingle();
   return (data as UserRow | null) ?? null;
 }
+
+/*
+ * ── Static-host fallbacks ────────────────────────────────────────────────
+ * Freebuff/production builds this app as a STATIC Vite site, where TanStack
+ * Start server functions do not exist — every adminListUsers/adminSet* call
+ * would fail at the network level. RLS lets the anon key read all users and
+ * (with the schema's update policy) flip the is_paid / is_admin flags, so
+ * the admin page falls back to these direct browser calls whenever a server
+ * function is unreachable. They are also the natural no-service-role path.
+ */
+
+/** Admin list straight from the browser with the anon key. */
+export async function listUsersAnon(): Promise<{ users: UserRow[]; error?: string }> {
+  const dbClient = db();
+  if (!dbClient) return { users: [], error: "Supabase is not configured" };
+  const { data, error } = await dbClient
+    .from("users")
+    .select("id, email, is_paid, is_admin, created_at")
+    .order("created_at", { ascending: false })
+    .limit(500);
+  if (error) return { users: [], error: error.message };
+  return { users: (data ?? []) as UserRow[] };
+}
+
+/** Flip is_paid / is_admin for one email straight from the browser. */
+export async function setUserFlagAnon(
+  email: string,
+  patch: { is_paid?: boolean; is_admin?: boolean },
+): Promise<{ ok: boolean; error?: string }> {
+  const dbClient = db();
+  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+  const { error } = await dbClient.from("users").update(patch).eq("email", clean(email));
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
+/** Count current admins straight from the browser (for owner bootstrap). */
+export async function countAdminsAnon(): Promise<number> {
+  const dbClient = db();
+  if (!dbClient) return 0;
+  const { count } = await dbClient
+    .from("users")
+    .select("email", { count: "exact", head: true })
+    .eq("is_admin", true);
+  return count ?? 0;
+}
