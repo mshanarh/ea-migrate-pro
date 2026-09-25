@@ -25,7 +25,6 @@ import {
 } from "@/lib/app-customization";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
-import { NewsSection } from "@/components/app/NewsSection";
 import { Newspaper } from "lucide-react";
 
 /**
@@ -250,15 +249,10 @@ export function CustomizationPanel() {
 
         <PillRow
           icon={<Newspaper className="size-5" />}
-          label="News & Predictions"
+          label="Fundamentals"
           accent={accent}
-          open={openSection === "news"}
-          onToggle={() => toggle("news")}
-        >
-          {/* Upcoming market news with forecast, prediction and an Execute
-              button that reveals the predicted trade direction + pairs. */}
-          <NewsSection accent={accent} />
-        </PillRow>
+          to="/app/fundamentals"
+        />
       </div>
 
       <div className="border-t border-white/10 px-5 py-5 text-center">
