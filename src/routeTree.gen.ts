@@ -13,6 +13,7 @@ import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as MigrateRouteImport } from './routes/migrate'
+import { Route as NewsRouteImport } from './routes/news'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SupportRouteImport } from './routes/support'
@@ -55,6 +56,11 @@ const DashboardRoute = DashboardRouteImport.update({
 const MigrateRoute = MigrateRouteImport.update({
   id: '/migrate',
   path: '/migrate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewsRoute = NewsRouteImport.update({
+  id: '/news',
+  path: '/news',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -178,6 +184,7 @@ export interface FileRoutesByFullPath {
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
@@ -206,6 +213,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
@@ -236,6 +244,7 @@ export interface FileRoutesById {
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
@@ -267,6 +276,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/dashboard'
     | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
@@ -295,6 +305,7 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
@@ -324,6 +335,7 @@ export interface FileRouteTypes {
     | '/admin'
     | '/dashboard'
     | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
@@ -354,6 +366,7 @@ export interface RootRouteChildren {
   AdminRoute: typeof AdminRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   MigrateRoute: typeof MigrateRoute
+  NewsRoute: typeof NewsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
   SupportRoute: typeof SupportRoute
@@ -398,6 +411,13 @@ declare module '@tanstack/react-router' {
       path: '/migrate'
       fullPath: '/migrate'
       preLoaderRoute: typeof MigrateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/news': {
+      id: '/news'
+      path: '/news'
+      fullPath: '/news'
+      preLoaderRoute: typeof NewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -597,6 +617,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRoute: AdminRoute,
   DashboardRoute: DashboardRouteWithChildren,
   MigrateRoute: MigrateRoute,
+  NewsRoute: NewsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
   SupportRoute: SupportRoute,

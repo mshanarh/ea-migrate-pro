@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import {
   CalendarDays,
   ChevronLeft,
@@ -7,16 +7,21 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
 import { fetchUpcomingNews, type NewsEvent } from "@/lib/news.server";
 
 export const Route = createFileRoute("/app/fundamentals")({
   ssr: false,
   beforeLoad: () => {
-    const access = requireAppAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    try {
+      const access = requireAppAccess(getAppState().email);
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    } catch (error) {
+      // A gated redirect is normal control flow; anything else must never
+      // take the whole page down — the calendar renders for everyone.
+      if (error && typeof error === "object" && "href" in error) throw error;
+    }
   },
   head: () => ({
     meta: [
@@ -24,8 +29,50 @@ export const Route = createFileRoute("/app/fundamentals")({
       { name: "description", content: "This week's economic calendar with live market sessions." },
     ],
   }),
+  /**
+   * Route-level boundary: even if the chunk, the feed or anything inside
+   * blows up, this page shows a usable fallback — never the app-wide
+   * "This page didn't load" crash screen.
+   */
+  errorComponent: FundamentalsErrorFallback,
   component: FundamentalsPage,
 });
+
+/** Friendly in-page fallback with the live Investing.com widget. */
+function FundamentalsErrorFallback() {
+  const [retrying, setRetrying] = useState(false);
+  return (
+    <div className="app-shell-locked min-h-screen w-full overflow-y-auto bg-[#0a0a0a] pb-28 text-white">
+      <p className="pt-10 text-center text-[15px] font-bold uppercase tracking-[0.35em] text-white/90">FUNDAMENTALS</p>
+      <p className="mt-2 text-center text-[15px] text-white/55">This week's economic calendar</p>
+      <main className="mx-auto w-full max-w-md px-5">
+        <div className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+          Calendar temporarily unavailable — check ForexFactory.com. The live calendar below still works:
+        </div>
+        <div className="mt-4 overflow-hidden rounded-2xl border border-white/10">
+          <iframe
+            src="https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&features=datepicker,timezone&countries=25,32,6,37,72,22,17,39,14,10,35,43,56,36,110,11,26,12,4,5&calType=week&timeZone=8&lang=1"
+            width="100%"
+            height="600"
+            title="Economic calendar"
+            style={{ border: 0, background: "#0a0a0a" }}
+          />
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setRetrying(true);
+            window.location.reload();
+          }}
+          className="mx-auto mt-5 flex h-12 items-center justify-center gap-2 rounded-full bg-white/12 px-6 text-sm font-bold text-white"
+        >
+          <RefreshCw className={`size-4 ${retrying ? "animate-spin" : ""}`} /> Try again
+        </button>
+      </main>
+      <FixedBottomNav />
+    </div>
+  );
+}
 
 /* ------------------------------------------------------------------ */
 /* Market sessions — real forex hours (GMT), glow + countdown          */
@@ -265,11 +312,7 @@ function toCalendarRows(events: NewsEvent[]): CalEvent[] {
 /* ------------------------------------------------------------------ */
 
 function FundamentalsPage() {
-  const navigate = useNavigate();
   const app = useAppState();
-  const { color } = useCustomization();
-  const accent = accentColorValue(color);
-  const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
   const [now, setNow] = useState(() => new Date());
   const [events, setEvents] = useState<CalEvent[] | null>(null);
@@ -289,10 +332,15 @@ function FundamentalsPage() {
   const load = async () => {
     const seq = ++loadSeq.current;
     setRefreshing(true);
+    // The feed is fetched through the server function (no CORS on the source).
+    // EVERY failure path lands on the mock week — the page must never crash
+    // and never show an error screen just because the calendar API is down.
     try {
       const result = await fetchUpcomingNews();
       if (loadSeq.current !== seq) return;
-      const rows = result.events.length > 0 ? toCalendarRows(result.events) : mockWeek();
+      const rows = result && Array.isArray(result.events) && result.events.length > 0
+        ? toCalendarRows(result.events)
+        : mockWeek();
       setEvents(rows);
     } catch {
       if (loadSeq.current !== seq) return;
@@ -353,6 +401,12 @@ function FundamentalsPage() {
     }
     return groups;
   }, [filtered]);
+
+  // Both the live feed and the mock build failed — show the live widget
+  // instead of an empty or broken page. Never a crash screen.
+  if (events === null && !loading) {
+    return <FundamentalsErrorFallback />;
+  }
 
   return (
     <div className="app-shell-locked min-h-screen w-full overflow-y-auto bg-[#0a0a0a] pb-28 text-white">
