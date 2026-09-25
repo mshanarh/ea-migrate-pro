@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
+    "build:static": "vite build && cp -r .vercel/output/static dist && cp dist/static/_shell.html dist/index.html",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",
     "lint": "eslint .",

@@ -27,6 +27,11 @@ export default defineConfig({
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this
     server: { entry: "server" },
+    // Static production hosting (Freebuff) runs no Node server, so the SSR
+    // build emitted no index.html and every URL 404ed. SPA mode pre-renders
+    // a shell at build time; the app then hydrates and routes client-side.
+    // Dev/preview SSR is unaffected.
+    spa: { enabled: true },
   },
   nitro: {
     // Production deploys run on Vercel (Build Output API): the app is full-stack
