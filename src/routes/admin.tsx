@@ -37,6 +37,7 @@ import {
   type AdminPatch,
   type PublicAccount,
 } from "@/lib/account-sync.server";
+import { supabaseConfigured } from "@/lib/supabase";
 import { BrandLogo } from "@/components/BrandLogo";
 
 export const Route = createFileRoute("/admin")({
@@ -258,9 +259,13 @@ function AdminConsole() {
             </span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            {cloud.enabled ? (
-              <span className="hidden sm:block">
-                <LiveBadge enabled />
+            {supabaseConfigured ? (
+              <span className="hidden items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300 md:flex">
+                <span className="relative flex size-2">
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
+                </span>
+                SYNCED — Supabase connected
               </span>
             ) : (
               <span className="hidden rounded-full border border-amber-400/30 bg-amber-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-amber-300 md:block">
@@ -291,13 +296,14 @@ function AdminConsole() {
           activation records.
         </p>
 
-        {!cloud.enabled && (
+        {!supabaseConfigured && (
           <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
             <p className="font-bold uppercase tracking-wide text-amber-300">Local-only mode</p>
             <p className="mt-1 leading-relaxed">
-              No shared registration store is connected, so approvals are saved on{" "}
-              <strong>this device only</strong>. Approve from the same phone/browser you use every
-              time — or ask the workspace owner to connect Upstash Redis (Settings → Environment) to
+              Supabase is not connected, so approvals are saved on{" "}
+              <strong>this device only</strong>. Ask the workspace owner to add{" "}
+              <span className="font-mono">VITE_SUPABASE_URL</span> and{" "}
+              <span className="font-mono">VITE_SUPABASE_ANON_KEY</span> (Settings → Environment) to
               sync every device live.
             </p>
           </div>
@@ -702,18 +708,4 @@ function MiniStat({
 
 function knownLocally(mentor: AdminViewAccount): boolean {
   return mentor.id.startsWith("m-") && Number.isFinite(Number(mentor.id.slice(2)));
-}
-
-/** Small pulsing badge showing that live cross-device sync is active. */
-function LiveBadge({ enabled }: { enabled: boolean }) {
-  if (!enabled) return null;
-  return (
-    <span className="flex items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.18em] text-emerald-300">
-      <span className="relative flex size-2">
-        <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-        <span className="relative inline-flex size-2 rounded-full bg-emerald-400" />
-      </span>
-      Live sync
-    </span>
-  );
 }

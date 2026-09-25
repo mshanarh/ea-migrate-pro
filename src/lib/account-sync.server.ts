@@ -1,43 +1,58 @@
 import { createServerFn } from "@tanstack/react-start";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { MENTOR_ONLY_EMAILS, OWNER_EMAILS, type Account, type PaymentRecord, type PortalStatus } from "@/lib/auth-store";
 
 /**
  * Shared cloud account sync — makes registrations visible on the admin page
- * in near-real time across ALL devices.
+ * in near-real time across ALL devices. Powered by SUPABASE ONLY (the
+ * Upstash/Redis layer was removed entirely).
  *
  * Why: auth-store lives in each device's localStorage, so a person registering
  * on their phone never appeared on the admin's phone. These server functions
- * (this stack's edge functions) mirror account records into an Upstash Redis
- * instance, and the admin console polls them every ~3 seconds.
+ * mirror account records, approvals, payments, MT5 records and EA video
+ * backups into Supabase tables, and the admin console polls them every
+ * ~3 seconds.
  *
- * Everything is env-gated: with no KV credentials set, every function returns
- * { enabled: false } and the app keeps working exactly as before (offline
- * localStorage behaviour). Set these in hosting env settings:
- *   UPSTASH_REDIS_REST_URL   (or KV_REST_API_URL)
- *   UPSTASH_REDIS_REST_TOKEN (or KV_REST_API_TOKEN)
+ * Everything is env-gated: with no Supabase credentials set, every function
+ * returns { enabled: false } and the app keeps working exactly as before
+ * (offline localStorage behaviour). Set these in hosting env settings:
+ *   SUPABASE_URL (or VITE_SUPABASE_URL)
+ *   SUPABASE_SERVICE_ROLE_KEY — server-side only; bypasses RLS
  *
  * Security model:
  * - `password` NEVER leaves the server. List responses strip it; sign-in
  *   verification happens server-side.
  * - Admin mutations require the caller's email to belong to an admin-role
  *   account stored in the cloud store.
+ * - The service-role key exists only in these server functions, never in
+ *   the browser bundle.
+ *
+ * Tables (see supabase/schema.sql):
+ *   portal_accounts  — full mentor/admin records as jsonb (licenses, EAs…)
+ *   mentor_approvals — email pk, status (pending/approved/rejected), created_at
+ *   portal_payments  — email pk, paid, paid_at
+ *   mt5_accounts     — user_id pk, connection metadata jsonb (no MT5 password
+ *                      leaves the server)
+ *   ea_videos        — video_id pk, data_url (uploaded video backup)
  */
 
-const ACCOUNTS_KEY = "eamp:accounts";
-const PAYMENTS_KEY = "eamp:payments";
+const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
+const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
 
-function restUrl(): string | null {
-  const url = (process.env["UPSTASH_REDIS_REST_URL"] ?? process.env["KV_REST_API_URL"] ?? "").trim();
-  return url.length > 0 ? url.replace(/\/+$/, "") : null;
-}
+let cachedClient: SupabaseClient | null = null;
 
-function restToken(): string | null {
-  const token = (process.env["UPSTASH_REDIS_REST_TOKEN"] ?? process.env["KV_REST_API_TOKEN"] ?? "").trim();
-  return token.length > 0 ? token : null;
+function db(): SupabaseClient | null {
+  if (!SUPABASE_URL || !SERVICE_ROLE) return null;
+  if (!cachedClient) {
+    cachedClient = createClient(SUPABASE_URL, SERVICE_ROLE, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+  }
+  return cachedClient;
 }
 
 export function cloudSyncConfigured(): boolean {
-  return restUrl() !== null && restToken() !== null;
+  return db() !== null;
 }
 
 /**
@@ -73,27 +88,6 @@ function enforceRoles(account: Account): Account {
   return account;
 }
 
-type PipelineResult = { result?: unknown; error?: string | null };
-
-/** Runs Redis commands via the REST pipeline endpoint. Returns null when not configured. */
-async function pipeline(commands: (string | number)[][]): Promise<PipelineResult[] | null> {
-  const url = restUrl();
-  const token = restToken();
-  if (!url || !token) return null;
-  try {
-    const response = await fetch(`${url}/pipeline`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(commands),
-    });
-    if (!response.ok) return null;
-    const payload = (await response.json()) as PipelineResult[];
-    return Array.isArray(payload) ? payload : null;
-  } catch {
-    return null;
-  }
-}
-
 function parseAccount(raw: unknown): Account | null {
   if (typeof raw !== "string" || raw.length === 0) return null;
   try {
@@ -111,6 +105,70 @@ export type PublicAccount = Omit<Account, "password">;
 function toPublic(account: Account): PublicAccount {
   const { password: _password, ...rest } = account;
   return rest;
+}
+
+/* ------------------------------------------------------------------ */
+/* Supabase table access helpers                                      */
+/* ------------------------------------------------------------------ */
+
+/** Reads one full account record (portal_accounts.data). */
+async function readAccount(targetEmail: string): Promise<Account | null> {
+  const client = db();
+  if (!client) return null;
+  const { data } = await client
+    .from("portal_accounts")
+    .select("data")
+    .eq("email", targetEmail.trim().toLowerCase())
+    .maybeSingle();
+  return parseAccount(data?.data);
+}
+
+/** Upserts one full account record. Returns false when the write failed. */
+async function writeAccount(account: Account): Promise<boolean> {
+  const client = db();
+  if (!client) return false;
+  const { error } = await client
+    .from("portal_accounts")
+    .upsert(
+      { email: account.email.trim().toLowerCase(), data: JSON.stringify(account), updated_at: new Date().toISOString() },
+      { onConflict: "email" },
+    );
+  if (error) console.error("[supabase] portal_accounts upsert failed:", error.message);
+  return !error;
+}
+
+/**
+ * The approval index — mentor_approvals is the SINGLE source of truth for
+ * pending/approved/rejected so every device agrees. Writes here accompany
+ * every status change; reads merge this status over the account record.
+ */
+async function setApprovalStatus(email: string, status: PortalStatus): Promise<boolean> {
+  const client = db();
+  if (!client) return false;
+  const clean = email.trim().toLowerCase();
+  const { error } = await client
+    .from("mentor_approvals")
+    .upsert({ email: clean, status }, { onConflict: "email" });
+  if (error) console.error("[supabase] mentor_approvals upsert failed:", error.message);
+  return !error;
+}
+
+/** All approval rows, keyed by email. */
+async function listApprovals(): Promise<Map<string, PortalStatus>> {
+  const client = db();
+  const map = new Map<string, PortalStatus>();
+  if (!client) return map;
+  const { data, error } = await client.from("mentor_approvals").select("email, status");
+  if (error) {
+    console.error("[supabase] mentor_approvals read failed:", error.message);
+    return map;
+  }
+  for (const row of (data ?? []) as Array<{ email: string; status: string }>) {
+    if (row.status === "pending" || row.status === "approved" || row.status === "rejected") {
+      map.set(row.email.toLowerCase(), row.status);
+    }
+  }
+  return map;
 }
 
 /* ------------------------------------------------------------------ */
@@ -163,10 +221,10 @@ export const syncRegister = createServerFn({ method: "POST" })
         ...(merged.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}),
       };
     }
-    const results = await pipeline([
-      ["HSET", ACCOUNTS_KEY, email, JSON.stringify(merged)],
-    ]);
-    const writeOk = results !== null && !results[0]?.error;
+    const writeOk = await writeAccount(merged);
+    // The approval row makes brand-new registrations visible in the admin
+    // console's Pending list even before any account merge lands.
+    if (writeOk) await setApprovalStatus(email, merged.status);
     // Registration-received email — only on the FIRST successful write of a
     // brand-new account, and never for the owner (they approve themselves).
     if (writeOk && !existing && !OWNER_EMAILS.includes(email)) {
@@ -174,7 +232,7 @@ export const syncRegister = createServerFn({ method: "POST" })
         console.error("[brevo] pending email unexpected failure:", error),
       );
     }
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    return { enabled: true, ok: writeOk };
   });
 
 /* ------------------------------------------------------------------ */
@@ -184,33 +242,38 @@ export const syncRegister = createServerFn({ method: "POST" })
 export type SyncListResult = { enabled: boolean; accounts: PublicAccount[]; payments: PaymentRecord[] };
 
 export const syncListAccounts = createServerFn({ method: "POST" }).handler(async (): Promise<SyncListResult> => {
-  if (!cloudSyncConfigured()) return { enabled: false, accounts: [], payments: [] };
-  const results = await pipeline([
-    ["HGETALL", ACCOUNTS_KEY],
-    ["HGETALL", PAYMENTS_KEY],
-  ]);
-  if (!results) return { enabled: false, accounts: [], payments: [] };
+  const client = db();
+  if (!client) return { enabled: false, accounts: [], payments: [] };
 
-  const accountsRaw = (results[0]?.result ?? {}) as Record<string, unknown>;
-  const accounts = Object.values(accountsRaw)
-    .map(parseAccount)
+  const [accountsRes, paymentsRes, approvals] = await Promise.all([
+    client.from("portal_accounts").select("email, data").order("updated_at", { ascending: false }),
+    client.from("portal_payments").select("email, paid, paid_at"),
+    listApprovals(),
+  ]);
+
+  if (accountsRes.error) {
+    console.error("[supabase] portal_accounts list failed:", accountsRes.error.message);
+    return { enabled: true, accounts: [], payments: [] };
+  }
+
+  const accounts = ((accountsRes.data ?? []) as Array<{ email: string; data: unknown }>)
+    .map((row) => parseAccount(row.data))
     .filter((account): account is Account => account !== null)
+    // mentor_approvals is the authoritative status index: the Pending /
+    // Approved / Rejected tabs read THIS table's decision, so a stale status
+    // inside an account record can never resurrect a reverted approval.
+    .map((account) => {
+      const approval = approvals.get(account.email.trim().toLowerCase());
+      return approval ? { ...account, status: approval } : account;
+    })
     // A removed admin's stale cloud record is demoted wherever it is listed,
     // so no device can ever hydrate them back into an admin role.
     .map(enforceRoles)
     .map(toPublic);
 
-  const paymentsRaw = (results[1]?.result ?? {}) as Record<string, unknown>;
-  const payments = Object.entries(paymentsRaw)
-    .map(([email, raw]) => {
-      try {
-        const parsed = JSON.parse(String(raw)) as PaymentRecord;
-        return typeof parsed?.paid === "boolean" ? ({ ...parsed, email } as PaymentRecord) : null;
-      } catch {
-        return null;
-      }
-    })
-    .filter((payment): payment is PaymentRecord => payment !== null);
+  const payments = ((paymentsRes.data ?? []) as Array<{ email: string; paid: boolean; paid_at: string | null }>)
+    .filter((row) => typeof row.paid === "boolean")
+    .map((row) => ({ email: row.email, paid: row.paid, ...(row.paid && row.paid_at ? { paidAt: row.paid_at } : {}) }));
 
   return { enabled: true, accounts, payments };
 });
@@ -231,9 +294,7 @@ export const syncSignIn = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SyncSignInResult> => {
     if (!cloudSyncConfigured()) return { enabled: false };
     const email = data.email.trim().toLowerCase();
-    const results = await pipeline([["HGET", ACCOUNTS_KEY, email]]);
-    const raw = results?.[0]?.result;
-    const account = typeof raw === "string" ? parseAccount(raw) : null;
+    const account = await readAccount(email);
     if (!account) {
       // Lost-record self-heal for platform-designated emails: an account
       // registered during the old sync-bug era may exist on no device and in
@@ -258,8 +319,7 @@ export const syncSignIn = createServerFn({ method: "POST" })
           licenses: [],
           eas: [],
         };
-        const write = await pipeline([["HSET", ACCOUNTS_KEY, email, JSON.stringify(healed)]]);
-        if (write !== null && !write[0]?.error) return { enabled: true, ok: true, account: toPublic(healed) };
+        if (await writeAccount(healed)) return { enabled: true, ok: true, account: toPublic(healed) };
       }
       return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
     }
@@ -272,11 +332,13 @@ export const syncSignIn = createServerFn({ method: "POST" })
     // they type today becomes the working password, mentor role enforced.
     if (SELF_HEAL_SIGNIN_EMAILS.has(email) && data.password.length >= 4) {
       const healed = enforceRoles({ ...account, password: data.password, role: "mentor", status: "approved" });
-      const write = await pipeline([["HSET", ACCOUNTS_KEY, email, JSON.stringify(healed)]]);
-      if (write !== null && !write[0]?.error) return { enabled: true, ok: true, account: toPublic(healed) };
+      if (await writeAccount(healed)) return { enabled: true, ok: true, account: toPublic(healed) };
     }
+    // The approval row outranks the stored record's status.
+    const approvals = await listApprovals();
+    const approval = approvals.get(email);
     // Mentor-only / removed-admin / owner rules win over the stored record.
-    const resolved = enforceRoles(account);
+    const resolved = enforceRoles(approval ? { ...account, status: approval } : account);
     return { enabled: true, ok: true, account: toPublic(resolved) };
   });
 
@@ -315,16 +377,19 @@ export type SyncRestoreResult = { enabled: boolean; licenses: RestoredLicense[] 
 export const syncRestoreLicenses = createServerFn({ method: "POST" })
   .validator((data: { email: string }) => data)
   .handler(async ({ data }): Promise<SyncRestoreResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, licenses: [] };
+    const client = db();
+    if (!client) return { enabled: false, licenses: [] };
     const email = data.email.trim().toLowerCase();
     if (!email) return { enabled: true, licenses: [] };
     // A key belongs to whichever mentor account carries it — scan all records.
-    const results = await pipeline([["HGETALL", ACCOUNTS_KEY]]);
-    if (!results) return { enabled: true, licenses: [] };
-    const accountsRaw = (results[0]?.result ?? {}) as Record<string, unknown>;
+    const { data: rows, error } = await client.from("portal_accounts").select("data");
+    if (error) {
+      console.error("[supabase] portal_accounts restore scan failed:", error.message);
+      return { enabled: true, licenses: [] };
+    }
     const restored: RestoredLicense[] = [];
-    for (const raw of Object.values(accountsRaw)) {
-      const account = parseAccount(raw);
+    for (const row of (rows ?? []) as Array<{ data: unknown }>) {
+      const account = parseAccount(row.data);
       if (!account) continue;
       const eaById = new Map(account.eas.map((ea) => [ea.id, ea]));
       for (const license of account.licenses) {
@@ -352,11 +417,14 @@ export const syncGetAccount = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SyncGetAccountResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, account: null };
     const account = await readAccount(data.email);
+    if (!account) return { enabled: true, account: null };
+    const approvals = await listApprovals();
+    const approval = approvals.get(data.email.trim().toLowerCase());
     // Every served record passes the role rules: mentor-only and removed-
     // admin emails are demoted, owners are upgraded — the stored role never
     // outranks the platform's decision.
-    const resolved = account ? enforceRoles(account) : null;
-    return { enabled: true, account: resolved ? toPublic(resolved) : null };
+    const resolved = enforceRoles(approval ? { ...account, status: approval } : account);
+    return { enabled: true, account: toPublic(resolved) };
   });
 
 /* ------------------------------------------------------------------ */
@@ -773,18 +841,9 @@ async function requireAdmin(adminEmail: string): Promise<{ ok: true } | { ok: fa
   // which only ever existed in a device's localStorage). Without this, admin
   // mutations silently failed and approvals never reached the mentor.
   if (OWNER_EMAILS.includes(clean)) return { ok: true };
-  const results = await pipeline([["HGET", ACCOUNTS_KEY, clean]]);
-  const raw = results?.[0]?.result;
-  const admin = typeof raw === "string" ? parseAccount(raw) : null;
+  const admin = await readAccount(clean);
   if (!admin || admin.role !== "admin") return { ok: false, error: "Only admins can make these changes." };
   return { ok: true };
-}
-
-async function readAccount(targetEmail: string): Promise<Account | null> {
-  const results = await pipeline([["HGET", ACCOUNTS_KEY, targetEmail.trim().toLowerCase()]]);
-  const raw = results?.[0]?.result;
-  if (typeof raw !== "string") return null;
-  return parseAccount(raw);
 }
 
 export const syncAdminUpdate = createServerFn({ method: "POST" })
@@ -836,10 +895,12 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
     // Retry the write a few times before giving up.
     let lastOk = false;
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const results = await pipeline([
-        ["HSET", ACCOUNTS_KEY, targetEmail, JSON.stringify(updated)],
-      ]);
-      lastOk = results !== null && !results[0]?.error;
+      lastOk = await writeAccount(updated);
+      // The approval index is the authoritative status — write it whenever
+      // the patch carries a status decision, with the same retry budget.
+      if (patch.status !== undefined) {
+        lastOk = (await setApprovalStatus(targetEmail, patch.status)) && lastOk;
+      }
       if (lastOk) break;
       await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
     }
@@ -870,17 +931,22 @@ export type SyncPaymentResult = { enabled: boolean; ok: boolean; error?: string 
 export const syncSetPayment = createServerFn({ method: "POST" })
   .validator((data: SyncPaymentInput) => data)
   .handler(async ({ data }): Promise<SyncPaymentResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const client = db();
+    if (!client) return { enabled: false, ok: false };
     const adminCheck = await requireAdmin(data.adminEmail);
     if (!adminCheck.ok) return { enabled: true, ok: false, error: adminCheck.error };
 
     const clean = data.email.trim().toLowerCase();
-    const record: PaymentRecord = { email: clean, paid: data.paid, ...(data.paid ? { paidAt: new Date().toISOString() } : {}) };
-    const command = data.paid
-      ? (["HSET", PAYMENTS_KEY, clean, JSON.stringify(record)] as (string | number)[])
-      : (["HDEL", PAYMENTS_KEY, clean] as (string | number)[]);
-    const results = await pipeline([command]);
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    const { error } = data.paid
+      ? await client
+          .from("portal_payments")
+          .upsert({ email: clean, paid: true, paid_at: new Date().toISOString() }, { onConflict: "email" })
+      : await client.from("portal_payments").delete().eq("email", clean);
+    if (error) {
+      console.error("[supabase] portal_payments write failed:", error.message);
+      return { enabled: true, ok: false, error: error.message };
+    }
+    return { enabled: true, ok: true };
   });
 
 /* ------------------------------------------------------------------ */
@@ -889,8 +955,6 @@ export const syncSetPayment = createServerFn({ method: "POST" })
 /* accepts the connection, read on page load. The MT5 password is     */
 /* NEVER stored — MetaApi holds it, we keep only metadata.            */
 /* ------------------------------------------------------------------ */
-
-const MT5_KEY = "eamp:mt5-accounts";
 
 export type Mt5AccountRecord = {
   userId: string;
@@ -931,11 +995,18 @@ export type Mt5SaveResult = { enabled: boolean; ok: boolean };
 export const syncSaveMt5Account = createServerFn({ method: "POST" })
   .validator((data: Mt5SaveInput) => data)
   .handler(async ({ data }): Promise<Mt5SaveResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const client = db();
+    if (!client) return { enabled: false, ok: false };
     const record = data.record;
     if (!record?.userId || !record.mcAccountId) return { enabled: true, ok: false };
-    const results = await pipeline([["HSET", MT5_KEY, record.userId.trim().toLowerCase(), JSON.stringify(record)]]);
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    const { error } = await client
+      .from("mt5_accounts")
+      .upsert(
+        { user_id: record.userId.trim().toLowerCase(), data: JSON.stringify(record), updated_at: new Date().toISOString() },
+        { onConflict: "user_id" },
+      );
+    if (error) console.error("[supabase] mt5_accounts upsert failed:", error.message);
+    return { enabled: true, ok: !error };
   });
 
 export type Mt5GetInput = { userId: string };
@@ -944,10 +1015,14 @@ export type Mt5GetResult = { enabled: boolean; record: Mt5AccountRecord | null }
 export const syncGetMt5Account = createServerFn({ method: "POST" })
   .validator((data: Mt5GetInput) => data)
   .handler(async ({ data }): Promise<Mt5GetResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, record: null };
-    const results = await pipeline([["HGET", MT5_KEY, data.userId.trim().toLowerCase()]]);
-    const raw = results?.[0]?.result;
-    const stored = parseMt5Record(raw);
+    const client = db();
+    if (!client) return { enabled: false, record: null };
+    const { data: row } = await client
+      .from("mt5_accounts")
+      .select("data")
+      .eq("user_id", data.userId.trim().toLowerCase())
+      .maybeSingle();
+    const stored = parseMt5Record(row?.data);
     // The saved MT5 password NEVER leaves the server — strip it before serving.
     if (!stored) return { enabled: true, record: null };
     const { mtPassword: _secret, ...safeRecord } = stored;
@@ -960,34 +1035,32 @@ export type Mt5DeleteResult = { enabled: boolean; ok: boolean };
 export const syncDeleteMt5Account = createServerFn({ method: "POST" })
   .validator((data: Mt5DeleteInput) => data)
   .handler(async ({ data }): Promise<Mt5DeleteResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const client = db();
+    if (!client) return { enabled: false, ok: false };
     const key = data.userId.trim().toLowerCase();
     if (data.mode === "password") {
       // Wipe only the credential — connection metadata survives (offline).
-      const results = await pipeline([["HGET", MT5_KEY, key]]);
-      const raw = results?.[0]?.result;
-      const stored = parseMt5Record(raw);
+      const { data: row } = await client.from("mt5_accounts").select("data").eq("user_id", key).maybeSingle();
+      const stored = parseMt5Record(row?.data);
       if (!stored) return { enabled: true, ok: true };
       const { mtPassword: _removed, ...rest } = stored;
-      const write = await pipeline([["HSET", MT5_KEY, key, JSON.stringify(rest)]]);
-      return { enabled: true, ok: write !== null && !write[0]?.error };
+      const { error } = await client
+        .from("mt5_accounts")
+        .upsert({ user_id: key, data: JSON.stringify(rest), updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+      return { enabled: true, ok: !error };
     }
-    const results = await pipeline([["HDEL", MT5_KEY, key]]);
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    const { error } = await client.from("mt5_accounts").delete().eq("user_id", key);
+    return { enabled: true, ok: !error };
   });
 
 /* ------------------------------------------------------------------ */
 /* EA video cloud backup — mentors' uploaded videos survive across     */
 /* devices and browser storage evictions. IndexedDB alone is          */
 /* best-effort: mobile browsers silently evict it, so a mentor who    */
-/* returns a week later was asked to re-upload. Videos are stored     */
-/* as base64 chunks (Redis values must stay small) behind one hash    */
-/* key per EA, written immediately after a successful upload.         */
+/* returns a week later was asked to re-upload. Stored as one text    */
+/* column per video — Postgres handles large values natively, so the  */
+/* old Redis chunking (and its size errors) is gone for good.         */
 /* ------------------------------------------------------------------ */
-
-const VIDEOS_KEY = "eamp:ea-videos";
-/** Keep chunks safely below Redis' default 512MB value limit. */
-const CHUNK_SIZE = 900_000;
 
 export type EaVideoBackupInput = { videoId: string; dataUrl: string };
 export type EaVideoBackupResult = { enabled: boolean; ok: boolean };
@@ -995,17 +1068,15 @@ export type EaVideoBackupResult = { enabled: boolean; ok: boolean };
 export const syncSaveEaVideo = createServerFn({ method: "POST" })
   .validator((data: EaVideoBackupInput) => data)
   .handler(async ({ data }): Promise<EaVideoBackupResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const client = db();
+    if (!client) return { enabled: false, ok: false };
     const videoId = data.videoId.trim();
     if (videoId.length === 0) return { enabled: true, ok: false };
-    const commands: (string | number)[][] = [];
-    const chunks = Math.ceil(data.dataUrl.length / CHUNK_SIZE);
-    for (let index = 0; index < chunks; index += 1) {
-      commands.push(["HSET", VIDEOS_KEY, `${videoId}:${index}`, data.dataUrl.slice(index * CHUNK_SIZE, (index + 1) * CHUNK_SIZE)]);
-    }
-    commands.push(["HSET", VIDEOS_KEY, `${videoId}:meta`, JSON.stringify({ chunks, at: new Date().toISOString() })]);
-    const results = await pipeline(commands);
-    return { enabled: true, ok: results !== null && results.every((item) => !item.error) };
+    const { error } = await client
+      .from("ea_videos")
+      .upsert({ video_id: videoId, data_url: data.dataUrl, updated_at: new Date().toISOString() }, { onConflict: "video_id" });
+    if (error) console.error("[supabase] ea_videos upsert failed:", error.message);
+    return { enabled: true, ok: !error };
   });
 
 export type EaVideoLoadInput = { videoId: string };
@@ -1014,25 +1085,16 @@ export type EaVideoLoadResult = { enabled: boolean; dataUrl: string | null };
 export const syncLoadEaVideo = createServerFn({ method: "POST" })
   .validator((data: EaVideoLoadInput) => data)
   .handler(async ({ data }): Promise<EaVideoLoadResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, dataUrl: null };
+    const client = db();
+    if (!client) return { enabled: false, dataUrl: null };
     const videoId = data.videoId.trim();
     if (videoId.length === 0) return { enabled: true, dataUrl: null };
-    const results = await pipeline([["HGET", VIDEOS_KEY, `${videoId}:meta`]]);
-    const meta = results?.[0]?.result;
-    let chunks = 0;
-    if (typeof meta === "string") {
-      try {
-        chunks = (JSON.parse(meta) as { chunks?: number }).chunks ?? 0;
-      } catch {
-        chunks = 0;
-      }
-    }
-    if (chunks <= 0) return { enabled: true, dataUrl: null };
-    const partResults = await pipeline(Array.from({ length: chunks }, (_, index) => ["HGET", VIDEOS_KEY, `${videoId}:${index}`] as (string | number)[]));
-    if (!partResults) return { enabled: true, dataUrl: null };
-    const parts = partResults.map((item) => (typeof item.result === "string" ? item.result : null));
-    if (parts.some((part) => part === null)) return { enabled: true, dataUrl: null };
-    return { enabled: true, dataUrl: parts.join("") };
+    const { data: row } = await client
+      .from("ea_videos")
+      .select("data_url")
+      .eq("video_id", videoId)
+      .maybeSingle();
+    return { enabled: true, dataUrl: typeof row?.data_url === "string" ? row.data_url : null };
   });
 
 export type EaVideoDeleteInput = { videoId: string };
@@ -1041,11 +1103,10 @@ export type EaVideoDeleteResult = { enabled: boolean; ok: boolean };
 export const syncDeleteEaVideo = createServerFn({ method: "POST" })
   .validator((data: EaVideoDeleteInput) => data)
   .handler(async ({ data }): Promise<EaVideoDeleteResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
+    const client = db();
+    if (!client) return { enabled: false, ok: false };
     const videoId = data.videoId.trim();
     if (videoId.length === 0) return { enabled: true, ok: false };
-    // Remove up to a generous chunk count plus meta — HDEL ignores missing fields.
-    const fields = [`${videoId}:meta`, ...Array.from({ length: 80 }, (_, index) => `${videoId}:${index}`)];
-    const results = await pipeline([["HDEL", VIDEOS_KEY, ...fields] as (string | number)[]]);
-    return { enabled: true, ok: results !== null && !results[0]?.error };
+    const { error } = await client.from("ea_videos").delete().eq("video_id", videoId);
+    return { enabled: true, ok: !error };
   });
