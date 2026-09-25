@@ -17,6 +17,7 @@ import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SupportRouteImport } from './routes/support'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
+import { Route as AppAdminRouteImport } from './routes/app.admin'
 import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as AppLoginRouteImport } from './routes/app.login'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
@@ -72,6 +73,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppActivateRoute = AppActivateRouteImport.update({
   id: '/app/activate',
   path: '/app/activate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppAdminRoute = AppAdminRouteImport.update({
+  id: '/app/admin',
+  path: '/app/admin',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppHomeRoute = AppHomeRouteImport.update({
@@ -163,6 +169,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -188,6 +195,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -215,6 +223,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -243,6 +252,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -268,6 +278,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -294,6 +305,7 @@ export interface FileRouteTypes {
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -321,6 +333,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
+  AppAdminRoute: typeof AppAdminRoute
   AppHomeRoute: typeof AppHomeRoute
   AppLoginRoute: typeof AppLoginRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
@@ -387,6 +400,13 @@ declare module '@tanstack/react-router' {
       path: '/app/activate'
       fullPath: '/app/activate'
       preLoaderRoute: typeof AppActivateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/admin': {
+      id: '/app/admin'
+      path: '/app/admin'
+      fullPath: '/app/admin'
+      preLoaderRoute: typeof AppAdminRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/home': {
@@ -540,6 +560,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
+  AppAdminRoute: AppAdminRoute,
   AppHomeRoute: AppHomeRoute,
   AppLoginRoute: AppLoginRoute,
   AppMetatraderRoute: AppMetatraderRoute,

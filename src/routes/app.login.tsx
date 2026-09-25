@@ -3,7 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, useAppState } from "@/lib/app-store";
-import { isPaymentExemptEmail, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
   ssr: false,
@@ -37,7 +38,7 @@ function AppAccess() {
   const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
   const showLicenseView = successReturn || paymentStatus !== "unpaid";
 
-  const continueWithEmail = (event: FormEvent<HTMLFormElement>) => {
+  const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const clean = email.trim().toLowerCase();
     console.log("[app-login] Trying login:", clean);
@@ -51,17 +52,22 @@ function AppAccess() {
     // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
     window.sessionStorage.setItem("eamp_pending_welcome", "1");
     if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
-    if (successReturn) {
-      markEmailPaid(clean);
+
+    // Supabase registration: upsert the user, create the session row, then
+    // decide the gate from the DATABASE — unpaid goes to checkout, paid or
+    // admin comes in. Falls back to the legacy local payment store while
+    // Supabase is unconfigured, so the flow never blocks.
+    const registration = await registerWithEmail(clean);
+    if (registration.outcome === "checkout") {
+      if (successReturn) {
+        markEmailPaid(clean);
+        return;
+      }
+      setRedirecting(true);
+      window.location.assign(WHOP_CHECKOUT_URL);
       return;
     }
-    if (isPaymentExemptEmail(clean)) {
-      toast.success("Admin access enabled — no payment is required.");
-      return;
-    }
-    if (paymentStatusForEmail(clean) === "paid") return;
-    setRedirecting(true);
-    window.location.assign(WHOP_CHECKOUT_URL);
+    if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
   };
 
   const submitLicense = (event: FormEvent<HTMLFormElement>) => {
