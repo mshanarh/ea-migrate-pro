@@ -1,10 +1,9 @@
 import { useRef, useState, type ReactNode } from "react";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, Link, redirect } from "@tanstack/react-router";
 import { AnimatePresence, motion } from "framer-motion";
-import { Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-react";
+import { ArrowRight, Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
-import { NewsSection } from "@/components/app/NewsSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
@@ -281,11 +280,17 @@ function AppSettings() {
 
             <PillSection
               icon="📰"
-              label="News & Predictions"
+              label="Fundamentals — Economic Calendar"
               open={!!openSections["news"]}
               onToggle={() => toggleSection("news")}
             >
-              <NewsSection accent={accent} />
+              <Link
+                to="/app/fundamentals"
+                className="flex h-12 items-center justify-center gap-2 rounded-full text-sm font-bold text-white transition-transform active:scale-[.98]"
+                style={{ backgroundColor: accent }}
+              >
+                Open FUNDAMENTALS <ArrowRight className="size-4" />
+              </Link>
             </PillSection>
 
             <PillSection

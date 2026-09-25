@@ -18,6 +18,7 @@ import { Route as SupportRouteImport } from './routes/support'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
 import { Route as AppAdminRouteImport } from './routes/app.admin'
+import { Route as AppFundamentalsRouteImport } from './routes/app.fundamentals'
 import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as AppLoginRouteImport } from './routes/app.login'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
@@ -78,6 +79,11 @@ const AppActivateRoute = AppActivateRouteImport.update({
 const AppAdminRoute = AppAdminRouteImport.update({
   id: '/app/admin',
   path: '/app/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppFundamentalsRoute = AppFundamentalsRouteImport.update({
+  id: '/app/fundamentals',
+  path: '/app/fundamentals',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppHomeRoute = AppHomeRouteImport.update({
@@ -170,6 +176,7 @@ export interface FileRoutesByFullPath {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -196,6 +203,7 @@ export interface FileRoutesByTo {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -224,6 +232,7 @@ export interface FileRoutesById {
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
   '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
@@ -253,6 +262,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -279,6 +289,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -306,6 +317,7 @@ export interface FileRouteTypes {
     | '/support'
     | '/app/activate'
     | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
@@ -334,6 +346,7 @@ export interface RootRouteChildren {
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
   AppAdminRoute: typeof AppAdminRoute
+  AppFundamentalsRoute: typeof AppFundamentalsRoute
   AppHomeRoute: typeof AppHomeRoute
   AppLoginRoute: typeof AppLoginRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
@@ -407,6 +420,13 @@ declare module '@tanstack/react-router' {
       path: '/app/admin'
       fullPath: '/app/admin'
       preLoaderRoute: typeof AppAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/fundamentals': {
+      id: '/app/fundamentals'
+      path: '/app/fundamentals'
+      fullPath: '/app/fundamentals'
+      preLoaderRoute: typeof AppFundamentalsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/home': {
@@ -561,6 +581,7 @@ const rootRouteChildren: RootRouteChildren = {
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
   AppAdminRoute: AppAdminRoute,
+  AppFundamentalsRoute: AppFundamentalsRoute,
   AppHomeRoute: AppHomeRoute,
   AppLoginRoute: AppLoginRoute,
   AppMetatraderRoute: AppMetatraderRoute,
