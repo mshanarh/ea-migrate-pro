@@ -96,7 +96,7 @@ function AppAccess() {
 function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-[2rem] bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/ea-migrate-platform-robot.png" alt="EA Migrate Pro" className="size-full object-contain" />
+      <img src="/logo.png" alt="EA Migrate Pro" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>

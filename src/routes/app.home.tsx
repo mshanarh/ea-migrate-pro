@@ -50,7 +50,7 @@ function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
   };
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 text-center text-white">
-      <img src="/ea-migrate-pro-icon.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+      <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
       <h1 className="mt-5 text-xl font-black tracking-tight">Dashboard didn't load</h1>
       <p className="mt-2 max-w-xs text-sm text-white/55">
         Something interrupted your robot dashboard. Try again — if it keeps happening, log out and sign back in.
@@ -164,7 +164,7 @@ function WelcomeMaster() {
         style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
       />
       <img
-        src="/ea-migrate-pro-icon.png"
+        src="/logo.png"
         alt=""
         className="relative size-24 rounded-[24px] bg-white/5 object-contain p-1"
         style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}

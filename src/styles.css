@@ -11,11 +11,6 @@
   display: none !important;
 }
 
-/* Keep legacy admin markup on the transparent platform logo during upgrades. */
-img[src="/ea-migrate-platform-robot.jpg"] {
-  content: url("/ea-migrate-pro-icon.png");
-  object-fit: contain;
-}
 
 /* The header logo no longer auto-slides — the translate loop made it overlap
    the brand text on narrow screens. Hover feedback only. */

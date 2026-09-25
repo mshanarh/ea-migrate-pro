@@ -53,7 +53,7 @@ const sections: { label?: string; items: NavItem[] }[] = [
 
 function BrandMark({ size = "size-9" }: { size?: string }) {
   return (
-    <img src="/ea-migrate-pro-icon.png" alt="EA Migrate Pro" className={`${size} shrink-0 rounded-full object-contain`} />
+    <img src="/logo.png" alt="EA Migrate Pro" className={`${size} shrink-0 rounded-full object-contain`} />
   );
 }
 

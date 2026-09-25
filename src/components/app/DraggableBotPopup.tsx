@@ -38,7 +38,7 @@ export default function DraggableBotPopup() {
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   const running = robot?.running ?? false;
   const eaName = robot?.name ?? "My EA";
-  const eaImage = robot?.image || "/ea-migrate-pro-icon.png";
+  const eaImage = robot?.image || "/logo.png";
 
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);

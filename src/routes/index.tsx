@@ -53,11 +53,11 @@ export const Route = createFileRoute("/")({
       },
       { property: "og:type", content: "website" },
       { property: "og:site_name", content: "EA Migrate Pro" },
-      { property: "og:image", content: "/ea-migrate-pro-icon.png" },
+      { property: "og:image", content: "/logo.png" },
       { property: "og:image:alt", content: "EA Migrate Pro robot logo" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
-      { name: "twitter:image", content: "/ea-migrate-pro-icon.png" },
+      { name: "twitter:image", content: "/logo.png" },
     ],
   }),
   component: Home,
@@ -195,25 +195,75 @@ function LandingChatbot() {
   const [messages, setMessages] = useState<ChatMessage[]>([
     {
       from: "bot",
-      text: "Hi — I’m the EA Migrate bot. Ask me about building an EA, MT4/MT5, chart scanning, or getting started.",
+      text: "Hi — I’m the EA Migrate bot. Ask me anything about the platform: what it is, building & hosting EAs, the AI scanner, licences & activation, the fundamentals calendar, payments, your trading account, support — I know it all.",
     },
   ]);
 
   const answer = (question: string) => {
     const text = question.toLowerCase();
-    if (text.includes("mt4") || text.includes("mt5") || text.includes("broker")) {
-      return "EA Migrate Pro supports MT4 and MT5 brokers. Your account stays with your broker while the hosted EA sends trade instructions.";
+
+    // ── Support & contact ────────────────────────────────────────────
+    if (text.includes("support") || text.includes("contact") || text.includes("email") || text.includes("help me") || text.includes("reach") || text.includes("whatsapp") || text.includes("phone") || text.includes("talk to")) {
+      return "You can reach the EA Migrate Pro team any time:\n• Email: eamigratepro@gmail.com — we respond within 24 hours\n• WhatsApp: 070 495 0612 — real-time chat with support\n• The /support page has a full contact form too. If it's about your portal (approval, licence keys, MT5 connection), message WhatsApp with your registered email so we can find your account fast.";
     }
-    if (text.includes("scan") || text.includes("chart")) {
-      return "The AI Scanner lets you upload a chart, choose one of your EA’s configured pairs, and get an instant signal setup.";
+
+    // ── What is the platform ────────────────────────────────────────
+    if (text.includes("what is") || text.includes("what's") || text.includes("about") || text.includes("platform") || text.includes("ea migrate") || text.includes("tell me")) {
+      return "EA Migrate Pro is a forex robot (EA) hosting platform for MT4 and MT5. Your mentor builds your Expert Advisor, hosts it 24/7 in the cloud, and issues you a licence key. You activate the key, connect your MT5 account, and the robot trades it — no VPS, no coding, no keeping your PC on. There's also an AI chart scanner, a fundamentals economic calendar, and customisable app themes.";
     }
-    if (text.includes("price") || text.includes("cost") || text.includes("payment")) {
-      return "Start by creating your portal account. The available licence and payment options are shown during activation.";
+
+    // ── How it works / getting started ────────────────────────────
+    if (text.includes("how") || text.includes("work") || text.includes("start") || text.includes("step") || text.includes("begin")) {
+      return "Getting started is 4 steps:\n1. Register on the signup page with your email — your portal is created instantly.\n2. Your mentor approves the portal and issues you a licence key (EMP-XXXX-XXXX-XXXX).\n3. Activate the key in the app and connect your MT5 account on the MetaTrader page.\n4. Turn the robot on — it trades 24/7 in the cloud, even with your phone off.";
     }
-    if (text.includes("how") || text.includes("work") || text.includes("start")) {
-      return "Describe your strategy, build the logic, connect MT4 or MT5, then let the hosted robot execute around the clock.";
+
+    // ── MT4 / MT5 / brokers ─────────────────────────────────────
+    if (text.includes("mt4") || text.includes("mt5") || text.includes("broker") || text.includes("metatrader")) {
+      return "EA Migrate Pro supports MT4 and MT5 with any broker (Exness, Pepperstone, OctaFX, FBS, Deriv, XM, IC Markets and more). Your account stays with your broker — the platform hosts the EA and sends trade instructions through a secure connection. Demo and cent accounts work too, so you can test safely before going live.";
     }
-    return "I can help with EA building, MT4/MT5 support, chart scanning, licence activation, and getting started. Try one of the quick questions below.";
+
+    // ── AI Scanner ──────────────────────────────────────────────
+    if (text.includes("scan") || text.includes("chart") || text.includes("signal")) {
+      return "The AI Scanner: upload or snap a chart, pick one of your EA's configured pairs, and get an instant signal setup — direction (BUY/SELL), lot size and max trades. One tap executes: the platform opens the broker connection, sends the trades, then closes the connection automatically.";
+    }
+
+    // ── Fundamentals / calendar ─────────────────────────────────
+    if (text.includes("fundamental") || text.includes("calendar") || text.includes("news") || text.includes("economic") || text.includes("session")) {
+      return "The FUNDAMENTALS page (Settings → Fundamentals) shows this week's real economic calendar from ForexFactory: every event with time, currency, impact level (bulls), forecast (FC) and previous (PREV) values. It also shows the four market sessions — Sydney, Tokyo, London and New York — glowing live with open/close countdowns. Tap a session to filter events to that region's currencies, or use the HIGH IMPACT and TODAY/TOMORROW/ALL WEEK filters.";
+    }
+
+    // ── Licences & activation ───────────────────────────────────
+    if (text.includes("licen") || text.includes("key") || text.includes("activat") || text.includes("emp-")) {
+      return "Licence keys look like EMP-XXXX-XXXX-XXXX and are issued by your mentor after your portal is approved. Activate one on the Activate page in the app: enter the key exactly as you received it (no spaces). Each key is locked to a single trading account and can be paused or expired by your mentor. Lost your key? Ask your mentor or contact support at eamigratepro@gmail.com.";
+    }
+
+    // ── Payments ────────────────────────────────────────────────
+    if (text.includes("price") || text.includes("cost") || text.includes("payment") || text.includes("pay") || text.includes("subscription") || text.includes("free") || text.includes("refund")) {
+      return "You start by creating your portal account. Payment options are shown when you activate — access is unlocked once payment is confirmed and your key is issued. Questions about pricing, refunds or a specific plan? Your mentor handles plans, or email eamigratepro@gmail.com and support will sort it out.";
+    }
+
+    // ── Trading account safety ──────────────────────────────────
+    if (text.includes("safe") || text.includes("secure") || text.includes("password") || text.includes("withdraw") || text.includes("risk") || text.includes("scam")) {
+      return "Your funds stay in YOUR broker account — the platform never withdraws and never holds your money. The hosted robot only sends trade instructions through an encrypted connection, and you can disconnect your MT5 account any time from the MetaTrader page. As with any trading, losses are possible — trade responsibly and start on a demo account.";
+    }
+
+    // ── Robot / hosting behaviour ───────────────────────────────
+    if (text.includes("host") || text.includes("vps") || text.includes("cloud") || text.includes("phone") || text.includes("offline") || text.includes("24") || text.includes("robot") || text.includes("ea ") || text.includes("build")) {
+      return "Your EA is hosted in the cloud 24/7 — no VPS to rent and no need to keep your phone or PC on. Your mentor builds the robot from your strategy, you activate it with your licence key, and it executes trades on your MT4/MT5 account around the clock. You can watch it live from the app and stop it whenever you like.";
+    }
+
+    // ── App customisation ───────────────────────────────────────
+    if (text.includes("theme") || text.includes("custom") || text.includes("colour") || text.includes("color") || text.includes("font") || text.includes("music") || text.includes("background") || text.includes("settings")) {
+      return "Open Settings in the app to make it yours: accent colours, interface themes, fonts, background animations, music (even your own uploads or a Spotify link), your own logo, and the Fundamentals calendar. Everything applies instantly and is saved on your device.";
+    }
+
+    // ── Portal approval / account issues ────────────────────────
+    if (text.includes("pending") || text.includes("approv") || text.includes("register") || text.includes("sign up") || text.includes("signup") || text.includes("account") || text.includes("login") || text.includes("password")) {
+      return "Register with your email on the signup page and your portal is created instantly — it just needs a quick approval before your mentor issues keys. Already registered? Sign in with the same email on any device. Waiting too long on approval, or trouble signing in? Message WhatsApp (070 495 0612) or email eamigratepro@gmail.com with your registered email.";
+    }
+
+    // ── Fallback: full summary ──────────────────────────────────
+    return "Here's what I know about EA Migrate Pro:\n• WHAT: forex EA hosting for MT4/MT5 — your mentor builds the robot, the cloud runs it 24/7\n• START: register → portal approved → activate your EMP licence key → connect MT5 → robot on\n• AI SCANNER: upload a chart, get a signal setup, execute in one tap\n• FUNDAMENTALS: live economic calendar + market sessions (Settings → Fundamentals)\n• SAFETY: your funds stay at your broker; disconnect any time\n• CUSTOMISE: themes, colours, fonts, music and your own logo\nAsk me about any of these — or for support: eamigratepro@gmail.com / WhatsApp 070 495 0612.";
   };
 
   const send = (value = input) => {
@@ -228,7 +278,7 @@ function LandingChatbot() {
       {open && (
         <div className="max-w-[360px] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
-            <img src="/ea-migrate-pro-icon.png" alt="EA Migrate Pro" className="size-10 rounded-full border-2 border-primary object-contain shadow-glow" />
+            <img src="/logo.png" alt="EA Migrate Pro" className="size-10 rounded-full border-2 border-primary object-contain shadow-glow" />
             <div className="min-w-0 flex-1">
               <p className="font-bold">EA Migrate assistant</p>
               <p className="text-xs text-emerald-400">Online · Ask anything</p>
@@ -243,7 +293,7 @@ function LandingChatbot() {
             ))}
           </div>
           <div className="flex flex-wrap gap-2 px-4 pb-3">
-            {["How does it work?", "MT5 support", "Chart scanner"].map((question) => (
+            {["How does it work?", "Support email", "Is it safe?", "Fundamentals calendar"].map((question) => (
               <button key={question} type="button" onClick={() => send(question)} className="rounded-full border border-primary/30 px-3 py-1.5 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10">{question}</button>
             ))}
           </div>
@@ -254,7 +304,7 @@ function LandingChatbot() {
         </div>
       )}
       <motion.button type="button" aria-label={open ? "Close EA Migrate assistant" : "Open EA Migrate assistant"} onClick={() => setOpen((value) => !value)} whileHover={{ scale: 1.05 }} whileTap={{ scale: 0.95 }} className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-white/5 p-1.5 shadow-[0_0_28px_rgba(37,99,235,.55)] backdrop-blur-sm">
-        <img src="/ea-migrate-pro-icon.png" alt="" className="size-full object-contain" />
+        <img src="/logo.png" alt="" className="size-full object-contain" />
         <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-white bg-[#22C55E]" />
         <MessageCircle className="absolute -right-1 -top-1 size-5 rounded-full bg-primary p-1 text-white" />
       </motion.button>
@@ -542,7 +592,7 @@ function Home() {
           <div className="py-10">
             <div className="flex items-center gap-2">
               <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 glow-ring">
-                <img src="/ea-migrate-pro-icon.png" alt="" className="size-6 rounded-md object-contain" />
+                <img src="/logo.png" alt="" className="size-6 rounded-md object-contain" />
               </span>
               <span className="text-base font-bold uppercase">
                 EA <span className="text-primary">Migrate</span> Pro

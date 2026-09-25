@@ -51,7 +51,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
   const eaName = robot?.name ?? "YOUR ROBOT";
-  const eaImage = robot?.image || "/ea-migrate-pro-icon.png";
+  const eaImage = robot?.image || "/logo.png";
 
   return (
     <div className="flex flex-col gap-5">
