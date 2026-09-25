@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { WHOP_CHECKOUT_URL, activateKey, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
 import { executeLiveTrade } from "@/lib/metaapi";
@@ -32,8 +32,51 @@ export const Route = createFileRoute("/app/home")({
       { name: "description", content: "Control your licensed Forex robots." },
     ],
   }),
+  errorComponent: HomeErrorFallback,
   component: AppHome,
 });
+
+/**
+ * Dashboard-only recovery screen — a crash here never falls back to the
+ * generic site error page. Offers a retry AND a clean logout: a corrupted
+ * robot/local-state record is the most likely cause, so logging out (which
+ * clears the app session) must always be one tap away.
+ */
+function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
+  const router = useRouter();
+  const handleLogout = () => {
+    appSignOut();
+    window.location.assign("/app/login");
+  };
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 text-center text-white">
+      <img src="/ea-migrate-pro-icon.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+      <h1 className="mt-5 text-xl font-black tracking-tight">Dashboard didn't load</h1>
+      <p className="mt-2 max-w-xs text-sm text-white/55">
+        Something interrupted your robot dashboard. Try again — if it keeps happening, log out and sign back in.
+      </p>
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            router.invalidate();
+            reset();
+          }}
+          className="h-11 rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] px-6 text-sm font-black text-black transition-transform active:scale-[0.98]"
+        >
+          Try again
+        </button>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="h-11 rounded-2xl border border-white/15 px-6 text-sm font-bold text-white/75 transition-colors hover:text-white"
+        >
+          Log out
+        </button>
+      </div>
+    </div>
+  );
+}
 
 function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; onSubmit: (key: string) => void }) {
   const [key, setKey] = useState("");

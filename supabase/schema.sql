@@ -73,6 +73,24 @@ create table if not exists public.ea_videos (
 
 create index if not exists portal_accounts_updated_idx on public.portal_accounts (updated_at desc);
 
+-- 6) LICENSE KEYS — every key issued to an app user, with its linked EA and
+--    expiry. Written by the send-email flow (license_approved) with the
+--    service-role key; safe to re-run (create-if-not-exists).
+create table if not exists public.license_keys (
+  license_key text primary key,
+  email       text,
+  ea_name     text,
+  expiry      text,
+  created_at  timestamp default now()
+);
+
+alter table public.license_keys enable row level security;
+create policy "license_keys full access"
+  on public.license_keys for all to anon, authenticated
+  using (true) with check (true);
+
+create index if not exists license_keys_email_idx on public.license_keys (email);
+
 -- ============================================================
 -- 3) ROW LEVEL SECURITY
 --

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, useCurrentAccount } from "@/lib/auth-store";
-import { syncSendLicenseEmail } from "@/lib/account-sync.server";
+import { sendPortalEmail } from "@/lib/send-email.server";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
 
@@ -78,21 +78,22 @@ function Licenses() {
       return;
     }
     // Email the key immediately — awaited so "Emailed to client" is real.
+    // The license_approved flow also saves the key into the Supabase
+    // license_keys table (server-side) before sending.
     setSending(true);
     let emailed = false;
     try {
-      const send = await syncSendLicenseEmail({
+      const send = await sendPortalEmail({
         data: {
-          toEmail: recipient,
-          clientName: keyName.trim(),
+          type: "license_approved",
+          email: recipient,
           licenseKey: key,
           eaName: selectedEa.name,
           expiry,
-          imageUrl: selectedEa.image ?? null,
         },
       });
-      emailed = send.ok;
-      if (!send.ok) toast.error(send.error ?? "Email could not be sent — the key is still saved.");
+      emailed = send.success;
+      if (!send.success) toast.error(send.error ?? "Email could not be sent — the key is still saved.");
     } catch {
       toast.error("Email could not be sent — the key is still saved.");
     } finally {

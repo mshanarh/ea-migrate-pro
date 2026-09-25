@@ -1,95 +1,69 @@
 /**
- * Brevo integration check — run with: bun scripts/check-brevo.mjs
+ * Brevo email sender check — run: bun scripts/check-brevo.mjs [to-email]
  *
- * Verifies, without ever printing the key value:
- *   1. BREVO_API_KEY is present in the environment.
- *   2. The key type is the v3 REST kind (xkeysib-…), not the SMTP-relay kind
- *      (xsmtpsib-…), which the /v3/smtp/email endpoint rejects.
- *   3. The key authenticates against GET /v3/account.
- *   4. The app's sender (eamigratepro@gmail.com) exists and is verified.
- *
- * Exit code 0 = all good; 1 = something needs fixing.
+ * Sends one real test email through the SAME Brevo v3 endpoint and payload
+ * shape the app's server functions use (api.brevo.com/v3/smtp/email), then
+ * prints the full response so delivery failures are visible. The API key is
+ * read from the environment (BREVO_API_KEY) and is never printed.
  */
+const to = (process.argv[2] ?? "biyasentobeko222@gmail.com").trim();
+const apiKey = (process.env.BREVO_API_KEY ?? "").trim();
 
-const SENDER_EMAIL = "eamigratepro@gmail.com";
-
-const key = (process.env["BREVO_API_KEY"] ?? "").trim();
-console.log("1) BREVO_API_KEY present:", key.length > 0);
-if (key.length === 0) {
-  console.log("   RESULT: FAIL — add the key in Settings → Environment.");
+console.log("1) BREVO_API_KEY present:", apiKey.length > 0);
+if (!apiKey) {
+  console.log("RESULT: FAIL — add BREVO_API_KEY in Settings → Environment.");
   process.exit(1);
 }
+console.log("   Key shape: length", apiKey.length, "| starts:", apiKey.slice(0, 3) === "xke" ? "xke… (correct Brevo format)" : "(unrecognised prefix)");
 
-const keyType = key.startsWith("xkeysib-")
-  ? "xkeysib (v3 REST API key — correct)"
-  : key.startsWith("xsmtpsib-")
-    ? "xsmtpsib (SMTP relay key — WRONG for the /v3 REST API)"
-    : "unrecognised prefix";
-console.log("2) Key type:", keyType);
-if (!key.startsWith("xkeysib-")) {
-  console.log("   RESULT: FAIL — generate a v3 API key in Brevo (SMTP & API → API Keys).");
-  process.exit(1);
-}
+const senderEmail = (process.env.BREVO_SENDER_EMAIL ?? "eamigratepro@gmail.com").trim();
+console.log("2) Sender:", senderEmail, "| To:", to);
 
-// Shape diagnostics that never reveal the secret itself.
-const raw = process.env["BREVO_API_KEY"] ?? "";
-console.log("2b) Key shape: length", key.length, "(xkeysib keys are ~88 chars)");
-if (raw !== key) console.log("    Note: value had surrounding whitespace — it was trimmed for this test.");
-if (/\s/.test(key)) console.log("    WARNING: the value contains spaces/newlines INSIDE it — re-paste the key without line breaks.");
-if (key.length < 60) console.log("    WARNING: the value looks short — it may be a truncated paste.");
+const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+  method: "POST",
+  headers: {
+    accept: "application/json",
+    "api-key": apiKey,
+    "content-type": "application/json",
+  },
+  body: JSON.stringify({
+    sender: { name: "EA Migrate Pro", email: senderEmail },
+    to: [{ email: to, name: "Platform Owner" }],
+    subject: "✅ Brevo email test — EA Migrate Pro",
+    htmlContent: `<!DOCTYPE html><html><body style="margin:0;background:#0A0A0C;font-family:Arial,Helvetica,sans-serif;">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:40px 16px;">
+        <tr><td align="center">
+          <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background:#121216;border:1px solid #26262E;border-radius:16px;">
+            <tr><td style="padding:32px;">
+              <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;">EA MIGRATE PRO</p>
+              <h1 style="margin:12px 0 0 0;font-size:24px;color:#FFFFFF;">Brevo is working ✅</h1>
+              <p style="margin:16px 0 0 0;font-size:15px;line-height:1.6;color:#C9C9D1;">This is a live delivery test of the platform's email pipeline. If you are reading this in your inbox, registration and approval emails will arrive correctly.</p>
+              <p style="margin:20px 0 0 0;font-size:12px;color:#6C6C78;">Sent at ${new Date().toISOString()} via api.brevo.com/v3/smtp/email</p>
+            </td></tr>
+          </table>
+        </td></tr>
+      </table>
+    </body></html>`,
+    textContent: "Brevo is working. This is a live delivery test of the EA Migrate Pro email pipeline.",
+  }),
+  signal: AbortSignal.timeout(15_000),
+});
 
-let account;
+console.log("3) POST /v3/smtp/email → HTTP", response.status);
+const body = await response.text().catch(() => "");
+let detail = body;
 try {
-  const response = await fetch("https://api.brevo.com/v3/account", {
-    headers: { "api-key": key, accept: "application/json" },
-  });
-  console.log("3) GET /v3/account ->", response.status);
-  if (!response.ok) {
-    const body = await response.text().catch(() => "");
-    let detail = body;
-    try {
-      const parsed = JSON.parse(body);
-      detail = parsed.message ?? body;
-    } catch {
-      /* keep raw */
-    }
-    console.log("   Brevo says:", String(detail).slice(0, 300));
-    if (/revoked|invalid|unauthor/i.test(String(detail))) {
-      console.log("   RESULT: FAIL — Brevo does not recognise this key. Generate a fresh one (SMTP & API → API Keys → Generate new key), copy it fully, and replace BREVO_API_KEY in Settings → Environment.");
-    }
-    process.exit(1);
-  }
-  account = (await response.json()) ?? {};
-  console.log("   Authenticated as Brevo account:", account.email ?? "(unknown)");
-} catch (error) {
-  console.log("3) Network request failed:", error?.message ?? error);
-  console.log("   RESULT: FAIL — could not reach api.brevo.com from this environment.");
-  process.exit(1);
+  detail = JSON.stringify(JSON.parse(body));
+} catch {
+  /* keep raw */
 }
+console.log("   Full Brevo response:", detail.slice(0, 600) || "(empty body)");
 
-let senderOk = false;
-try {
-  const response = await fetch("https://api.brevo.com/v3/senders", {
-    headers: { "api-key": key, accept: "application/json" },
-  });
-  console.log("4) GET /v3/senders ->", response.status);
-  if (response.ok) {
-    const data = (await response.json()) ?? {};
-    const senders = Array.isArray(data.senders) ? data.senders : [];
-    const match = senders.find((sender) => String(sender.email ?? "").toLowerCase() === SENDER_EMAIL);
-    if (match) {
-      senderOk = match.verified === true;
-      console.log(`   Sender ${SENDER_EMAIL}: ${match.verified ? "verified ✓" : "NOT verified ✗"}`);
-    } else {
-      console.log(`   Sender ${SENDER_EMAIL}: not found in the senders list ✗`);
-    }
-  }
-} catch (error) {
-  console.log("4) Sender lookup failed:", error?.message ?? error);
+if (response.ok) {
+  console.log("RESULT: OK — email accepted by Brevo. Check the inbox (and spam) for:", to);
+} else if (response.status === 401 || response.status === 403) {
+  console.log("RESULT: FAIL — Brevo rejected the API key. Generate a fresh SMTP/API key at app.brevo.com and update BREVO_API_KEY.");
+} else {
+  console.log("RESULT: FAIL — see the Brevo error above (sender not verified is the most common cause).");
 }
-if (!senderOk) {
-  console.log(`   RESULT: PARTIAL — key works, but add/verify ${SENDER_EMAIL} under Brevo → Senders & IP, or Brevo will reject outgoing mail.`);
-  process.exit(1);
-}
-
-console.log("RESULT: OK — key and sender are ready for the approval emails.");
+process.exit(response.ok ? 0 : 1);

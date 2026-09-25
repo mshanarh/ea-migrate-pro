@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
 import { syncRegister } from "@/lib/account-sync.server";
+import { sendPortalEmail } from "@/lib/send-email.server";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
@@ -77,6 +78,20 @@ function SignUp() {
               if (synced.enabled && !synced.ok) {
                 console.error("[signup] Shared registration sync failed");
               }
+              // Admin alert — "New user registered: <email> - Approve in
+              // admin". Also saves the pending approval row. Fire-and-forget:
+              // a slow/unavailable email must never delay the redirect into
+              // the mentor's own dashboard.
+              void sendPortalEmail({
+                data: {
+                  type: "new_registration",
+                  email: res.account.email,
+                  firstName: res.account.firstName,
+                  displayName: res.account.displayName,
+                },
+              }).catch((emailError) =>
+                console.error("[signup] registration email failed:", emailError),
+              );
             }
             navigate({ to: "/dashboard" });
           } catch (syncError) {
