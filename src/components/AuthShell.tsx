@@ -29,7 +29,7 @@ export function AuthShell({
             className="flex size-20 items-center justify-center rounded-3xl border border-[#38BDF8]/25 bg-white/5 p-2 shadow-[0_0_36px_rgb(0_168_255_/_0.28)] transition-transform duration-300 hover:scale-105"
           >
             <img
-              src="/ea-migrate-pro-icon.png"
+              src="/logo.png"
               alt="EA Migrate Pro"
               className="size-full object-contain"
             />

@@ -64,7 +64,7 @@ export function useBrand() {
 }
 
 /** The logo every part of the app renders when no custom one is uploaded. */
-export const DEFAULT_LOGO = "/botlogic-mascot.png";
+export const DEFAULT_LOGO = "/logo.png";
 
 export function setCustomLogo(ref: string) {
   load();

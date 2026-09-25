@@ -20,7 +20,7 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
         <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
           <img
-            src="/ea-migrate-platform-robot.png"
+            src="/logo.svg"
             alt="EA Migrate Pro"
             className="size-10 min-w-[32px] shrink-0 object-contain"
           />
