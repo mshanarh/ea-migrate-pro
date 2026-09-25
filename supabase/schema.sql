@@ -28,6 +28,11 @@ create table if not exists public.user_sessions (
   created_at  timestamp default now()
 );
 
+-- Repair for sessions tables created before license_key existed. Safe to
+-- re-run; create-table-if-not-exists never alters an existing table.
+alter table public.user_sessions add column if not exists license_key text;
+alter table public.user_sessions add column if not exists created_at timestamp default now();
+
 create index if not exists user_sessions_email_idx on public.user_sessions (email);
 create index if not exists users_created_at_idx on public.users (created_at desc);
 

@@ -6,7 +6,9 @@
  *      paid, "admin" for admins.
  *
  * While Supabase env vars are missing the module degrades gracefully and
- * the legacy local payment store decides, so the app never blocks.
+ * the legacy local payment store decides, so the app never blocks. A
+ * partially-migrated schema (e.g. a missing column) must never lock a
+ * customer out either — failures here fail open to the legacy local gate.
  */
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
@@ -21,6 +23,13 @@ function db() {
   return supabaseConfigured ? supabase : null;
 }
 
+/**
+ * Registration gate. Fail-open by design: every Supabase error path lands on
+ * the legacy local payment store instead of an error screen, so a schema
+ * hiccup degrades the check rather than blocking sign-in. The ONLY case that
+ * blocks an email is an explicit unpaid decision from a successfully read
+ * row — so nobody can skip checkout just because the database hiccuped.
+ */
 export async function registerWithEmail(
   email: string,
   licenseKey?: string,
@@ -39,31 +48,42 @@ export async function registerWithEmail(
     .maybeSingle();
 
   if (upsertError) {
-    console.warn("[supabase] user upsert failed:", upsertError.message);
+    // 42703 = PostgREST "column does not exist" — the table predates a
+    // migration. Treat as read failure, not a registration failure.
+    console.warn("[supabase] user upsert failed:", upsertError.code, upsertError.message);
     return { outcome: "allow", user: null, error: upsertError.message };
   }
 
-  // 2. Session row — best-effort; a missing session never blocks sign-in.
+  // 2. Session row — best-effort. Some deployments lack the license_key
+  //    column; retry without it so the session still records.
   const { error: sessionError } = await dbClient.from("user_sessions").insert({
     email: address,
     ...(licenseKey ? { license_key: licenseKey } : {}),
   });
-  if (sessionError) console.warn("[supabase] session insert failed:", sessionError.message);
+  if (sessionError?.code === "42703") {
+    const { error: retryError } = await dbClient.from("user_sessions").insert({ email: address });
+    if (retryError) console.warn("[supabase] session insert failed:", retryError.message);
+  } else if (sessionError) {
+    console.warn("[supabase] session insert failed:", sessionError.message);
+  }
 
   // 3. Re-read the row (covers "insert raced, upsert ignored" — the select
   //    after ignoreDuplicates can be null when the row already existed).
   let user = inserted as UserRow | null;
   if (!user) {
-    const { data: fetched } = await dbClient
+    const { data: fetched, error: fetchError } = await dbClient
       .from("users")
       .select("id, email, is_paid, is_admin, created_at")
       .eq("email", address)
       .maybeSingle();
+    if (fetchError) console.warn("[supabase] user read failed:", fetchError.code, fetchError.message);
     user = (fetched as UserRow | null) ?? null;
   }
 
-  if (user?.is_admin) return { outcome: "admin", user };
-  if (user?.is_paid) return { outcome: "allow", user };
+  // An unreadable row must NOT force the user to pay — fail open.
+  if (!user) return { outcome: "allow", user: null };
+  if (user.is_admin) return { outcome: "admin", user };
+  if (user.is_paid) return { outcome: "allow", user };
   return { outcome: "checkout", user };
 }
 
