@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
-import { fetchUpcomingNews, type NewsEvent } from "@/lib/news.server";
+import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
 
 export const Route = createFileRoute("/app/fundamentals")({
   ssr: false,
@@ -38,17 +38,16 @@ export const Route = createFileRoute("/app/fundamentals")({
   component: FundamentalsPage,
 });
 
-/** Friendly in-page fallback with the live Investing.com widget. */
+/** Live fallback: the real Investing.com weekly economic calendar widget. */
 function FundamentalsErrorFallback() {
-  const [retrying, setRetrying] = useState(false);
   return (
-    <div className="app-shell-locked min-h-screen w-full overflow-y-auto bg-[#0a0a0a] pb-28 text-white">
+    <div className="min-h-screen w-full bg-[#0a0a0a] pb-32 text-white">
       <p className="pt-10 text-center text-[15px] font-bold uppercase tracking-[0.35em] text-white/90">FUNDAMENTALS</p>
       <p className="mt-2 text-center text-[15px] text-white/55">This week's economic calendar</p>
       <main className="mx-auto w-full max-w-md px-5">
-        <div className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
-          Calendar temporarily unavailable — check ForexFactory.com. The live calendar below still works:
-        </div>
+        <p className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+          Live feed temporarily unavailable — the real calendar below is always up to date.
+        </p>
         <div className="mt-4 overflow-hidden rounded-2xl border border-white/10">
           <iframe
             src="https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&features=datepicker,timezone&countries=25,32,6,37,72,22,17,39,14,10,35,43,56,36,110,11,26,12,4,5&calType=week&timeZone=8&lang=1"
@@ -60,13 +59,10 @@ function FundamentalsErrorFallback() {
         </div>
         <button
           type="button"
-          onClick={() => {
-            setRetrying(true);
-            window.location.reload();
-          }}
+          onClick={() => window.location.reload()}
           className="mx-auto mt-5 flex h-12 items-center justify-center gap-2 rounded-full bg-white/12 px-6 text-sm font-bold text-white"
         >
-          <RefreshCw className={`size-4 ${retrying ? "animate-spin" : ""}`} /> Try again
+          <RefreshCw className="size-4" /> Try again
         </button>
       </main>
       <FixedBottomNav />
@@ -81,7 +77,6 @@ function FundamentalsErrorFallback() {
 type SessionDef = {
   id: string;
   label: string;
-  flag: string;
   /** GMT open/close hour pair. open < close = same-day window; open > close wraps midnight. */
   open: number;
   close: number;
@@ -89,10 +84,10 @@ type SessionDef = {
 };
 
 const SESSIONS: SessionDef[] = [
-  { id: "sydney", label: "SYDNEY", flag: "🇦🇺", open: 22, close: 7, currencies: ["AUD", "NZD"] },
-  { id: "tokyo", label: "TOKYO", flag: "🇯🇵", open: 0, close: 9, currencies: ["JPY"] },
-  { id: "london", label: "LONDON", flag: "🇬🇧", open: 8, close: 17, currencies: ["GBP", "EUR"] },
-  { id: "newyork", label: "NEW YORK", flag: "🇺🇸", open: 13, close: 22, currencies: ["USD", "CAD"] },
+  { id: "sydney", label: "SYDNEY", open: 22, close: 7, currencies: ["AUD", "NZD"] },
+  { id: "tokyo", label: "TOKYO", open: 0, close: 9, currencies: ["JPY"] },
+  { id: "london", label: "LONDON", open: 8, close: 17, currencies: ["GBP", "EUR"] },
+  { id: "newyork", label: "NEW YORK", open: 13, close: 22, currencies: ["USD", "CAD"] },
 ];
 
 type SessionState = {
@@ -119,7 +114,7 @@ function sessionStates(now: Date): SessionState[] {
   });
 }
 
-function hoursLabel(hours: number, open: boolean): string {
+function hoursLabel(hours: number): string {
   const total = Math.round(hours * 60);
   const h = Math.floor(total / 60);
   const m = total % 60;
@@ -207,100 +202,41 @@ function ImpactBulls({ impact }: { impact: string }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Mock fallback — realistic FF-shaped week when the feed is blocked    */
+/* Mapping the real feed into calendar rows for the whole week         */
 /* ------------------------------------------------------------------ */
 
 type CalEvent = {
   id: string;
   time: string; // "15:20" local display
-  dayOffset: number; // 0 = today
+  dayOffset: number; // 0 = today, up to 6
   currency: string;
   title: string;
-  impact: "High" | "Medium" | "Low" | "Holiday";
+  impact: string; // "High" | "Medium" | "Low" | "Holiday"
   forecast?: string;
   previous?: string;
 };
 
-function mockWeek(): CalEvent[] {
-  const mk = (
-    dayOffset: number,
-    time: string,
-    currency: string,
-    title: string,
-    impact: CalEvent["impact"],
-    forecast?: string,
-    previous?: string,
-  ): CalEvent => ({
-    id: `mock-${dayOffset}-${time}-${currency}-${title}`,
-    dayOffset,
-    time,
-    currency,
-    title,
-    impact,
-    ...(forecast !== undefined ? { forecast } : {}),
-    ...(previous !== undefined ? { previous } : {}),
-  });
-  return [
-    mk(0, "10:00", "EUR", "M3 Money Supply y/y", "Low", "3.5%", "3.4%"),
-    mk(0, "10:00", "EUR", "Private Loans y/y", "Low", "3.2%", "3.1%"),
-    mk(0, "11:15", "GBP", "BOE Gov Bailey Speaks", "High"),
-    mk(0, "11:15", "USD", "FOMC Member Williams Speaks", "Low"),
-    mk(0, "14:30", "USD", "Core Durable Goods Orders m/m", "Medium", "0.6%", "0.4%"),
-    mk(0, "14:30", "USD", "Durable Goods Orders m/m", "Medium", "1.1%", "0.9%"),
-    mk(0, "15:20", "USD", "FOMC Member Schmid Speaks", "Low"),
-    mk(0, "16:00", "USD", "Revised UoM Consumer Sentiment", "Medium", "47.4", "47.8"),
-    mk(0, "16:00", "USD", "Revised UoM Inflation Expectations", "Medium", undefined, "4.6%"),
-    mk(0, "20:00", "USD", "FOMC Member Hammack Speaks", "Low"),
-    mk(1, "01:01", "GBP", "GfK Consumer Confidence", "Low", "-16", "-14"),
-    mk(1, "01:01", "CNY", "Bank Holiday", "Holiday"),
-    mk(1, "07:00", "JPY", "BOJ Core CPI y/y", "Low", "1.5%", "1.6%"),
-    mk(1, "08:00", "EUR", "German GfK Consumer Climate", "Low", "-27.1", "-26.6"),
-    mk(1, "14:30", "CAD", "RMPI m/m", "Medium", "1.8%", "2.1%"),
-    mk(1, "15:00", "NZD", "RBNZ Offshore Holdings", "Low"),
-    mk(2, "00:30", "AUD", "Building Approvals m/m", "Medium", "2.4%", "1.9%"),
-    mk(2, "12:00", "GBP", "Mortgage Approvals", "Low", "61K", "60K"),
-    mk(2, "14:15", "USD", "Fed Chair Powell Speaks", "High"),
-    mk(3, "02:30", "JPY", "Tankan Manufacturing Index", "High", "13", "12"),
-    mk(3, "14:30", "USD", "Unemployment Claims", "Medium", "221K", "218K"),
-    mk(3, "15:45", "EUR", "ECB Lane Speaks", "Medium"),
-    mk(4, "03:35", "AUD", "RBA Bull Speaks", "Medium"),
-    mk(4, "14:30", "USD", "Core PCE Price Index m/m", "High", "0.3%", "0.2%"),
-    mk(5, "07:00", "GBP", "Halifax HPI m/m", "Medium", "0.2%", "0.3%"),
-    mk(5, "16:00", "USD", "FOMC Member Logan Speaks", "Low"),
-    mk(6, "16:00", "NZD", "Daylight Saving Time Shift", "Holiday"),
-  ];
-}
-
-/** Maps the server news feed to calendar rows for the whole week. */
-function toCalendarRows(events: NewsEvent[]): CalEvent[] {
+/** Maps the real server feed to calendar rows for the full week. */
+function toCalendarRows(events: CalendarEvent[]): CalEvent[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const dayName = (offset: number) => {
-    const d = new Date(today);
-    d.setDate(d.getDate() + offset);
-    return d;
-  };
   const offsets = new Map<string, number>();
-  for (let i = 0; i < 7; i += 1) offsets.set(dayName(i).toDateString(), i);
+  for (let i = 0; i < 7; i += 1) {
+    const d = new Date(today);
+    d.setDate(d.getDate() + i);
+    offsets.set(d.toDateString(), i);
+  }
 
   return events.map((event, index) => {
     const when = new Date(event.date);
     const offset = offsets.get(when.toDateString()) ?? 0;
-    const impact: CalEvent["impact"] =
-      event.impact.toLowerCase() === "high"
-        ? "High"
-        : event.impact.toLowerCase() === "medium"
-          ? "Medium"
-          : event.impact.toLowerCase() === "holiday"
-            ? "Holiday"
-            : "Low";
     return {
       id: event.id || `feed-${index}`,
       dayOffset: offset,
       time: `${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`,
       currency: event.currency,
       title: event.title,
-      impact,
+      impact: event.impact,
       ...(event.forecast ? { forecast: event.forecast } : {}),
       ...(event.previous ? { previous: event.previous } : {}),
     };
@@ -312,11 +248,11 @@ function toCalendarRows(events: NewsEvent[]): CalEvent[] {
 /* ------------------------------------------------------------------ */
 
 function FundamentalsPage() {
-  const app = useAppState();
+  useAppState();
 
   const [now, setNow] = useState(() => new Date());
   const [events, setEvents] = useState<CalEvent[] | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [feedFailed, setFeedFailed] = useState(false);
   const [highImpactOnly, setHighImpactOnly] = useState(false);
   const [range, setRange] = useState<"today" | "tomorrow" | "week">("week");
   const [sessionFilter, setSessionFilter] = useState<string | null>(null);
@@ -332,21 +268,24 @@ function FundamentalsPage() {
   const load = async () => {
     const seq = ++loadSeq.current;
     setRefreshing(true);
-    // The feed is fetched through the server function (no CORS on the source).
-    // EVERY failure path lands on the mock week — the page must never crash
-    // and never show an error screen just because the calendar API is down.
+    // The real feed is fetched through the server function (the source has no
+    // CORS header). Every failure lands on the live Investing.com widget —
+    // the page NEVER shows fake events and never crashes.
     try {
-      const result = await fetchUpcomingNews();
+      const result = await fetchWeekCalendar();
       if (loadSeq.current !== seq) return;
-      const rows = result && Array.isArray(result.events) && result.events.length > 0
-        ? toCalendarRows(result.events)
-        : mockWeek();
-      setEvents(rows);
+      if (result.ok && Array.isArray(result.events) && result.events.length > 0) {
+        setEvents(toCalendarRows(result.events));
+        setFeedFailed(false);
+      } else {
+        setEvents(null);
+        setFeedFailed(true);
+      }
     } catch {
       if (loadSeq.current !== seq) return;
-      setEvents(mockWeek());
+      setEvents(null);
+      setFeedFailed(true);
     } finally {
-      if (loadSeq.current === seq) setLoading(false);
       setRefreshing(false);
     }
   };
@@ -372,14 +311,14 @@ function FundamentalsPage() {
       const active = SESSIONS.find((s) => s.id === sessionFilter);
       if (active) rows = rows.filter((row) => active.currencies.includes(row.currency));
     }
-    if (highImpactOnly) rows = rows.filter((row) => row.impact === "High");
+    if (highImpactOnly) rows = rows.filter((row) => row.impact.toLowerCase() === "high");
     if (range === "today") rows = rows.filter((row) => row.dayOffset === 0);
     if (range === "tomorrow") rows = rows.filter((row) => row.dayOffset === 1);
     return rows;
   }, [events, sessionFilter, highImpactOnly, range]);
 
   const highCount = useMemo(
-    () => (events ?? []).filter((row) => row.impact === "High" && (range !== "today" || row.dayOffset === 0)).length,
+    () => (events ?? []).filter((row) => row.impact.toLowerCase() === "high" && (range !== "today" || row.dayOffset === 0)).length,
     [events, range],
   );
 
@@ -402,14 +341,12 @@ function FundamentalsPage() {
     return groups;
   }, [filtered]);
 
-  // Both the live feed and the mock build failed — show the live widget
-  // instead of an empty or broken page. Never a crash screen.
-  if (events === null && !loading) {
+  if (feedFailed) {
     return <FundamentalsErrorFallback />;
   }
 
   return (
-    <div className="app-shell-locked min-h-screen w-full overflow-y-auto bg-[#0a0a0a] pb-28 text-white">
+    <div className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-32 text-white">
       {/* ── top bar ── */}
       <div className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-6">
         <button
@@ -449,7 +386,7 @@ function FundamentalsPage() {
             </p>
             {nextSession && (
               <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-white/45">
-                NEXT · {nextSession.session.label} IN {hoursLabel(nextSession.hours, false)}
+                NEXT · {nextSession.session.label} IN {hoursLabel(nextSession.hours)}
               </p>
             )}
           </div>
@@ -472,7 +409,7 @@ function FundamentalsPage() {
               <p className="mt-3 text-[15px] font-extrabold uppercase tracking-[0.24em]">
                 {hero.session.label} OPEN
               </p>
-              <p className="text-[13px] text-white/55">Closes in {hoursLabel(hero.hours, true)}</p>
+              <p className="text-[13px] text-white/55">Closes in {hoursLabel(hero.hours)}</p>
             </>
           ) : (
             <>
@@ -484,7 +421,7 @@ function FundamentalsPage() {
               </p>
               {nextSession && (
                 <p className="text-[13px] text-white/55">
-                  {nextSession.session.label} opens in {hoursLabel(nextSession.hours, false)}
+                  {nextSession.session.label} opens in {hoursLabel(nextSession.hours)}
                 </p>
               )}
             </>
@@ -510,7 +447,7 @@ function FundamentalsPage() {
                 {session.label}
               </span>
               <span className={`text-[10px] font-bold uppercase tracking-[0.1em] ${isOpen ? "text-white/90" : "text-white/45"}`}>
-                {isOpen ? `OPEN · ${hoursLabel(hours, true)}` : `IN ${hoursLabel(hours, false)}`}
+                {isOpen ? `OPEN · ${hoursLabel(hours)}` : `IN ${hoursLabel(hours)}`}
               </span>
             </button>
           ))}
@@ -579,8 +516,10 @@ function FundamentalsPage() {
 
         {/* ── event list ── */}
         <div className="mt-5 space-y-6">
-          {loading && <p className="py-10 text-center text-sm text-white/40">Loading this week's calendar…</p>}
-          {!loading && grouped.length === 0 && (
+          {!events && (
+            <p className="py-10 text-center text-sm text-white/40">Loading this week's calendar…</p>
+          )}
+          {events && grouped.length === 0 && (
             <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
               No events match these filters.
             </p>
@@ -603,10 +542,10 @@ function FundamentalsPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-baseline gap-3">
                           <span className="text-[14px] font-extrabold tracking-wide">{row.currency}</span>
-                          <span className="min-w-0 flex-1 truncate text-[15px] text-white/90">{row.title}</span>
+                          <span className="min-w-0 flex-1 text-[15px] text-white/90">{row.title}</span>
                         </div>
                         {(row.forecast || row.previous) && (
-                          <p className="mt-2 flex gap-4 text-[12px] font-semibold">
+                          <p className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-[12px] font-semibold">
                             {row.forecast && (
                               <span className="text-white/55">
                                 FC <span className="text-white/85">{row.forecast}</span>
