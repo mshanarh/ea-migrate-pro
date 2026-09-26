@@ -182,12 +182,12 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
           )}
           {phase === "trade" && (
             <p className="truncate text-[13px] font-bold text-white">
-              <span className="text-green-400">✅</span> Trade {currentTrade}/{totalTrades} completed successfully
+              <span className="text-green-400">✅</span> Trade {currentTrade} opened — EA Migrate ({currentTrade}/{totalTrades})
             </p>
           )}
           {phase === "done" && (
             <p className="truncate text-[13px] font-bold text-white">
-              {typed || `🎉 All ${totalTrades} trades executed on MetaTrader`}
+              {typed || `🎉 All ${totalTrades} trades opened on MT5 — EA Migrate`}
             </p>
           )}
           {totalTrades > 0 && (phase === "trade" || phase === "scanning") && (

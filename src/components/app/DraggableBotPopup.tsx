@@ -86,7 +86,8 @@ export default function DraggableBotPopup() {
           ? { text: `TP: ${p.takeProfit} | SL: ${p.stopLoss}`, kind: "info" }
           : { text: "SL/TP attached by the trade plan", kind: "info" },
         { text: `SENDING ${p.max_trades} TRADES TO MT5...`, kind: "info" },
-        { text: `${p.max_trades}/${p.max_trades} TRADES EXECUTED ON MT5`, kind: "last" },
+        { text: `TRADE 1 OPENED — EA MIGRATE ✓`, kind: "last" },
+        { text: `${p.max_trades}/${p.max_trades} TRADES OPENED ON MT5 — EA MIGRATE`, kind: "last" },
       ];
       setState("executed");
       setLogs([]);
@@ -104,7 +105,7 @@ export default function DraggableBotPopup() {
         const base = prev.filter((line) => line.kind !== "last");
         return [...base, { text: result.ok ? `✔ ${result.message.toUpperCase()}` : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? "last" : "info" }];
       });
-      speakBot(result.message);
+      speakBot(result.ok ? `Trade opened. EA Migrate. ${result.message}` : result.message);
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);
     // Compatibility no-op — visibility is store-driven now.

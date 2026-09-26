@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/metaapi";
+import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/market-scanner.server";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 type ScannerTimeframe = "15m" | "1h" | "4h";

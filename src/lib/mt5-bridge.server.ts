@@ -191,7 +191,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
         ok: true,
         executed,
         total,
-        message: total > 1 ? `${total}/${total} ${data.symbol} trades executed on MT5` : `${data.symbol} trade executed on MT5`,
+        message: total > 1 ? `${total}/${total} ${data.symbol} trades opened on MT5 — EA Migrate` : `${data.symbol} trade opened on MT5 — EA Migrate`,
       };
     }
     const reason = results.find((item) => !item.success)?.error ?? "The bridge did not accept the order.";
@@ -234,7 +234,7 @@ async function executeVpsTradeInternal(input: {
         volume: input.volume,
         stop_loss: input.stop_loss || 0,
         take_profit: input.take_profit || 0,
-        comment: "EA Migrate Pro Live",
+        comment: "EA Migrate Live",
       }),
     });
 
