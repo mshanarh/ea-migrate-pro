@@ -140,7 +140,6 @@ function AppScanner() {
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
-          {...(app.mt ? { accountId: `${app.mt.loginId}@${app.mt.server}` } : {})}
           accent={accent}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}

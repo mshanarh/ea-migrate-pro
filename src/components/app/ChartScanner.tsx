@@ -41,10 +41,6 @@ export type ExecutionOutcome = {
 type Props = {
   /** Symbols the mentor attached to this bot (EA creation on the mentor portal). */
   symbols: string[];
-  /** MetaApi account used for live quotes and historical candles. */
-  accountId?: string;
-  /** MetaApi region returned when the MT5 account was connected. */
-  region?: string;
   /** Per-symbol lot/max trades saved on the robot (falls back to sensible defaults). */
   pairs?: { symbol: string; lotSize: string; maxTrades: string }[];
   /** Accent color hex, applied to buttons, bullets and highlights. */
@@ -129,8 +125,6 @@ const PHASE_META: Record<
 
 export default function ChartScanner({
   symbols,
-  accountId,
-  region,
   pairs = [],
   accent,
   scansLeft,
@@ -174,14 +168,14 @@ export default function ChartScanner({
 
   const hasSymbols = symbols.length > 0;
   const lotValid = Number(lot) > 0;
-  const scanLocked = !accountId || !symbol || !lotValid || trades < 1;
-  const lockReason = !accountId
-    ? "Connect your MT5 account first"
-    : !symbol
-      ? "Add a symbol to your EA"
-      : !lotValid
-        ? "Set a lot size"
-        : "";
+  // Scanning is ACCOUNT-INDEPENDENT: public market data powers the analysis,
+  // so no MT5/MetaApi account is required to scan any symbol.
+  const scanLocked = !symbol || !lotValid || trades < 1;
+  const lockReason = !symbol
+    ? "Add a symbol to your EA"
+    : !lotValid
+      ? "Set a lot size"
+      : "";
 
   const resetResult = () => {
     setExecuted(false);
@@ -243,10 +237,9 @@ export default function ChartScanner({
     try {
       const result = await getScannerAnalysis({
         data: {
-          accountId: accountId ?? "",
+          accountId: "public-feed",
           symbol,
           timeframe,
-          ...(region ? { region } : {}),
         },
       });
       if (!result.ok) {
@@ -260,7 +253,7 @@ export default function ChartScanner({
       window.clearInterval(interval);
       setScanning(false);
     }
-  }, [accountId, region, symbol, timeframe, onScanStart, scanning]);
+  }, [symbol, timeframe, onScanStart, scanning]);
 
   const startScan = () => {
     if (scanning || scanLocked) return;
@@ -348,14 +341,14 @@ export default function ChartScanner({
       <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-5 sm:px-6">
         <div>
           <div className="flex items-center gap-2">
-            <span className="size-2 rounded-full" style={{ background: accountId ? "#22c55e" : "#9ca3af" }} />
+            <span className="size-2 rounded-full" style={{ background: "#22c55e" }} />
             <span className="text-[10px] font-bold tracking-[0.2em] text-white/40">
-              {accountId ? "MT5 CONNECTED" : "MT5 NOT CONNECTED"}
+              MARKET FEED LIVE
             </span>
           </div>
           <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
           <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
-            Live broker quotes build executable trade plans with entry, stop-loss and take-profit.
+            Public market data builds executable trade plans with entry, stop-loss and take-profit. Execute sends the order to your saved MT5 account.
           </p>
         </div>
         <span
