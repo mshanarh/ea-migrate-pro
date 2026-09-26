@@ -221,7 +221,7 @@ function toCalendarRows(events: CalendarEvent[]): CalEvent[] {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const offsets = new Map<string, number>();
-  for (let i = 0; i < 7; i += 1) {
+  for (let i = -7; i <= 7; i += 1) {
     const d = new Date(today);
     d.setDate(d.getDate() + i);
     offsets.set(d.toDateString(), i);
@@ -229,6 +229,8 @@ function toCalendarRows(events: CalendarEvent[]): CalEvent[] {
 
   return events.map((event, index) => {
     const when = new Date(event.date);
+    // True day difference: earlier-in-week and next-week events group under
+    // their real day instead of collapsing into TODAY.
     const offset = offsets.get(when.toDateString()) ?? 0;
     return {
       id: event.id || `feed-${index}`,
@@ -265,12 +267,12 @@ function FundamentalsPage() {
     return () => clearInterval(timer);
   }, []);
 
-  const load = async () => {
+  const load = async (silent = false) => {
     const seq = ++loadSeq.current;
-    setRefreshing(true);
-    // The real feed is fetched through the server function (the source has no
-    // CORS header). Every failure lands on the live Investing.com widget —
-    // the page NEVER shows fake events and never crashes.
+    if (!silent) setRefreshing(true);
+    // The real feed is fetched through the server function (the mirrors have
+    // no CORS header). A failed refresh never wipes real events off the page —
+    // the page keeps the screenshot design at all times.
     try {
       const result = await fetchWeekCalendar();
       if (loadSeq.current !== seq) return;
@@ -278,20 +280,26 @@ function FundamentalsPage() {
         setEvents(toCalendarRows(result.events));
         setFeedFailed(false);
       } else {
-        setEvents(null);
         setFeedFailed(true);
       }
     } catch {
       if (loadSeq.current !== seq) return;
-      setEvents(null);
       setFeedFailed(true);
     } finally {
-      setRefreshing(false);
+      if (!silent) setRefreshing(false);
     }
   };
 
   useEffect(() => {
     void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The calendar keeps itself up to date — a silent refresh every 5 minutes
+  // (matching the server cache) so new releases appear without a refresh.
+  useEffect(() => {
+    const timer = setInterval(() => void load(true), 5 * 60 * 1000);
+    return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -340,10 +348,6 @@ function FundamentalsPage() {
     }
     return groups;
   }, [filtered]);
-
-  if (feedFailed) {
-    return <FundamentalsErrorFallback />;
-  }
 
   return (
     <div className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-32 text-white">
@@ -514,10 +518,26 @@ function FundamentalsPage() {
           )}
         </div>
 
-        {/* ── event list ── */}
+        {/* ── event list (real feed; live widget only while the feed is down) ── */}
         <div className="mt-5 space-y-6">
-          {!events && (
+          {!events && !feedFailed && (
             <p className="py-10 text-center text-sm text-white/40">Loading this week's calendar…</p>
+          )}
+          {!events && feedFailed && (
+            <>
+              <p className="rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+                Live feed temporarily unavailable — the real calendar below is always up to date.
+              </p>
+              <div className="overflow-hidden rounded-2xl border border-white/10">
+                <iframe
+                  src="https://sslecal2.investing.com?columns=exc_flags,exc_currency,exc_importance,exc_actual,exc_forecast,exc_previous&features=datepicker,timezone&countries=25,32,6,37,72,22,17,39,14,10,35,43,56,36,110,11,26,12,4,5&calType=week&timeZone=8&lang=1"
+                  width="100%"
+                  height="600"
+                  title="Economic calendar"
+                  style={{ border: 0, background: "#0a0a0a" }}
+                />
+              </div>
+            </>
           )}
           {events && grouped.length === 0 && (
             <p className="rounded-2xl border border-white/10 bg-white/[0.03] p-6 text-center text-sm text-white/45">
