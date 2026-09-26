@@ -39,6 +39,7 @@ function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -61,29 +62,56 @@ function SignIn() {
         className="mt-8 space-y-6"
         onSubmit={async (e) => {
           e.preventDefault();
+          if (busy) return;
           setError("");
-          const res = signIn(email, password);
-          if (res.error) {
-            // Not on this device? Verify against the shared cloud store so
-            // users can sign in from any phone/browser.
-            const cloud = await syncSignIn({ data: { email, password } });
-            if (cloud.enabled && cloud.ok) {
-              // Seed this device with the cloud account and sign in locally.
-              const { adoptCloudPassword, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
-              hydrateFromCloud([cloud.account]);
-              adoptCloudPassword(email, password);
-              setCurrentAccount(email);
+          setBusy(true);
+          // Marked welcome in a storage-safe way — blocked sessionStorage
+          // (private mode) must never crash the sign-in itself.
+          const markWelcome = () => {
+            try {
               sessionStorage.setItem("eamp_pending_welcome", "1");
-              navigate({ to: cloud.account.role === "admin" ? "/admin" : "/dashboard" });
+            } catch {
+              /* storage blocked — the welcome banner just won't show */
+            }
+          };
+          try {
+            const res = signIn(email, password);
+            if (res.error) {
+              // Not on this device? Verify against the shared cloud store so
+              // users can sign in from any phone/browser. A failed/unreachable
+              // cloud check falls through to the local error — it must NEVER
+              // leave the button looking dead.
+              let cloud: Awaited<ReturnType<typeof syncSignIn>> | null = null;
+              try {
+                cloud = await syncSignIn({ data: { email: email.trim(), password } });
+              } catch (cloudError) {
+                console.error("[sign-in] cloud check failed:", cloudError);
+                cloud = null;
+              }
+              if (cloud && cloud.enabled && cloud.ok) {
+                // Seed this device with the cloud account and sign in locally.
+                const { adoptCloudPassword, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+                hydrateFromCloud([cloud.account]);
+                adoptCloudPassword(email.trim(), password);
+                setCurrentAccount(email.trim());
+                markWelcome();
+                navigate({ to: cloud.account.role === "admin" ? "/admin" : "/dashboard" });
+                return;
+              }
+              setError(res.error);
               return;
             }
-            return setError(res.error);
+            const account = store.accounts.find(
+              (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
+            );
+            markWelcome();
+            navigate({ to: res.role === "admin" || account?.role === "admin" ? "/admin" : "/dashboard" });
+          } catch (submitError) {
+            console.error("[sign-in] unexpected failure:", submitError);
+            setError("Sign in hit an unexpected error. Check your connection and try again.");
+          } finally {
+            setBusy(false);
           }
-          const account = store.accounts.find(
-            (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
-          );
-          sessionStorage.setItem("eamp_pending_welcome", "1");
-          navigate({ to: res.role === "admin" || account?.role === "admin" ? "/admin" : "/dashboard" });
         }}
       >
         <Field label="Email address">
@@ -119,8 +147,17 @@ function SignIn() {
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
-          <LogIn className="size-5" /> Sign in
+        <Button type="submit" size="lg" disabled={busy} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          {busy ? (
+            <span className="flex items-center gap-3">
+              <span className="size-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              Signing in…
+            </span>
+          ) : (
+            <>
+              <LogIn className="size-5" /> Sign in
+            </>
+          )}
         </Button>
 
         <div className="flex justify-center gap-6 text-sm text-muted-foreground">

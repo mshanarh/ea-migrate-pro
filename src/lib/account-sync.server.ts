@@ -292,7 +292,19 @@ export type SyncSignInResult =
 export const syncSignIn = createServerFn({ method: "POST" })
   .validator((data: SyncSignInInput) => data)
   .handler(async ({ data }): Promise<SyncSignInResult> => {
-    if (!cloudSyncConfigured()) return { enabled: false };
+    // Never throw to the client: an unreachable Supabase must degrade to
+    // "cloud unavailable" so the sign-in flow can show a normal error
+    // instead of an unhandled rejection that leaves the button dead.
+    try {
+      return await syncSignInInner(data);
+    } catch (error) {
+      console.error("[supabase] syncSignIn failed:", error);
+      return { enabled: false };
+    }
+  });
+
+async function syncSignInInner(data: SyncSignInInput): Promise<SyncSignInResult> {
+  if (!cloudSyncConfigured()) return { enabled: false };
     const email = data.email.trim().toLowerCase();
     const account = await readAccount(email);
     if (!account) {
@@ -340,7 +352,7 @@ export const syncSignIn = createServerFn({ method: "POST" })
     // Mentor-only / removed-admin / owner rules win over the stored record.
     const resolved = enforceRoles(approval ? { ...account, status: approval } : account);
     return { enabled: true, ok: true, account: toPublic(resolved) };
-  });
+}
 
 /* ------------------------------------------------------------------ */
 /* Status refresh — a signed-in device polls this so admin decisions   */
