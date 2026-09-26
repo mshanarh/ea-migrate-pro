@@ -7,7 +7,8 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { saveMt5Connection, setMtAccountConnection, disconnectMt5Account } from "@/lib/metaapi";
+import { verifyMt5Credentials } from "@/lib/mt5-bridge.server";
+import { disconnectMt5Account } from "@/lib/metaapi";
 import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -196,9 +197,9 @@ function AppMetatrader() {
   }, [app.email]);
 
   /**
-   * SAVE DETAILS — stores the credentials ONLY. The server creates (or
-   * reuses) MetaApi's hosted copy of the account WITHOUT deploying it, so no
-   * broker connection is opened. The saved status shows Disconnected/Offline.
+   * SAVE DETAILS — verifies the credentials against the broker through the
+   * VPS MT5 bridge and stores the metadata ONLY. No hosted account copy is
+   * created and no broker connection is opened. Saved status: Offline.
    */
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -211,21 +212,19 @@ function AppMetatrader() {
     setErrorMessage(null);
     setKeyNotice(false);
     try {
-      // The server validates the details with the provider and keeps the
-      // hosted copy UNDEPLOYED — saving never connects to the broker.
-      const result = await saveMt5Connection({
+      // The VPS bridge validates the details against the broker in real time —
+      // saving never opens or keeps a broker connection.
+      const result = await verifyMt5Credentials({
         data: {
           login: loginId.trim(),
           password: password.trim(),
           server: server.trim(),
-          alias: app.email ?? loginId.trim(),
-          accountType,
         },
       });
-      if (!result.ok) {
-        setKeyNotice(result.code === "key_missing");
-        setErrorMessage(result.message);
-        toast.error(result.message);
+
+      if (!result.success) {
+        setErrorMessage(result.error || "Failed to verify account on VPS");
+        toast.error(result.error || "Failed to verify account on VPS");
         return;
       }
       const derivedBroker = broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim());
@@ -235,9 +234,6 @@ function AppMetatrader() {
         server: server.trim(),
         accountType,
         loginId: loginId.trim(),
-        mcAccountId: result.accountId,
-        ...(result.environment ? { environment: result.environment } : {}),
-        ...(result.kind ? { kind: result.kind } : {}),
       };
       connectMt(account);
       writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
@@ -251,9 +247,7 @@ function AppMetatrader() {
               server: account.server,
               accountType: account.accountType,
               broker: account.broker,
-              mcAccountId: result.accountId,
-              environment: result.environment,
-              ...(result.kind ? { kind: result.kind } : {}),
+              mcAccountId: "",
               isConnected: false,
               connectedAt: "",
               mtPassword: password.trim(),
@@ -264,7 +258,7 @@ function AppMetatrader() {
       toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server} (offline until a trade executes)`);
       setPassword("");
     } catch {
-      const message = "Could not reach the connection provider. Check your internet connection and try again.";
+      const message = "Could not reach the verification service. Check your internet connection and try again.";
       setErrorMessage(message);
       toast.error(message);
     } finally {
@@ -273,29 +267,32 @@ function AppMetatrader() {
   };
 
   /**
-   * TEST CONNECTION — the ONLY manual connect path: temporarily opens the
-   * broker connection, verifies it, then ALWAYS disconnects again.
+   * TEST CONNECTION — re-verifies the saved account through the VPS bridge.
+   * The MT5 password is never stored on the device, so the user types it in
+   * the form below and the bridge checks it against the broker in real time.
    */
   const checkStatus = async () => {
-    if (!mt?.mcAccountId || testing) return;
+    if (!mt || testing) return;
+    if (!password.trim()) {
+      setTestResult(null);
+      setErrorMessage("Type your MT5 password in the form below, then tap TEST CONNECTION to verify the saved details.");
+      return;
+    }
     setTesting(true);
     setTestResult(null);
     setErrorMessage(null);
     try {
-      const open = await setMtAccountConnection({ data: { accountId: mt.mcAccountId, connected: true } });
-      if (!open.ok) {
-        setErrorMessage(open.message);
-        toast.error(open.message);
+      const result = await verifyMt5Credentials({
+        data: { login: mt.loginId, password: password.trim(), server: mt.server },
+      });
+      if (!result.success) {
+        const message = result.error || "Failed to verify account on VPS";
+        setErrorMessage(message);
+        toast.error(message);
         return;
       }
-      // Verified — now disconnect so nothing stays running in the background.
-      const close = await setMtAccountConnection({ data: { accountId: mt.mcAccountId, connected: false } });
-      toast.success(
-        `Connection verified ✓ — ${open.currency ?? ""} ${open.balance?.toFixed(2) ?? "?"} balance${close.ok ? " · disconnected again" : ""}`,
-      );
-      setTestResult(
-        `Verified: ${open.currency ?? ""} ${open.balance?.toFixed(2) ?? "?"} balance — connection closed again.`,
-      );
+      toast.success(`Connection verified ✓ — Account ${mt.loginId} · ${mt.server}`);
+      setTestResult(`Verified: Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
     } finally {
       setTesting(false);
     }
