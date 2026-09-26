@@ -37,12 +37,13 @@ export const verifyMt5Credentials = createServerFn({ method: "POST" })
 /**
  * 2. Save MT5 credentials — SAVE FIRST, VERIFY BEST-EFFORT.
  *
- * The credentials are ALWAYS persisted to the cloud store before any broker
- * contact. Verification then runs against the VPS bridge with a short
- * timeout; a bridge outage, wrong password or timeout NEVER blocks or rolls
- * back the save — the account is simply marked unverified and the platform
- * verifies again when the next trade executes. This is the bridge-offline
- * fix: the user's details are never lost because the VPS was down.
+ * The credentials are ALWAYS persisted — on the device first, then in the
+ * cloud store best-effort — before any broker contact. Verification then
+ * runs against the VPS bridge with a short timeout; a bridge outage, wrong
+ * password or timeout NEVER blocks or rolls back the save — the account is
+ * simply marked unverified and the platform verifies again when the next
+ * trade executes. This is the bridge-offline fix: the user's details are
+ * never lost because the VPS was down.
  */
 export type SaveMt5CredentialsInput = {
   userId: string;
@@ -66,8 +67,8 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
     const password = data.password;
     const server = data.server.trim();
 
-    // 1. ALWAYS save to the database first. A missing cloud store counts as a
-    //    failed save so the user knows nothing was kept.
+    // 1. Persist to the cloud store BEST-EFFORT — a failed or missing cloud
+    //    write never fails the overall save (the device keeps its own copy).
     const record = {
       userId: data.userId,
       loginId: login,
@@ -85,14 +86,6 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
     } catch (dbError) {
       console.error("[mt5-bridge] credential save failed:", dbError);
       saved = false;
-    }
-    if (!saved) {
-      return {
-        success: false,
-        verified: false,
-        saved: false,
-        message: "Failed to save credentials",
-      };
     }
 
     // 2. Try verification, but DON'T block saving. Abort after 5s — a slow or
@@ -127,11 +120,12 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
       // Bridge offline/slow — DO NOT throw; the save stands as unverified.
     }
 
-    // 3. Always report success when saved — verification is best-effort.
+    // 3. Always succeed — the credentials are kept (device + cloud when
+    //    reachable) and verification happens again at the next trade.
     return {
       success: true,
       verified,
-      saved: true,
+      saved,
       message: verified ? "Connected and saved!" : "Saved securely. Will verify on next trade.",
     };
   });

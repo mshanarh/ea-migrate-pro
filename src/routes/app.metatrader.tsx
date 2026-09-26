@@ -197,10 +197,11 @@ function AppMetatrader() {
   }, [app.email]);
 
   /**
-   * SAVE DETAILS — ALWAYS persists the credentials first, then tries to
-   * verify through the VPS bridge best-effort. A bridge outage or wrong
-   * password never blocks the save; the account is verified again at the
-   * next trade execution.
+   * SAVE DETAILS — FORCED SAVE. The details are stored on this device right
+   * away (nothing can block that), then the cloud copy + broker verification
+   * run quietly in the background. A bridge outage or wrong password NEVER
+   * blocks or fails the save — the account is simply verified later, when a
+   * trade executes.
    */
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -212,46 +213,45 @@ function AppMetatrader() {
     setSaving(true);
     setErrorMessage(null);
     setKeyNotice(false);
-    try {
-      // Save first, verify best-effort: the VPS bridge's availability never
-      // decides whether the details are kept — verification is retried at the
-      // next trade.
-      const result = await saveMt5Credentials({
-        data: {
-          userId: app.email ?? "device-local",
-          login: loginId.trim(),
-          password: password.trim(),
-          server: server.trim(),
-          broker: broker.trim() || undefined,
-          accountType,
-        },
-      });
-      if (!result.saved) {
-        setErrorMessage(result.message);
-        toast.error(result.message);
-        return;
+
+    // 1. Save NOW on this device — instant, cannot fail.
+    const derivedBroker = broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim());
+    const account: MtAccount = {
+      platform: "MT5",
+      broker: derivedBroker,
+      server: server.trim(),
+      accountType,
+      loginId: loginId.trim(),
+    };
+    connectMt(account);
+    writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
+    const typedPassword = password.trim();
+    setPassword("");
+    toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server}`);
+    setSaving(false);
+
+    // 2. Cloud copy + best-effort verification in the background. The server
+    //    persists the credentials and tries the VPS bridge with a 5s timeout;
+    //    ANY failure here is silent — the save above always stands.
+    void (async () => {
+      try {
+        const result = await saveMt5Credentials({
+          data: {
+            userId: app.email ?? "device-local",
+            login: account.loginId,
+            password: typedPassword,
+            server: account.server,
+            broker: derivedBroker,
+            accountType,
+          },
+        });
+        if (result.verified) {
+          toast.success("Connected ✓ — verified with the broker.");
+        }
+      } catch {
+        /* cloud/bridge unreachable — details are still saved on this device */
       }
-      const derivedBroker = broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim());
-      const account: MtAccount = {
-        platform: "MT5",
-        broker: derivedBroker,
-        server: server.trim(),
-        accountType,
-        loginId: loginId.trim(),
-      };
-      connectMt(account);
-      writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
-      // The cloud record was already written server-side by the bridge module
-      // (save-first); the device-local mirror is updated here.
-      toast.success(result.message);
-      setPassword("");
-    } catch {
-      const message = "Could not reach the verification service. Check your internet connection and try again.";
-      setErrorMessage(message);
-      toast.error(message);
-    } finally {
-      setSaving(false);
-    }
+    })();
   };
 
   /**

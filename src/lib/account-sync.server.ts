@@ -1015,7 +1015,9 @@ export const syncSaveMt5Account = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<Mt5SaveResult> => {
     if (!cloudSyncConfigured()) return { enabled: false, ok: false };
     const record = data.record;
-    if (!record?.userId || !record.mcAccountId) return { enabled: true, ok: false };
+    // mcAccountId is legacy (the VPS bridge executes directly now) — only a
+    // userId is required to keep a credentials record.
+    if (!record?.userId || !record.loginId) return { enabled: true, ok: false };
     const ok = await upsertMt5Record(record);
     return { enabled: true, ok };
   });
