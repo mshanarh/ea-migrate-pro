@@ -143,13 +143,20 @@ function AdminConsole() {
   const pushCloudUpdate = useCallback(
     (targetEmail: string, patch: AdminPatch) => {
       if (!account) return;
-      const fail = () =>
-        toast.error(`Could not save ${targetEmail} to the shared store — the change may be lost.`);
+      const fail = (reason?: string) =>
+        toast.error(
+          reason
+            ? `Could not save ${targetEmail}: ${reason}`
+            : `Could not save ${targetEmail} to the shared store — the change may be lost. Check your connection and try again.`,
+        );
       void syncAdminUpdate({ data: { adminEmail: account.email, targetEmail, patch } })
         .then((result) => {
-          if (result.enabled && !result.ok) fail();
+          if (result.enabled && !result.ok) fail(result.error);
         })
-        .catch(fail);
+        .catch((error) => {
+          console.error("[admin] syncAdminUpdate failed:", error);
+          fail();
+        });
     },
     [account],
   );

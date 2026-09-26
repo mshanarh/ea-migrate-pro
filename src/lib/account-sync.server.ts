@@ -123,18 +123,25 @@ async function readAccount(targetEmail: string): Promise<Account | null> {
   return parseAccount(data?.data);
 }
 
-/** Upserts one full account record. Returns false when the write failed. */
-async function writeAccount(account: Account): Promise<boolean> {
+/**
+ * Upserts one full account record. Returns null on success or the reason the
+ * write failed, so admin actions can show the REAL problem instead of a
+ * generic "could not save".
+ */
+async function writeAccount(account: Account): Promise<string | null> {
   const client = db();
-  if (!client) return false;
+  if (!client) return "Cloud store is not connected (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing).";
   const { error } = await client
     .from("portal_accounts")
     .upsert(
       { email: account.email.trim().toLowerCase(), data: JSON.stringify(account), updated_at: new Date().toISOString() },
       { onConflict: "email" },
     );
-  if (error) console.error("[supabase] portal_accounts upsert failed:", error.message);
-  return !error;
+  if (error) {
+    console.error("[supabase] portal_accounts upsert failed:", error.message);
+    return `Cloud store rejected the account write: ${error.message}`;
+  }
+  return null;
 }
 
 /**
@@ -142,15 +149,18 @@ async function writeAccount(account: Account): Promise<boolean> {
  * pending/approved/rejected so every device agrees. Writes here accompany
  * every status change; reads merge this status over the account record.
  */
-async function setApprovalStatus(email: string, status: PortalStatus): Promise<boolean> {
+async function setApprovalStatus(email: string, status: PortalStatus): Promise<string | null> {
   const client = db();
-  if (!client) return false;
+  if (!client) return "Cloud store is not connected (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY missing).";
   const clean = email.trim().toLowerCase();
   const { error } = await client
     .from("mentor_approvals")
     .upsert({ email: clean, status }, { onConflict: "email" });
-  if (error) console.error("[supabase] mentor_approvals upsert failed:", error.message);
-  return !error;
+  if (error) {
+    console.error("[supabase] mentor_approvals upsert failed:", error.message);
+    return `Cloud store rejected the approval write: ${error.message}`;
+  }
+  return null;
 }
 
 /** All approval rows, keyed by email. */
@@ -221,7 +231,8 @@ export const syncRegister = createServerFn({ method: "POST" })
         ...(merged.licenseLimit < 2000 ? { licenseLimit: 2000 } : {}),
       };
     }
-    const writeOk = await writeAccount(merged);
+    const writeError = await writeAccount(merged);
+    const writeOk = writeError === null;
     // The approval row makes brand-new registrations visible in the admin
     // console's Pending list even before any account merge lands.
     if (writeOk) await setApprovalStatus(email, merged.status);
@@ -331,7 +342,7 @@ async function syncSignInInner(data: SyncSignInInput): Promise<SyncSignInResult>
           licenses: [],
           eas: [],
         };
-        if (await writeAccount(healed)) return { enabled: true, ok: true, account: toPublic(healed) };
+        if ((await writeAccount(healed)) === null) return { enabled: true, ok: true, account: toPublic(healed) };
       }
       return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
     }
@@ -344,7 +355,7 @@ async function syncSignInInner(data: SyncSignInInput): Promise<SyncSignInResult>
     // they type today becomes the working password, mentor role enforced.
     if (SELF_HEAL_SIGNIN_EMAILS.has(email) && data.password.length >= 4) {
       const healed = enforceRoles({ ...account, password: data.password, role: "mentor", status: "approved" });
-      if (await writeAccount(healed)) return { enabled: true, ok: true, account: toPublic(healed) };
+      if ((await writeAccount(healed)) === null) return { enabled: true, ok: true, account: toPublic(healed) };
     }
     // The approval row outranks the stored record's status.
     const approvals = await listApprovals();
@@ -904,16 +915,24 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
     };
     // Admin decisions MUST reach the shared store — a silently dropped write
     // made approved users reappear as pending on the next poll/re-login.
-    // Retry the write a few times before giving up.
+    // Each store gets its own retry budget and its own error reason: a failed
+    // approval-index write must never cancel out a successful account write
+    // (that made the UI claim "could not save" for saves that DID land).
     let lastOk = false;
+    let lastError = "The shared store did not accept the update — try again.";
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      lastOk = await writeAccount(updated);
-      // The approval index is the authoritative status — write it whenever
-      // the patch carries a status decision, with the same retry budget.
+      const accountError = await writeAccount(updated);
+      let approvalError: string | null = null;
       if (patch.status !== undefined) {
-        lastOk = (await setApprovalStatus(targetEmail, patch.status)) && lastOk;
+        approvalError = await setApprovalStatus(targetEmail, patch.status);
       }
-      if (lastOk) break;
+      if (accountError === null && approvalError === null) {
+        lastOk = true;
+        break;
+      }
+      // Prefer the approval-index reason (the authoritative status store);
+      // otherwise surface whichever write actually failed.
+      lastError = approvalError ?? accountError ?? lastError;
       await new Promise((resolve) => setTimeout(resolve, 800 * (attempt + 1)));
     }
     // Welcome email on the pending/rejected -> approved transition (never for
@@ -933,7 +952,7 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
     return {
       enabled: true,
       ok: lastOk,
-      ...(lastOk ? {} : { error: "The shared store did not accept the update — try again." }),
+      ...(lastOk ? {} : { error: lastError }),
     };
   });
 
