@@ -15,7 +15,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { speakBot } from "@/lib/bot-voice";
-import { executeLiveTrade } from "@/lib/metaapi";
+import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -233,18 +233,19 @@ function AppHome() {
     window.showBotStarted?.(robot.name, "started");
     toast.success(`${robot.name} started`);
     speakBot(`${robot.name} started. Time to make money.`);
-    // Live execution fires in the background on the user's own connected MT5
-    // account; it never blocks START. Without a connected account it is a no-op.
-    if (!app.mt?.mcAccountId) return;
+    // Live execution fires in the background on the user's own saved MT5
+    // account through the VPS bridge; it never blocks START. Without a saved
+    // account or a signed-in portal session it is a no-op.
+    if (!app.mt || !app.email) return;
     const firstPair = robot.pairs?.[0];
     const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
-    void executeLiveTrade({
+    void executeMt5ForUser({
       data: {
-        accountId: app.mt.mcAccountId,
-        eaName: robot.name,
+        userId: app.email,
         symbol,
-        direction: "BUY",
-        lotSize: String(firstPair?.lotSize ?? 0.01),
+        action: "BUY",
+        volume: Number(firstPair?.lotSize ?? 0.01),
+        tradeCount: 1,
       },
     })
       .then((result) => {

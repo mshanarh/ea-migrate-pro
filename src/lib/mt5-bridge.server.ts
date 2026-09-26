@@ -1,5 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
-import { cloudSyncConfigured, upsertMt5Record } from "@/lib/account-sync.server";
+import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/lib/account-sync.server";
 
 const BRIDGE_URL = process.env["MT5_BRIDGE_URL"] || "http://34.201.16.197:8000";
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
@@ -131,7 +131,127 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
   });
 
 /**
- * 3. Execute Trade Directly to MT5
+ * 3. Execute trades for a signed-in user — THE LIVE EXECUTION PATH.
+ *
+ * Trade execution needs the MT5 password, and the password NEVER travels
+ * through the browser. This server function takes the signed-in user id,
+ * reads the saved credentials server-side from the cloud store, then sends
+ * them to the VPS bridge which opens the broker connection, places the
+ * order(s) and closes the connection again.
+ */
+export type ExecuteMt5ForUserInput = {
+  userId: string;
+  symbol: string;
+  action: "BUY" | "SELL";
+  volume: number;
+  stop_loss?: number | undefined;
+  take_profit?: number | undefined;
+  tradeCount?: number | undefined;
+};
+export type ExecuteMt5ForUserResult = {
+  ok: boolean;
+  message: string;
+  executed: number;
+  total: number;
+};
+
+export const executeMt5ForUser = createServerFn({ method: "POST" })
+  .validator((data: ExecuteMt5ForUserInput) => data)
+  .handler(async ({ data }): Promise<ExecuteMt5ForUserResult> => {
+    const total = Math.max(1, Math.min(Math.floor(data.tradeCount ?? 1), 20));
+    const record = await getMt5RecordWithSecret(data.userId);
+    if (!record || !record.mtPassword) {
+      return {
+        ok: false,
+        executed: 0,
+        total,
+        message: "No saved MT5 credentials — save them on the MetaTrader page first.",
+      };
+    }
+
+    // All orders fire through the bridge in parallel — the bridge opens the
+    // broker connection per order and closes it afterwards.
+    const results = await Promise.all(
+      Array.from({ length: total }, () =>
+        executeVpsTradeInternal({
+          login: record.loginId,
+          password: record.mtPassword ?? "",
+          server: record.server,
+          symbol: data.symbol,
+          action: data.action,
+          volume: data.volume,
+          stop_loss: data.stop_loss,
+          take_profit: data.take_profit,
+        }).catch(() => ({ success: false as const, error: "Bridge request failed" })),
+      ),
+    );
+    const executed = results.filter((item) => item.success).length;
+    if (executed === total) {
+      return {
+        ok: true,
+        executed,
+        total,
+        message: total > 1 ? `${total}/${total} ${data.symbol} trades executed on MT5` : `${data.symbol} trade executed on MT5`,
+      };
+    }
+    const reason = results.find((item) => !item.success)?.error ?? "The bridge did not accept the order.";
+    return {
+      ok: false,
+      executed,
+      total,
+      message: executed > 0 ? `${executed}/${total} executed — ${reason}` : reason,
+    };
+  });
+
+/**
+ * 4. Execute one trade directly to MT5 — internal, credentials in hand.
+ */
+async function executeVpsTradeInternal(input: {
+  login: number | string;
+  password: string;
+  server: string;
+  symbol: string;
+  action: "BUY" | "SELL";
+  volume: number;
+  stop_loss?: number | undefined;
+  take_profit?: number | undefined;
+}): Promise<{ success: boolean; error?: string }> {
+  try {
+    const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-key": BRIDGE_KEY,
+      },
+      body: JSON.stringify({
+        credentials: {
+          login: Number(input.login),
+          password: input.password,
+          server: input.server,
+        },
+        symbol: input.symbol,
+        action: input.action.toUpperCase(),
+        volume: input.volume,
+        stop_loss: input.stop_loss || 0,
+        take_profit: input.take_profit || 0,
+        comment: "EA Migrate Pro Live",
+      }),
+    });
+
+    const res = await response.json();
+    if (!response.ok) {
+      throw new Error(res.detail || res.message || "Trade execution failed");
+    }
+    return { success: true };
+  } catch (err: any) {
+    return { success: false, error: err.message ?? "Trade execution failed" };
+  }
+}
+
+/**
+ * 5. Execute Trade Directly to MT5 — explicit-credentials server function.
+ * Kept for callers that already hold the credentials server-side; the app's
+ * live path goes through executeMt5ForUser so no password reaches the client.
  */
 export const executeVpsTrade = createServerFn({ method: "POST" })
   .validator((data: {
@@ -139,38 +259,19 @@ export const executeVpsTrade = createServerFn({ method: "POST" })
     symbol: string;
     action: "BUY" | "SELL";
     volume: number;
-    stop_loss?: number;
-    take_profit?: number;
+    stop_loss?: number | undefined;
+    take_profit?: number | undefined;
   }) => data)
   .handler(async ({ data }) => {
-    try {
-      const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": BRIDGE_KEY,
-        },
-        body: JSON.stringify({
-          credentials: {
-            login: Number(data.credentials.login),
-            password: data.credentials.password,
-            server: data.credentials.server,
-          },
-          symbol: data.symbol,
-          action: data.action.toUpperCase(),
-          volume: data.volume,
-          stop_loss: data.stop_loss || 0,
-          take_profit: data.take_profit || 0,
-          comment: "EA Migrate Pro Live",
-        }),
-      });
-
-      const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.detail || "Trade execution failed");
-      }
-      return { success: true, order: res.order };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
+    const result = await executeVpsTradeInternal({
+      login: data.credentials.login,
+      password: data.credentials.password,
+      server: data.credentials.server,
+      symbol: data.symbol,
+      action: data.action,
+      volume: data.volume,
+      stop_loss: data.stop_loss,
+      take_profit: data.take_profit,
+    });
+    return result.success ? { success: true } : { success: false, error: result.error };
   });

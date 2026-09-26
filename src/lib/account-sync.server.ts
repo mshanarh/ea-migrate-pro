@@ -989,6 +989,23 @@ function parseMt5Record(raw: unknown): Mt5AccountRecord | null {
   }
 }
 
+/**
+ * SERVER-ONLY internal read for trade execution: returns the full record
+ * INCLUDING the stored MT5 password so the VPS bridge can open the broker
+ * connection at trade time. Never call from anything that reaches the
+ * browser — the public syncGetMt5Account endpoint strips the password.
+ */
+export async function getMt5RecordWithSecret(userId: string): Promise<Mt5AccountRecord | null> {
+  const client = db();
+  if (!client) return null;
+  const { data: row } = await client
+    .from("mt5_accounts")
+    .select("data")
+    .eq("user_id", userId.trim().toLowerCase())
+    .maybeSingle();
+  return parseMt5Record(row?.data);
+}
+
 export type Mt5SaveInput = { record: Mt5AccountRecord };
 export type Mt5SaveResult = { enabled: boolean; ok: boolean };
 

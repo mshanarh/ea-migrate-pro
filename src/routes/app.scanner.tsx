@@ -10,7 +10,7 @@ import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
-import { executeLiveTradeOnDemand } from "@/lib/metaapi";
+import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -68,7 +68,7 @@ function AppScanner() {
   ): Promise<ExecutionOutcome> => {
     const { symbol, lot, trades, direction, stopLoss, takeProfit } = plan;
 
-    if (!app.mt?.mcAccountId) {
+    if (!app.mt) {
       toast.error("Save your MT5 details first — MetaTrader page.");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
@@ -76,6 +76,11 @@ function AppScanner() {
         }),
       );
       return { ok: false, message: "No saved MT5 details — save them on the MetaTrader page first." };
+    }
+    if (!app.email) {
+      const message = "Sign in to the portal so your saved MT5 account can be used for execution.";
+      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+      return { ok: false, message };
     }
 
     // Top execution toast + floating bot popup get the REAL analyzed values.
@@ -93,19 +98,23 @@ function AppScanner() {
     window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "CONNECTING TO BROKER..." } }));
 
     try {
-      const outcome = await executeLiveTradeOnDemand({
+      // The VPS bridge opens the broker connection with the SAVED credentials
+      // (server-side only — the password never travels through the browser),
+      // places the order(s) and closes the connection again.
+      const stopLossValue = Number(stopLoss);
+      const takeProfitValue = Number(takeProfit);
+      const result = await executeMt5ForUser({
         data: {
-          accountId: app.mt.mcAccountId,
-          eaName: robot?.name ?? "EA",
+          userId: app.email,
           symbol,
-          direction,
-          lotSize: lot,
-          ...(stopLoss ? { stopLoss } : {}),
-          ...(takeProfit ? { takeProfit } : {}),
-          ...(app.mt.environment ? { region: app.mt.environment } : {}),
+          action: direction,
+          volume: Number(lot),
+          ...(Number.isFinite(stopLossValue) && stopLossValue > 0 ? { stop_loss: stopLossValue } : {}),
+          ...(Number.isFinite(takeProfitValue) && takeProfitValue > 0 ? { take_profit: takeProfitValue } : {}),
           tradeCount: Math.max(1, Math.min(trades, 20)),
         },
       });
+      const outcome: ExecutionOutcome = { ok: result.ok, message: result.message };
       onProgress("Disconnecting...");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
@@ -131,8 +140,7 @@ function AppScanner() {
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
-          {...(app.mt?.mcAccountId ? { accountId: app.mt.mcAccountId } : {})}
-          {...(app.mt?.environment ? { region: app.mt.environment } : {})}
+          {...(app.mt ? { accountId: `${app.mt.loginId}@${app.mt.server}` } : {})}
           accent={accent}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}

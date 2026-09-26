@@ -8,7 +8,6 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { saveMt5Credentials, verifyMt5Credentials } from "@/lib/mt5-bridge.server";
-import { disconnectMt5Account } from "@/lib/metaapi";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -177,8 +176,6 @@ function AppMetatrader() {
           server: record.server,
           accountType: record.accountType || "Standard",
           loginId: record.loginId,
-          mcAccountId: record.mcAccountId,
-          ...(record.environment ? { environment: record.environment } : {}),
           ...(record.kind === "demo" || record.kind === "live" ? { kind: record.kind } : {}),
         };
         connectMt(account);
@@ -289,11 +286,6 @@ function AppMetatrader() {
   const removeConnection = async () => {
     if (!mt) return;
     if (!window.confirm(`Delete the saved details for ${mt.loginId} on this device and the hosting platform?`)) return;
-    if (mt.mcAccountId) {
-      // Best-effort undeploy (offline anyway), then remove the hosted copy.
-      const result = await disconnectMt5Account({ data: { accountId: mt.mcAccountId } });
-      if (!result.ok) toast.warning(result.message);
-    }
     disconnectMt();
     writeMt5Ui(null);
     if (app.email) void syncDeleteMt5Account({ data: { userId: app.email } }).catch(() => {});
