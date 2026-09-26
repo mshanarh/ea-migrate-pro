@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { cloudSyncConfigured, upsertMt5Record } from "@/lib/account-sync.server";
 
 const BRIDGE_URL = process.env["MT5_BRIDGE_URL"] || "http://34.201.16.197:8000";
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
@@ -34,7 +35,109 @@ export const verifyMt5Credentials = createServerFn({ method: "POST" })
   });
 
 /**
- * 2. Execute Trade Directly to MT5
+ * 2. Save MT5 credentials — SAVE FIRST, VERIFY BEST-EFFORT.
+ *
+ * The credentials are ALWAYS persisted to the cloud store before any broker
+ * contact. Verification then runs against the VPS bridge with a short
+ * timeout; a bridge outage, wrong password or timeout NEVER blocks or rolls
+ * back the save — the account is simply marked unverified and the platform
+ * verifies again when the next trade executes. This is the bridge-offline
+ * fix: the user's details are never lost because the VPS was down.
+ */
+export type SaveMt5CredentialsInput = {
+  userId: string;
+  login: number | string;
+  password: string;
+  server: string;
+  broker?: string | undefined;
+  accountType?: string | undefined;
+};
+export type SaveMt5CredentialsResult = {
+  success: boolean;
+  verified: boolean;
+  saved: boolean;
+  message: string;
+};
+
+export const saveMt5Credentials = createServerFn({ method: "POST" })
+  .validator((data: SaveMt5CredentialsInput) => data)
+  .handler(async ({ data }): Promise<SaveMt5CredentialsResult> => {
+    const login = String(data.login).trim();
+    const password = data.password;
+    const server = data.server.trim();
+
+    // 1. ALWAYS save to the database first. A missing cloud store counts as a
+    //    failed save so the user knows nothing was kept.
+    const record = {
+      userId: data.userId,
+      loginId: login,
+      server,
+      accountType: data.accountType ?? "Standard",
+      broker: data.broker?.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server) : server),
+      mcAccountId: "", // legacy MetaApi column — the bridge executes directly
+      isConnected: false,
+      connectedAt: "",
+      mtPassword: password, // server-side only; never served to the browser
+    };
+    let saved = false;
+    try {
+      saved = cloudSyncConfigured() ? await upsertMt5Record(record) : false;
+    } catch (dbError) {
+      console.error("[mt5-bridge] credential save failed:", dbError);
+      saved = false;
+    }
+    if (!saved) {
+      return {
+        success: false,
+        verified: false,
+        saved: false,
+        message: "Failed to save credentials",
+      };
+    }
+
+    // 2. Try verification, but DON'T block saving. Abort after 5s — a slow or
+    //    down bridge must never hold the user's save hostage.
+    let verified = false;
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 5000);
+      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "x-bridge-key": BRIDGE_KEY,
+        },
+        body: JSON.stringify({
+          login: Number(login),
+          password,
+          server,
+        }),
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      if (response.ok) {
+        const res = await response.json();
+        verified = res.valid === true || res.success === true;
+        if (verified) {
+          // Persist the verified state so the UI can show Connected.
+          await upsertMt5Record({ ...record, isConnected: true, connectedAt: new Date().toISOString() });
+        }
+      }
+    } catch {
+      // Bridge offline/slow — DO NOT throw; the save stands as unverified.
+    }
+
+    // 3. Always report success when saved — verification is best-effort.
+    return {
+      success: true,
+      verified,
+      saved: true,
+      message: verified ? "Connected and saved!" : "Saved securely. Will verify on next trade.",
+    };
+  });
+
+/**
+ * 3. Execute Trade Directly to MT5
  */
 export const executeVpsTrade = createServerFn({ method: "POST" })
   .validator((data: {

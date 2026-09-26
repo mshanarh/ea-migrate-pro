@@ -992,21 +992,32 @@ function parseMt5Record(raw: unknown): Mt5AccountRecord | null {
 export type Mt5SaveInput = { record: Mt5AccountRecord };
 export type Mt5SaveResult = { enabled: boolean; ok: boolean };
 
+/**
+ * Shared MT5 record upsert — used by the cloud sync endpoint below AND by the
+ * VPS bridge's save-first flow (mt5-bridge.server.ts). Returns false when
+ * Supabase is not configured or the write failed.
+ */
+export async function upsertMt5Record(record: Mt5AccountRecord): Promise<boolean> {
+  const client = db();
+  if (!client) return false;
+  const { error } = await client
+    .from("mt5_accounts")
+    .upsert(
+      { user_id: record.userId.trim().toLowerCase(), data: JSON.stringify(record), updated_at: new Date().toISOString() },
+      { onConflict: "user_id" },
+    );
+  if (error) console.error("[supabase] mt5_accounts upsert failed:", error.message);
+  return !error;
+}
+
 export const syncSaveMt5Account = createServerFn({ method: "POST" })
   .validator((data: Mt5SaveInput) => data)
   .handler(async ({ data }): Promise<Mt5SaveResult> => {
-    const client = db();
-    if (!client) return { enabled: false, ok: false };
+    if (!cloudSyncConfigured()) return { enabled: false, ok: false };
     const record = data.record;
     if (!record?.userId || !record.mcAccountId) return { enabled: true, ok: false };
-    const { error } = await client
-      .from("mt5_accounts")
-      .upsert(
-        { user_id: record.userId.trim().toLowerCase(), data: JSON.stringify(record), updated_at: new Date().toISOString() },
-        { onConflict: "user_id" },
-      );
-    if (error) console.error("[supabase] mt5_accounts upsert failed:", error.message);
-    return { enabled: true, ok: !error };
+    const ok = await upsertMt5Record(record);
+    return { enabled: true, ok };
   });
 
 export type Mt5GetInput = { userId: string };

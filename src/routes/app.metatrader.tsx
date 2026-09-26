@@ -7,9 +7,9 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { verifyMt5Credentials } from "@/lib/mt5-bridge.server";
+import { saveMt5Credentials, verifyMt5Credentials } from "@/lib/mt5-bridge.server";
 import { disconnectMt5Account } from "@/lib/metaapi";
-import { syncDeleteMt5Account, syncGetMt5Account, syncSaveMt5Account } from "@/lib/account-sync.server";
+import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
@@ -197,9 +197,10 @@ function AppMetatrader() {
   }, [app.email]);
 
   /**
-   * SAVE DETAILS — verifies the credentials against the broker through the
-   * VPS MT5 bridge and stores the metadata ONLY. No hosted account copy is
-   * created and no broker connection is opened. Saved status: Offline.
+   * SAVE DETAILS — ALWAYS persists the credentials first, then tries to
+   * verify through the VPS bridge best-effort. A bridge outage or wrong
+   * password never blocks the save; the account is verified again at the
+   * next trade execution.
    */
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -212,19 +213,22 @@ function AppMetatrader() {
     setErrorMessage(null);
     setKeyNotice(false);
     try {
-      // The VPS bridge validates the details against the broker in real time —
-      // saving never opens or keeps a broker connection.
-      const result = await verifyMt5Credentials({
+      // Save first, verify best-effort: the VPS bridge's availability never
+      // decides whether the details are kept — verification is retried at the
+      // next trade.
+      const result = await saveMt5Credentials({
         data: {
+          userId: app.email ?? "device-local",
           login: loginId.trim(),
           password: password.trim(),
           server: server.trim(),
+          broker: broker.trim() || undefined,
+          accountType,
         },
       });
-
-      if (!result.success) {
-        setErrorMessage(result.error || "Failed to verify account on VPS");
-        toast.error(result.error || "Failed to verify account on VPS");
+      if (!result.saved) {
+        setErrorMessage(result.message);
+        toast.error(result.message);
         return;
       }
       const derivedBroker = broker.trim() || (server.includes("-") ? (server.split("-")[0]?.trim() ?? server.trim()) : server.trim());
@@ -237,25 +241,9 @@ function AppMetatrader() {
       };
       connectMt(account);
       writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
-      // Durable cloud copy — credentials live ONLY in the server-side store.
-      if (app.email) {
-        void syncSaveMt5Account({
-          data: {
-            record: {
-              userId: app.email,
-              loginId: account.loginId,
-              server: account.server,
-              accountType: account.accountType,
-              broker: account.broker,
-              mcAccountId: "",
-              isConnected: false,
-              connectedAt: "",
-              mtPassword: password.trim(),
-            },
-          },
-        }).catch(() => {});
-      }
-      toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server} (offline until a trade executes)`);
+      // The cloud record was already written server-side by the bridge module
+      // (save-first); the device-local mirror is updated here.
+      toast.success(result.message);
       setPassword("");
     } catch {
       const message = "Could not reach the verification service. Check your internet connection and try again.";
