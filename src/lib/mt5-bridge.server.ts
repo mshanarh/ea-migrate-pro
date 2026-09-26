@@ -24,8 +24,8 @@ export const verifyMt5Credentials = createServerFn({ method: "POST" })
       });
 
       const res = await response.json();
-      if (!response.ok) {
-        throw new Error(res.detail || "Account verification failed");
+      if (!response.ok || res.success === false) {
+        throw new Error(res.message || res.detail || "Account verification failed");
       }
       return { success: true, account: res.account };
     } catch (err: any) {
