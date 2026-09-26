@@ -1220,55 +1220,31 @@ async function fetchPublicCandles(symbol: string, timeframe: string): Promise<Ca
 }
 
 /**
- * Analyzes real market data for a symbol using the connected MT5 account:
- * trend (EMA21/50), momentum (RSI14), volatility (ATR14) and swing structure
- * → direction, entry at market, SL beyond the recent swing, TP at ≥2R.
+ * Analyzes real market data for a symbol — broker-INDEPENDENT. Accounts now
+ * live on the VPS bridge (MetaApi hosts nothing anymore), so the scan never
+ * talks to MetaApi: real candles come from the public market feed (which
+ * maps broker names like HW_100, XAUUSD.M, US30 to live instruments) and the
+ * plan is marked conditional until the trade executes at market through the
+ * bridge. The handler is exception-proof — it NEVER throws; every failure is
+ * returned as a friendly message the UI can show.
  */
 export const getScannerAnalysis = createServerFn({ method: "POST" })
   .validator((data: ScannerAnalysisRequest) => data)
   .handler(async ({ data }): Promise<{ ok: true; analysis: ScannerAnalysis } | MtFailure> => {
-    if (!data.accountId)
+    // The broker connection is opened ONLY when a trade executes through the
+    // VPS bridge — analysis itself is a pure market-data read, so no account
+    // id, MetaApi token or cloud terminal is involved at all.
+    try {
+      return await runScannerAnalysis(data, { regions: [], hosts: [] });
+    } catch (error) {
+      console.error("[scanner] analysis failed:", error);
       return {
         ok: false,
         code: "failed",
-        message: "No connected MT5 account. Link your account on the MetaTrader page first.",
+        message:
+          "The chart analysis hit an unexpected error. Try again — if it keeps failing, try a standard symbol like EURUSD, XAUUSD, US30 or BTCUSD.",
       };
-    const symbol = data.symbol.trim().toUpperCase();
-    const timeframe = data.timeframe ?? "1h";
-
-    // Resolve region + make sure the terminal is up.
-    let region = data.region;
-    const detail = await withMasterToken((token) =>
-      maFetch(token, `/users/current/accounts/${encodeURIComponent(data.accountId)}`),
-    );
-    if (detail.kind === "missing")
-      return { ok: false, code: "key_missing", message: missingKeyMessage() };
-    if (detail.kind === "rejected")
-      return { ok: false, code: "key_rejected", message: rejectedKeyMessage(detail.status) };
-    if (detail.kind === "ok" && detail.response.status === 200) {
-      const account = detail.response.payload as MaAccount | undefined;
-      region = account?.region ?? region;
-      // ON-DEMAND MODEL: analysis never deploys the terminal. When the broker
-      // terminal is offline the public-feed fallback supplies factual candles,
-      // so scanning keeps working while the account stays disconnected.
     }
-
-    // Bounded fan-out: at most 3 hosts/regions are probed so even a broken
-    // region hint cannot stretch the scan past a few seconds per read.
-    const regionHost = region ? CLIENT_API_HOSTS[region] : undefined;
-    const hosts: string[] = regionHost
-      ? [regionHost]
-      : (Object.values(CLIENT_API_HOSTS) as string[]).slice(0, 3);
-    const regions =
-      region && regionHost ? [region] : Object.keys(CLIENT_API_HOSTS).slice(0, 3);
-
-    // FAST SCAN: never deploy the cloud terminal or wait for a broker attach
-    // here — that made every scan sit 30–90 seconds. Candle history and
-    // quotes are read immediately; when the terminal is cold the public
-    // market feed tops the data up inside runScannerAnalysis. The broker
-    // connection is opened ONLY when a trade executes
-    // (executeLiveTradeOnDemand) and is closed right after.
-    return runScannerAnalysis(data, { regions, hosts });
   });
 
 /**
@@ -1280,77 +1256,29 @@ async function runScannerAnalysis(
   data: ScannerAnalysisRequest,
   context: { regions: string[]; hosts: string[] },
 ): Promise<{ ok: true; analysis: ScannerAnalysis } | MtFailure> {
-  const { regions, hosts } = context;
   const symbol = data.symbol.trim().toUpperCase();
   const timeframe = data.timeframe ?? "1h";
 
-  // Start the historical read alongside the live snapshot. History improves
-  // the indicators but must never make a live signal wait on a cold endpoint.
-  const readHistory = async (): Promise<Candle[]> => {
-    for (const accountRegion of regions) {
-      const historyResult = await withMasterToken((token) =>
-        fetchJson(
-          `https://mt-market-data-client-api-v1.${accountRegion}.agiliumtrade.ai/users/current/accounts/${encodeURIComponent(data.accountId)}/historical-market-data/symbols/${encodeURIComponent(symbol)}/timeframes/${metaApiTimeframe(timeframe)}/candles?limit=300`,
-          { headers: { "auth-token": token, Accept: "application/json" } },
-          8_000,
-        ),
-      );
-      if (
-        historyResult.kind === "ok" &&
-        historyResult.response.status === 200 &&
-        Array.isArray(historyResult.response.payload)
-      ) {
-        const payload = historyResult.response.payload as Candle[];
-        // An empty array on a cold terminal usually means "not ready yet", not
-        // "symbol has no candles" — treat it as a miss so the next region and
-        // the public-feed top-up still get a chance.
-        if (payload.length > 0) return payload;
+  // Broker-independent mode: candles come from the public market feed. The
+  // old MetaApi historical/quote reads are gone — accounts live on the VPS
+  // bridge now, and the feed maps broker symbol names (HW_100, XAUUSD.M,
+  // US30, BTCUSD…) onto real instruments with live prices.
+  void context;
+
+    // REAL candles from the public market feed — the only data source now.
+    let candles = await fetchPublicCandles(symbol, timeframe);
+    let usedPublicFeed = true;
+    if (candles.length === 0) {
+      // Broker-specific aliases some feeds do not know (HW_ prefix etc.) —
+      // retry once with the stripped base name before giving up.
+      const base = symbol.replace(/^[A-Z]{2,4}_/, "");
+      if (base && base !== symbol) {
+        candles = await fetchPublicCandles(base, timeframe);
       }
     }
-    return [];
-  };
-  // Both reads start NOW and run concurrently — the awaited pair below waits
-  // for the slower of the two, not their sum.
-  const historyPromise = readHistory();
 
-    // A live bid/ask is preferred for an executable setup. When a symbol is
-    // available but its session is closed (common on Saturday/Sunday), use the
-    // latest broker candle as a clearly conditional reference instead of
-    // returning a blank result.
-    const readMarketSnapshot = async () => {
-      let price: { bid: number; ask: number } | undefined;
-      for (const host of hosts) {
-        const priceResult = await withMasterToken((token) =>
-          fetchJson(
-            `${host}/users/current/accounts/${encodeURIComponent(data.accountId)}/symbols/${encodeURIComponent(symbol)}/current-price?keepSubscription=true`,
-            { headers: { "auth-token": token, Accept: "application/json" } },
-            3_500,
-          ),
-        );
-        if (priceResult.kind === "ok" && priceResult.response.status === 200) {
-          const raw = priceResult.response.payload as { bid?: number; ask?: number } | undefined;
-          if (raw?.bid && raw?.ask) price = { bid: raw.bid, ask: raw.ask };
-        }
-        if (price) break;
-      }
-      return { price };
-    };
-
-    // Quote + history resolve together (Promise.all) — the scan waits for the
-    // SLOWER of the two, not their sum. Every read is time-boxed, so a cold
-    // broker cannot stall the scan: the public feed takes over below.
-    const [{ price }, brokerCandles] = await Promise.all([
-      readMarketSnapshot(),
-      historyPromise.catch(() => [] as Candle[]),
-    ]);
-    let candles = brokerCandles;
-    let usedPublicFeed = false;
-
-    // When the broker returns neither a quote nor candle history (offline
-    // cloud terminal), read the public market feed so the scanner always has
-    // a factual reference to analyze instead of a dead end.
     let lastCandle = candles.at(-1);
-    let referenceClose = price?.bid ?? lastCandle?.close ?? 0;
+    let referenceClose = lastCandle?.close ?? 0;
     if (!referenceClose || !Number.isFinite(referenceClose)) {
       const publicCandles = await fetchPublicCandles(symbol, timeframe);
       if (publicCandles.length > 0) {
@@ -1366,17 +1294,18 @@ async function runScannerAnalysis(
         analysis: buildUnavailableScannerAnalysis(
           symbol,
           timeframe,
-          `No market data is available for ${symbol} — the broker terminal is offline and the public feed has no data for this symbol name. Try a standard symbol like EURUSD, XAUUSD, US100 or BTCUSD.`,
+          `No market data is available for ${symbol} — the market feed has no data for this symbol name. Try a standard symbol like EURUSD, XAUUSD, US30 or BTCUSD.`,
         ),
       };
     }
 
-    const hasLiveQuote = Boolean(price);
-    // Use the live bid for the decision when available. On a closed session,
-    // use the latest broker candle close and mark the result conditional.
+    // No live quote stream in this mode — the latest feed close is the
+    // reference and the plan is conditional; the bridge executes at the
+    // broker's real market price when the user presses Execute.
+    const hasLiveQuote = false;
     const close = referenceClose;
-    const bid = price?.bid ?? close;
-    const ask = price?.ask ?? close;
+    const bid = close;
+    const ask = close;
     const closes = candles.map((item) => item.close);
     const ema21 = closes.length >= 21 ? ema(closes, 21) : close;
     const ema50 = closes.length >= 50 ? ema(closes, 50) : close;
