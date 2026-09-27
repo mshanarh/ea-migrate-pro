@@ -324,6 +324,13 @@ type InstallPromptEvent = Event & {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 };
 
+declare global {
+  interface Window {
+    /** Set by the head script — captures the prompt even before React mounts. */
+    __eamigrateInstallEvent?: InstallPromptEvent | null;
+  }
+}
+
 function Home() {
   const navigate = useNavigate();
   const installEvent = useRef<InstallPromptEvent | null>(null);
@@ -353,24 +360,29 @@ function Home() {
 
   /** Android download: native install dialog when available, app fallback. */
   const handleAndroidDownload = async () => {
-    const promptEvent = installEvent.current;
+    // Prefer the locally captured event, but also pick up the one caught by
+    // the head script before React mounted.
+    const promptEvent = installEvent.current ?? window.__eamigrateInstallEvent ?? null;
     if (promptEvent) {
       try {
         await promptEvent.prompt();
         const choice = await promptEvent.userChoice;
         if (choice.outcome === "accepted") {
-          setInstallResult("Installing EA Migrate… check your home screen.");
+          setInstallResult("Installing EA Migrate… check your home screen. 🎉");
           installEvent.current = null;
+          window.__eamigrateInstallEvent = null;
           setInstallReady(false);
           return;
-      }
+        }
       } catch {
         /* user dismissed or prompt failed — fall through to the app */
       }
     }
-    // No native prompt available (already installed, iOS, or prompt not yet
-    // captured): open the app so the user can add it to the home screen
-    // manually (Chrome menu → “Add to Home screen”).
+    // No native prompt available (already installed, iOS, or Chrome not yet
+    // eligible). Open the app AND tell the user exactly how to install it.
+    setInstallResult(
+      "Opening EA Migrate… to INSTALL it, tap ⋮ menu → “Add to Home screen” inside the app.",
+    );
     navigate({ to: "/app" });
   };
 

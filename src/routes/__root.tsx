@@ -29,6 +29,19 @@ const PLATFORM_PREPAINT_SCRIPT = `
   } catch (e) {
     document.documentElement.classList.add("platform-android");
   }
+  // Install-prompt capture at head time: Chrome fires beforeinstallprompt
+  // shortly after load — often BEFORE React mounts — so it must be caught
+  // here and kept for the Download button on the landing page.
+  try {
+    window.__eamigrateInstallEvent = null;
+    if ("serviceWorker" in navigator) {
+      navigator.serviceWorker.register("/sw.js").catch(function () {});
+    }
+    window.addEventListener("beforeinstallprompt", function (event) {
+      event.preventDefault();
+      window.__eamigrateInstallEvent = event;
+    });
+  } catch (e) {}
 })();
 `;
 import { Toaster } from "@/components/ui/sonner";

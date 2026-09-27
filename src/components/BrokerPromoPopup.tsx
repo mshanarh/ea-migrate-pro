@@ -13,11 +13,10 @@ import { cn } from "@/lib/utils";
 /**
  * Broker promo popup for the landing page: celebrates the visitor's arrival
  * (🎉), recommends Headway as EA Migrate's broker, and links to the partner
- * signup URL. Shows once per day per device so it never nags.
+ * signup URL. Shows on EVERY visit to the landing page (900ms after load
+ * so the page settles first).
  */
 const PROMO_LINK = "https://headway.partners/user/signup?hwp=f37cd5";
-const PROMO_KEY = "ea_migrate_broker_promo";
-const DAY_MS = 24 * 60 * 60 * 1000;
 
 const HIGHLIGHTS = [
   {
@@ -46,13 +45,6 @@ export function BrokerPromoPopup() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    try {
-      const last = Number(window.localStorage.getItem(PROMO_KEY) ?? 0);
-      if (Number.isFinite(last) && Date.now() - last < DAY_MS) return;
-      window.localStorage.setItem(PROMO_KEY, String(Date.now()));
-    } catch {
-      /* storage unavailable — still show once per visit */
-    }
     const timer = window.setTimeout(() => setOpen(true), 900);
     return () => window.clearTimeout(timer);
   }, []);
