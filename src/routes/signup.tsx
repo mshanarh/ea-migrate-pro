@@ -7,7 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
 import { syncRegister } from "@/lib/account-sync.server";
-import { sendPortalEmail } from "@/lib/send-email.server";
+import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({

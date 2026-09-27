@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, useCurrentAccount } from "@/lib/auth-store";
-import { sendPortalEmail } from "@/lib/send-email.server";
+import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
 
@@ -26,6 +26,13 @@ function Pill({ children }: { children: ReactNode }) {
       {children}
     </span>
   );
+}
+
+/** Keys show IN FULL exactly once — on the creation result card. The saved
+ *  list only ever displays a masked reference (EMP••••-••XZ), never the key. */
+function maskKey(key: string): string {
+  const tail = key.slice(-2);
+  return `${key.slice(0, 3)}••••-••${tail}`;
 }
 
 function Licenses() {
@@ -333,7 +340,7 @@ function Licenses() {
             <li key={license.id} className="panel flex items-center justify-between gap-3 p-5">
               <div className="min-w-0">
                 <p className="font-semibold">{license.name || "Client license key"}</p>
-                <p className="break-all font-mono text-sm text-primary">{license.key}</p>
+                <p className="break-all font-mono text-sm text-primary">{maskKey(license.key)}</p>
                 <p className="text-sm text-muted-foreground">
                   {account.eas.find((ea) => ea.id === license.eaId)?.name || "Private EA"} · {license.expiry || license.plan} ·{" "}
                   {license.clientEmail || account.email}
