@@ -125,8 +125,8 @@ function AppScanner() {
         .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-      const commentTag = " - ea migrate"; // 13 chars — always kept intact
-      const maxName = 31 - commentTag.length; // 18 chars for the name
+      const commentTag = " ea migrate"; // 12 chars — always kept intact
+      const maxName = 31 - commentTag.length; // 19 chars for the name
       const orderComment = botName
         ? `${botName.slice(0, maxName).replace(/[\s.,_()-]+$/, "")}${commentTag}`
         : "EA Migrate";
