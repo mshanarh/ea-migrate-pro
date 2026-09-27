@@ -49,7 +49,7 @@ export function SiteHeader() {
           <img
             src="/logo.png"
             alt="EA Migrate"
-            className="size-12 min-w-[40px] shrink-0 rounded-full border border-border/60 object-cover"
+            className="logo-spin size-12 min-w-[40px] shrink-0 rounded-full border border-border/60 object-cover"
           />
           <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span>

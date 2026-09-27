@@ -117,6 +117,24 @@
   --surface-panel: linear-gradient(180deg, #151515, #111111);
 }
 
+/* Landing header logo — a slow, continuous spin (12s per turn). */
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.logo-spin {
+  animation: logo-spin 12s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo-spin {
+    animation: none;
+  }
+}
+
 /* Landing light mode — activated ONLY by the sun toggle in the header.
    Overrides the core tokens so the whole page renders on a white base. */
 html.light-mode {
