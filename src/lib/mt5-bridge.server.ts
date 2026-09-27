@@ -3,36 +3,81 @@ import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/
 
 const BRIDGE_URL = process.env["MT5_BRIDGE_URL"] || "http://34.201.16.197:8000";
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
+/** Hard cap on any single bridge request — a dead bridge must fail FAST with
+ *  a clear message, never hang the scanner on "EXECUTING" forever. */
+const BRIDGE_TIMEOUT_MS = 12_000;
+
+function bridgeHostLabel(): string {
+  try {
+    return new URL(BRIDGE_URL).host;
+  } catch {
+    return BRIDGE_URL;
+  }
+}
+
+/** Uniform, ACTIONABLE message for any bridge transport failure. */
+function bridgeTransportError(err: unknown): string {
+  const host = bridgeHostLabel();
+  if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
+    return `VPS bridge timed out after ${BRIDGE_TIMEOUT_MS / 1000}s — ${host} did not respond. Check that bridge.py is running on the VPS.`;
+  }
+  const detail = err instanceof Error ? err.message : String(err);
+  return `Cannot reach the VPS bridge at ${host} (${detail}). Check that bridge.py is running and that port 8000 is open in the VPS firewall/security group.`;
+}
+
+/**
+ * Single bridge transport helper — every call site uses this so timeouts and
+ * error shaping are consistent. Never throws: transport failures come back
+ * as { transportError } and are turned into user-facing messages upstream.
+ */
+async function bridgeFetch(
+  path: string,
+  body: unknown,
+  timeoutMs: number = BRIDGE_TIMEOUT_MS,
+): Promise<{ ok: boolean; status: number; data: Record<string, unknown>; transportError?: string }> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`${BRIDGE_URL}${path}`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-key": BRIDGE_KEY,
+      },
+      body: JSON.stringify(body),
+      signal: controller.signal,
+    });
+    const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    return { ok: response.ok, status: response.status, data };
+  } catch (err: any) {
+    return { ok: false, status: 0, data: {}, transportError: bridgeTransportError(err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * 1. Verify MT5 Account Credentials
  */
 export const verifyMt5Credentials = createServerFn({ method: "POST" })
   .validator((data: { login: number | string; password: string; server: string }) => data)
-  .handler(async ({ data }) => {
-    try {
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": BRIDGE_KEY,
-        },
-        body: JSON.stringify({
-          login: Number(data.login),
-          password: data.password,
-          server: data.server,
-        }),
+  .handler(
+    async ({ data }): Promise<{ success: boolean; error?: string | undefined; account?: any }> => {
+      const result = await bridgeFetch("/account/verify", {
+        login: Number(data.login),
+        password: data.password,
+        server: data.server,
       });
-
-      const res = await response.json();
-      if (!response.ok || res.success === false) {
-        throw new Error(res.message || res.detail || "Account verification failed");
+      if (result.transportError) {
+        return { success: false, error: result.transportError };
+      }
+      const res = result.data as { success?: boolean; message?: string; detail?: string; account?: any };
+      if (!result.ok || res.success === false) {
+        return { success: false, error: res.message || res.detail || "Account verification failed" };
       }
       return { success: true, account: res.account };
-    } catch (err: any) {
-      return { success: false, error: err.message };
-    }
-  });
+    },
+  );
 
 /**
  * 2. Save MT5 credentials — SAVE FIRST, VERIFY BEST-EFFORT.
@@ -91,34 +136,21 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
     // 2. Try verification, but DON'T block saving. Abort after 5s — a slow or
     //    down bridge must never hold the user's save hostage.
     let verified = false;
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": BRIDGE_KEY,
-        },
-        body: JSON.stringify({
-          login: Number(login),
-          password,
-          server,
-        }),
-        signal: controller.signal,
-      });
-      clearTimeout(timeout);
-      if (response.ok) {
-        const res = await response.json();
-        verified = res.valid === true || res.success === true;
-        if (verified) {
-          // Persist the verified state so the UI can show Connected.
-          await upsertMt5Record({ ...record, isConnected: true, connectedAt: new Date().toISOString() });
-        }
+    const verifyResult = await bridgeFetch(
+      "/account/verify",
+      { login: Number(login), password, server },
+      5000,
+    );
+    if (verifyResult.ok) {
+      const res = verifyResult.data as { valid?: boolean; success?: boolean };
+      verified = res.valid === true || res.success === true;
+      if (verified) {
+        // Persist the verified state so the UI can show Connected.
+        await upsertMt5Record({ ...record, isConnected: true, connectedAt: new Date().toISOString() });
       }
-    } catch {
-      // Bridge offline/slow — DO NOT throw; the save stands as unverified.
     }
+    // Bridge offline/slow (transportError) — DO NOT throw; the save stands as
+    // unverified and verification retries at the next trade.
 
     // 3. Always succeed — the credentials are kept (device + cloud when
     //    reachable) and verification happens again at the next trade.
@@ -169,22 +201,42 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
       };
     }
 
-    // All orders fire through the bridge in parallel — the bridge opens the
-    // broker connection per order and closes it afterwards.
-    const results = await Promise.all(
-      Array.from({ length: total }, () =>
-        executeVpsTradeInternal({
-          login: record.loginId,
-          password: record.mtPassword ?? "",
-          server: record.server,
-          symbol: data.symbol,
-          action: data.action,
-          volume: data.volume,
-          stop_loss: data.stop_loss,
-          take_profit: data.take_profit,
-        }).catch(() => ({ success: false as const, error: "Bridge request failed" })),
-      ),
-    );
+    // Fire the FIRST order alone. If the bridge itself is unreachable, one
+    // clear error beats N identical failures (and 20 simultaneous broker
+    // logins). Only when the first order reaches the bridge do the rest fire
+    // in parallel — the bridge opens the broker connection per order and
+    // closes it afterwards.
+    const firstAttempt = await executeVpsTradeInternal({
+      login: record.loginId,
+      password: record.mtPassword ?? "",
+      server: record.server,
+      symbol: data.symbol,
+      action: data.action,
+      volume: data.volume,
+      stop_loss: data.stop_loss,
+      take_profit: data.take_profit,
+    });
+    if (!firstAttempt.success && firstAttempt.transportDown) {
+      return { ok: false, executed: 0, total, message: firstAttempt.error ?? "VPS bridge unreachable." };
+    }
+    const results = [firstAttempt];
+    if (total > 1) {
+      const rest = await Promise.all(
+        Array.from({ length: total - 1 }, () =>
+          executeVpsTradeInternal({
+            login: record.loginId,
+            password: record.mtPassword ?? "",
+            server: record.server,
+            symbol: data.symbol,
+            action: data.action,
+            volume: data.volume,
+            stop_loss: data.stop_loss,
+            take_profit: data.take_profit,
+          }).catch(() => ({ success: false as const, error: "Bridge request failed" })),
+        ),
+      );
+      results.push(...rest);
+    }
     const executed = results.filter((item) => item.success).length;
     if (executed === total) {
       return {
@@ -215,37 +267,28 @@ async function executeVpsTradeInternal(input: {
   volume: number;
   stop_loss?: number | undefined;
   take_profit?: number | undefined;
-}): Promise<{ success: boolean; error?: string }> {
-  try {
-    const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-bridge-key": BRIDGE_KEY,
-      },
-      body: JSON.stringify({
-        credentials: {
-          login: Number(input.login),
-          password: input.password,
-          server: input.server,
-        },
-        symbol: input.symbol,
-        action: input.action.toUpperCase(),
-        volume: input.volume,
-        stop_loss: input.stop_loss || 0,
-        take_profit: input.take_profit || 0,
-        comment: "EA Migrate Live",
-      }),
-    });
-
-    const res = await response.json();
-    if (!response.ok) {
-      throw new Error(res.detail || res.message || "Trade execution failed");
-    }
-    return { success: true };
-  } catch (err: any) {
-    return { success: false, error: err.message ?? "Trade execution failed" };
+}): Promise<{ success: boolean; error?: string; transportDown?: boolean }> {
+  const result = await bridgeFetch("/trade/execute", {
+    credentials: {
+      login: Number(input.login),
+      password: input.password,
+      server: input.server,
+    },
+    symbol: input.symbol,
+    action: input.action.toUpperCase(),
+    volume: input.volume,
+    stop_loss: input.stop_loss || 0,
+    take_profit: input.take_profit || 0,
+    comment: "EA Migrate Live",
+  });
+  if (result.transportError) {
+    return { success: false, error: result.transportError, transportDown: true };
   }
+  if (!result.ok) {
+    const res = result.data as { detail?: string; message?: string };
+    return { success: false, error: res.detail || res.message || `Trade execution failed (HTTP ${result.status})` };
+  }
+  return { success: true };
 }
 
 /**
