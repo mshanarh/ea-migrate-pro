@@ -117,6 +117,45 @@
   --surface-panel: linear-gradient(180deg, #151515, #111111);
 }
 
+/* Landing light mode — activated ONLY by the sun toggle in the header.
+   Overrides the core tokens so the whole page renders on a white base. */
+html.light-mode {
+  --background: #f6f8fb;
+  --foreground: #0b1220;
+  --card: #ffffff;
+  --card-foreground: #0b1220;
+  --popover: #ffffff;
+  --popover-foreground: #0b1220;
+  --secondary: #eef2f7;
+  --secondary-foreground: #0b1220;
+  --muted: #eef2f7;
+  --muted-foreground: #5a6474;
+  --accent: #e8f1fb;
+  --accent-foreground: #0077cc;
+  --border: #dbe2ec;
+  --input: #dbe2ec;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0b1220;
+  --sidebar-accent: #e8f1fb;
+  --surface-panel: linear-gradient(180deg, #ffffff, #f2f5f9);
+  --gradient-hero: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(0 168 255 / 0.14), transparent 70%);
+  --glow: 0 0 40px rgb(0 168 255 / 0.18);
+  color-scheme: light;
+}
+html.light-mode body {
+  background: var(--background);
+}
+/* The landing also hardcodes white-alpha utilities — flip those to ink-on-white. */
+html.light-mode [class*="text-white"] {
+  color: #101828;
+}
+html.light-mode [class*="bg-white/"] {
+  background-color: rgb(15 23 42 / 0.04);
+}
+html.light-mode [class*="border-white/"] {
+  border-color: rgb(15 23 42 / 0.12);
+}
+
 @utility text-brand {
   background: var(--gradient-brand);
   -webkit-background-clip: text;

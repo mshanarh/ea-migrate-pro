@@ -1,13 +1,40 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Menu, ChevronDown, Smartphone, Apple } from "lucide-react";
+import { Menu, ChevronDown, Smartphone, Apple, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+
+const LIGHT_KEY = "ea_migrate_light";
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [apkOpen, setApkOpen] = useState(false);
+  const [light, setLight] = useState(false);
   const navigate = useNavigate();
+
+  // Restore the visitor's choice (the toggle is opt-in — dark stays default).
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(LIGHT_KEY) === "1") {
+        document.documentElement.classList.add("light-mode");
+        setLight(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleLight = () => {
+    const next = !light;
+    setLight(next);
+    document.documentElement.classList.toggle("light-mode", next);
+    try {
+      if (next) window.localStorage.setItem(LIGHT_KEY, "1");
+      else window.localStorage.removeItem(LIGHT_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const close = () => setOpen(false);
   const openIosApp = () => {
@@ -29,7 +56,17 @@ export function SiteHeader() {
           </span>
         </Link>
 
-        <Sheet open={open} onOpenChange={setOpen}>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label={light ? "Switch to dark mode" : "Switch to light mode"}
+            onClick={toggleLight}
+            className="plat-pressable flex size-11 items-center justify-center rounded-xl border border-border/70 bg-card/60 text-muted-foreground transition-colors hover:text-primary"
+          >
+            {light ? <Moon className="size-5" /> : <Sun className="size-5" />}
+          </button>
+
+          <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
             <button
               aria-label="Open menu"
@@ -95,7 +132,8 @@ export function SiteHeader() {
               </a>
             </div>
           </SheetContent>
-        </Sheet>
+          </Sheet>
+        </div>
       </div>
     </header>
   );

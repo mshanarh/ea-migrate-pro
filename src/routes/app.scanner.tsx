@@ -118,18 +118,17 @@ function AppScanner() {
       };
       // MT5 order comments accept PRINTABLE ASCII ONLY — bot names often
       // contain emoji (e.g. "Sniper killer Ea v2.0🛜"), which make order_send
-      // fail with 'Invalid "comment" argument'. Strip to ASCII, then keep
-      // the whole bot name when the tag fits, else the name alone (never a
-      // mid-character cut), capped at MT5's 31-char limit.
+      // fail with 'Invalid "comment" argument'. The "/ ea migrate" tag must
+      // ALWAYS be visible next to the name, so the NAME is trimmed to make
+      // room (never the tag), capped at MT5's 31-char limit.
       const botName = (robot?.name ?? "")
         .replace(/[^\x20-\x7E]/g, "")
         .replace(/\s+/g, " ")
         .trim();
-      const commentTag = " / ea migrate";
+      const commentTag = " / ea migrate"; // 12 chars — always kept intact
+      const maxName = 31 - commentTag.length; // 19 chars for the name
       const orderComment = botName
-        ? (botName + commentTag).length <= 31
-          ? botName + commentTag
-          : botName.slice(0, 31)
+        ? `${botName.slice(0, maxName)}${commentTag}`
         : "EA Migrate";
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
