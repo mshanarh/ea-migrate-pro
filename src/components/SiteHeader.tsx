@@ -47,9 +47,9 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
         <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
           <img
-            src="/logo.svg"
+            src="/logo.png"
             alt="EA Migrate"
-            className="size-12 min-w-[40px] shrink-0 rounded-full object-contain"
+            className="size-12 min-w-[40px] shrink-0 rounded-full border border-border/60 object-cover"
           />
           <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
             EA <span className="text-primary">Migrate</span>

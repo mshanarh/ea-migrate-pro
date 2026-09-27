@@ -126,7 +126,12 @@ const seedMentor: Account = {
 };
 
 /** Platform owner accounts — admins by definition, on every device. */
-export const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "admin@eamigrate.pro"];
+export const OWNER_EMAILS = [
+  "biyasentobeko222@gmail.com",
+  "biyasentobeko222@gmail",
+  "admin@eamigrate.pro",
+  "lwethunkandi3@gmail.com",
+];
 
 /**
  * Emails forced to the normal-mentor role EVERYWHERE (server responses and
