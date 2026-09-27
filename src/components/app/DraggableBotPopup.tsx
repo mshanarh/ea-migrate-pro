@@ -1,4 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
+import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
 import { speakBot } from "@/lib/bot-voice";
 
@@ -44,6 +46,127 @@ export default function DraggableBotPopup() {
   const [logs, setLogs] = useState<LogLine[]>([]);
   const [state, setState] = useState<"ready" | "executed">("ready");
   const prevRunning = useRef(running);
+
+  // ── Picture-in-Picture: the popup rendered to a canvas → video stream.
+  // Android PiP floats ABOVE every other app (MetaTrader included), so the
+  // bot log keeps “moving with” the trader after they leave the browser.
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const imgCache = useRef<{ src: string; img: HTMLImageElement } | null>(null);
+  const pipData = useRef({ eaName, eaImage, logs, state });
+  pipData.current = { eaName, eaImage, logs, state };
+
+  const drawPip = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const W = canvas.width;
+    const H = canvas.height;
+    const { eaName: name, eaImage: image, logs: currentLogs, state: currentState } = pipData.current;
+
+    ctx.fillStyle = "#0A0A1A";
+    ctx.fillRect(0, 0, W, H);
+
+    // EA image header (cover-fit) — only when the cached image is ready.
+    const headerH = 180;
+    const paint = (img: HTMLImageElement) => {
+      const scale = Math.max(W / img.width, headerH / img.height);
+      const w = img.width * scale;
+      const h = img.height * scale;
+      ctx.drawImage(img, (W - w) / 2, (headerH - h) / 2, w, h);
+      const grad = ctx.createLinearGradient(0, headerH * 0.35, 0, headerH);
+      grad.addColorStop(0, "rgba(0,0,0,0)");
+      grad.addColorStop(1, "rgba(0,0,0,0.95)");
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, W, headerH);
+      ctx.font = "800 20px system-ui, sans-serif";
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText(name.slice(0, 24), 16, headerH - 34);
+      ctx.beginPath();
+      ctx.arc(22, headerH - 12, 5, 0, Math.PI * 2);
+      ctx.fillStyle = "#22c55e";
+      ctx.fill();
+      ctx.font = "700 11px system-ui, sans-serif";
+      ctx.fillStyle = "#4ade80";
+      ctx.fillText("SERVER CONNECTED", 34, headerH - 8);
+    };
+    const cached = imgCache.current;
+    if (cached && cached.src === image && cached.img.complete && cached.img.naturalWidth > 0) {
+      paint(cached.img);
+    } else {
+      const img = new Image();
+      img.onload = () => drawPip();
+      img.src = image;
+      imgCache.current = { src: image, img };
+    }
+
+    // Terminal log panel.
+    ctx.fillStyle = "#0F172A";
+    ctx.fillRect(0, headerH, W, H - headerH);
+    const lines =
+      currentState === "ready"
+        ? READY_LINES.map((line) => ({
+            text: line.kind === "info" ? `${name} ${line.text}` : line.text,
+            kind: line.kind,
+          }))
+        : currentLogs;
+    ctx.font = "12px ui-monospace, SFMono-Regular, Menlo, monospace";
+    lines.slice(-4).forEach((line, index) => {
+      const y = headerH + 24 + index * 22;
+      ctx.fillStyle = "#6b7280";
+      ctx.fillText(">", 14, y);
+      ctx.fillStyle = line.kind === "last" ? "#4ade80" : line.kind === "cmd" ? "#9ca3af" : "#d1d5db";
+      ctx.fillText(line.text.slice(0, 42), 26, y);
+    });
+  }, []);
+
+  // Stream the canvas into the (hidden, muted) video so Chrome can PiP it.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    const video = videoRef.current;
+    if (!canvas || !video || typeof canvas.captureStream !== "function") return;
+    let stream: MediaStream | null = null;
+    try {
+      stream = canvas.captureStream(2);
+    } catch {
+      return;
+    }
+    video.srcObject = stream;
+    void video.play().catch(() => {});
+    return () => {
+      if (document.pictureInPictureElement) void document.exitPictureInPicture().catch(() => {});
+      stream?.getTracks().forEach((track) => track.stop());
+      video.srcObject = null;
+    };
+  }, []);
+
+  // Redraw on every log/state change plus a 1s heartbeat.
+  useEffect(() => {
+    drawPip();
+    const id = window.setInterval(drawPip, 1000);
+    return () => window.clearInterval(id);
+  }, [drawPip, logs, state, eaName, eaImage]);
+
+  /** Enter PiP (must be called from a user gesture on Android). */
+  const enterPip = async () => {
+    const video = videoRef.current;
+    if (!video || typeof video.requestPictureInPicture !== "function") {
+      toast.error("Floating over apps needs Android Chrome — the popup stays in-app here.");
+      return;
+    }
+    try {
+      await video.play();
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
+        return;
+      }
+      await video.requestPictureInPicture();
+      toast.success("Floating over apps — open MetaTrader, the bot stays on top.");
+    } catch {
+      toast.error("Picture-in-Picture was blocked — try again or keep the app open.");
+    }
+  };
 
   // Draggable position — fixed coordinates from the viewport, default bottom-right.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
@@ -202,6 +325,14 @@ export default function DraggableBotPopup() {
             <div className="absolute inset-0 bg-gradient-to-t from-black via-black/20 to-transparent" />
             <button
               type="button"
+              aria-label="Float over other apps"
+              onClick={() => void enterPip()}
+              className="absolute left-3 top-3 flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur"
+            >
+              <PictureInPicture2 className="size-4" />
+            </button>
+            <button
+              type="button"
               aria-label="Close trade log"
               onClick={() => setOpen(false)}
               className="absolute right-3 top-3 flex size-8 items-center justify-center rounded-full bg-black/60 text-white backdrop-blur"
@@ -241,6 +372,16 @@ export default function DraggableBotPopup() {
       )}
 
       <style>{`@keyframes popUp{from{transform:translateY(15px) scale(0.95);opacity:0}to{transform:translateY(0) scale(1);opacity:1}}`}</style>
+
+      {/* Hidden PiP pipeline: canvas → video stream (Chrome floats it above apps) */}
+      <canvas ref={canvasRef} width={320} height={340} className="hidden" aria-hidden />
+      <video
+        ref={videoRef}
+        muted
+        playsInline
+        aria-hidden
+        className="pointer-events-none fixed bottom-0 right-0 size-px opacity-0"
+      />
     </>
   );
 }
