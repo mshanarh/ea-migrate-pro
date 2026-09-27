@@ -89,7 +89,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <BrandMark />
         <p className="text-xl font-black tracking-tight">
-          EA <span className="text-primary">Migrate</span> Pro
+          EA <span className="text-primary">Migrate</span>
         </p>
       </div>
 
@@ -175,7 +175,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             <Link to="/dashboard" className="flex items-center gap-2 lg:hidden">
               <BrandMark size="size-8" />
               <span className="text-base font-black tracking-tight">
-                EA <span className="text-primary">Migrate</span> Pro
+                EA <span className="text-primary">Migrate</span>
               </span>
             </Link>
           </div>
@@ -211,7 +211,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <BrandMark size="size-8" />
                 <p className="text-sm font-black">
-                  EA <span className="text-primary">Migrate</span> Pro
+                  EA <span className="text-primary">Migrate</span>
                   <span className="ml-3 font-normal text-white/45">© 2026 All rights reserved.</span>
                 </p>
               </div>

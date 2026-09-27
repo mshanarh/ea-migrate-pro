@@ -591,11 +591,11 @@ function Home() {
 
           <div className="py-10">
             <div className="flex items-center gap-2">
-              <span className="flex size-8 items-center justify-center rounded-lg bg-primary/15 glow-ring">
-                <img src="/logo.png" alt="" className="size-6 rounded-md object-contain" />
+              <span className="flex size-8 items-center justify-center rounded-full bg-primary/15 glow-ring">
+                <img src="/logo.png" alt="" className="size-6 rounded-full object-contain" />
               </span>
               <span className="text-base font-bold uppercase">
-                EA <span className="text-primary">Migrate</span> Pro
+                EA <span className="text-primary">Migrate</span>
               </span>
             </div>
             <p className="mt-5 text-sm text-muted-foreground">

@@ -95,7 +95,7 @@ function AppAccess() {
 
 function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
   return <div className="-translate-y-8 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-[2rem] bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
