@@ -116,19 +116,19 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // MT5 order comments accept PRINTABLE ASCII ONLY — bot names often
-      // contain emoji (e.g. "Sniper killer Ea v2.0🛜"), which make order_send
-      // fail with 'Invalid "comment" argument'. The "/ ea migrate" tag must
-      // ALWAYS be visible next to the name, so the NAME is trimmed to make
-      // room (never the tag), capped at MT5's 31-char limit.
+      // MT5 order comments accept only a small character set — emoji AND
+      // special characters like "/" make order_send fail with 'Invalid
+      // "comment" argument'. Whitelist the safe set (letters, digits,
+      // space and basic punctuation), then keep the "- ea migrate" tag
+      // ALWAYS visible by trimming the NAME to fit MT5's 31-char limit.
       const botName = (robot?.name ?? "")
-        .replace(/[^\x20-\x7E]/g, "")
+        .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-      const commentTag = " / ea migrate"; // 12 chars — always kept intact
-      const maxName = 31 - commentTag.length; // 19 chars for the name
+      const commentTag = " - ea migrate"; // 13 chars — always kept intact
+      const maxName = 31 - commentTag.length; // 18 chars for the name
       const orderComment = botName
-        ? `${botName.slice(0, maxName)}${commentTag}`
+        ? `${botName.slice(0, maxName).replace(/[\s.,_()-]+$/, "")}${commentTag}`
         : "EA Migrate";
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.

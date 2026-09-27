@@ -22,7 +22,7 @@ export function friendlyTradeError(raw: string): string {
     return "Not enough free margin for this trade — lower the lot size or the number of trades.";
   }
   if (text.includes("invalid \"comment\"") || (text.includes("comment") && text.includes("invalid"))) {
-    return "The order comment contained characters MT5 rejects (emoji/symbols) — rename the bot without emoji and try again.";
+    return "MT5 rejected the order comment — the app strips unsafe characters automatically; simplify the bot's name if this keeps happening.";
   }
   if (text.includes("symbol") && (text.includes("unknown") || text.includes("not found") || text.includes("invalid"))) {
     return "This broker does not list that symbol — check the exact name in your MT5 app (e.g. HW_100 vs FLAME).";
