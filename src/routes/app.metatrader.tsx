@@ -272,15 +272,26 @@ function AppMetatrader() {
   };
 
   /**
-   * TEST CONNECTION — re-verifies the saved account through the VPS bridge.
-   * The MT5 password is never stored on the device, so the user types it in
-   * the form below and the bridge checks it against the broker in real time.
+   * TEST CONNECTION — verifies the saved account through the bridge and
+   * shows the money available on the MT5 account. Uses the freshly typed
+   * password when present, otherwise the password stored on this device at
+   * save time — so testing needs NO typing at all.
    */
   const checkStatus = async () => {
     if (!mt || testing) return;
-    if (!password.trim()) {
+    let activePassword = password.trim();
+    if (!activePassword) {
+      try {
+        activePassword = window.localStorage.getItem("mt_password") ?? "";
+      } catch {
+        activePassword = "";
+      }
+    }
+    if (!activePassword) {
       setTestResult(null);
-      setErrorMessage("Type your MT5 password in the form below, then tap TEST CONNECTION to verify the saved details.");
+      setErrorMessage(
+        "No password on this device yet — type it once and tap SAVE, then TEST CONNECTION will check your account automatically.",
+      );
       return;
     }
     setTesting(true);
@@ -295,7 +306,7 @@ function AppMetatrader() {
         headers: { "Content-Type": "application/json", "x-bridge-key": "my_secret_bridge_key_2026" },
         body: JSON.stringify({
           login: Number(mt.loginId) || mt.loginId,
-          password: password.trim(),
+          password: activePassword,
           server: mt.server,
         }),
       });
@@ -310,8 +321,31 @@ function AppMetatrader() {
         toast.error(message);
         return;
       }
-      toast.success(`Connection verified ✓ — Account ${mt.loginId} · ${mt.server}`);
-      setTestResult(`Verified: Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
+      // The bridge returns the live MT5 account_info on success — lead with
+      // the money available to trade (free margin), then balance and equity.
+      const account = (payload["account"] ?? {}) as Record<string, unknown>;
+      const num = (key: string): number | null => {
+        const value = account[key];
+        return typeof value === "number" && Number.isFinite(value) ? value : null;
+      };
+      const currency = typeof account["currency"] === "string" && account["currency"] ? account["currency"] : "";
+      const cur = currency ? `${currency} ` : "";
+      const fmt = (value: number | null) =>
+        value === null ? "—" : cur + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      const marginFree = num("margin_free") ?? num("equity") ?? num("balance");
+      const balance = num("balance");
+      const equity = num("equity");
+      toast.success(`Connected ✓ — Account ${mt.loginId} · ${mt.server}`);
+      if (marginFree === null && balance === null && equity === null) {
+        setTestResult(`Connected ✓ — Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
+        return;
+      }
+      setTestResult(
+        `Connected ✓ — Free margin available: ${fmt(marginFree)}` +
+          (balance !== null ? ` · Balance: ${fmt(balance)}` : "") +
+          (equity !== null ? ` · Equity: ${fmt(equity)}` : "") +
+          " — ready to execute.",
+      );
     } catch {
       const message = "Could not reach the bridge — check your connection and try again.";
       setErrorMessage(message);
