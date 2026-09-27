@@ -116,6 +116,10 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
+      // MT5 order comment: the ACTIVE bot's name exactly as the user named
+      // it, followed by the platform tag. Capped at 31 chars (MT5 limit).
+      const botName = (robot?.name ?? "").trim() || "EA Migrate";
+      const orderComment = `${botName} / ea migrate`.slice(0, 31);
       // Estimated-price symbols (HW_100 etc.): the planned SL/TP sit on a
       // simulated price scale the broker validates against its LIVE price —
       // they are always refused (10016). Execute at market without stops.
@@ -138,7 +142,7 @@ function AppScanner() {
             volume: Number(lot),
             stop_loss: stopLossValue,
             take_profit: takeProfitValue,
-            comment: "EA Migrate Live",
+            comment: orderComment,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
