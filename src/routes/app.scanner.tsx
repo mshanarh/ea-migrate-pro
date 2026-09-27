@@ -11,7 +11,7 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
-import { friendlyTradeError } from "@/lib/trade-errors";
+import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -142,6 +142,27 @@ function AppScanner() {
             `The bridge rejected the order (HTTP ${response.status}).`;
           throw new Error(friendlyTradeError(detail));
         }
+        // HTTP 200 is NOT enough — the broker's verdict lives in the body.
+        // The bridge mirrors /account/verify's shape (success:false with an
+        // error message) and MT5's own retcode. Only a retcode of 10008/10009
+        // (or an explicit success/true) is a real fill; everything else is a
+        // broker rejection the user must see instead of a fake "EXECUTED".
+        const rawRetcode = payload["retcode"];
+        const retcode =
+          typeof rawRetcode === "number" ? rawRetcode : typeof rawRetcode === "string" && /^\d+$/.test(rawRetcode) ? Number(rawRetcode) : null;
+        const okFlag = payload["success"];
+        const explicitOk = okFlag === true || (retcode !== null && (retcode === 10008 || retcode === 10009));
+        if (explicitOk === false || (okFlag === false && retcode === null)) {
+          const rawDetail =
+            (typeof payload["message"] === "string" && payload["message"]) ||
+            (typeof payload["detail"] === "string" && payload["detail"]) ||
+            "The broker refused the order.";
+          throw new Error(friendlyTradeError(rawDetail));
+        }
+        if (retcode !== null && !explicitOk) {
+          const message = friendlyRetcode(retcode);
+          if (message) throw new Error(message);
+        }
         return payload;
       };
 
@@ -169,7 +190,8 @@ function AppScanner() {
           : [];
       const failed = rest.filter((item) => item.status === "rejected").length;
 
-      const rawTicket = firstPayload["order"] ?? firstPayload["ticket"] ?? firstPayload["deal"];
+      const rawTicket =
+        firstPayload["order"] ?? firstPayload["ticket"] ?? firstPayload["deal"] ?? firstPayload["order_id"] ?? firstPayload["id"];
       const ticketNumber = Number(rawTicket);
       const ticketLabel = rawTicket !== undefined && rawTicket !== null && Number.isFinite(ticketNumber)
         ? ` Ticket #${ticketNumber}.`

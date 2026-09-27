@@ -26,3 +26,38 @@ export function friendlyTradeError(raw: string): string {
   }
   return raw;
 }
+
+/**
+ * MetaTrader order_send retcodes — the broker's own verdict on an order.
+ * The bridge can answer HTTP 200 while the BROKER rejected the trade, so
+ * the retcode (or success flag) in the body is the only source of truth.
+ */
+export function friendlyRetcode(code: number): string | null {
+  switch (code) {
+    case 10008:
+    case 10009:
+      return null; // PLACED / DONE — genuine success
+    case 10004:
+      return "The broker requoted — market moved before the order was accepted. Try again.";
+    case 10006:
+      return "The broker rejected the order — check the lot size and try again.";
+    case 10013:
+      return "The broker rejected the request as invalid — often a wrong/renamed symbol or bad price. Check the exact symbol name in your MT5 app.";
+    case 10014:
+      return "Invalid lot size for this symbol — try a larger lot (many brokers start at 0.10).";
+    case 10015:
+      return "Invalid price — the planned price is too far from the live market. Scan again for fresh levels.";
+    case 10016:
+      return "Invalid stops — the SL/TP sit inside the broker's minimum stop distance. Try again after a fresh scan, or execute without SL/TP.";
+    case 10017:
+      return "Trading is disabled for this symbol on your account — check it in your MT5 app.";
+    case 10018:
+      return "This market is closed right now — try again when it reopens.";
+    case 10019:
+      return "Not enough free margin — lower the lot size or the number of trades.";
+    case 10030:
+      return "The broker does not support this order filling mode — the bridge needs its filling-mode setting adjusted for your account.";
+    default:
+      return `The broker refused the order (MT5 code ${code}).`;
+  }
+}
