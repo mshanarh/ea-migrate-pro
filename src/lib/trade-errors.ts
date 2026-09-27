@@ -41,6 +41,14 @@ export function friendlyRetcode(code: number): string | null {
       return "The broker requoted — market moved before the order was accepted. Try again.";
     case 10006:
       return "The broker rejected the order — check the lot size and try again.";
+    case 10007:
+      return "The order was cancelled before it could be filled — try again.";
+    case 10010:
+      return null; // DONE_PARTIAL — a (partial) fill still happened
+    case 10011:
+      return "The trade server reported an internal error — try again in a moment.";
+    case 10012:
+      return "The broker timed out processing the order — check your MT5 Trade tab before retrying.";
     case 10013:
       return "The broker rejected the request as invalid — often a wrong/renamed symbol or bad price. Check the exact symbol name in your MT5 app.";
     case 10014:
@@ -55,8 +63,38 @@ export function friendlyRetcode(code: number): string | null {
       return "This market is closed right now — try again when it reopens.";
     case 10019:
       return "Not enough free margin — lower the lot size or the number of trades.";
+    case 10020:
+      return "The price changed while placing the order — try again.";
+    case 10021:
+      return "No live price for this symbol right now — the broker has no quotes for it at the moment.";
+    case 10022:
+      return "Invalid order expiration — the broker rejected the expiry setting.";
+    case 10023:
+      return "The order state changed before execution — check your MT5 Trade tab.";
+    case 10024:
+      return "Too many requests — the broker is rate-limiting. Wait a few seconds and try fewer trades at once.";
+    case 10025:
+      return "No changes — the order matched what the broker already has.";
+    case 10026:
+      return "AutoTrading is disabled by the BROKER's server for this account — enable it in your MT5 app (or contact the broker).";
+    case 10027:
+      return "AutoTrading (Algo Trading) is OFF in the MT5 terminal on the trading server — click the AutoTrading ⚡ button in its toolbar, then execute again.";
+    case 10028:
+      return "The order or position is locked by the broker right now — try again shortly.";
+    case 10029:
+      return "The order or position is frozen — modifications are temporarily blocked.";
     case 10030:
       return "The broker does not support this order filling mode — the bridge needs its filling-mode setting adjusted for your account.";
+    case 10031:
+      return "No connection to the broker's trade server — check the MT5 terminal on the trading server shows a live connection (bottom-right corner).";
+    case 10032:
+      return "This order type is only allowed on real accounts — demo accounts cannot place it.";
+    case 10033:
+      return "Too many pending orders on the account — the broker's order limit was reached.";
+    case 10034:
+      return "Total volume limit reached — the account's open volume exceeds the broker's cap.";
+    case 10038:
+      return "The close volume exceeds the open position volume.";
     default:
       return `The broker refused the order (MT5 code ${code}).`;
   }

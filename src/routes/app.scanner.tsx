@@ -143,25 +143,33 @@ function AppScanner() {
           throw new Error(friendlyTradeError(detail));
         }
         // HTTP 200 is NOT enough — the broker's verdict lives in the body.
-        // The bridge mirrors /account/verify's shape (success:false with an
-        // error message) and MT5's own retcode. Only a retcode of 10008/10009
-        // (or an explicit success/true) is a real fill; everything else is a
-        // broker rejection the user must see instead of a fake "EXECUTED".
-        const rawRetcode = payload["retcode"];
+        // The retcode is the source of truth when present (top level or
+        // nested in `result`); only 10008/10009/10010 are real fills. The
+        // broker's own `comment` (e.g. "Invalid stops") is appended so the
+        // user sees exactly why an order was refused.
+        const result = (payload["result"] ?? {}) as Record<string, unknown>;
+        const rawRetcode = payload["retcode"] ?? result["retcode"];
         const retcode =
-          typeof rawRetcode === "number" ? rawRetcode : typeof rawRetcode === "string" && /^\d+$/.test(rawRetcode) ? Number(rawRetcode) : null;
-        const okFlag = payload["success"];
-        const explicitOk = okFlag === true || (retcode !== null && (retcode === 10008 || retcode === 10009));
-        if (explicitOk === false || (okFlag === false && retcode === null)) {
+          typeof rawRetcode === "number"
+            ? rawRetcode
+            : typeof rawRetcode === "string" && /^\d+$/.test(rawRetcode)
+              ? Number(rawRetcode)
+              : null;
+        if (retcode !== null) {
+          const message = friendlyRetcode(retcode) ?? `The broker refused the order (MT5 code ${retcode}).`;
+          if (message) {
+            const brokerComment =
+              (typeof payload["comment"] === "string" && payload["comment"]) ||
+              (typeof result["comment"] === "string" && result["comment"]) ||
+              "";
+            throw new Error(brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message);
+          }
+        } else if (payload["success"] === false) {
           const rawDetail =
             (typeof payload["message"] === "string" && payload["message"]) ||
             (typeof payload["detail"] === "string" && payload["detail"]) ||
             "The broker refused the order.";
           throw new Error(friendlyTradeError(rawDetail));
-        }
-        if (retcode !== null && !explicitOk) {
-          const message = friendlyRetcode(retcode);
-          if (message) throw new Error(message);
         }
         return payload;
       };
