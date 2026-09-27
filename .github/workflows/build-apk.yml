@@ -1,0 +1,65 @@
+name: build-apk
+
+# Builds the EA Migrate Android wrapper APK on every push to main (except
+# the bot commit that ships the APK itself) and commits it to public/ so the
+# next Vercel deploy serves it at https://eamigratepro.vercel.app/ea-migrate.apk
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - "public/ea-migrate.apk"
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Build signed APK
+        run: |
+          set -e
+          SDK="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          PLATFORM_JAR="$(ls "$SDK"/platforms/*/android.jar | sort -V | tail -1)"
+          BT_DIR="$(ls -d "$SDK"/build-tools/* | sort -V | tail -1)"
+          echo "Using platform: $PLATFORM_JAR"
+          echo "Using build-tools: $BT_DIR"
+
+          mkdir -p build/gen build/obj build/apk android/res/drawable
+          cp public/logo.png android/res/drawable/ic_launcher.png
+
+          "$BT_DIR/aapt2" compile --dir android/res -o build/res.zip
+          "$BT_DIR/aapt2" link -o build/base.apk -I "$PLATFORM_JAR" \
+            --manifest android/AndroidManifest.xml build/res.zip --java build/gen
+
+          javac -source 17 -target 17 -classpath "$PLATFORM_JAR" -d build/obj \
+            $(find android/java build/gen -name '*.java')
+
+          "$BT_DIR/d8" --release --lib "$PLATFORM_JAR" --output build/apk \
+            $(find build/obj -name '*.class')
+          (cd build/apk && zip -q -u ../base.apk classes.dex)
+
+          "$BT_DIR/zipalign" -f 4 build/base.apk build/aligned.apk
+          keytool -genkeypair -keystore build/ks.jks -storepass eamigrate \
+            -keypass eamigrate -alias ea -keyalg RSA -keysize 2048 \
+            -validity 10000 -dname "CN=EA Migrate" >/dev/null 2>&1
+          "$BT_DIR/apksigner" sign --ks build/ks.jks --ks-pass pass:eamigrate \
+            --key-pass pass:eamigrate --out public/ea-migrate.apk build/aligned.apk
+
+          ls -la public/ea-migrate.apk
+
+      - name: Commit the APK (no CI loop)
+        run: |
+          git config user.name "ea-migrate-bot"
+          git config user.email "bot@eamigrate.dev"
+          git add public/ea-migrate.apk
+          git commit -m "[skip ci] Ship fresh Android APK"
+          git push

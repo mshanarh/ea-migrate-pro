@@ -314,76 +314,43 @@ function LandingChatbot() {
 }
 
 /**
- * Android/Chrome fires `beforeinstallprompt` when the site is installable
- * (manifest + service worker). We capture that event so the Download button
- * can trigger the NATIVE install dialog; if it never fired (already installed,
- * iOS, or not yet eligible) the button falls back to opening the app itself.
+ * The Download button ships the REAL Android APK (public/ea-migrate.apk,
+ * built and signed by GitHub Actions). The pass-through service worker stays
+ * registered so iOS visitors can still “Add to Home screen” the PWA.
  */
-type InstallPromptEvent = Event & {
-  prompt: () => void;
-  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
-};
-
-declare global {
-  interface Window {
-    /** Set by the head script — captures the prompt even before React mounts. */
-    __eamigrateInstallEvent?: InstallPromptEvent | null;
-  }
-}
-
 function Home() {
   const navigate = useNavigate();
-  const installEvent = useRef<InstallPromptEvent | null>(null);
-  const [installReady, setInstallReady] = useState(false);
   const [installResult, setInstallResult] = useState<string | null>(
     null,
   );
 
-  // Register the pass-through service worker (no caching) and capture the
-  // native install prompt when the browser offers it.
+  // Register the pass-through service worker (no caching) — best-effort.
   useEffect(() => {
     if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
     navigator.serviceWorker.register("/sw.js").catch(() => {
-      /* registration is best-effort — the buttons still work without it */
+      /* the buttons still work without it */
     });
-
-    const onBeforeInstall = (event: Event) => {
-      event.preventDefault();
-      installEvent.current = event as InstallPromptEvent;
-      setInstallReady(true);
-    };
-    window.addEventListener("beforeinstallprompt", onBeforeInstall);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
-    };
   }, []);
 
-  /** Android download: native install dialog when available, app fallback. */
+  /** Android download: the REAL APK file — built and signed by GitHub Actions. */
   const handleAndroidDownload = async () => {
-    // Prefer the locally captured event, but also pick up the one caught by
-    // the head script before React mounted.
-    const promptEvent = installEvent.current ?? window.__eamigrateInstallEvent ?? null;
-    if (promptEvent) {
-      try {
-        await promptEvent.prompt();
-        const choice = await promptEvent.userChoice;
-        if (choice.outcome === "accepted") {
-          setInstallResult("Installing EA Migrate… check your home screen. 🎉");
-          installEvent.current = null;
-          window.__eamigrateInstallEvent = null;
-          setInstallReady(false);
-          return;
-        }
-      } catch {
-        /* user dismissed or prompt failed — fall through to the app */
-      }
+    try {
+      setInstallResult("Downloading the EA Migrate APK…");
+      const response = await fetch("/ea-migrate.apk");
+      if (!response.ok) throw new Error("not built yet");
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = "ea-migrate.apk";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+      setInstallResult("Downloaded ✓ — open it and allow “Install from this source” when Android asks.");
+    } catch {
+      setInstallResult("The APK is building — try again in a few minutes.");
     }
-    // No native prompt available (already installed, iOS, or Chrome not yet
-    // eligible). Open the app AND tell the user exactly how to install it.
-    setInstallResult(
-      "Opening EA Migrate… to INSTALL it, tap ⋮ menu → “Add to Home screen” inside the app.",
-    );
-    navigate({ to: "/app" });
   };
 
   return (
