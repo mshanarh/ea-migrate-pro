@@ -11,6 +11,7 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
+import { friendlyTradeError } from "@/lib/trade-errors";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -139,7 +140,7 @@ function AppScanner() {
             (typeof payload["detail"] === "string" && payload["detail"]) ||
             (typeof payload["message"] === "string" && payload["message"]) ||
             `The bridge rejected the order (HTTP ${response.status}).`;
-          throw new Error(detail);
+          throw new Error(friendlyTradeError(detail));
         }
         return payload;
       };

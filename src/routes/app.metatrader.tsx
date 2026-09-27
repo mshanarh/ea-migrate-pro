@@ -8,7 +8,8 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
-import { saveMt5Credentials, verifyMt5Credentials } from "@/lib/mt5-bridge.server";
+import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
+import { friendlyTradeError } from "@/lib/trade-errors";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -260,15 +261,10 @@ function AppMetatrader() {
         });
         if (result.verified) {
           toast.success("Connected ✓ — verified with the broker.");
-        } else {
-          // The device keeps the password for direct bridge execution — clear
-          // it when the broker itself rejects the credentials.
-          try {
-            window.localStorage.removeItem("mt_password");
-          } catch {
-            /* ignore */
-          }
         }
+        // An unverified result is NOT a rejection — it can be a slow bridge.
+        // The device keeps the password so execution still works; wrong
+        // credentials surface as a clear error on the next Execute attempt.
       } catch {
         /* cloud/bridge unreachable — details are still saved on this device */
       }
@@ -291,17 +287,35 @@ function AppMetatrader() {
     setTestResult(null);
     setErrorMessage(null);
     try {
-      const result = await verifyMt5Credentials({
-        data: { login: mt.loginId, password: password.trim(), server: mt.server },
+      // Direct browser → bridge verification: the static production build has
+      // no server functions, so this goes to the bridge exactly like trade
+      // execution does.
+      const response = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/account/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bridge-key": "my_secret_bridge_key_2026" },
+        body: JSON.stringify({
+          login: Number(mt.loginId) || mt.loginId,
+          password: password.trim(),
+          server: mt.server,
+        }),
       });
-      if (!result.success) {
-        const message = result.error || "Failed to verify account on VPS";
+      const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      const rawDetail =
+        (typeof payload["detail"] === "string" && payload["detail"]) ||
+        (typeof payload["message"] === "string" && payload["message"]) ||
+        "";
+      if (!response.ok || payload["success"] !== true) {
+        const message = friendlyTradeError(rawDetail || `Verification failed (HTTP ${response.status}).`);
         setErrorMessage(message);
         toast.error(message);
         return;
       }
       toast.success(`Connection verified ✓ — Account ${mt.loginId} · ${mt.server}`);
       setTestResult(`Verified: Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
+    } catch {
+      const message = "Could not reach the bridge — check your connection and try again.";
+      setErrorMessage(message);
+      toast.error(message);
     } finally {
       setTesting(false);
     }
