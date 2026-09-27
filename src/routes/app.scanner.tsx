@@ -66,7 +66,7 @@ function AppScanner() {
     plan: ExecutionPlan,
     onProgress: (message: string) => void,
   ): Promise<ExecutionOutcome> => {
-    const { symbol, lot, trades, direction, stopLoss, takeProfit, estimated } = plan;
+    const { symbol, lot, trades, direction, entry, stopLoss, takeProfit, estimated } = plan;
 
     if (!app.mt) {
       toast.error("Save your MT5 details first — MetaTrader page.");
@@ -131,12 +131,55 @@ function AppScanner() {
           ? botName + commentTag
           : botName.slice(0, 31)
         : "EA Migrate";
-      // Estimated-price symbols (HW_100 etc.): the planned SL/TP sit on a
-      // simulated price scale the broker validates against its LIVE price —
-      // they are always refused (10016). Execute at market without stops.
-      const withStops = !estimated && Number(stopLoss) > 0;
-      const takeProfitValue = withStops ? Number(takeProfit) || 0 : 0;
-      const stopLossValue = withStops ? Number(stopLoss) || 0 : 0;
+      // SL/TP strategy:
+      // • Feed-backed symbols — the planned levels are real-price based, send them.
+      // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
+      //   price scale the broker always refuses (10016), so pull the LIVE
+      //   quote from the bridge (/symbol/price, bridge v0.2+) and anchor the
+      //   plan's risk/reward percentages to the real price. No live quote →
+      //   fall back to market without stops (still fills).
+      const planEntry = Number(entry) || 0;
+      const planStop = Number(stopLoss) || 0;
+      const planTp = Number(takeProfit) || 0;
+      let stopLossValue = estimated ? 0 : planStop;
+      let takeProfitValue = estimated ? 0 : planTp;
+      if (estimated && (planStop > 0 || planTp > 0)) {
+        try {
+          const priceResponse = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/symbol/price", {
+            method: "POST",
+            headers: { "Content-Type": "application/json", "x-bridge-key": "my_secret_bridge_key_2026" },
+            body: JSON.stringify({ credentials, symbol }),
+          });
+          const pricePayload = (await priceResponse.json().catch(() => ({}))) as Record<string, unknown>;
+          const bid = typeof pricePayload["bid"] === "number" ? pricePayload["bid"] : 0;
+          const ask = typeof pricePayload["ask"] === "number" ? pricePayload["ask"] : 0;
+          const digits = typeof pricePayload["digits"] === "number" ? pricePayload["digits"] : null;
+          const point = typeof pricePayload["point"] === "number" && pricePayload["point"] > 0 ? pricePayload["point"] : 10 ** -(digits ?? 2);
+          const stopsLevelPoints = typeof pricePayload["stops_level"] === "number" ? pricePayload["stops_level"] : 0;
+          if (pricePayload["success"] === true && bid > 0 && ask > 0 && digits !== null && planEntry > 0) {
+            const liveEntry = direction === "BUY" ? ask : bid;
+            const riskPct = planStop > 0 ? Math.abs(planEntry - planStop) / planEntry : 0;
+            const rewardPct = planTp > 0 ? Math.abs(planTp - planEntry) / planEntry : 0;
+            const minDistance = stopsLevelPoints * point;
+            const round = (value: number) => Number(value.toFixed(digits));
+            if (riskPct > 0) {
+              const raw = direction === "BUY" ? liveEntry * (1 - riskPct) : liveEntry * (1 + riskPct);
+              stopLossValue = round(
+                direction === "BUY" ? Math.min(raw, liveEntry - minDistance) : Math.max(raw, liveEntry + minDistance),
+              );
+            }
+            if (rewardPct > 0) {
+              const raw = direction === "BUY" ? liveEntry * (1 + rewardPct) : liveEntry * (1 - rewardPct);
+              takeProfitValue = round(
+                direction === "BUY" ? Math.max(raw, liveEntry + minDistance) : Math.min(raw, liveEntry - minDistance),
+              );
+            }
+          }
+        } catch {
+          /* no live quote (older bridge) — market order without stops */
+        }
+      }
+      const withStops = stopLossValue > 0 || takeProfitValue > 0;
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
       const executeOnce = async (): Promise<Record<string, unknown>> => {
@@ -208,6 +251,8 @@ function AppScanner() {
         const raw = error instanceof Error ? error.message : "";
         if (useStops && /invalid stops|10016/i.test(raw)) {
           useStops = false;
+          stopLossValue = 0;
+          takeProfitValue = 0;
           try {
             firstPayload = await executeOnce();
           } catch (retryError) {
