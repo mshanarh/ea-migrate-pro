@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Blocks,
@@ -312,8 +312,66 @@ function LandingChatbot() {
   );
 }
 
+/**
+ * Android/Chrome fires `beforeinstallprompt` when the site is installable
+ * (manifest + service worker). We capture that event so the Download button
+ * can trigger the NATIVE install dialog; if it never fired (already installed,
+ * iOS, or not yet eligible) the button falls back to opening the app itself.
+ */
+type InstallPromptEvent = Event & {
+  prompt: () => void;
+  userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
+};
+
 function Home() {
   const navigate = useNavigate();
+  const installEvent = useRef<InstallPromptEvent | null>(null);
+  const [installReady, setInstallReady] = useState(false);
+  const [installResult, setInstallResult] = useState<string | null>(
+    null,
+  );
+
+  // Register the pass-through service worker (no caching) and capture the
+  // native install prompt when the browser offers it.
+  useEffect(() => {
+    if (typeof window === "undefined" || !("serviceWorker" in navigator)) return;
+    navigator.serviceWorker.register("/sw.js").catch(() => {
+      /* registration is best-effort — the buttons still work without it */
+    });
+
+    const onBeforeInstall = (event: Event) => {
+      event.preventDefault();
+      installEvent.current = event as InstallPromptEvent;
+      setInstallReady(true);
+    };
+    window.addEventListener("beforeinstallprompt", onBeforeInstall);
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onBeforeInstall);
+    };
+  }, []);
+
+  /** Android download: native install dialog when available, app fallback. */
+  const handleAndroidDownload = async () => {
+    const promptEvent = installEvent.current;
+    if (promptEvent) {
+      try {
+        await promptEvent.prompt();
+        const choice = await promptEvent.userChoice;
+        if (choice.outcome === "accepted") {
+          setInstallResult("Installing EA Migrate… check your home screen.");
+          installEvent.current = null;
+          setInstallReady(false);
+          return;
+      }
+      } catch {
+        /* user dismissed or prompt failed — fall through to the app */
+      }
+    }
+    // No native prompt available (already installed, iOS, or prompt not yet
+    // captured): open the app so the user can add it to the home screen
+    // manually (Chrome menu → “Add to Home screen”).
+    navigate({ to: "/app" });
+  };
 
   return (
     <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#0A0A0A] text-white">
@@ -556,7 +614,7 @@ function Home() {
               clock.
             </p>
             <div className="mx-auto mt-8 flex max-w-sm flex-col gap-3">
-              <Button size="lg" className="h-14 rounded-full text-base font-semibold">
+              <Button size="lg" className="h-14 rounded-full text-base font-semibold" onClick={() => void handleAndroidDownload()}>
                 Download Android
               </Button>
               <Button
@@ -567,6 +625,9 @@ function Home() {
               >
                 Get iOS App
               </Button>
+              {installResult && (
+                <p className="text-sm font-semibold text-emerald-400">{installResult}</p>
+              )}
             </div>
           </motion.div>
         </section>

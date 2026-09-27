@@ -10,13 +10,13 @@
   "icons": [
     {
       "src": "/logo.png",
-      "sizes": "512x512",
+      "sizes": "1024x1024",
       "type": "image/png",
       "purpose": "any"
     },
     {
       "src": "/favicon.png",
-      "sizes": "192x192",
+      "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
     }
