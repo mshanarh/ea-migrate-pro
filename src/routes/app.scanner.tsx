@@ -118,18 +118,13 @@ function AppScanner() {
       };
       // MT5 order comments accept only a small character set — emoji AND
       // special characters like "/" make order_send fail with 'Invalid
-      // "comment" argument'. Whitelist the safe set (letters, digits,
-      // space and basic punctuation), then keep the "- ea migrate" tag
-      // ALWAYS visible by trimming the NAME to fit MT5's 31-char limit.
+      // "comment" argument'. The comment is JUST the bot's name, sanitized
+      // to the safe character set and capped at MT5's 31-char limit.
       const botName = (robot?.name ?? "")
         .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-      const commentTag = " ea migrate"; // 12 chars — always kept intact
-      const maxName = 31 - commentTag.length; // 19 chars for the name
-      const orderComment = botName
-        ? `${botName.slice(0, maxName).replace(/[\s.,_()-]+$/, "")}${commentTag}`
-        : "EA Migrate";
+      const orderComment = botName.slice(0, 31).replace(/[\s.,_()-]+$/, "") || "EA Migrate";
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
