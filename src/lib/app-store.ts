@@ -454,6 +454,13 @@ export function connectMt(mt: MtAccount) {
 export function disconnectMt() {
   load();
   state = { ...state, mt: null };
+  // The device-held password (used for direct bridge execution) must not
+  // outlive the saved MT5 account.
+  try {
+    window.localStorage.removeItem("mt_password");
+  } catch {
+    /* ignore */
+  }
   persist();
 }
 

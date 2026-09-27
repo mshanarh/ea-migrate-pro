@@ -10,7 +10,6 @@ import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
-import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -98,37 +97,100 @@ function AppScanner() {
     window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "CONNECTING TO BROKER..." } }));
 
     try {
-      // The VPS bridge opens the broker connection with the SAVED credentials
-      // (server-side only — the password never travels through the browser),
-      // places the order(s) and closes the connection again.
-      const stopLossValue = Number(stopLoss);
-      const takeProfitValue = Number(takeProfit);
-      const result = await executeMt5ForUser({
-        data: {
-          userId: app.email,
-          symbol,
-          action: direction,
-          volume: Number(lot),
-          ...(Number.isFinite(stopLossValue) && stopLossValue > 0 ? { stop_loss: stopLossValue } : {}),
-          ...(Number.isFinite(takeProfitValue) && takeProfitValue > 0 ? { take_profit: takeProfitValue } : {}),
-          tradeCount: Math.max(1, Math.min(trades, 20)),
-        },
-      });
-      const outcome: ExecutionOutcome = { ok: result.ok, message: result.message };
+      // Direct browser → bridge execution: the app deploys as a STATIC client
+      // site on Vercel, so TanStack server functions (/executeMt5ForUser) 404
+      // there. The bridge accepts CORS'd browser requests, and the MT5
+      // password lives on this device (stored when the user saves their
+      // details on the MetaTrader page).
+      const password = window.localStorage.getItem("mt_password") ?? "";
+      if (!password) {
+        const message =
+          "MT5 password not found on this device — re-save your MT5 details on the MetaTrader page.";
+        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+        return { ok: false, message };
+      }
+      const loginNumber = Number(app.mt.loginId);
+      const credentials = {
+        login: Number.isFinite(loginNumber) && loginNumber > 0 ? loginNumber : app.mt.loginId,
+        password,
+        server: app.mt.server,
+      };
+      const total = Math.max(1, Math.min(trades, 20));
+      const executeOnce = async (): Promise<Record<string, unknown>> => {
+        const response = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/trade/execute", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-key": "my_secret_bridge_key_2026",
+          },
+          body: JSON.stringify({
+            credentials,
+            symbol,
+            action: direction,
+            volume: Number(lot),
+            stop_loss: Number(stopLoss) || 0,
+            take_profit: Number(takeProfit) || 0,
+            comment: "EA Migrate Live",
+          }),
+        });
+        const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+        if (!response.ok) {
+          const detail =
+            (typeof payload["detail"] === "string" && payload["detail"]) ||
+            (typeof payload["message"] === "string" && payload["message"]) ||
+            `The bridge rejected the order (HTTP ${response.status}).`;
+          throw new Error(detail);
+        }
+        return payload;
+      };
+
+      // Fire the FIRST order alone — one clear error beats N identical
+      // failures (and 20 simultaneous broker logins). Only when the first
+      // order reaches the bridge do the rest fire in parallel.
+      let firstPayload: Record<string, unknown>;
+      try {
+        firstPayload = await executeOnce();
+      } catch (error) {
+        const message =
+          error instanceof TypeError
+            ? "Could not reach the execution bridge — check your connection and try again."
+            : (error instanceof Error ? error.message : "Execution failed.");
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
+          }),
+        );
+        return { ok: false, message };
+      }
+      const rest =
+        total > 1
+          ? await Promise.allSettled(Array.from({ length: total - 1 }, () => executeOnce()))
+          : [];
+      const failed = rest.filter((item) => item.status === "rejected").length;
+
+      const rawTicket = firstPayload["order"] ?? firstPayload["ticket"] ?? firstPayload["deal"];
+      const ticketNumber = Number(rawTicket);
+      const ticketLabel = rawTicket !== undefined && rawTicket !== null && Number.isFinite(ticketNumber)
+        ? ` Ticket #${ticketNumber}.`
+        : ".";
+      const message =
+        failed > 0
+          ? `${total - failed}/${total} ${symbol} trades opened on MT5 — EA Migrate.${ticketLabel}`
+          : total > 1
+            ? `${total}/${total} ${symbol} trades opened on MT5 — EA Migrate.${ticketLabel}`
+            : `${symbol} trade opened on MT5 — EA Migrate${ticketLabel}`;
       onProgress("Disconnecting...");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
-          detail: {
-            ok: outcome.ok,
-            message: outcome.ok
-              ? outcome.message.toUpperCase()
-              : `${outcome.message.toUpperCase()} — CONNECTION CLOSED`,
-          },
+          detail: { ok: true, message: message.toUpperCase() },
         }),
       );
-      return outcome;
-    } catch {
-      const message = "Could not reach the execution service.";
+      return { ok: true, message };
+    } catch (error) {
+      const message =
+        error instanceof TypeError
+          ? "Could not reach the execution bridge — check your connection and try again."
+          : (error instanceof Error ? error.message : "Could not reach the execution service.");
       window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
       return { ok: false, message };
     }

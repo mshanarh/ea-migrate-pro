@@ -231,6 +231,14 @@ function AppMetatrader() {
     connectMt(account);
     writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
     const typedPassword = password.trim();
+    // Keep the password ON THIS DEVICE ONLY so the scanner can execute trades
+    // directly against the bridge from the browser (the deployed app is a
+    // static client site — there is no server to hold the secret).
+    try {
+      window.localStorage.setItem("mt_password", typedPassword);
+    } catch {
+      /* storage unavailable — execution will ask the user to re-save */
+    }
     setPassword("");
     toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server}`);
     setSaving(false);
@@ -252,6 +260,14 @@ function AppMetatrader() {
         });
         if (result.verified) {
           toast.success("Connected ✓ — verified with the broker.");
+        } else {
+          // The device keeps the password for direct bridge execution — clear
+          // it when the broker itself rejects the credentials.
+          try {
+            window.localStorage.removeItem("mt_password");
+          } catch {
+            /* ignore */
+          }
         }
       } catch {
         /* cloud/bridge unreachable — details are still saved on this device */
