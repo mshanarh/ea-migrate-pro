@@ -7,6 +7,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials, verifyMt5Credentials } from "@/lib/mt5-bridge.server";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 
@@ -48,9 +49,14 @@ const BROKER_SERVERS: Record<string, string[]> = {
 /** Popular brokers offered as suggestions — any broker is accepted. */
 const POPULAR_BROKERS = Object.keys(BROKER_SERVERS);
 
-const labelClass = "text-[11px] font-bold tracking-[0.28em] text-white/40 uppercase";
+const labelClass = "plat-uppercase-label text-[11px] font-bold tracking-[0.28em] text-white/40 uppercase";
+/**
+ * Platform-adaptive field: height and corner radius come from the platform
+ * tokens (Material 16px/54px vs iOS 14px/50px). The dark surface, focus ring
+ * and typography are shared — this is the same input on both platforms.
+ */
 const fieldClass =
-  "h-14 w-full rounded-2xl border border-white/[0.07] bg-[#141414] px-5 text-base text-white outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25 focus:bg-[#181818] focus:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]";
+  "plat-field w-full border border-white/[0.07] bg-[#141414] px-5 text-base text-white outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25 focus:bg-[#181818] focus:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]";
 
 /** Select styled like the screenshot's dark dropdowns (native = reliable on mobile). */
 function DarkSelect({ value, onChange, placeholder, options, ariaLabel, hint }: {
@@ -135,6 +141,8 @@ function AppMetatrader() {
   const app = useAppState();
   const { color } = useCustomization();
   const accent = accentColorValue(color);
+  const platform = usePlatform();
+  const isIos = platform === "ios";
   const mt = app.mt;
 
   const [broker, setBroker] = useState(mt?.broker ?? "");
@@ -303,8 +311,8 @@ function AppMetatrader() {
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]" style={{ background: `radial-gradient(ellipse 70% 55% at 50% -8%, ${accent}2e, transparent 70%)` }} />
 
       <div className="app-scroll-area relative">
-        <main className="mx-auto flex w-full max-w-md flex-col px-5 pt-8 pb-36">
-          {/* MT5 badge */}
+        <main className="mx-auto flex w-full max-w-md flex-col px-5 pt-safe pb-safe-nav">
+          {/* MT5 badge — pill on Android, soft rounded chip on iOS */}
           <motion.div
             initial={{ opacity: 0, y: 14 }}
             animate={{ opacity: 1, y: 0 }}
@@ -312,7 +320,7 @@ function AppMetatrader() {
             className="flex justify-center"
           >
             <span
-              className="inline-flex h-12 items-center justify-center rounded-full px-10 text-base font-black tracking-wide text-black"
+              className={`inline-flex h-12 items-center justify-center px-10 text-base font-black tracking-wide text-black ${isIos ? "rounded-2xl" : "rounded-full"}`}
               style={{ background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 10px 34px ${accent}66` }}
             >
               MT5 Account
@@ -335,7 +343,7 @@ function AppMetatrader() {
               initial={{ opacity: 0, y: 18 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="mt-8 rounded-[24px] border p-5"
+              className="plat-card mt-8 border p-5"
               style={{ borderColor: `${accent}59`, background: `linear-gradient(180deg, ${accent}14, rgba(0,0,0,0.5))` }}
             >
               <div className="flex items-center justify-between">
@@ -365,14 +373,14 @@ function AppMetatrader() {
                   type="button"
                   onClick={() => void checkStatus()}
                   disabled={testing}
-                  className="h-11 flex-1 rounded-2xl bg-white/[0.05] text-xs font-bold text-emerald-300 transition-transform active:scale-[0.97] disabled:opacity-60"
+                  className="plat-pressable plat-control h-11 flex-1 bg-white/[0.05] text-xs font-bold text-emerald-300 disabled:opacity-60"
                 >
                   {testing ? "TESTING..." : "TEST CONNECTION"}
                 </button>
                 <button
                   type="button"
                   onClick={() => void removeConnection()}
-                  className="h-11 flex-1 rounded-2xl bg-white/[0.05] text-xs font-bold text-white/60 transition-transform active:scale-[0.97] hover:text-red-300"
+                  className="plat-pressable plat-control h-11 flex-1 bg-white/[0.05] text-xs font-bold text-white/60 hover:text-red-300"
                 >
                   REMOVE DETAILS
                 </button>
@@ -501,7 +509,7 @@ function AppMetatrader() {
               <button
                 type="submit"
                 disabled={saving}
-                className="flex h-16 w-full items-center justify-center gap-2 rounded-[28px] text-lg font-black text-black transition-all duration-200 active:scale-[0.98] disabled:opacity-60"
+                className={`plat-pressable flex h-16 w-full items-center justify-center gap-2 text-lg font-black text-black disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
                 style={{ background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 14px 44px ${accent}66` }}
               >
                 {saving ? (
@@ -529,7 +537,7 @@ function AppMetatrader() {
           >
             <Link
               to="/app/trading-pairs"
-              className="mt-8 flex items-center justify-between rounded-[24px] border p-5 transition-transform active:scale-[0.99]"
+              className="plat-card mt-8 border p-5 active:scale-[0.99]"
               style={{ borderColor: `${accent}40`, background: `${accent}0d` }}
             >
               <span className="flex items-center gap-4">

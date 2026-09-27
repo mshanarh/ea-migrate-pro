@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/market-scanner.server";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { usePlatform } from "@/lib/platform";
 
 type ScannerTimeframe = "15m" | "1h" | "4h";
 
@@ -131,6 +132,10 @@ export default function ChartScanner({
   onScanStart,
   onExecute,
 }: Props) {
+  const platform = usePlatform();
+  const isIos = platform === "ios";
+  const cardRadius = isIos ? "rounded-[20px]" : "rounded-[24px]";
+  const symbolRadius = isIos ? "rounded-2xl" : "rounded-full";
   const [symbol, setSymbol] = useState("");
   const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
   const [trades, setTrades] = useState(5);
@@ -336,9 +341,9 @@ export default function ChartScanner({
   const phase = phaseOf(scanning, analysis, analysisError, executing, execError);
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col pb-[130px]" style={{ backgroundColor: "#090c10" }}>
+    <div className="mx-auto flex w-full max-w-5xl flex-col pt-safe pb-safe-nav" style={{ backgroundColor: "#090c10" }}>
       {/* Header — title, scans-left badge */}
-      <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-5 sm:px-6">
+      <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-2 sm:px-6">
         <div>
           <div className="flex items-center gap-2">
             <span className="size-2 rounded-full" style={{ background: "#22c55e" }} />
@@ -353,7 +358,7 @@ export default function ChartScanner({
         </div>
         <span
           data-testid="text-scans-remaining"
-          className="shrink-0 rounded-full border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
+          className="shrink-0 rounded-[var(--plat-radius-control)] border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
         >
           {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
         </span>
@@ -363,7 +368,7 @@ export default function ChartScanner({
       {phase !== "idle" && (
         <div
           data-testid="banner-scanner-state"
-          className="mx-3 flex items-center justify-between rounded-2xl border px-4 py-3 sm:mx-6"
+          className="plat-card mx-3 flex items-center justify-between border px-4 py-3 sm:mx-6"
           style={{ borderColor: `${PHASE_META[phase].color}55`, backgroundColor: `${PHASE_META[phase].color}0f` }}
         >
           <span className="flex items-center gap-2">
@@ -378,7 +383,7 @@ export default function ChartScanner({
 
       {/* Optional screenshot — the signal is calculated from MT5 market data. */}
       <div
-        className="relative mx-3 mt-3 min-h-[220px] overflow-hidden rounded-[26px] border-2 border-dashed sm:mx-6 sm:min-h-[280px]"
+        className={`relative mx-3 mt-3 min-h-[220px] overflow-hidden border-2 border-dashed sm:mx-6 sm:min-h-[280px] ${isIos ? "rounded-[20px]" : "rounded-[26px]"}`}
         style={{ borderColor: dragging ? accent : "#4a2029", backgroundColor: "#120b10" }}
         onDragOver={(event) => {
           event.preventDefault();
@@ -463,7 +468,8 @@ export default function ChartScanner({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
+                className="plat-pressable flex h-12 w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
+                style={{ borderRadius: "var(--plat-radius-control)" }}
               >
                 {chartSrc ? "Replace chart image" : "Attach chart screenshot"}
               </button>
@@ -505,9 +511,9 @@ export default function ChartScanner({
           )}
 
           {/* SYMBOL — exactly the mentor's EA symbols; the user picks one */}
-          <div className="mx-3 mt-4 rounded-[20px] border border-white/8 bg-[#151a20] p-4 sm:mx-6">
+          <div className={`mx-3 mt-4 border border-white/8 bg-[#151a20] p-4 sm:mx-6 ${cardRadius}`}>
             <div className="mb-3 flex items-center justify-between">
-              <p className="text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
+              <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
               <p className="text-[10px] font-bold text-white/25">{symbols.length} FROM YOUR EA</p>
             </div>
             <div className="flex flex-wrap gap-2">
@@ -516,7 +522,7 @@ export default function ChartScanner({
                   key={item}
                   type="button"
                   onClick={() => selectSymbol(item)}
-                  className="rounded-full px-5 py-2.5 text-[13px] font-bold transition-colors"
+                  className={`px-5 py-2.5 text-[13px] font-bold transition-colors ${symbolRadius}`}
                   style={
                     symbol === item
                       ? { background: accent, color: "#fff" }
@@ -534,7 +540,7 @@ export default function ChartScanner({
               </p>
             )}
             <div className="mt-3 flex items-center justify-between">
-              <p className="text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
+              <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
               <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-bold text-white/65">
                 {timeframe}
               </span>
@@ -542,7 +548,7 @@ export default function ChartScanner({
           </div>
 
           {/* Trades + lot size */}
-          <div className="mx-3 mt-3 divide-y divide-white/5 rounded-[20px] border border-white/8 bg-[#151a20] sm:mx-6">
+          <div className={`mx-3 mt-3 divide-y divide-white/5 border border-white/8 bg-[#151a20] sm:mx-6 ${cardRadius}`}>
             <div className="flex items-center justify-between p-4">
               <div>
                 <p className="font-bold text-white">Trades</p>
@@ -590,7 +596,7 @@ export default function ChartScanner({
             onClick={startScan}
             disabled={scanning || scanLocked}
             data-testid="button-run-scan"
-            className="mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 rounded-full font-bold text-white transition-transform active:scale-[0.98] disabled:opacity-60 sm:mx-6"
+            className={`plat-pressable mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 font-bold text-white disabled:opacity-60 sm:mx-6 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
             style={{ background: accent, boxShadow: scanLocked ? "none" : `0 0 20px ${accent}66` }}
           >
             <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
@@ -603,7 +609,7 @@ export default function ChartScanner({
         /* ---------- RESULT VIEW ---------- */
         <div className="mx-3 mt-3 space-y-3 sm:mx-6">
           {/* LIVE MARKET DATA — real broker values only */}
-          <div className="rounded-[24px] border border-white/8 bg-[#151a20] p-4">
+          <div className={`border border-white/8 bg-[#151a20] p-4 ${cardRadius}`}>
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] text-white/35">
                 <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
@@ -650,7 +656,7 @@ export default function ChartScanner({
           </div>
 
           {/* TRADE PLAN — real calculated levels */}
-          <div className="rounded-[24px] border-2 bg-[#151a20] p-4" style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
+          <div className={`border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
@@ -721,7 +727,7 @@ export default function ChartScanner({
               onClick={openConfirm}
               disabled={executing}
               data-testid="button-execute-trade"
-              className="mt-4 flex h-[58px] w-full items-center justify-center rounded-full text-[15px] font-black tracking-wide text-white transition-transform active:scale-[0.98] disabled:opacity-60"
+              className={`plat-pressable mt-4 flex h-[58px] w-full items-center justify-center text-[15px] font-black tracking-wide text-white disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
               style={{ background: accent, boxShadow: `0 0 24px ${accent}66` }}
             >
               {executing ? "EXECUTING..." : `EXECUTE TRADE — ${analysis.signal} ${lot} Lot`}
@@ -820,7 +826,7 @@ export default function ChartScanner({
 
       {/* Confirmation popup — symbol, direction, entry, SL, TP and lot */}
       <Dialog open={confirmOpen} onOpenChange={(open) => (open ? setConfirmOpen(true) : setConfirmOpen(false))}>
-        <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-white sm:max-w-sm">
+        <DialogContent className="max-w-sm border border-white/10 bg-[#0b0b0d] pt-safe text-white sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-xl font-black">Confirm trade</DialogTitle>
             <DialogDescription className="text-sm text-white/55">

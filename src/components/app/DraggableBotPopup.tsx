@@ -157,7 +157,7 @@ export default function DraggableBotPopup() {
   const style: React.CSSProperties = {
     ...(pos
       ? { left: pos.x, top: pos.y }
-      : { right: 16, bottom: 96 }),
+      : { right: 16, bottom: `calc(96px + var(--sa-bottom))` }),
     position: "fixed" as const,
     touchAction: "none",
     border: "3px solid #2E5BFF",
@@ -194,6 +194,7 @@ export default function DraggableBotPopup() {
           role="dialog"
           aria-label={`${eaName} trade log`}
           className="fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 border-[#A020F0] bg-[#0A0A1A] shadow-[0_0_30px_rgba(160,32,240,0.5)]"
+          style={{ marginBottom: "var(--sa-bottom)" }}
         >
           {/* EA image header */}
           <div className="relative h-[220px] w-full bg-black">

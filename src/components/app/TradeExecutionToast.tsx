@@ -156,6 +156,7 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
       role="status"
       aria-live="polite"
       className="fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md animate-[slideDown_0.3s_ease-out] rounded-[16px] border border-[#2a2a2a] bg-[#0f0f0f] p-4 shadow-xl"
+      style={{ marginTop: "var(--sa-top)" }}
     >
       <div className="flex items-center gap-3">
         {/* Green pulsing spinner */}

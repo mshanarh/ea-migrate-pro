@@ -93,7 +93,7 @@ function TradingPairsScreen() {
   return (
     <div className="app-fullscreen bg-black text-white">
       <div className="app-scroll-area">
-        <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-4 pt-6 pb-36">
+        <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-4 pt-safe pb-safe-nav">
           {/* Header */}
           <div className="flex items-center justify-between">
             <button
@@ -181,7 +181,7 @@ function TradingPairsScreen() {
                 </div>
               ) : (
                 mineFiltered.map((pair) => (
-                  <div key={pair.symbol} className="rounded-[20px] border border-[#2A2A2A] bg-[#1E1E1E] p-4">
+                  <div key={pair.symbol} className="plat-card rounded-[20px] border border-[#2A2A2A] bg-[#1E1E1E] p-4">
                     <div className="flex items-center justify-between">
                       <p className="text-base font-bold">{pair.symbol}</p>
                       <button

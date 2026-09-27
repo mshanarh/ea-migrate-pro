@@ -25,6 +25,7 @@ import {
 } from "@/lib/app-customization";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
+import { usePlatform } from "@/lib/platform";
 import { Newspaper } from "lucide-react";
 
 /**
@@ -272,9 +273,17 @@ type DrawerProps = {
   onClose: () => void;
 };
 
+/**
+ * Platform-adaptive customization surface — same panel, same handlers:
+ *  • Android: the classic left drawer (Material side sheet).
+ *  • iOS:     a full-height bottom sheet rising over the screen, grabber
+ *             included, respecting the home indicator.
+ */
 export function CustomizationDrawer({ open, onClose }: DrawerProps) {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
+  const platform = usePlatform();
+  const isIos = platform === "ios";
 
   return (
     <AnimatePresence>
@@ -293,13 +302,20 @@ export function CustomizationDrawer({ open, onClose }: DrawerProps) {
           <motion.aside
             role="dialog"
             aria-label="Customize your interface"
-            initial={{ x: "-100%" }}
-            animate={{ x: 0 }}
-            exit={{ x: "-100%" }}
-            transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed inset-y-0 left-0 z-[70] flex w-[85%] max-w-sm flex-col border-r bg-[#0a0a0c]/95 backdrop-blur-xl"
+            initial={isIos ? { y: "100%" } : { x: "-100%" }}
+            animate={isIos ? { y: 0 } : { x: 0 }}
+            exit={isIos ? { y: "100%" } : { x: "-100%" }}
+            transition={{ type: "spring", damping: isIos ? 34 : 30, stiffness: isIos ? 320 : 300 }}
+            className={
+              isIos
+                ? "fixed inset-x-0 bottom-0 z-[70] flex h-[92dvh] flex-col rounded-t-[38px] border-t bg-[#0a0a0c]/95 backdrop-blur-xl"
+                : "fixed inset-y-0 left-0 z-[70] flex w-[85%] max-w-sm flex-col border-r bg-[#0a0a0c]/95 backdrop-blur-xl"
+            }
             style={{ borderColor: `${accent}40` }}
           >
+            {isIos ? (
+              <span aria-hidden className="plat-sheet-grabber mt-2.5" />
+            ) : null}
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-5">
               <div>
                 <p className="text-xl font-black tracking-[0.08em] text-white">SETTINGS</p>
@@ -309,14 +325,14 @@ export function CustomizationDrawer({ open, onClose }: DrawerProps) {
                 type="button"
                 onClick={onClose}
                 aria-label="Close"
-                className="flex size-10 items-center justify-center rounded-full bg-white/5 text-white/60"
+                className="plat-pressable flex size-10 items-center justify-center rounded-full bg-white/5 text-white/60"
               >
                 <X className="size-5" />
               </button>
             </div>
             <CustomizationPanel />
             <p
-              className="pb-3 text-center text-[10px] font-bold tracking-[0.2em] uppercase"
+              className="pb-safe-base text-center text-[10px] font-bold tracking-[0.2em] uppercase"
               style={{ color: accent }}
             >
               Swipe or tap outside to close

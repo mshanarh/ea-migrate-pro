@@ -333,6 +333,208 @@ body:has(.app-shell-locked) {
 }
 
 /* Brighter portal variant, toggled from the portal header. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLATFORM-ADAPTIVE UI LAYER
+   ══════════════════════════════════════════════════════════════════════
+   The pre-paint script in __root.tsx stamps `platform-android` or
+   `platform-ios` on <html>. Components read these tokens so the SAME screens
+   render Material-style on Android and iOS-style on iPhone: corner radii,
+   fonts, control heights, nav shape, sheets and safe areas. Presentation
+   only — functionality, wiring and branding are untouched.
+
+   Safe areas (notch / Dynamic Island / home indicator / Android nav bar). */
+:root {
+  --sa-top: env(safe-area-inset-top, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
+  --sa-left: env(safe-area-inset-left, 0px);
+  --sa-right: env(safe-area-inset-right, 0px);
+}
+
+/* ── Android / Material defaults (also the desktop rendering) ─────────── */
+html {
+  --plat-font-ui: "Roboto", "Saira", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --plat-font-display: "Saira", "Orbitron", "Space Grotesk", system-ui, sans-serif;
+  --plat-radius-control: 16px;
+  --plat-radius-card: 20px;
+  --plat-radius-sheet: 24px;
+  --plat-radius-field: 16px;
+  --plat-radius-button: 999px;
+  --plat-control-h: 52px;
+  --plat-field-h: 54px;
+  --plat-touch-min: 48px;
+  --plat-nav-h: 64px;
+  --plat-label-size: 11px;
+  --plat-label-track: 0.22em;
+  --plat-title-size: 26px;
+  --plat-elev-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --plat-elev-2: 0 2px 6px rgba(0, 0, 0, 0.55), 0 14px 38px rgba(0, 0, 0, 0.45);
+  --plat-elev-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 24px 64px rgba(0, 0, 0, 0.55);
+}
+
+/* ── iOS overrides — SF-adjacent stack, continuous radii, Apple metrics ── */
+html.platform-ios {
+  --plat-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --plat-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --plat-radius-control: 14px;
+  --plat-radius-card: 20px;
+  --plat-radius-sheet: 38px;
+  --plat-radius-field: 14px;
+  --plat-radius-button: 14px;
+  --plat-control-h: 50px;
+  --plat-field-h: 50px;
+  --plat-touch-min: 44px;
+  --plat-nav-h: 60px;
+  --plat-label-size: 10px;
+  --plat-label-track: 0.06em;
+  --plat-title-size: 28px;
+  --plat-elev-1: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --plat-elev-2: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --plat-elev-3: 0 18px 60px rgba(0, 0, 0, 0.6);
+}
+
+html.platform-ios body {
+  letter-spacing: -0.01em;
+}
+
+/* Platform utilities — components opt in with these classes. */
+@utility plat-title {
+  font-family: var(--plat-font-display);
+  font-size: clamp(var(--plat-title-size), 7vw, calc(var(--plat-title-size) + 6px));
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+@utility plat-label {
+  font-size: var(--plat-label-size);
+  letter-spacing: var(--plat-label-track);
+}
+@utility plat-elev-1 { box-shadow: var(--plat-elev-1); }
+@utility plat-elev-2 { box-shadow: var(--plat-elev-2); }
+@utility plat-elev-3 { box-shadow: var(--plat-elev-3); }
+
+/* Safe-area helpers — compose with flex/grid; never hardcode positions.
+   Each one keeps the screen's previous spacing when no inset exists
+   (max/calc) and grows only where the system reports a real inset, so
+   Android-browser spacing is unchanged while iPhone notch/home-indicator
+   clearances become correct. */
+@utility pt-safe { padding-top: max(2rem, var(--sa-top)); }
+@utility pb-safe-nav {
+  padding-bottom: calc(var(--plat-nav-h) + var(--sa-bottom) + 5rem);
+}
+@utility pb-safe-base { padding-bottom: max(1.25rem, var(--sa-bottom)); }
+@utility pb-safe-xl { padding-bottom: max(5rem, var(--sa-bottom)); }
+
+/* ── Platform press feedback ────────────────────────────────────────────
+   Android: Material-style brighten + pop. iOS: Apple dim + spring-back. */
+html.platform-android .plat-pressable {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms ease, filter 160ms ease;
+}
+html.platform-android .plat-pressable:active:not(:disabled) {
+  transform: scale(0.97);
+  filter: brightness(1.12);
+}
+html.platform-ios .plat-pressable {
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1), opacity 180ms ease, filter 180ms ease;
+}
+html.platform-ios .plat-pressable:active:not(:disabled) {
+  transform: scale(0.96);
+  opacity: 0.82;
+}
+
+/* Platform card / field / control vocabulary. */
+.plat-card {
+  border-radius: var(--plat-radius-card);
+  box-shadow: var(--plat-elev-1);
+}
+.plat-field {
+  height: var(--plat-field-h);
+  border-radius: var(--plat-radius-field);
+}
+.plat-control {
+  min-height: var(--plat-touch-min);
+  border-radius: var(--plat-radius-control);
+}
+
+html.platform-ios .plat-uppercase-label {
+  letter-spacing: 0.08em;
+}
+
+/* Horizontal safe-area insets (landscape notch) are handled by the existing
+   px-* gutters on every screen; vertical insets use the utilities above. A
+   .plat-screen class is deliberately NOT defined: any unlayered padding or
+   display rule here would fight the px-*/flex utilities in the cascade. */
+
+/* ── Platform dialogs & sheets (components/ui/dialog.tsx) ─────────────── */
+/* Android: centered Material card, 28px radius, fade + rise. */
+.plat-dialog-android {
+  border-radius: 28px;
+  animation: platAndroidDialogIn 240ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes platAndroidDialogIn {
+  from { opacity: 0; transform: translate(-50%, -46%) scale(0.94); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+/* iOS: bottom sheet on the home-indicator edge, grabber, slide-up. */
+.plat-dialog-ios {
+  border-radius: var(--plat-radius-sheet) var(--plat-radius-sheet) 0 0;
+  padding-bottom: calc(1rem + var(--sa-bottom));
+  animation: platIosSheetIn 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes platIosSheetIn {
+  from { opacity: 0.4; transform: translate(-50%, 12%); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.plat-sheet-grabber { display: none; }
+html.platform-ios .plat-sheet-grabber {
+  display: block;
+  width: 40px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  margin: 2px auto 10px;
+}
+
+/* ── Platform bottom navigation ──────────────────────────────────────── */
+.plat-nav-android {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: var(--sa-bottom);
+}
+.plat-nav-ios {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: calc(var(--sa-bottom) + 8px);
+}
+.plat-nav-indicator {
+  width: 56px;
+  height: 30px;
+  border-radius: 999px;
+  transition: background-color 200ms ease, width 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── Responsive guards ──────────────────────────────────────────────────
+   Ultra-narrow phones (Fold cover, 320px class): shrink display type so
+   nothing clips. Short landscape phones: soften hero corners. */
+@media (max-width: 360px) {
+  html {
+    --plat-title-size: 22px;
+  }
+}
+
+@media (max-height: 620px) {
+  .app-hero-bleed {
+    border-radius: 24px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plat-dialog-android,
+  .plat-dialog-ios {
+    animation: none;
+  }
+  html.platform-android .plat-pressable,
+  html.platform-ios .plat-pressable {
+    transition: none;
+  }
+}
 .portal-bright .panel {
   background: linear-gradient(180deg, #1a222d, #151b23);
   border-color: rgb(255 255 255 / 0.12);

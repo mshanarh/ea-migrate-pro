@@ -87,7 +87,7 @@ function AppAccess() {
   };
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pb-20 pt-10">
+    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {!showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn} />}
     </main>
   </div>;

@@ -10,6 +10,27 @@ import {
 import { useEffect, type ReactNode } from "react";
 
 import appCss from "../styles.css?url";
+
+/**
+ * Platform-adaptive UI: stamps `platform-android` / `platform-ios` on <html>
+ * BEFORE first paint, so the CSS layer (fonts, radii, safe areas) is already
+ * correct when the app appears — no flash of the wrong platform styling.
+ * Detection logic mirrors src/lib/platform.ts exactly.
+ */
+const PLATFORM_PREPAINT_SCRIPT = `
+(function () {
+  try {
+    var ua = navigator.userAgent || "";
+    var uaData = navigator.userAgentData;
+    var classicIos = /iPad|iPhone|iPod/.test(ua);
+    var ipadAsMac = ua.indexOf("Macintosh") !== -1 && navigator.maxTouchPoints > 1;
+    var isIos = classicIos || ipadAsMac || (uaData && /^ios$/i.test(uaData.platform || "")) || (uaData && uaData.platform === "macOS" && navigator.maxTouchPoints > 1);
+    document.documentElement.classList.add(isIos ? "platform-ios" : "platform-android");
+  } catch (e) {
+    document.documentElement.classList.add("platform-android");
+  }
+})();
+`;
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
@@ -137,6 +158,7 @@ function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
       <head>
+        <script dangerouslySetInnerHTML={{ __html: PLATFORM_PREPAINT_SCRIPT }} />
         <HeadContent />
       </head>
       <body className="m-0 p-0 bg-black">

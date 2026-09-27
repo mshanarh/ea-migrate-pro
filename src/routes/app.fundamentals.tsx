@@ -350,9 +350,9 @@ function FundamentalsPage() {
   }, [filtered]);
 
   return (
-    <div className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-32 text-white">
+    <div className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-safe-nav text-white">
       {/* ── top bar ── */}
-      <div className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-6">
+      <div className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-safe">
         <button
           type="button"
           onClick={() => window.history.back()}

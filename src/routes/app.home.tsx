@@ -14,6 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
 import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 
@@ -49,8 +50,8 @@ function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
     window.location.assign("/app/login");
   };
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 text-center text-white">
-      <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 pt-safe pb-safe-base text-center text-white">
+      <img src="/logo.png" alt="" className="plat-card size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
       <h1 className="mt-5 text-xl font-black tracking-tight">Dashboard didn't load</h1>
       <p className="mt-2 max-w-xs text-sm text-white/55">
         Something interrupted your robot dashboard. Try again — if it keeps happening, log out and sign back in.
@@ -62,14 +63,14 @@ function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
             router.invalidate();
             reset();
           }}
-          className="h-11 rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] px-6 text-sm font-black text-black transition-transform active:scale-[0.98]"
+          className="plat-pressable plat-control h-11 rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] px-6 text-sm font-black text-black"
         >
           Try again
         </button>
         <button
           type="button"
           onClick={handleLogout}
-          className="h-11 rounded-2xl border border-white/15 px-6 text-sm font-bold text-white/75 transition-colors hover:text-white"
+          className="plat-pressable plat-control h-11 rounded-2xl border border-white/15 px-6 text-sm font-bold text-white/75 transition-colors hover:text-white"
         >
           Log out
         </button>
@@ -89,7 +90,7 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
         onOpenChange(next);
       }}
     >
-      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-white sm:max-w-md">
+      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 pt-safe text-white sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="text-2xl font-black tracking-tight">Add robot</DialogTitle>
           <DialogDescription className="text-sm text-white/55">
@@ -115,11 +116,11 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
             onChange={(event) => setKey(event.target.value.toUpperCase())}
             placeholder="EMP-XXXXXXXXXXXX"
             aria-label="Host robot key"
-            className="h-14 w-full rounded-2xl border border-white/10 bg-white/[0.05] px-5 font-mono text-sm tracking-[0.18em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-white/30 focus:border-[#FFA500]/70"
+            className="plat-field h-14 w-full border border-white/10 bg-white/[0.05] px-5 font-mono text-sm tracking-[0.18em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-white/30 focus:border-[#FFA500]/70"
           />
           <button
             type="submit"
-            className="h-14 w-full rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)] transition-transform active:scale-[0.99]"
+            className="plat-pressable h-14 w-full bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)]"
           >
             ACTIVATE ROBOT
           </button>
@@ -177,7 +178,7 @@ function WelcomeMaster() {
       </h1>
       <p
         className="relative mt-2 text-sm font-semibold tracking-wide text-white/70"
-        style={{ animation: "welcomeUp 0.3s ease-out 0.3s both" }}
+        style={{ animation: "welcomeUp 0.3s ease-out 0.3s both", paddingBottom: "var(--sa-bottom)" }}
       >
         It&apos;s time to make money 💰
       </p>
@@ -273,7 +274,7 @@ function AppHome() {
       onTouchEnd={onTouchEnd}
     >
       <div className="app-scroll-area">
-      <main className="flex w-full flex-col gap-4 pb-36">
+      <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
         <ThemeContent
           robot={robot}
           robots={app.robots}

@@ -8,6 +8,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
+import { usePlatform } from "@/lib/platform";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess } from "@/lib/app-store";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
@@ -64,9 +65,13 @@ function PillSection({
   switchOn?: boolean;
   onSwitch?: () => void;
 }) {
+  const isIos = usePlatform() === "ios";
   return (
     <section className="w-full max-w-full">
-      <div className="flex items-center justify-between gap-3 rounded-full border border-white/10 bg-[#0f1a1a] px-5 py-3.5">
+      <div
+        className="flex items-center justify-between gap-3 border border-white/10 bg-[#0f1a1a] px-5 py-3.5"
+        style={{ borderRadius: isIos ? "var(--plat-radius-control)" : "9999px" }}
+      >
         <button
           type="button"
           onClick={onToggle}
@@ -216,6 +221,7 @@ function FontSection({ accent }: { accent: string }) {
 function AppSettings() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
+  const isIos = usePlatform() === "ios";
 
   const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
   const toggleSection = (key: string) =>
@@ -224,7 +230,7 @@ function AppSettings() {
   return (
     <div className="app-fullscreen bg-black text-white">
       <div className="app-scroll-area">
-        <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-10 pb-40">
+        <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-safe pb-safe-nav">
           <div className="pb-5">
             <h1 className="text-3xl font-black tracking-tight">Settings</h1>
             <p className="mt-2 text-sm text-white/55">
