@@ -218,7 +218,7 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
     </div>
     <div><p className={labelClass}>Symbols</p>
       <div className="mt-2 flex gap-3">
-        <input value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSymbol(); } }} placeholder="e.g. XAUUSD" className={fieldClass + " h-14 flex-1"} />
+        <input value={symbol} onChange={(event) => setSymbol(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSymbol(); } }} placeholder="e.g. XAUUSD" className={fieldClass + " h-14 flex-1"} />
         <button type="button" onClick={addSymbol} className="h-14 rounded-2xl bg-primary px-7 text-base font-black text-primary-foreground">Add</button>
       </div>
       {symbols.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{symbols.map((item) => <button type="button" key={item} onClick={() => setSymbols((current) => current.filter((value) => value !== item))} className="flex items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary">{item}<X className="size-3" /></button>)}</div>}
