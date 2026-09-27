@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { getScannerAnalysis, type ScannerAnalysis } from "@/lib/market-scanner.server";
+import { analyzeMarket, type ScannerAnalysis } from "@/lib/market-scanner-core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { usePlatform } from "@/lib/platform";
 
@@ -240,12 +240,9 @@ export default function ChartScanner({
       setStep(Math.min(index, SCAN_STEPS.length - 1));
     }, 650);
     try {
-      const result = await getScannerAnalysis({
-        data: {
-          accountId: "public-feed",
-          symbol,
-          timeframe,
-        },
+      const result = await analyzeMarket({
+        symbol,
+        timeframe,
       });
       if (!result.ok) {
         setAnalysisError(result.message);
