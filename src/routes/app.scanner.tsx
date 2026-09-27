@@ -116,10 +116,21 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // MT5 order comment: the ACTIVE bot's name exactly as the user named
-      // it, followed by the platform tag. Capped at 31 chars (MT5 limit).
-      const botName = (robot?.name ?? "").trim() || "EA Migrate";
-      const orderComment = `${botName} / ea migrate`.slice(0, 31);
+      // MT5 order comments accept PRINTABLE ASCII ONLY — bot names often
+      // contain emoji (e.g. "Sniper killer Ea v2.0🛜"), which make order_send
+      // fail with 'Invalid "comment" argument'. Strip to ASCII, then keep
+      // the whole bot name when the tag fits, else the name alone (never a
+      // mid-character cut), capped at MT5's 31-char limit.
+      const botName = (robot?.name ?? "")
+        .replace(/[^\x20-\x7E]/g, "")
+        .replace(/\s+/g, " ")
+        .trim();
+      const commentTag = " / ea migrate";
+      const orderComment = botName
+        ? (botName + commentTag).length <= 31
+          ? botName + commentTag
+          : botName.slice(0, 31)
+        : "EA Migrate";
       // Estimated-price symbols (HW_100 etc.): the planned SL/TP sit on a
       // simulated price scale the broker validates against its LIVE price —
       // they are always refused (10016). Execute at market without stops.
