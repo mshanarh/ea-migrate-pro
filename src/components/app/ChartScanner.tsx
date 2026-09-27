@@ -27,6 +27,10 @@ export type ExecutionPlan = {
   riskReward: string;
   confidence: number;
   executionReady: boolean;
+  /** True when levels come from the estimated-price fallback — the broker
+   *  rejects SL/TP computed from them (they sit on a simulated price scale),
+   *  so execution goes at market without stops. */
+  estimated: boolean;
 };
 
 export type ExecutionOutcome = {
@@ -303,6 +307,7 @@ export default function ChartScanner({
           riskReward: analysis.riskReward,
           confidence: analysis.confidence,
           executionReady: analysis.executionReady,
+          estimated: analysis.dataSource.startsWith("Estimated"),
         },
         (message) => {
           setExecProgress(message);

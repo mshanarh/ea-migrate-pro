@@ -245,7 +245,7 @@ async function runScannerAnalysis(
   const reasons: string[] = [];
   reasons.push(
     synthesized
-      ? `No public feed covers ${symbol} — levels are planned from an estimated price (${fmtPrice(referenceClose)}) with realistic simulated volatility. Pressing Execute sends the order at the broker's REAL ${symbol} price.`
+      ? `No public feed covers ${symbol} — levels are planned from an estimated price (${fmtPrice(referenceClose)}) with realistic simulated volatility. Pressing Execute sends the order at the broker's REAL ${symbol} price, at market and without SL/TP (planned stops would not match the live price).`
       : `Candles came from the public market feed${resolvedSymbol ? ` (${resolvedSymbol} tracks ${symbol})` : ""} — pressing Execute sends the order at the broker's real market price.`,
   );
   if (synthetic) {

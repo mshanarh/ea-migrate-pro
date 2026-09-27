@@ -66,7 +66,7 @@ function AppScanner() {
     plan: ExecutionPlan,
     onProgress: (message: string) => void,
   ): Promise<ExecutionOutcome> => {
-    const { symbol, lot, trades, direction, stopLoss, takeProfit } = plan;
+    const { symbol, lot, trades, direction, stopLoss, takeProfit, estimated } = plan;
 
     if (!app.mt) {
       toast.error("Save your MT5 details first — MetaTrader page.");
@@ -116,7 +116,14 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
+      // Estimated-price symbols (HW_100 etc.): the planned SL/TP sit on a
+      // simulated price scale the broker validates against its LIVE price —
+      // they are always refused (10016). Execute at market without stops.
+      const withStops = !estimated && Number(stopLoss) > 0;
+      const takeProfitValue = withStops ? Number(takeProfit) || 0 : 0;
+      const stopLossValue = withStops ? Number(stopLoss) || 0 : 0;
       const total = Math.max(1, Math.min(trades, 20));
+      let useStops = withStops;
       const executeOnce = async (): Promise<Record<string, unknown>> => {
         const response = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/trade/execute", {
           method: "POST",
@@ -129,8 +136,8 @@ function AppScanner() {
             symbol,
             action: direction,
             volume: Number(lot),
-            stop_loss: Number(stopLoss) || 0,
-            take_profit: Number(takeProfit) || 0,
+            stop_loss: stopLossValue,
+            take_profit: takeProfitValue,
             comment: "EA Migrate Live",
           }),
         });
@@ -181,16 +188,37 @@ function AppScanner() {
       try {
         firstPayload = await executeOnce();
       } catch (error) {
-        const message =
-          error instanceof TypeError
-            ? "Could not reach the execution bridge — check your connection and try again."
-            : (error instanceof Error ? error.message : "Execution failed.");
-        window.dispatchEvent(
-          new CustomEvent("eamp:execution-result", {
-            detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
-          }),
-        );
-        return { ok: false, message };
+        // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
+        // market without SL/TP — a filled market order beats a refused one.
+        const raw = error instanceof Error ? error.message : "";
+        if (useStops && /invalid stops|10016/i.test(raw)) {
+          useStops = false;
+          try {
+            firstPayload = await executeOnce();
+          } catch (retryError) {
+            const message =
+              retryError instanceof TypeError
+                ? "Could not reach the execution bridge — check your connection and try again."
+                : (retryError instanceof Error ? retryError.message : "Execution failed.");
+            window.dispatchEvent(
+              new CustomEvent("eamp:execution-result", {
+                detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
+              }),
+            );
+            return { ok: false, message };
+          }
+        } else {
+          const message =
+            error instanceof TypeError
+              ? "Could not reach the execution bridge — check your connection and try again."
+              : (error instanceof Error ? error.message : "Execution failed.");
+          window.dispatchEvent(
+            new CustomEvent("eamp:execution-result", {
+              detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
+            }),
+          );
+          return { ok: false, message };
+        }
       }
       const rest =
         total > 1
