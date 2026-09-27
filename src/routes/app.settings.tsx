@@ -196,21 +196,39 @@ function FontSection({ accent }: { accent: string }) {
           key={option.id}
           type="button"
           onClick={() => setFontOption(option.id)}
-          className="flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+          className="flex w-full items-center gap-4 rounded-2xl border p-4 text-left"
           style={{
             borderColor: font === option.id ? accent : "rgba(255,255,255,0.1)",
+            borderWidth: font === option.id ? 2 : 1,
             backgroundColor: font === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
           }}
         >
-          <span
-            className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white/5 text-xl font-black text-white"
-            style={{ fontFamily: fontStack(option.id) }}
-          >
-            Aa
+          <span className="min-w-0 flex-1">
+            <span
+              className="block truncate text-2xl font-bold text-white"
+              style={{ fontFamily: fontStack(option.id) }}
+            >
+              {option.name}
+            </span>
+            <span className="mt-0.5 flex items-center gap-2">
+              <span className="text-xs text-white/45">{option.description}</span>
+              {"pro" in option && option.pro ? (
+                <span
+                  className="rounded-full border px-1.5 py-px text-[9px] font-black tracking-wider"
+                  style={{ color: accent, borderColor: `${accent}66` }}
+                >
+                  PRO
+                </span>
+              ) : null}
+            </span>
           </span>
-          <span className="flex-1 text-sm font-bold text-white/85">{option.name}</span>
           {font === option.id && (
-            <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+            <span
+              className="flex size-8 shrink-0 items-center justify-center rounded-full"
+              style={{ backgroundColor: accent }}
+            >
+              <Check className="size-4 text-black" strokeWidth={3.5} />
+            </span>
           )}
         </button>
       ))}

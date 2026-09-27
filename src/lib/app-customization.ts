@@ -42,15 +42,19 @@ export const INTERFACE_THEMES = [
 ] as const;
 
 export const FONT_OPTIONS = [
-  { id: "Orbitron", name: "Orbitron" },
-  { id: "Montserrat", name: "Montserrat" },
-  { id: "Poppins", name: "Poppins" },
-  { id: "Rajdhani", name: "Rajdhani" },
-  { id: "Space Grotesk", name: "Space Grotesk" },
-  { id: "Inter", name: "Inter" },
-  { id: "Bebas Neue", name: "Bebas Neue" },
-  { id: "Chakra Petch", name: "Chakra Petch" },
-  { id: "Saira", name: "Saira" },
+  { id: "Inter", name: "Inter", description: "Modern & Clean" },
+  { id: "Space Grotesk", name: "Space Grotesk", description: "Futuristic Tech" },
+  { id: "JetBrains Mono", name: "JetBrains Mono", description: "Monospace Coding" },
+  { id: "Orbitron", name: "Orbitron", description: "Sci-Fi Digital" },
+  { id: "Rajdhani", name: "Rajdhani", description: "Bold Angular" },
+  { id: "Audiowide", name: "Audiowide", description: "Retro Gaming" },
+  { id: "Michroma", name: "Michroma", description: "Wide Cinematic", pro: true },
+  { id: "Teko", name: "Teko", description: "Mecha Industrial", pro: true },
+  { id: "Syncopate", name: "Syncopate", description: "Editorial Bold", pro: true },
+  { id: "Cinzel", name: "Cinzel", description: "Luxury Serif", pro: true },
+  { id: "Major Mono Display", name: "Major Mono Display", description: "Brutalist Mono", pro: true },
+  { id: "Bruno Ace SC", name: "Bruno Ace SC", description: "Hyper Modern", pro: true },
+  { id: "Russo One", name: "Russo One", description: "Heavy Display", pro: true },
 ] as const;
 
 export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
@@ -62,17 +66,17 @@ export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
   "NOVA CORE": "Orbitron",
   "PHANTOM PULSE": "Space Grotesk",
   "TITAN EDGE": "Rajdhani",
-  "PRIME FORGE": "Montserrat",
-  "BLUEPRINT EDGE": "Montserrat",
-  "CRIMSON NAVIGATOR": "Saira",
-  "NAVIGATOR PLUS": "Saira",
-  "PABLO CRIMSON": "Bebas Neue",
-  "PABLO ELITE": "Bebas Neue",
-  "QUANTUM BLUE": "Chakra Petch",
-  "DARKWEB AI": "Chakra Petch",
-  "SUPREME EQUINOX": "Saira",
+  "PRIME FORGE": "Inter",
+  "BLUEPRINT EDGE": "Inter",
+  "CRIMSON NAVIGATOR": "Russo One",
+  "NAVIGATOR PLUS": "Russo One",
+  "PABLO CRIMSON": "Teko",
+  "PABLO ELITE": "Teko",
+  "QUANTUM BLUE": "Space Grotesk",
+  "DARKWEB AI": "JetBrains Mono",
+  "SUPREME EQUINOX": "Russo One",
   "ULTRON MEGA": "Rajdhani",
-  "EA CLOUD": "Saira",
+  "EA CLOUD": "Inter",
 };
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";
@@ -113,10 +117,13 @@ function load() {
   const storedColor = window.localStorage.getItem(COLOR_KEY) as AccentColorId | null;
   const storedTheme = window.localStorage.getItem(THEME_KEY) as InterfaceThemeId | null;
   const storedFont = window.localStorage.getItem(FONT_KEY) as FontOptionId | null;
+  // A font removed from the lineup falls back to the default instead of
+  // rendering as an invisible system stack.
+  const validFont = FONT_OPTIONS.some((option) => option.id === storedFont);
   state = {
     color: storedColor ?? DEFAULT_COLOR,
     theme: storedTheme ?? DEFAULT_THEME,
-    font: storedFont ?? DEFAULT_FONT,
+    font: validFont ? (storedFont as FontOptionId) : DEFAULT_FONT,
   };
 }
 
