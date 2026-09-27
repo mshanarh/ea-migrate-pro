@@ -494,7 +494,7 @@ async function sendBrevoEmail(options: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        sender: { name: options.fromName ?? "EA Migrate Pro", email: "eamigratepro@gmail.com" },
+        sender: { name: options.fromName ?? "EA Migrate", email: "eamigratepro@gmail.com" },
         to: [{ email: options.to, name: options.toName }],
         subject: options.subject,
         htmlContent: options.html,
@@ -535,7 +535,7 @@ function brandEmailHtml(options: {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
             <tr>
               <td style="padding:32px 32px 0 32px;">
-                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
                 <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">${options.heading}</h1>
               </td>
             </tr>
@@ -567,22 +567,22 @@ function brandEmailHtml(options: {
 async function sendApprovalEmail(userEmail: string, firstName: string): Promise<boolean> {
   const name = firstName.trim().length > 0 ? firstName.trim() : "Broker";
   const html = brandEmailHtml({
-    heading: `Welcome to EA Migrate Pro, ${escapeHtml(name)}! 🔓`,
+    heading: `Welcome to EA Migrate, ${escapeHtml(name)}! 🔓`,
     paragraphs: [
       `Hi ${escapeHtml(name)},`,
-      "Welcome to the EA Migrate Pro Portal! 🔓🎉",
+      "Welcome to the EA Migrate Portal! 🔓🎉",
       "We've confirmed your request and your access has been accepted.",
       "Welcome to the team, Brother! 🤝",
     ],
-    buttonText: "Open EA Migrate Pro Portal",
+    buttonText: "Open EA Migrate Portal",
     buttonColor: "#E03131",
-    footer: "— The EA Migrate Pro Team",
+    footer: "— The EA Migrate Team",
   });
-  const text = `Hi ${name},\n\nWelcome to the EA Migrate Pro Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
+  const text = `Hi ${name},\n\nWelcome to the EA Migrate Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
   return sendBrevoEmail({
     to: userEmail,
     toName: name,
-    subject: `Welcome to EA Migrate Pro, ${name}! 🔓`,
+    subject: `Welcome to EA Migrate, ${name}! 🔓`,
     html,
     text,
   });
@@ -603,8 +603,8 @@ async function sendPendingEmail(userEmail: string, firstName: string): Promise<b
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
             <tr>
               <td style="padding:32px 32px 0 32px;">
-                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
-                <h2 style="margin:12px 0 0 0;font-size:24px;line-height:1.3;color:#FFFFFF;">Welcome to EA Migrate Pro!</h2>
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
+                <h2 style="margin:12px 0 0 0;font-size:24px;line-height:1.3;color:#FFFFFF;">Welcome to EA Migrate!</h2>
               </td>
             </tr>
             <tr>
@@ -613,12 +613,12 @@ async function sendPendingEmail(userEmail: string, firstName: string): Promise<b
                 <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Your account is currently on our pending list. You will be approved once the admin reviews and approves your account.</p>
                 <p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">You will be notified via email once your account is approved.</p>
                 <br>
-                <p style="margin:0;font-size:15px;line-height:1.6;color:#C9C9D1;">Thank you,<br>EA Migrate Pro Team</p>
+                <p style="margin:0;font-size:15px;line-height:1.6;color:#C9C9D1;">Thank you,<br>EA Migrate Team</p>
               </td>
             </tr>
             <tr>
               <td align="center" style="padding:28px 32px 32px 32px;">
-                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
+                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Portal</a>
                 <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span></p>
               </td>
             </tr>
@@ -628,11 +628,11 @@ async function sendPendingEmail(userEmail: string, firstName: string): Promise<b
     </table>
   </body>
 </html>`;
-  const text = `Welcome to EA Migrate Pro!\n\nWe have successfully received your registration.\n\nYour account is currently on our pending list. You will be approved once the admin reviews and approves your account.\n\nYou will be notified via email once your account is approved.\n\nThank you,\nEA Migrate Pro Team\n\nOpen your portal: ${PORTAL_URL}`;
+  const text = `Welcome to EA Migrate!\n\nWe have successfully received your registration.\n\nYour account is currently on our pending list. You will be approved once the admin reviews and approves your account.\n\nYou will be notified via email once your account is approved.\n\nThank you,\nEA Migrate Team\n\nOpen your portal: ${PORTAL_URL}`;
   return sendBrevoEmail({
     to: userEmail,
     toName: name,
-    subject: "Registration Received - Pending Approval | EA Migrate Pro",
+    subject: "Registration Received - Pending Approval | EA Migrate",
     html,
     text,
   });
@@ -696,7 +696,7 @@ function licenseEmailHtml(options: {
           <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:24px;overflow:hidden;">
             <tr>
               <td align="center" style="padding:36px 32px 0 32px;">
-                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+                <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
                 <h1 style="margin:14px 0 0 0;font-size:30px;line-height:1.2;color:#FFFFFF;">Generate License</h1>
                 <p style="margin:8px 0 0 0;font-size:12px;font-weight:bold;letter-spacing:0.3em;color:#8A8A96;text-transform:uppercase;">Key Created</p>
               </td>
@@ -726,7 +726,7 @@ function licenseEmailHtml(options: {
             <tr>
               <td style="padding:20px 32px 0 32px;">
                 <p style="margin:0 0 12px 0;font-size:14px;line-height:1.6;color:#C9C9D1;"><strong style="color:#E7B53A;">How to activate:</strong></p>
-                <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">1. Open the EA Migrate Pro Portal and sign in with this email address.</p>
+                <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">1. Open the EA Migrate Portal and sign in with this email address.</p>
                 <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">2. In your trading app, open <strong>Activate</strong>.</p>
                 <p style="margin:0 0 6px 0;font-size:14px;line-height:1.6;color:#C9C9D1;">3. Paste this exact license key. The key is linked to ${email} and expires: ${expiry}.</p>
                 <p style="margin:12px 0 0 0;font-size:13px;line-height:1.6;color:#8A8A96;">Keep this email safe — you will need the key whenever you reinstall the EA.</p>
@@ -734,8 +734,8 @@ function licenseEmailHtml(options: {
             </tr>
             <tr>
               <td align="center" style="padding:28px 32px 32px 32px;">
-                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Pro Portal</a>
-                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />— The EA Migrate Pro Team</p>
+                <a href="${PORTAL_URL}" style="display:inline-block;background:#E7B53A;color:#0A0A0C;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">Open EA Migrate Portal</a>
+                <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />— The EA Migrate Team</p>
               </td>
             </tr>
           </table>
@@ -761,7 +761,7 @@ async function sendLicenseEmail(options: {
   return sendBrevoEmail({
     to: options.to,
     toName: name,
-    subject: `Your EA Migrate Pro License Key - ${eaName}`,
+    subject: `Your EA Migrate License Key - ${eaName}`,
     html: licenseEmailHtml({
       licenseKey: options.licenseKey,
       eaName,
@@ -769,7 +769,7 @@ async function sendLicenseEmail(options: {
       email: options.to,
       imageUrl: options.imageUrl ?? null,
     }),
-    text: `Your EA Migrate Pro license key: ${options.licenseKey}\n\nEA: ${eaName}\nExpiry: ${expiry}\nLinked to: ${options.to}\n\nActivate it in the EA Migrate Pro Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
+    text: `Your EA Migrate license key: ${options.licenseKey}\n\nEA: ${eaName}\nExpiry: ${expiry}\nLinked to: ${options.to}\n\nActivate it in the EA Migrate Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
   });
 }
 
@@ -816,7 +816,7 @@ export type SyncSendPasswordChangedEmailResult = { enabled: boolean; ok: boolean
 
 /**
  * Sent right after a successful password reset. Exact brand config:
- * From: "EA Migrate Pro Team <eamigratepro@gmail.com>" via Brevo (BREVO_API_KEY).
+ * From: "EA Migrate Team <eamigratepro@gmail.com>" via Brevo (BREVO_API_KEY).
  */
 export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
   .validator((data: SyncSendPasswordChangedEmailInput) => data)
@@ -838,15 +838,15 @@ export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
       ],
       buttonText: "Go to Portal",
       buttonColor: "#1E90FF",
-      footer: "EA Migrate Pro Team",
+      footer: "EA Migrate Team",
     });
     const sent = await sendBrevoEmail({
       to,
       toName: to,
-      subject: "Password Changed Successfully - EA Migrate Pro",
+      subject: "Password Changed Successfully - EA Migrate",
       html,
-      text: "Your password has been successfully changed\nYou can now login with your new password\n\nEA Migrate Pro Team",
-      fromName: "EA Migrate Pro Team",
+      text: "Your password has been successfully changed\nYou can now login with your new password\n\nEA Migrate Team",
+      fromName: "EA Migrate Team",
     });
     return sent
       ? { enabled: true, ok: true }

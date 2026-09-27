@@ -39,24 +39,24 @@ import heroApp from "/ea-migrate-hero.jpg";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "EA Migrate Pro — Build Custom Forex Expert Advisors" },
+      { title: "EA Migrate — Build Custom Forex Expert Advisors" },
       {
         name: "description",
         content:
           "Create, backtest and deploy custom MT4/MT5 Expert Advisors with a visual strategy builder. No coding required.",
       },
-      { property: "og:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
+      { property: "og:title", content: "EA Migrate — Build Custom Forex EAs" },
       {
         property: "og:description",
         content:
           "Visual strategy builder for MT4 and MT5 Expert Advisors. Build, test and deploy in minutes.",
       },
       { property: "og:type", content: "website" },
-      { property: "og:site_name", content: "EA Migrate Pro" },
+      { property: "og:site_name", content: "EA Migrate" },
       { property: "og:image", content: "/logo.png" },
-      { property: "og:image:alt", content: "EA Migrate Pro robot logo" },
+      { property: "og:image:alt", content: "EA Migrate robot logo" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:title", content: "EA Migrate Pro — Build Custom Forex EAs" },
+      { name: "twitter:title", content: "EA Migrate — Build Custom Forex EAs" },
       { name: "twitter:image", content: "/logo.png" },
     ],
   }),
@@ -153,7 +153,7 @@ const why = [
 
 const faqs = [
   {
-    q: "What is EA Migrate Pro?",
+    q: "What is EA Migrate?",
     a: "A platform where you build custom Expert Advisors for MT4 and MT5, then let us host and run them for you around the clock.",
   },
   {
@@ -204,12 +204,12 @@ function LandingChatbot() {
 
     // ── Support & contact ────────────────────────────────────────────
     if (text.includes("support") || text.includes("contact") || text.includes("email") || text.includes("help me") || text.includes("reach") || text.includes("whatsapp") || text.includes("phone") || text.includes("talk to")) {
-      return "You can reach the EA Migrate Pro team any time:\n• Email: eamigratepro@gmail.com — we respond within 24 hours\n• WhatsApp: 070 495 0612 — real-time chat with support\n• The /support page has a full contact form too. If it's about your portal (approval, licence keys, MT5 connection), message WhatsApp with your registered email so we can find your account fast.";
+      return "You can reach the EA Migrate team any time:\n• Email: eamigratepro@gmail.com — we respond within 24 hours\n• WhatsApp: 070 495 0612 — real-time chat with support\n• The /support page has a full contact form too. If it's about your portal (approval, licence keys, MT5 connection), message WhatsApp with your registered email so we can find your account fast.";
     }
 
     // ── What is the platform ────────────────────────────────────────
     if (text.includes("what is") || text.includes("what's") || text.includes("about") || text.includes("platform") || text.includes("ea migrate") || text.includes("tell me")) {
-      return "EA Migrate Pro is a forex robot (EA) hosting platform for MT4 and MT5. Your mentor builds your Expert Advisor, hosts it 24/7 in the cloud, and issues you a licence key. You activate the key, connect your MT5 account, and the robot trades it — no VPS, no coding, no keeping your PC on. There's also an AI chart scanner, a fundamentals economic calendar, and customisable app themes.";
+      return "EA Migrate is a forex robot (EA) hosting platform for MT4 and MT5. Your mentor builds your Expert Advisor, hosts it 24/7 in the cloud, and issues you a licence key. You activate the key, connect your MT5 account, and the robot trades it — no VPS, no coding, no keeping your PC on. There's also an AI chart scanner, a fundamentals economic calendar, and customisable app themes.";
     }
 
     // ── How it works / getting started ────────────────────────────
@@ -219,7 +219,7 @@ function LandingChatbot() {
 
     // ── MT4 / MT5 / brokers ─────────────────────────────────────
     if (text.includes("mt4") || text.includes("mt5") || text.includes("broker") || text.includes("metatrader")) {
-      return "EA Migrate Pro supports MT4 and MT5 with any broker (Exness, Pepperstone, OctaFX, FBS, Deriv, XM, IC Markets and more). Your account stays with your broker — the platform hosts the EA and sends trade instructions through a secure connection. Demo and cent accounts work too, so you can test safely before going live.";
+      return "EA Migrate supports MT4 and MT5 with any broker (Exness, Pepperstone, OctaFX, FBS, Deriv, XM, IC Markets and more). Your account stays with your broker — the platform hosts the EA and sends trade instructions through a secure connection. Demo and cent accounts work too, so you can test safely before going live.";
     }
 
     // ── AI Scanner ──────────────────────────────────────────────
@@ -263,7 +263,7 @@ function LandingChatbot() {
     }
 
     // ── Fallback: full summary ──────────────────────────────────
-    return "Here's what I know about EA Migrate Pro:\n• WHAT: forex EA hosting for MT4/MT5 — your mentor builds the robot, the cloud runs it 24/7\n• START: register → portal approved → activate your EMP licence key → connect MT5 → robot on\n• AI SCANNER: upload a chart, get a signal setup, execute in one tap\n• FUNDAMENTALS: live economic calendar + market sessions (Settings → Fundamentals)\n• SAFETY: your funds stay at your broker; disconnect any time\n• CUSTOMISE: themes, colours, fonts, music and your own logo\nAsk me about any of these — or for support: eamigratepro@gmail.com / WhatsApp 070 495 0612.";
+    return "Here's what I know about EA Migrate:\n• WHAT: forex EA hosting for MT4/MT5 — your mentor builds the robot, the cloud runs it 24/7\n• START: register → portal approved → activate your EMP licence key → connect MT5 → robot on\n• AI SCANNER: upload a chart, get a signal setup, execute in one tap\n• FUNDAMENTALS: live economic calendar + market sessions (Settings → Fundamentals)\n• SAFETY: your funds stay at your broker; disconnect any time\n• CUSTOMISE: themes, colours, fonts, music and your own logo\nAsk me about any of these — or for support: eamigratepro@gmail.com / WhatsApp 070 495 0612.";
   };
 
   const send = (value = input) => {
@@ -278,7 +278,7 @@ function LandingChatbot() {
       {open && (
         <div className="max-w-[360px] overflow-hidden rounded-3xl border border-primary/30 bg-background/95 shadow-2xl backdrop-blur-xl">
           <div className="flex items-center gap-3 border-b border-border/60 bg-card/80 px-4 py-3">
-            <img src="/logo.png" alt="EA Migrate Pro" className="size-10 rounded-full border-2 border-primary object-contain shadow-glow" />
+            <img src="/logo.png" alt="EA Migrate" className="size-10 rounded-full border-2 border-primary object-contain shadow-glow" />
             <div className="min-w-0 flex-1">
               <p className="font-bold">EA Migrate assistant</p>
               <p className="text-xs text-emerald-400">Online · Ask anything</p>
@@ -348,7 +348,7 @@ function Home() {
               transition={{ duration: 0.6, delay: 0.16, ease: [0.22, 1, 0.36, 1] }}
               className="mx-auto mt-5 max-w-xl text-base text-muted-foreground sm:text-lg"
             >
-              EA Migrate Pro turns your strategy into a working MT4 or MT5 Expert Advisor —
+              EA Migrate turns your strategy into a working MT4 or MT5 Expert Advisor —
               built visually, backtested in seconds and hosted around the clock.
             </motion.p>
 
@@ -380,7 +380,7 @@ function Home() {
             >
               <motion.img
                 src={heroApp}
-                alt="EA Migrate Pro app running the EA Migrate tester bot on a phone"
+                alt="EA Migrate app running the EA Migrate tester bot on a phone"
                 className="h-auto w-full object-contain"
                 style={{
                   borderRadius: 40,
@@ -487,7 +487,7 @@ function Home() {
             Why choose us
           </p>
           <h2 className="mt-3 text-3xl font-bold sm:text-4xl">
-            Why <span className="text-primary">EA Migrate Pro</span>.
+            Why <span className="text-primary">EA Migrate</span>.
           </h2>
 
           <div className="mt-12 grid gap-6 text-left lg:grid-cols-3">
@@ -599,7 +599,7 @@ function Home() {
               </span>
             </div>
             <p className="mt-5 text-sm text-muted-foreground">
-              © EA Migrate Pro {new Date().getFullYear()}. All rights reserved.
+              © EA Migrate {new Date().getFullYear()}. All rights reserved.
             </p>
             <div className="mt-5 flex flex-wrap gap-4 text-sm text-muted-foreground">
               <Link to="/support" className="transition hover:text-primary">Support</Link>

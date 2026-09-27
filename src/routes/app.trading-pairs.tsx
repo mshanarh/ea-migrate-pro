@@ -17,7 +17,7 @@ export const Route = createFileRoute("/app/trading-pairs")({
   },
   head: () => ({
     meta: [
-      { title: "Trading Pairs — EA Migrate Pro" },
+      { title: "Trading Pairs — EA Migrate" },
       { name: "description", content: "Choose pairs, lot size and max trades for your robot." },
     ],
   }),

@@ -9,13 +9,13 @@ export const Route = createFileRoute("/dashboard")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Mentor Dashboard — EA Migrate Pro" },
+      { title: "Mentor Dashboard — EA Migrate" },
       {
         name: "description",
         content:
-          "Your EA Migrate Pro mentor portal: licences, Expert Advisors, copy trading and website tools in one place.",
+          "Your EA Migrate mentor portal: licences, Expert Advisors, copy trading and website tools in one place.",
       },
-      { property: "og:title", content: "Mentor Dashboard — EA Migrate Pro" },
+      { property: "og:title", content: "Mentor Dashboard — EA Migrate" },
       {
         property: "og:description",
         content: "Manage licences, Expert Advisors, copy trading and your public website from your mentor portal.",

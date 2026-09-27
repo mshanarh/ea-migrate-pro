@@ -33,7 +33,7 @@ export const Route = createFileRoute("/app/admin")({
   },
   head: () => ({
     meta: [
-      { title: "Admin — EA Migrate Pro" },
+      { title: "Admin — EA Migrate" },
       { name: "description", content: "Approve users and manage admins from the Supabase user table." },
     ],
   }),

@@ -24,7 +24,7 @@ export const Route = createFileRoute("/app/scanner")({
   },
   head: () => ({
     meta: [
-      { title: "AI Scanner — EA Migrate Pro" },
+      { title: "AI Scanner — EA Migrate" },
       { name: "description", content: "Scan a chart and get an instant signal setup." },
     ],
   }),

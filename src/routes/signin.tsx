@@ -17,16 +17,16 @@ import { syncSignIn } from "@/lib/account-sync.server";
 export const Route = createFileRoute("/signin")({
   head: () => ({
     meta: [
-      { title: "Mentor Sign In — EA Migrate Pro" },
+      { title: "Mentor Sign In — EA Migrate" },
       {
         name: "description",
         content:
-          "Sign in to EA Migrate Pro to manage your Expert Advisors, licences and hosted MT4/MT5 sessions.",
+          "Sign in to EA Migrate to manage your Expert Advisors, licences and hosted MT4/MT5 sessions.",
       },
-      { property: "og:title", content: "Mentor Sign In — EA Migrate Pro" },
+      { property: "og:title", content: "Mentor Sign In — EA Migrate" },
       {
         property: "og:description",
-        content: "Access your EA Migrate Pro dashboard, licences and hosted terminals.",
+        content: "Access your EA Migrate dashboard, licences and hosted terminals.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },

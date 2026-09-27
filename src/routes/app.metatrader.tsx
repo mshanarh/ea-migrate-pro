@@ -22,7 +22,7 @@ export const Route = createFileRoute("/app/metatrader")({
   },
   head: () => ({
     meta: [
-      { title: "MetaTrader — EA Migrate Pro" },
+      { title: "MetaTrader — EA Migrate" },
       { name: "description", content: "Save your MT5 account for on-demand trading." },
     ],
   }),

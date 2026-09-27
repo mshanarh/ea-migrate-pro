@@ -1,5 +1,5 @@
 {
-  "name": "EA Migrate Pro",
+  "name": "EA Migrate",
   "short_name": "EA Migrate",
   "description": "Design, test and deploy custom MT4/MT5 Expert Advisors without writing code.",
   "start_url": "/app/home",

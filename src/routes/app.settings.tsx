@@ -35,7 +35,7 @@ export const Route = createFileRoute("/app/settings")({
   },
   head: () => ({
     meta: [
-      { title: "Settings — EA Migrate Pro" },
+      { title: "Settings — EA Migrate" },
       {
         name: "description",
         content: "Customize colors, interface style, fonts, background effects and music.",

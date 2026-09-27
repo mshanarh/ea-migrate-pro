@@ -272,7 +272,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
               <MessageCircle className="size-5" />
             </button>
             <span className="relative flex size-11 items-center justify-center rounded-full border border-white/20 bg-white/10 backdrop-blur-sm">
-              <img src="/logo.png" alt="EA Migrate Pro" className="size-full object-contain" />
+              <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
               <span className="absolute -bottom-0.5 left-1/2 size-3 -translate-x-1/2 rounded-full border-2 border-black bg-[#22C55E]" />
             </span>
           </div>

@@ -30,7 +30,7 @@ export function AuthShell({
           >
             <img
               src="/logo.png"
-              alt="EA Migrate Pro"
+              alt="EA Migrate"
               className="size-full object-contain"
             />
           </Link>

@@ -11,7 +11,7 @@ import {
 
 export const Route = createFileRoute("/migrate")({
   ssr: false,
-  head: () => ({ meta: [{ title: "One-time Migration — EA Migrate Pro" }] }),
+  head: () => ({ meta: [{ title: "One-time Migration — EA Migrate" }] }),
   component: MigratePage,
 });
 

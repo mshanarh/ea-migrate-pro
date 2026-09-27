@@ -12,13 +12,13 @@ import { sendPortalEmail } from "@/lib/send-email.server";
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: "Create your mentor portal — EA Migrate Pro" },
+      { title: "Create your mentor portal — EA Migrate" },
       {
         name: "description",
         content:
-          "Register a mentor portal on EA Migrate Pro to build, licence and host custom MT4/MT5 Expert Advisors.",
+          "Register a mentor portal on EA Migrate to build, licence and host custom MT4/MT5 Expert Advisors.",
       },
-      { property: "og:title", content: "Create your mentor portal — EA Migrate Pro" },
+      { property: "og:title", content: "Create your mentor portal — EA Migrate" },
       {
         property: "og:description",
         content: "Register a mentor portal and start issuing Expert Advisor licences.",

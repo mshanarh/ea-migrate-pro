@@ -25,7 +25,7 @@ export const Route = createFileRoute("/app/fundamentals")({
   },
   head: () => ({
     meta: [
-      { title: "Fundamentals — EA Migrate Pro" },
+      { title: "Fundamentals — EA Migrate" },
       { name: "description", content: "This week's economic calendar with live market sessions." },
     ],
   }),

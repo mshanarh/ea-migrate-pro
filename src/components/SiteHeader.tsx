@@ -21,7 +21,7 @@ export function SiteHeader() {
         <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
           <img
             src="/logo.svg"
-            alt="EA Migrate Pro"
+            alt="EA Migrate"
             className="size-12 min-w-[40px] shrink-0 object-contain"
           />
           <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">

@@ -29,7 +29,7 @@ export const Route = createFileRoute("/app/home")({
   },
   head: () => ({
     meta: [
-      { title: "Robot Dashboard — EA Migrate Pro" },
+      { title: "Robot Dashboard — EA Migrate" },
       { name: "description", content: "Control your licensed Forex robots." },
     ],
   }),

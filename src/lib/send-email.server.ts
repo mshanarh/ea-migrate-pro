@@ -63,7 +63,7 @@ async function sendViaBrevo(options: {
         "content-type": "application/json",
       },
       body: JSON.stringify({
-        sender: { name: "EA Migrate Pro Team", email: sender },
+        sender: { name: "EA Migrate Team", email: sender },
         to: [{ email: options.to, name: options.toName }],
         subject: options.subject,
         htmlContent: options.html,
@@ -84,7 +84,7 @@ async function sendViaBrevo(options: {
   }
 }
 
-/** Brand HTML shell matching every other EA Migrate Pro email. */
+/** Brand HTML shell matching every other EA Migrate email. */
 function brandHtml(heading: string, paragraphs: string[], buttonText: string, buttonColor: string): string {
   return `<!DOCTYPE html>
 <html lang="en">
@@ -93,7 +93,7 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
       <tr><td align="center">
         <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
           <tr><td style="padding:32px 32px 0 32px;">
-            <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
+            <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
             <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">${heading}</h1>
           </td></tr>
           <tr><td style="padding:20px 32px 0 32px;">
@@ -103,7 +103,7 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
           </td></tr>
           <tr><td align="center" style="padding:28px 32px 32px 32px;">
             <a href="${PORTAL_URL}" style="display:inline-block;background:${buttonColor};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">${buttonText}</a>
-            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />EA Migrate Pro Team</p>
+            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />EA Migrate Team</p>
           </td></tr>
         </table>
       </td></tr>
@@ -150,8 +150,8 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
       const name = (data.displayName ?? data.firstName ?? "").trim();
       const send = await sendViaBrevo({
         to: ADMIN_EMAIL,
-        toName: "EA Migrate Pro Admin",
-        subject: "New user registered - EA Migrate Pro",
+        toName: "EA Migrate Admin",
+        subject: "New user registered - EA Migrate",
         html: brandHtml(
           "New user registered",
           [
@@ -196,7 +196,7 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
       html: brandHtml(
         "Approved - Your EA License",
         [
-          "Congratulations — your EA Migrate Pro license has been approved! 🎉",
+          "Congratulations — your EA Migrate license has been approved! 🎉",
           `Your license key for <strong style="color:#FFFFFF;">${eaName}</strong> (expiry: ${expiry}):`,
           `<span style="display:block;margin:8px 0;padding:14px 16px;border:1px solid #E7B53A;border-radius:12px;background:#1A1608;color:#E7B53A;font-family:monospace;font-size:18px;font-weight:bold;letter-spacing:0.12em;">${licenseKey}</span>`,
           "Keep this email safe — you will need the key whenever you reinstall the EA.",
@@ -204,7 +204,7 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
         "Activate Your License",
         "#E7B53A",
       ),
-      text: `Approved - Your EA License\n\nEA: ${eaName}\nExpiry: ${expiry}\nLicense key: ${licenseKey}\n\nActivate it in the EA Migrate Pro Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
+      text: `Approved - Your EA License\n\nEA: ${eaName}\nExpiry: ${expiry}\nLicense key: ${licenseKey}\n\nActivate it in the EA Migrate Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
     });
     return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
   });

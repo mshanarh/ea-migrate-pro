@@ -42,7 +42,7 @@ import { BrandLogo } from "@/components/BrandLogo";
 
 export const Route = createFileRoute("/admin")({
   ssr: false,
-  head: () => ({ meta: [{ title: "Admin Console — EA Migrate Pro" }] }),
+  head: () => ({ meta: [{ title: "Admin Console — EA Migrate" }] }),
   component: AdminConsole,
 });
 
@@ -168,7 +168,7 @@ function AdminConsole() {
         <div>
           <h1 className="text-2xl font-bold">Admins only</h1>
           <p className="mt-2 text-sm text-muted-foreground">
-            This console is restricted to EA Migrate Pro administrators.
+            This console is restricted to EA Migrate administrators.
           </p>
           <Link
             to="/dashboard"

@@ -21,7 +21,7 @@ import { loadImageUrl } from "@/lib/media-store";
 export function BrandLogo({
   className,
   style,
-  alt = "EA Migrate Pro logo",
+  alt = "EA Migrate logo",
 }: {
   className?: string;
   style?: React.CSSProperties;
