@@ -20,6 +20,9 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  // The license key IS the payment — this path lets the user skip checkout
+  // entirely and go straight to entering the key their mentor issued.
+  const [keyMode, setKeyMode] = useState(false);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -36,7 +39,7 @@ function AppAccess() {
 
   const activeEmail = app.email || email.trim().toLowerCase();
   const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
-  const showLicenseView = successReturn || paymentStatus !== "unpaid";
+  const showLicenseView = keyMode || successReturn || paymentStatus !== "unpaid";
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -88,12 +91,18 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {!showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn} />}
+      {!showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} onEnterKey={() => {
+        const clean = email.trim().toLowerCase();
+        if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
+        const signInResult = appSignIn(clean);
+        if (signInResult.error) { toast.error(signInResult.error); return; }
+        setKeyMode(true);
+      }} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn || keyMode} />}
     </main>
   </div>;
 }
 
-function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
+function LoginView({ email, setEmail, onSubmit, redirecting, onEnterKey }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean; onEnterKey: () => void }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
@@ -107,6 +116,9 @@ function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; 
       </label>
       <button type="submit" disabled={redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : "Proceed"}<ArrowRight className="size-6" /></button>
     </form>
+    <button type="button" onClick={onEnterKey} className="mx-auto mt-6 flex items-center gap-2 text-sm font-bold text-[#55c7ff] underline-offset-4 hover:underline">
+      <LockKeyhole className="size-4" /> I already have a license key
+    </button>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
   </div>;
 }

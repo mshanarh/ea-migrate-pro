@@ -409,6 +409,9 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   };
   if (typeof window !== "undefined") window.localStorage.setItem("robotName", robot.name);
   state = { ...state, activeRobotId: state.activeRobotId || robot.id, robots: [...state.robots, robot] };
+  // A valid license key IS proof of payment — mark the email paid so the
+  // app gate never bounces a freshly-activated user to checkout.
+  if (state.email) markEmailPaid(state.email);
   persist();
   return { robot };
 }
