@@ -148,8 +148,18 @@ export default function DraggableBotPopup() {
     return () => window.clearInterval(id);
   }, [drawPip, logs, state, eaName, eaImage]);
 
-  /** Enter PiP (must be called from a user gesture on Android). */
+  /**
+   * Enter PiP. Inside the Android app this calls the NATIVE bridge (window
+   * floats above every app, MetaTrader included); in a browser it uses the
+   * video-stream API. Must be triggered by a user gesture.
+   */
   const enterPip = async () => {
+    const nativeBridge = (window as unknown as { EAMigrate?: { canPip: () => boolean; enterPip: () => void } }).EAMigrate;
+    if (nativeBridge?.canPip?.()) {
+      nativeBridge.enterPip();
+      toast.success("Floating over apps — open MetaTrader, the bot stays on top.");
+      return;
+    }
     const video = videoRef.current;
     if (!video || typeof video.requestPictureInPicture !== "function") {
       toast.error("Floating over apps needs Android Chrome — the popup stays in-app here.");
@@ -167,6 +177,15 @@ export default function DraggableBotPopup() {
       toast.error("Picture-in-Picture was blocked — try again or keep the app open.");
     }
   };
+
+  // Inside the Android app: while a bot runs, leaving the app shrinks it to
+  // the floating window automatically (native auto-PiP).
+  useEffect(() => {
+    const nativeBridge = (window as unknown as { EAMigrate?: { setAutoPip: (on: boolean) => void } }).EAMigrate;
+    if (!nativeBridge?.setAutoPip) return;
+    nativeBridge.setAutoPip(running && open);
+    return () => nativeBridge.setAutoPip(false);
+  }, [running, open]);
 
   // Draggable position — fixed coordinates from the viewport, default bottom-right.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
