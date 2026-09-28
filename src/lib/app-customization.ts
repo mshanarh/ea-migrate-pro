@@ -21,6 +21,12 @@ export const ACCENT_COLORS = [
   { id: "gold", name: "Gold", value: "#E7B53A" },
   { id: "champagne", name: "Champagne", value: "#F5D491" },
   { id: "titanium", name: "Titanium", value: "#B8C0CC" },
+  { id: "crimson", name: "Crimson", value: "#DC143C" },
+  { id: "plasma", name: "Plasma Pink", value: "#FF2E88" },
+  { id: "ultraviolet", name: "Ultraviolet", value: "#7B2FFF" },
+  { id: "matrix", name: "Matrix Green", value: "#00FF41" },
+  { id: "aquamarine", name: "Aquamarine", value: "#7FFFD4" },
+  { id: "copper", name: "Copper", value: "#B87333" },
   { id: "white", name: "White", value: "#FFFFFF" },
 ] as const;
 

@@ -2,7 +2,7 @@ import { motion } from "framer-motion";
 import { Bot, Pause, Play, Plus, Trash2, DollarSign } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { ACCENT_COLORS, useCustomization } from "@/lib/app-customization";
-import { RobotMedia } from "@/components/app/RobotMedia";
+import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
 
 /**
  * BLUEPRINT EDGE — robot console theme, built exactly like the reference
@@ -54,7 +54,11 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
   const eaImage = robot?.image || "/logo.png";
 
   return (
-    <div className="flex flex-col gap-5">
+    <>
+      {/* The robot's video plays full-bleed behind the whole console — the
+          black background is NOT empty; without a video the image shows. */}
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} />
+      <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section
         layout
@@ -154,6 +158,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
           )}
         </div>
       </section>
-    </div>
+      </div>
+    </>
   );
 }

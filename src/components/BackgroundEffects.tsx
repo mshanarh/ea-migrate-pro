@@ -55,6 +55,14 @@ export const BG_EFFECTS: BgEffectCard[] = [
   { id: "pnl", name: "Profit / Loss", subtitle: "Floating +$ / -$ values" },
   { id: "zigzag", name: "Zigzag Chart", subtitle: "Live zigzag price line" },
   { id: "pipgrid", name: "Pip Grid", subtitle: "Dot grid with sparks" },
+  { id: "rockets", name: "Rally Rockets", subtitle: "Bull rockets blasting up" },
+  { id: "gears", name: "EA Gears", subtitle: "Rotating engine gears" },
+  { id: "dna", name: "Profit Helix", subtitle: "Double helix spiral" },
+  { id: "meteors", name: "Meteors", subtitle: "Streaking fireballs" },
+  { id: "aurora", name: "Aurora Waves", subtitle: "Northern-lights bands" },
+  { id: "traffic", name: "Order Flow", subtitle: "Buy/sell flow arrows" },
+  { id: "galaxy", name: "Galaxy Spin", subtitle: "Rotating star spiral" },
+  { id: "goldrush", name: "Gold Rush", subtitle: "Golden coins raining" },
 ];
 
 const TAU = Math.PI * 2;
@@ -1278,6 +1286,233 @@ const FACTORIES: Record<string, Factory> = {
         ctx.stroke();
         ctx.fillStyle = `rgba(0,229,255,${s.life})`;
         ctx.fillRect(s.x - 2, s.y - 2, 4, 4);
+      }
+    };
+  },
+
+  rockets: (ctx, w, h) => {
+    const ps = Array.from({ length: 18 }, () => ({
+      x: rand(0, w),
+      y: rand(h * 0.3, h + 60),
+      v: rand(140, 320),
+      tilt: rand(-0.12, 0.12),
+      s: rand(10, 20),
+    }));
+    return (dt) => {
+      for (const p of ps) {
+        p.y -= p.v * dt;
+        if (p.y < -60) {
+          p.y = h + rand(40, 120);
+          p.x = rand(0, w);
+        }
+        ctx.save();
+        ctx.translate(p.x, p.y);
+        ctx.rotate(p.tilt);
+        ctx.font = `bold ${p.s}px system-ui, sans-serif`;
+        ctx.fillText("🚀", -p.s / 2, 0);
+        ctx.fillStyle = "rgba(255,120,40,0.5)";
+        ctx.fillRect(-3, 4, 6, p.s);
+        ctx.restore();
+      }
+    };
+  },
+
+  gears: (ctx, w, h) => {
+    const gears = Array.from({ length: 7 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      r: rand(24, 58),
+      a: rand(0, TAU),
+      v: rand(-0.9, 0.9) || 0.5,
+      teeth: Math.floor(rand(8, 14)),
+    }));
+    return (dt) => {
+      for (const g of gears) {
+        g.a += g.v * dt;
+        ctx.save();
+        ctx.translate(g.x, g.y);
+        ctx.rotate(g.a);
+        ctx.strokeStyle = "rgba(120,170,255,0.35)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(0, 0, g.r, 0, TAU);
+        ctx.stroke();
+        for (let t = 0; t < g.teeth; t += 1) {
+          const angle = (t / g.teeth) * TAU;
+          ctx.beginPath();
+          ctx.moveTo(Math.cos(angle) * g.r, Math.sin(angle) * g.r);
+          ctx.lineTo(Math.cos(angle) * (g.r + 9), Math.sin(angle) * (g.r + 9));
+          ctx.stroke();
+        }
+        ctx.restore();
+      }
+    };
+  },
+
+  dna: (ctx, w, h) => {
+    let t = 0;
+    return (dt) => {
+      t += dt;
+      const strands = 2;
+      for (let s = 0; s < strands; s += 1) {
+        ctx.strokeStyle = s === 0 ? "rgba(64,220,120,0.5)" : "rgba(80,140,255,0.5)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        for (let y = 0; y <= h; y += 8) {
+          const x = w / 2 + Math.sin(y / 60 + t * 1.4 + s * Math.PI) * (w * 0.28);
+          if (y === 0) ctx.moveTo(x, y);
+          else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.strokeStyle = "rgba(180,200,255,0.25)";
+      for (let y = (t * 30) % 40; y < h; y += 40) {
+        const x1 = w / 2 + Math.sin(y / 60 + t * 1.4) * (w * 0.28);
+        const x2 = w / 2 + Math.sin(y / 60 + t * 1.4 + Math.PI) * (w * 0.28);
+        ctx.beginPath();
+        ctx.moveTo(x1, y);
+        ctx.lineTo(x2, y);
+        ctx.stroke();
+      }
+    };
+  },
+
+  meteors: (ctx, w, h) => {
+    const ps = Array.from({ length: 22 }, () => ({
+      x: rand(0, w * 1.4),
+      y: rand(-120, h * 0.4),
+      v: rand(420, 900),
+      len: rand(70, 160),
+    }));
+    return (dt) => {
+      ctx.clearRect(0, 0, w, h);
+      for (const p of ps) {
+        p.x += p.v * dt * 0.7;
+        p.y += p.v * dt * 0.7;
+        if (p.x > w + 200 || p.y > h + 200) {
+          p.x = rand(-100, w * 0.6);
+          p.y = rand(-160, -20);
+        }
+        const grad = ctx.createLinearGradient(p.x, p.y, p.x - p.len, p.y - p.len);
+        grad.addColorStop(0, "rgba(255,220,160,0.9)");
+        grad.addColorStop(1, "rgba(255,140,60,0)");
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.moveTo(p.x, p.y);
+        ctx.lineTo(p.x - p.len, p.y - p.len);
+        ctx.stroke();
+      }
+    };
+  },
+
+  aurora: (ctx, w, h) => {
+    let t = 0;
+    return (dt) => {
+      t += dt;
+      ctx.clearRect(0, 0, w, h);
+      for (let band = 0; band < 4; band += 1) {
+        const hue = 130 + band * 40;
+        const grad = ctx.createLinearGradient(0, h * 0.1, 0, h * 0.7);
+        grad.addColorStop(0, `hsla(${hue}, 90%, 60%, 0.0)`);
+        grad.addColorStop(0.5, `hsla(${hue}, 90%, 60%, 0.16)`);
+        grad.addColorStop(1, `hsla(${hue}, 90%, 60%, 0.0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.moveTo(0, h);
+        for (let x = 0; x <= w; x += 16) {
+          const y = h * 0.32 + Math.sin(x / 90 + t * (0.5 + band * 0.16) + band) * 46 + band * 26;
+          ctx.lineTo(x, y);
+        }
+        ctx.lineTo(w, h);
+        ctx.closePath();
+        ctx.fill();
+      }
+    };
+  },
+
+  traffic: (ctx, w, h) => {
+    const buys = Array.from({ length: 12 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      v: rand(90, 200),
+    }));
+    const sells = Array.from({ length: 12 }, () => ({
+      x: rand(0, w),
+      y: rand(0, h),
+      v: rand(90, 200),
+    }));
+    return (dt) => {
+      ctx.font = "16px monospace";
+      for (const p of buys) {
+        p.y -= p.v * dt;
+        if (p.y < -24) {
+          p.y = h + 20;
+          p.x = rand(0, w);
+        }
+        ctx.fillStyle = "rgba(0,220,120,0.75)";
+        ctx.fillText("▲ BUY", p.x, p.y);
+      }
+      for (const p of sells) {
+        p.y += p.v * dt;
+        if (p.y > h + 24) {
+          p.y = -20;
+          p.x = rand(0, w);
+        }
+        ctx.fillStyle = "rgba(255,80,90,0.75)";
+        ctx.fillText("▼ SELL", p.x, p.y);
+      }
+    };
+  },
+
+  galaxy: (ctx, w, h) => {
+    const stars = Array.from({ length: 160 }, () => {
+      const angle = rand(0, TAU);
+      const radius = rand(20, Math.max(w, h) * 0.6);
+      return { angle, radius, v: rand(0.05, 0.25), size: rand(0.6, 2.2) };
+    });
+    let rotation = 0;
+    return (dt) => {
+      rotation += dt * 0.12;
+      ctx.clearRect(0, 0, w, h);
+      for (const s of stars) {
+        const a = s.angle + rotation * (60 / s.radius) * s.v * 10;
+        const x = w / 2 + Math.cos(a) * s.radius;
+        const y = h / 2 + Math.sin(a) * s.radius * 0.62;
+        ctx.fillStyle = `rgba(190,210,255,${0.25 + s.size / 4})`;
+        ctx.fillRect(x, y, s.size, s.size);
+      }
+    };
+  },
+
+  goldrush: (ctx, w, h) => {
+    const coins = Array.from({ length: 26 }, () => ({
+      x: rand(0, w),
+      y: rand(-h, 0),
+      v: rand(110, 240),
+      s: rand(12, 24),
+      spin: rand(0, TAU),
+    }));
+    return (dt) => {
+      for (const c of coins) {
+        c.y += c.v * dt;
+        c.spin += dt * 5;
+        if (c.y > h + 30) {
+          c.y = -30;
+          c.x = rand(0, w);
+        }
+        const squash = Math.abs(Math.cos(c.spin));
+        ctx.save();
+        ctx.translate(c.x, c.y);
+        ctx.scale(squash, 1);
+        ctx.fillStyle = "rgba(231,181,58,0.9)";
+        ctx.beginPath();
+        ctx.arc(0, 0, c.s / 2, 0, TAU);
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255,230,150,0.95)";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.restore();
       }
     };
   },
