@@ -82,9 +82,13 @@ export function useTradingPairsStore() {
 /** Mentor adds a pair (source of truth for the app's Available tab). */
 export function addTradingPair(symbol: string, minLot: number): { error?: string; pair?: TradingPair } {
   load();
-  const clean = symbol.trim().toUpperCase();
-  if (!/^[A-Z0-9._-]{3,12}$/.test(clean)) return { error: "Use 3-12 letters/numbers (e.g. BTCUSD)." };
-  if (state.tradingPairs.some((pair) => pair.symbol === clean)) return { error: `${clean} already exists.` };
+  // Case preserved EXACTLY as typed (brokers like Exness use suffixed
+  // lowercase symbols such as US30m); matching is case-insensitive.
+  const clean = symbol.trim();
+  if (!/^[A-Za-z0-9._-]{3,12}$/.test(clean)) return { error: "Use 3-12 letters/numbers (e.g. BTCUSD)." };
+  if (state.tradingPairs.some((pair) => pair.symbol.toUpperCase() === clean.toUpperCase())) {
+    return { error: `${clean} already exists.` };
+  }
   if (!(minLot > 0)) return { error: "Minimum lot must be greater than 0." };
   const pair: TradingPair = { id: "tp-" + Date.now().toString(36), symbol: clean, minLot, active: true };
   state = { ...state, tradingPairs: [...state.tradingPairs, pair] };
@@ -106,16 +110,17 @@ export function removeTradingPair(id: string) {
 
 export function addUserPair(userId: string, symbol: string, lotSize = 0.01, maxTrades = 0): { error?: string; pair?: UserPair } {
   load();
-  const clean = symbol.trim().toUpperCase();
-  const template = state.tradingPairs.find((pair) => pair.symbol === clean);
+  // Case-insensitive template match; the pair keeps the mentor's exact casing.
+  const clean = symbol.trim();
+  const template = state.tradingPairs.find((pair) => pair.symbol.toUpperCase() === clean.toUpperCase());
   if (!template) return { error: "That pair is not available." };
-  if (state.userPairs.some((pair) => pair.userId === userId && pair.symbol === clean)) {
+  if (state.userPairs.some((pair) => pair.userId === userId && pair.symbol.toUpperCase() === clean.toUpperCase())) {
     return { error: `${clean} is already in My Pairs.` };
   }
   const userPair: UserPair = {
     id: "up-" + Date.now().toString(36),
     userId,
-    symbol: clean,
+    symbol: template.symbol, // the mentor's exact casing travels to execution
     lotSize: Math.max(template.minLot, lotSize),
     maxTrades,
     createdAt: new Date().toISOString(),

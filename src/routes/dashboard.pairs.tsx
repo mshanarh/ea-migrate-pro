@@ -48,7 +48,7 @@ function ManagePairs() {
           <div className="mt-4 flex flex-col gap-3 sm:flex-row">
             <input
               value={symbol}
-              onChange={(event) => setSymbol(event.target.value.toUpperCase())}
+              onChange={(event) => setSymbol(event.target.value)}
               onKeyDown={(event) => event.key === "Enter" && handleAdd()}
               placeholder="SYMBOL (e.g. BTCUSD)"
               aria-label="Symbol"
