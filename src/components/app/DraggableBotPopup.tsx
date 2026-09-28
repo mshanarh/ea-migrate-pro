@@ -178,14 +178,48 @@ export default function DraggableBotPopup() {
     }
   };
 
-  // Inside the Android app: while a bot runs, leaving the app shrinks it to
-  // the floating window automatically (native auto-PiP).
+  // Inside the Android app: while a bot runs, show the NATIVE chat-head
+  // bubble (round avatar floating above every app — MetaTrader included).
+  // Stopping the bot removes it. The popup's float button stays for PiP.
+  const nativeApi = (
+    window as unknown as {
+      EAMigrate?: {
+        canPip?: () => boolean;
+        enterPip?: () => void;
+        setAutoPip?: (on: boolean) => void;
+        canOverlay?: () => boolean;
+        showBubble?: (image: string) => void;
+        hideBubble?: () => void;
+        pushLog?: (line: string) => void;
+      };
+    }
+  ).EAMigrate;
+
   useEffect(() => {
-    const nativeBridge = (window as unknown as { EAMigrate?: { setAutoPip: (on: boolean) => void } }).EAMigrate;
-    if (!nativeBridge?.setAutoPip) return;
-    nativeBridge.setAutoPip(running && open);
-    return () => nativeBridge.setAutoPip(false);
-  }, [running, open]);
+    if (!nativeApi?.showBubble) return;
+    if (running) {
+      nativeApi.showBubble?.(eaImage);
+    } else {
+      nativeApi.hideBubble?.();
+    }
+    return () => nativeApi.hideBubble?.();
+  }, [running, eaImage, nativeApi]);
+
+  // Stream the newest log line into the native bubble.
+  useEffect(() => {
+    if (!nativeApi?.pushLog) return;
+    const latest = logs.at(-1);
+    if (latest && running) nativeApi.pushLog(latest.text);
+  }, [logs, running, nativeApi]);
+
+  // Auto-PiP stays as the browser fallback when overlays are unavailable.
+  useEffect(() => {
+    const setAutoPip = nativeApi?.setAutoPip;
+    if (!setAutoPip) return;
+    const overlayDenied = nativeApi?.canOverlay ? nativeApi.canOverlay() !== true : false;
+    setAutoPip(running && open && overlayDenied);
+    return () => setAutoPip(false);
+  }, [running, open, nativeApi]);
 
   // Draggable position — fixed coordinates from the viewport, default bottom-right.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);

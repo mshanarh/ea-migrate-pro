@@ -2,9 +2,12 @@ package pro.eamigrate.app;
 
 import android.app.Activity;
 import android.app.PictureInPictureParams;
+import android.content.Intent;
 import android.content.res.Configuration;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.provider.Settings;
 import android.util.Rational;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
@@ -13,14 +16,13 @@ import android.webkit.WebViewClient;
 
 /**
  * EA Migrate Android wrapper — a fast, full-screen WebView over the live
- * platform. Opens straight into the APP experience (/app) — never the
- * marketing landing page. Sign-in state persists in the WebView storage,
- * so after the first login the app opens directly into the workspace.
+ * platform. Opens straight into the APP experience (/app).
  *
- * Picture-in-Picture: the web app calls EAMigrate.enterPip() (the 📺 button
- * on the bot popup) to float the trade log ABOVE other apps — MetaTrader
- * included. With auto-PiP enabled (set while a bot is running), simply
- * leaving the app shrinks it to the floating window automatically.
+ * Floating bot bubble: while a bot runs, the web app calls
+ * EAMigrate.showBubble(imageUrl) — a round chat-head avatar that floats
+ * above EVERY app (MetaTrader included), draggable, tap to return,
+ * long-press to dismiss. OverlayService.push(line) streams the latest
+ * trade-log line into it. Picture-in-Picture remains available too.
  */
 public class MainActivity extends Activity {
     private static final String START_URL = "https://eamigratepro.vercel.app/app";
@@ -29,6 +31,11 @@ public class MainActivity extends Activity {
 
     private boolean pipSupported() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
+    }
+
+    private boolean overlayAllowed() {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                || Settings.canDrawOverlays(this);
     }
 
     private void enterPipMode() {
@@ -80,13 +87,65 @@ public class MainActivity extends Activity {
                 }
             });
         }
+
+        @JavascriptInterface
+        public boolean canOverlay() {
+            return overlayAllowed();
+        }
+
+        /** Opens the system "Display over other apps" settings page. */
+        @JavascriptInterface
+        public void requestOverlay() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                            Uri.parse("package:" + getPackageName()));
+                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivity(intent);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void showBubble(final String imageUrl) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (!overlayAllowed()) {
+                        requestOverlay();
+                        return;
+                    }
+                    Intent intent = new Intent(MainActivity.this, OverlayService.class);
+                    intent.putExtra("image", imageUrl);
+                    startService(intent);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void hideBubble() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    Intent intent = new Intent(MainActivity.this, OverlayService.class);
+                    intent.putExtra("stop", true);
+                    startService(intent);
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void pushLog(final String line) {
+            OverlayService.push(line);
+        }
     }
 
     /** Leaving the app while a bot runs → shrink to the floating window. */
     @Override
     public void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (autoPip && pipSupported() && !isInPictureInPictureMode()) {
+        if (autoPip && pipSupported() && !isInPictureInPictureMode() && !overlayAllowed()) {
             enterPipMode();
         }
     }
