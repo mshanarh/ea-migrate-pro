@@ -70,7 +70,7 @@ function AppAccess() {
     if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
   };
 
-  const submitLicense = (event: FormEvent<HTMLFormElement>) => {
+  const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!app.email) {
       const signInResult = appSignIn(email.trim().toLowerCase());
@@ -78,7 +78,7 @@ function AppAccess() {
     }
     // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
     const normalizedKey = key.trim().toUpperCase().replace(/\s+/g, "");
-    const result = activateKey(normalizedKey);
+    const result = await activateKey(normalizedKey);
     if (result.error) { toast.error(result.error); return; }
     toast.success((result.robot?.name || "Robot") + " activated on this device");
     // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.

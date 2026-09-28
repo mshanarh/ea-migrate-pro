@@ -210,8 +210,8 @@ function AppHome() {
     touchStartX.current = null;
   };
 
-  const handleSubmit = (key: string) => {
-    const result = activateKey(key);
+  const handleSubmit = async (key: string) => {
+    const result = await activateKey(key);
     if (result.error) {
       toast.error(result.error);
       return;

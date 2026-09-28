@@ -290,7 +290,54 @@ export function appSignOut() {
   persist();
 }
 
-function findSavedLicenseForEmail(key: string, email: string) {
+/**
+ * Cloud license lookup — real users receive their key by EMAIL, which saves
+ * it to Supabase `license_keys` (mentor portal + admin issuance). The mentor's
+ * local store is only checked as a fallback for mentors activating on their
+ * own device.
+ */
+async function findLicenseInCloud(
+  key: string,
+  email: string,
+): Promise<{ error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } | null> {
+  // (shape mirrors findSavedLicenseForEmail's success contract)
+  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
+  const anonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
+  if (!url || !anonKey) return null;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const client = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await client
+      .from("license_keys")
+      .select("license_key, email, ea_name, expiry")
+      .eq("license_key", key)
+      .maybeSingle();
+    if (error) {
+      console.error("[key-activation] cloud lookup failed:", error.message);
+      return null;
+    }
+    if (!data) return null;
+    // A key issued to a specific email belongs to THAT email.
+    if (data.email && data.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
+      return { error: "That license key belongs to a different email." };
+    }
+    const found: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {};
+    if (data.ea_name) {
+      found.license = { eaName: data.ea_name, ...(data.expiry ? { expiry: data.expiry } : {}) };
+      found.ea = { name: data.ea_name };
+    } else {
+      found.license = {};
+    }
+    return found;
+  } catch (lookupError) {
+    console.error("[key-activation] cloud lookup error:", lookupError);
+    return null;
+  }
+}
+
+async function findSavedLicenseForEmail(key: string, email: string) {
   if (typeof window === "undefined") return { error: "License activation is only available in the app." };
   try {
     const raw = window.localStorage.getItem("eamp.store.v1");
@@ -321,7 +368,7 @@ function findSavedLicenseForEmail(key: string, email: string) {
   }
 }
 
-export function activateKey(key: string): { error?: string; robot?: Robot } {
+export async function activateKey(key: string): Promise<{ error?: string; robot?: Robot }> {
   load();
   // Tolerant normalisation: trim, uppercase and strip any spaces the user pasted.
   const clean = key.trim().toUpperCase().replace(/\s+/g, "");
@@ -337,18 +384,24 @@ export function activateKey(key: string): { error?: string; robot?: Robot } {
   if (!state.email) return { error: "Sign in with your email before activating a key." };
   if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
   // Validate the key first, then enforce the one-device binding before creating a robot.
-  const licenseResult = findSavedLicenseForEmail(clean, state.email);
+  // CLOUD FIRST (real users get keys by email → license_keys table); the
+  // mentor's local store is the fallback for mentors on their own device.
+  const cloud = await findLicenseInCloud(clean, state.email);
+  const licenseResult: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } =
+    cloud ?? (await findSavedLicenseForEmail(clean, state.email));
   if (licenseResult.error) return { error: licenseResult.error };
+  if (!licenseResult.license) return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };
   const savedEa = licenseResult.ea;
+  const symbols: string[] = savedEa?.symbols ?? [];
   const robot: Robot = {
     id: "r-" + Date.now(),
     key: clean,
-    name: savedEa?.name || "Private EA",
+    name: savedEa?.name || licenseResult.license.eaName || "Private EA",
     ...(savedEa?.version ? { version: savedEa.version } : {}),
-    symbols: savedEa?.symbols || licenseResult.license.symbols || [],
-    pairs: (savedEa?.symbols || licenseResult.license.symbols || []).map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
+    symbols,
+    pairs: symbols.map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
     ...(savedEa?.image ? { image: savedEa.image } : {}),
     ...(savedEa?.video ? { video: savedEa.video } : {}),
