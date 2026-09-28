@@ -309,24 +309,34 @@ async function findLicenseInCloud(
     const client = createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
+    // The live table's key column is `key` (legacy schema); select only the
+    // columns that exist there — optional extras are read defensively below.
     const { data, error } = await client
       .from("license_keys")
-      .select("license_key, email, ea_name, expiry")
-      .eq("license_key", key)
+      .select("id, key, email, created_at")
+      .eq("key", key)
       .maybeSingle();
     if (error) {
       console.error("[key-activation] cloud lookup failed:", error.message);
       return null;
     }
     if (!data) return null;
-    // A key issued to a specific email belongs to THAT email.
+    // A key issued to a specific email belongs to THAT email (unset email =
+    // open key, activated by whoever enters it first).
     if (data.email && data.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
       return { error: "That license key belongs to a different email." };
     }
+    // Optional columns (ea_name/expiry) exist only in the updated schema —
+    // read them defensively so a legacy row never breaks activation.
+    let eaName: string | undefined;
+    let expiry: string | undefined;
+    const extended = data as unknown as { ea_name?: unknown; expiry?: unknown };
+    if (typeof extended.ea_name === "string" && extended.ea_name) eaName = extended.ea_name;
+    if (typeof extended.expiry === "string" && extended.expiry) expiry = extended.expiry;
     const found: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {};
-    if (data.ea_name) {
-      found.license = { eaName: data.ea_name, ...(data.expiry ? { expiry: data.expiry } : {}) };
-      found.ea = { name: data.ea_name };
+    if (eaName) {
+      found.license = { eaName, ...(expiry ? { expiry } : {}) };
+      found.ea = { name: eaName };
     } else {
       found.license = {};
     }

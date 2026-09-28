@@ -96,7 +96,12 @@ async function savePendingApproval(email: string): Promise<boolean> {
   }
 }
 
-/** Upsert the issued key into license_keys via the anon client. */
+/**
+ * Upsert the issued key into license_keys via the anon client. The live
+ * table's key column is `key`; the optional ea_name/expiry columns may not
+ * exist on legacy tables, so the write retries WITHOUT them (PostgREST
+ * error 42703 = column does not exist) and the key row always lands.
+ */
 async function saveLicenseKey(input: {
   licenseKey: string;
   email: string;
@@ -109,12 +114,23 @@ async function saveLicenseKey(input: {
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    const saved = await client.from("license_keys").upsert(
-      { license_key: input.licenseKey, email: input.email, ea_name: input.eaName, expiry: input.expiry },
-      { onConflict: "license_key" },
+    // The live table's key column is `key` (legacy schema); optional columns
+    // (ea_name/expiry) are only sent when present so legacy tables work too.
+    const base: Record<string, unknown> = { key: input.licenseKey, email: input.email };
+    const extras: Record<string, unknown> = {};
+    if (input.eaName) extras["ea_name"] = input.eaName;
+    if (input.expiry) extras["expiry"] = input.expiry;
+
+    let result = await client.from("license_keys").upsert(
+      Object.keys(extras).length > 0 ? { ...base, ...extras } : base,
+      Object.keys(extras).length > 0 ? { onConflict: "key" } : undefined,
     );
-    if (saved.error) {
-      console.error("[send-email] license_keys upsert failed:", saved.error.message);
+    if (result.error?.code === "42703") {
+      // Legacy table without the optional columns — write the core row only.
+      result = await client.from("license_keys").upsert(base);
+    }
+    if (result.error) {
+      console.error("[send-email] license_keys upsert failed:", result.error.message);
       return false;
     }
     return true;
