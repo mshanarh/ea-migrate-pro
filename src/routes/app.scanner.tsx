@@ -12,6 +12,7 @@ import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
+import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -139,9 +140,9 @@ function AppScanner() {
       let takeProfitValue = estimated ? 0 : planTp;
       if (estimated && (planStop > 0 || planTp > 0)) {
         try {
-          const priceResponse = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/symbol/price", {
+          const priceResponse = await fetch(`${BRIDGE_URL}/symbol/price`, {
             method: "POST",
-            headers: { "Content-Type": "application/json", "x-bridge-key": "my_secret_bridge_key_2026" },
+            headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
             body: JSON.stringify({ credentials, symbol }),
           });
           const pricePayload = (await priceResponse.json().catch(() => ({}))) as Record<string, unknown>;
@@ -177,11 +178,11 @@ function AppScanner() {
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
       const executeOnce = async (): Promise<Record<string, unknown>> => {
-        const response = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/trade/execute", {
+        const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
-            "x-bridge-key": "my_secret_bridge_key_2026",
+            "x-bridge-key": BRIDGE_KEY,
           },
           body: JSON.stringify({
             credentials,

@@ -10,6 +10,7 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
 import { friendlyTradeError } from "@/lib/trade-errors";
+import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 
 export const Route = createFileRoute("/app/metatrader")({
@@ -301,9 +302,9 @@ function AppMetatrader() {
       // Direct browser → bridge verification: the static production build has
       // no server functions, so this goes to the bridge exactly like trade
       // execution does.
-      const response = await fetch("https://bidding-horizontal-calgary-cups.trycloudflare.com/account/verify", {
+      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", "x-bridge-key": "my_secret_bridge_key_2026" },
+        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
         body: JSON.stringify({
           login: Number(mt.loginId) || mt.loginId,
           password: activePassword,

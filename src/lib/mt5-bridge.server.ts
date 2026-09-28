@@ -3,7 +3,7 @@ import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/
 
 const BRIDGE_URL =
   process.env["MT5_BRIDGE_URL"] ||
-  "https://bidding-horizontal-calgary-cups.trycloudflare.com";
+  "https://camping-geology-operates-consistency.trycloudflare.com";
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
 /** Hard cap on any single bridge request — a dead bridge must fail FAST with
  *  a clear message, never hang the scanner on "EXECUTING" forever. */
