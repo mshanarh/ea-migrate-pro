@@ -13,6 +13,7 @@ import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -20,10 +21,10 @@ import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
-  beforeLoad: () => {
-    // Same gates the /app login view enforces — mirrors the Next.js
-    // middleware pattern: no email → app login, unpaid → Whop checkout.
-    const access = requireAppAccess(getAppState().email);
+  beforeLoad: async () => {
+    // Cloud-verified gates: no email → /app/login; a local-only "paid"
+    // record that the database does not confirm → Whop checkout.
+    const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },

@@ -8,13 +8,16 @@ import {
 } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
 
 export const Route = createFileRoute("/app/fundamentals")({
   ssr: false,
-  beforeLoad: () => {
+  beforeLoad: async () => {
     try {
-      const access = requireAppAccess(getAppState().email);
+      // Cloud-verified gates: no email → app login; a local "paid" record the
+      // database does not confirm → Whop checkout.
+      const access = await requireVerifiedAccess(getAppState().email);
       if (access.action === "signin") throw redirect({ href: "/app/login" });
       if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
     } catch (error) {

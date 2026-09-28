@@ -6,6 +6,7 @@ import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
@@ -15,10 +16,10 @@ import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.serv
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
-  beforeLoad: () => {
-    // Same gates the /app login view enforces: no email → app login,
-    // unpaid → Whop checkout. Paid/admin emails pass through.
-    const access = requireAppAccess(getAppState().email);
+  beforeLoad: async () => {
+    // Cloud-verified gates: no email → app login; a local "paid" record the
+    // database does not confirm → Whop checkout.
+    const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },

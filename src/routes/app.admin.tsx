@@ -3,6 +3,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { getAppState, requireAppAccess, useAppState, WHOP_CHECKOUT_URL } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
 import { supabaseConfigured } from "@/lib/supabase";
@@ -25,9 +26,10 @@ async function withAnonFallback<T>(serverCall: () => Promise<T>, anonCall: () =>
 
 export const Route = createFileRoute("/app/admin")({
   ssr: false,
-  beforeLoad: () => {
-    // Same gates as the rest of the app: no email → /app/login, unpaid → checkout.
-    const access = requireAppAccess(getAppState().email);
+  beforeLoad: async () => {
+    // Same gates as the rest of the app, cloud-verified: no email →
+    // /app/login; a local "paid" record the DB does not confirm → checkout.
+    const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },

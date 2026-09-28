@@ -109,6 +109,25 @@ async function saveLicenseKey(input: {
   expiry: string | null;
 }): Promise<boolean> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
+  // SECURE PATH FIRST: issue through the server function with the
+  // service-role key. Once supabase/secure-payment-gate.sql is applied, the
+  // anon insert on license_keys is blocked (anyone could otherwise forge a
+  // key row for their own email), so issuance MUST go through the server.
+  try {
+    const { issueLicenseKeySecure } = await import("@/lib/supabase.server");
+    const secure = await issueLicenseKeySecure({
+      data: {
+        licenseKey: input.licenseKey,
+        email: input.email,
+        eaName: input.eaName,
+        expiry: input.expiry,
+      },
+    });
+    if (secure.ok) return true;
+    console.warn("[send-email] secure key issuance failed:", secure.error, "— trying anon fallback");
+  } catch (secureError) {
+    console.warn("[send-email] secure key issuance unavailable:", secureError);
+  }
   try {
     const { createClient } = await import("@supabase/supabase-js");
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {

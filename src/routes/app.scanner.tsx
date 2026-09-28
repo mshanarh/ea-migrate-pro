@@ -10,16 +10,17 @@ import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { WHOP_CHECKOUT_URL, useAppState } from "@/lib/app-store";
 import { getAppState, requireAppAccess } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
-  beforeLoad: () => {
-    // Same gates the /app login view enforces: no email → app login,
-    // unpaid → Whop checkout. Paid/admin emails pass through.
-    const access = requireAppAccess(getAppState().email);
+  beforeLoad: async () => {
+    // Cloud-verified gates: no email → app login; a local "paid" record the
+    // database does not confirm → Whop checkout.
+    const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },

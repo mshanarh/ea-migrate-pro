@@ -4,6 +4,7 @@ import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { requireVerifiedAccess, verifyPaymentReturn } from "@/lib/payment-gate";
 import { registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
@@ -27,9 +28,19 @@ function AppAccess() {
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
     setSuccessReturn(success);
+    // SECURITY: ?success=true alone must NEVER unlock the app — typing that
+    // URL used to call markEmailPaid() locally, which is exactly how a
+    // non-payer got in. The flag only shows the key entry view; unlock
+    // happens ONLY after the SERVER verifies the Whop membership (or the
+    // database already holds an approval/license for this email).
     if (success && app.email) {
-      markEmailPaid(app.email);
-      if (typeof window !== "undefined") window.localStorage.removeItem("eamp.pending-payment-email");
+      void verifyPaymentReturn(app.email).then((verified) => {
+        if (verified) {
+          if (typeof window !== "undefined") window.localStorage.removeItem("eamp.pending-payment-email");
+        } else {
+          setSuccessReturn(false);
+        }
+      });
     }
   }, [app.email]);
 
@@ -63,8 +74,10 @@ function AppAccess() {
     const registration = await registerWithEmail(clean);
     if (registration.outcome === "checkout") {
       if (successReturn) {
-        markEmailPaid(clean);
-        return;
+        // The URL flag says they returned from checkout — prove it on the
+        // server before granting anything. Unverifiable → straight to Whop.
+        const verified = await verifyPaymentReturn(clean);
+        if (verified) return;
       }
       setRedirecting(true);
       window.location.assign(WHOP_CHECKOUT_URL);

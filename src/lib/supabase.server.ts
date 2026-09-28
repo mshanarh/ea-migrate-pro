@@ -94,3 +94,82 @@ export const adminClaimFirstAdmin = createServerFn({ method: "POST" })
     const { error } = await db.from("users").update({ is_admin: true }).eq("email", email);
     return error ? { ok: false, error: error.message } : { ok: true };
   });
+
+/**
+ * Whop membership verification — SERVER-side, using WHOP_API_KEY (a secret
+ * that must be set in the production environment; the anon key is public).
+ * This is the only trustworthy answer to "did this email actually pay?":
+ * the ?success=true URL parameter is forged by typing the URL, which is
+ * exactly how a non-payer unlocked the app before this check existed.
+ */
+export const whopVerifyMembership = createServerFn({ method: "POST" })
+  .validator((data: EmailInput) => data)
+  .handler(async ({ data }): Promise<{ ok: boolean; paid: boolean; error?: string }> => {
+    const apiKey = (process.env["WHOP_API_KEY"] ?? process.env["VITE_WHOP_API_KEY"] ?? "").trim();
+    const productId = (process.env["WHOP_PRODUCT_ID"] ?? process.env["VITE_WHOP_PRODUCT_ID"] ?? "").trim();
+    if (!apiKey) return { ok: false, paid: false, error: "WHOP_API_KEY is not configured" };
+    try {
+      const url = new URL("https://api.whop.com/api/v1/memberships");
+      url.searchParams.set("page_size", "100");
+      if (productId) url.searchParams.set("product", productId);
+      const response = await fetch(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!response.ok) {
+        return { ok: false, paid: false, error: `Whop API ${response.status}` };
+      }
+      const payload = (await response.json()) as {
+        data?: Array<{ status?: string; user?: { email?: string } }>;
+      };
+      const clean = data.email.trim().toLowerCase();
+      const paid = (payload.data ?? []).some(
+        (membership) =>
+          membership.user?.email?.trim().toLowerCase() === clean &&
+          (membership.status === "active" || membership.status === "trialing" || membership.status === "past_due"),
+      );
+      if (paid) {
+        // Back-fill the database so future checks are database-only and the
+        // admin console shows the user as approved.
+        const db = serviceClient();
+        if (db) {
+          await db
+            .from("users")
+            .upsert({ email: clean, is_paid: true }, { onConflict: "email", ignoreDuplicates: false });
+        }
+      }
+      return { ok: true, paid };
+    } catch (error) {
+      return { ok: false, paid: false, error: error instanceof Error ? error.message : "Whop check failed" };
+    }
+  });
+
+/**
+ * Secure license-key issuance — runs SERVER-side with the service-role key,
+ * which bypasses RLS. The old browser-side anon upsert in send-email.ts
+ * becomes a forge hole once RLS is tightened (anyone could insert a row for
+ * their own email), so issuance moves here. Called from the mentor portal's
+ * license-issuance flow instead of the anon client.
+ */
+export const issueLicenseKeySecure = createServerFn({ method: "POST" })
+  .validator(
+    (data: { licenseKey: string; email: string; eaName?: string | null; expiry?: string | null }) => data,
+  )
+  .handler(
+    async ({ data }): Promise<{ ok: boolean; error?: string }> => {
+      const db = serviceClient();
+      if (!db) return { ok: false, error: "Supabase is not configured" };
+      const row: Record<string, unknown> = {
+        key: data.licenseKey.trim().toUpperCase(),
+        email: data.email.trim().toLowerCase(),
+      };
+      if (data.eaName) row["ea_name"] = data.eaName;
+      if (data.expiry) row["expiry"] = data.expiry;
+      let result = await db.from("license_keys").upsert(row, { onConflict: "key" });
+      if (result.error?.code === "42703") {
+        // Legacy table without the optional columns — core row only.
+        result = await db.from("license_keys").upsert({ key: row["key"], email: row["email"] });
+      }
+      return result.error ? { ok: false, error: result.error.message } : { ok: true };
+    },
+  );

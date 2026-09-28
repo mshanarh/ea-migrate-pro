@@ -10,6 +10,7 @@ import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { usePlatform } from "@/lib/platform";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
 import {
@@ -26,10 +27,10 @@ import {
 
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
-  beforeLoad: () => {
-    // Same gates the /app login view enforces: no email → app login,
-    // unpaid → Whop checkout. Paid/admin emails pass through.
-    const access = requireAppAccess(getAppState().email);
+  beforeLoad: async () => {
+    // Cloud-verified gates: no email → app login; a local "paid" record the
+    // database does not confirm → Whop checkout.
+    const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
     if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
   },

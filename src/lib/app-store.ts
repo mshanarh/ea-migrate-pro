@@ -392,13 +392,23 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   }
   if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
   if (!state.email) return { error: "Sign in with your email before activating a key." };
-  if (paymentStatusForEmail(state.email) === "unpaid") return { error: "Complete payment before activating your licence key." };
   // Validate the key first, then enforce the one-device binding before creating a robot.
-  // CLOUD FIRST (real users get keys by email → license_keys table); the
-  // mentor's local store is the fallback for mentors on their own device.
+  // CLOUD FIRST — a license_keys row bound to this email IS proof of payment, so it
+  // is resolved BEFORE the local payment gate (a fresh device is always locally
+  // unpaid, which must never block a real key-holder). The local mentor-store
+  // fallback only runs for emails with LOCAL proof of payment (verified Whop
+  // return, admin-exempt, or the mentor's own device) — a forged local record
+  // cannot survive the route guards, which verify against the cloud database.
   const cloud = await findLicenseInCloud(clean, state.email);
-  const licenseResult: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } =
-    cloud ?? (await findSavedLicenseForEmail(clean, state.email));
+  let licenseResult: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> };
+  if (cloud?.license) {
+    licenseResult = cloud;
+  } else if (paymentStatusForEmail(state.email) === "unpaid") {
+    // No cloud license and no local proof of payment — the gate holds.
+    return { error: "Complete payment before activating your licence key." };
+  } else {
+    licenseResult = await findSavedLicenseForEmail(clean, state.email);
+  }
   if (licenseResult.error) return { error: licenseResult.error };
   if (!licenseResult.license) return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
