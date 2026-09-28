@@ -13,7 +13,9 @@ import android.webkit.WebViewClient;
 
 /**
  * EA Migrate Android wrapper — a fast, full-screen WebView over the live
- * platform (https://eamigratepro.vercel.app).
+ * platform. Opens straight into the APP experience (/app) — never the
+ * marketing landing page. Sign-in state persists in the WebView storage,
+ * so after the first login the app opens directly into the workspace.
  *
  * Picture-in-Picture: the web app calls EAMigrate.enterPip() (the 📺 button
  * on the bot popup) to float the trade log ABOVE other apps — MetaTrader
@@ -21,7 +23,7 @@ import android.webkit.WebViewClient;
  * leaving the app shrinks it to the floating window automatically.
  */
 public class MainActivity extends Activity {
-    private static final String START_URL = "https://eamigratepro.vercel.app/";
+    private static final String START_URL = "https://eamigratepro.vercel.app/app";
     private WebView web;
     private boolean autoPip = false;
 
