@@ -37,7 +37,43 @@ import {
   type AdminPatch,
   type PublicAccount,
 } from "@/lib/account-sync.server";
+import {
+  portalAdminUpdate,
+  portalListAccounts,
+  portalSetPayment,
+} from "@/lib/portal-cloud";
 import { supabaseConfigured } from "@/lib/supabase";
+import { portalCloudConfigured } from "@/lib/portal-cloud";
+
+/**
+ * Server functions exist in dev but 404 on the static production build —
+ * try the server call, fall back to the direct browser cloud client.
+ */
+async function withCloudFallback<T>(serverCall: () => Promise<T>, browserCall: () => Promise<T>): Promise<T> {
+  try {
+    return await serverCall();
+  } catch {
+    return browserCall();
+  }
+}
+
+async function pushAdminUpdate(targetEmail: string, patch: AdminPatch) {
+  return withCloudFallback(
+    () => syncAdminUpdate({ data: { adminEmail: "", targetEmail, patch } }),
+    () => portalAdminUpdate(targetEmail, patch),
+  );
+}
+
+async function listCloudAccounts() {
+  return withCloudFallback(() => syncListAccounts(), () => portalListAccounts());
+}
+
+async function setCloudPayment(email: string, paid: boolean) {
+  return withCloudFallback(
+    () => syncSetPayment({ data: { adminEmail: "", email, paid } }),
+    () => portalSetPayment(email, paid),
+  );
+}
 import { BrandLogo } from "@/components/BrandLogo";
 
 export const Route = createFileRoute("/admin")({
@@ -110,13 +146,7 @@ function AdminConsole() {
       const missing = local.licenses.filter((license) => !remote.licenses.some((candidate) => candidate.id === license.id));
       if (missing.length > 0) patches.push({ licenses: local.licenses, replaceLicenses: true });
       for (const patch of patches) {
-        void syncAdminUpdate({
-          data: {
-            adminEmail: account.email,
-            targetEmail: local.email,
-            patch,
-          },
-        });
+        void pushAdminUpdate(local.email, patch);
       }
     }
   }, [account, cloud.enabled, cloud.accounts]);
@@ -126,7 +156,7 @@ function AdminConsole() {
   // store so admin actions work on them immediately.
   const pollCloud = useCallback(async () => {
     try {
-      const result = await syncListAccounts();
+      const result = await listCloudAccounts();
       setCloud({ enabled: result.enabled, accounts: result.accounts });
       if (result.enabled && result.accounts.length > 0) hydrateFromCloud(result.accounts);
     } catch {
@@ -149,12 +179,11 @@ function AdminConsole() {
             ? `Could not save ${targetEmail}: ${reason}`
             : `Could not save ${targetEmail} to the shared store — the change may be lost. Check your connection and try again.`,
         );
-      void syncAdminUpdate({ data: { adminEmail: account.email, targetEmail, patch } })
-        .then((result) => {
+      void pushAdminUpdate(targetEmail, patch).then((result) => {
           if (result.enabled && !result.ok) fail(result.error);
         })
         .catch((error) => {
-          console.error("[admin] syncAdminUpdate failed:", error);
+          console.error("[admin] cloud update failed:", error);
           fail();
         });
     },
@@ -266,7 +295,7 @@ function AdminConsole() {
             </span>
           </Link>
           <div className="flex shrink-0 items-center gap-2">
-            {supabaseConfigured ? (
+            {supabaseConfigured || portalCloudConfigured() ? (
               <span className="hidden items-center gap-2 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.12em] text-emerald-300 md:flex">
                 <span className="relative flex size-2">
                   <span className="absolute inline-flex size-full animate-ping rounded-full bg-emerald-400 opacity-75" />
@@ -303,7 +332,7 @@ function AdminConsole() {
           activation records.
         </p>
 
-        {!supabaseConfigured && (
+        {!supabaseConfigured && !portalCloudConfigured() && (
           <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
             <p className="font-bold uppercase tracking-wide text-amber-300">Local-only mode</p>
             <p className="mt-1 leading-relaxed">
