@@ -354,7 +354,7 @@ function Home() {
   };
 
   return (
-    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-[#0A0A0A] text-white">
+    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-background text-foreground">
       <SiteHeader />
 
       <main>

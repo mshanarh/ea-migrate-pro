@@ -168,7 +168,7 @@ function RootShell({ children }: { children: ReactNode }) {
         <script dangerouslySetInnerHTML={{ __html: PLATFORM_PREPAINT_SCRIPT }} />
         <HeadContent />
       </head>
-      <body className="m-0 p-0 bg-black">
+      <body className="m-0 p-0 bg-background text-foreground">
         {children}
         <Scripts />
       </body>

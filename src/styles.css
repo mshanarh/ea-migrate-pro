@@ -163,7 +163,15 @@ html.light-mode {
 html.light-mode body {
   background: var(--background);
 }
-/* The landing also hardcodes white-alpha utilities — flip those to ink-on-white. */
+/* The landing hardcodes many dark surfaces — flip them ALL in light mode:
+   black/navy backgrounds → white cards, white text → ink, white-alpha
+   utilities → ink-alpha, dark shadows → soft light-mode shadows. */
+html.light-mode [class*="bg-black"],
+html.light-mode [class*="bg-[#0"],
+html.light-mode [class*="bg-[#1"],
+html.light-mode [class*="bg-[#2"] {
+  background-color: #ffffff;
+}
 html.light-mode [class*="text-white"] {
   color: #101828;
 }
@@ -172,6 +180,22 @@ html.light-mode [class*="bg-white/"] {
 }
 html.light-mode [class*="border-white/"] {
   border-color: rgb(15 23 42 / 0.12);
+}
+html.light-mode [class*="border-[#"],
+html.light-mode [class*="border-border"] {
+  border-color: rgb(15 23 42 / 0.12);
+}
+html.light-mode .panel {
+  background: linear-gradient(180deg, #ffffff, #f4f7fa);
+  box-shadow: 0 8px 28px rgb(15 23 42 / 0.06);
+}
+html.light-mode [class*="shadow-["] {
+  --tw-shadow-colored: 0 8px 24px rgb(15 23 42 / 0.10);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.10);
+}
+/* Gradient/solid text accents stay readable on white. */
+html.light-mode .hero-glow {
+  background: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(0 168 255 / 0.10), transparent 70%);
 }
 
 @utility text-brand {
