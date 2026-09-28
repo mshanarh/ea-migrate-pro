@@ -197,8 +197,10 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
       .catch(() => setError("Could not store that video — try again."));
   };
   const addSymbol = () => {
-    const clean = symbol.trim().toUpperCase();
-    if (!clean || symbols.includes(clean)) return;
+    const clean = symbol.trim();
+    // Case-insensitive dedupe — XAUUSD and xauusd are the same symbol — but
+    // the symbol DISPLAYS exactly as the mentor typed it.
+    if (!clean || symbols.some((existing) => existing.toUpperCase() === clean.toUpperCase())) return;
     setSymbols((current) => [...current, clean]);
     setSymbol("");
   };

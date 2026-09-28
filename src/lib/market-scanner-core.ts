@@ -84,7 +84,10 @@ type Candle = { time: string; open: number; high: number; low: number; close: nu
 async function runScannerAnalysis(
   data: ScannerAnalysisRequest,
 ): Promise<{ ok: true; analysis: ScannerAnalysis } | ScannerFailure> {
-  const symbol = (data.symbol ?? "").trim().toUpperCase();
+  // Symbols DISPLAY exactly as the mentor applied them on the EA (case
+  // preserved); all feed/lookup work runs on an uppercased copy.
+  const symbolInput = (data.symbol ?? "").trim();
+  const symbol = symbolInput.toUpperCase();
   const timeframe = data.timeframe ?? "1h";
   const synthetic = isSyntheticSymbol(symbol);
   if (!symbol) {
@@ -320,7 +323,7 @@ async function runScannerAnalysis(
   return {
     ok: true,
     analysis: {
-      symbol,
+      symbol: symbolInput || symbol,
       timeframe,
       bias,
       signal,
