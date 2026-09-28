@@ -20,7 +20,6 @@
  */
 import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
-import { whopVerifyMembership } from "@/lib/supabase.server";
 
 export type CloudAccess = "admin" | "paid" | "unpaid";
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
@@ -84,9 +83,18 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
 
   // 3. Whop — the checkout source of truth, verified SERVER-side with the
   //    WHOP_API_KEY (never from the browser). Also back-fills users.is_paid
-  //    so later checks are database-only.
-  const whop = await whopVerifyMembership({ data: { email: clean } });
-  if (whop.ok && whop.paid) return "paid";
+  //    so later checks are database-only. DYNAMIC import: supabase.server
+  //    reads process.env at module init and registers TanStack server
+  //    functions — statically importing it into the client graph crashed
+  //    the Android WebView bundle ("Dashboard didn't load"). Any failure
+  //    here just means "no Whop confirmation" — the database still decides.
+  try {
+    const { whopVerifyMembership } = await import("@/lib/supabase.server");
+    const whop = await whopVerifyMembership({ data: { email: clean } });
+    if (whop.ok && whop.paid) return "paid";
+  } catch {
+    /* server functions unavailable in this bundle — DB decision stands */
+  }
 
   return "unpaid";
 }
@@ -98,7 +106,14 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
  */
 export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
   if (!email) return { action: "signin" };
-  const cloud = await resolveCloudAccess(email);
+  let cloud: CloudAccess | null = null;
+  try {
+    cloud = await resolveCloudAccess(email);
+  } catch {
+    // NEVER let a gate error crash a route (that was the "Dashboard didn't
+    // load" screen on Android) — degrade to the legacy local gate.
+    cloud = null;
+  }
   if (cloud === "admin" || cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.
@@ -117,18 +132,27 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
  */
 export async function verifyPaymentReturn(email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();
-  const cloud = await resolveCloudAccess(clean);
-  if (cloud === "admin" || cloud === "paid") {
-    markEmailPaid(clean);
-    return true;
+  try {
+    const cloud = await resolveCloudAccess(clean);
+    if (cloud === "admin" || cloud === "paid") {
+      markEmailPaid(clean);
+      return true;
+    }
+    if (cloud === "unpaid") return false;
+  } catch {
+    /* fall through to the explicit Whop check */
   }
-  if (cloud === null && !supabaseConfigured) return false;
   // resolveCloudAccess already ran the Whop check inside computeFromDatabase
-  // for the unpaid branch — re-run explicitly here for a fresh answer.
-  const whop = await whopVerifyMembership({ data: { email: clean } });
-  if (whop.ok && whop.paid) {
-    markEmailPaid(clean);
-    return true;
+  // for the unpaid branch — run it explicitly here for a fresh answer.
+  try {
+    const { whopVerifyMembership } = await import("@/lib/supabase.server");
+    const whop = await whopVerifyMembership({ data: { email: clean } });
+    if (whop.ok && whop.paid) {
+      markEmailPaid(clean);
+      return true;
+    }
+  } catch {
+    /* server functions unavailable */
   }
   return false;
 }

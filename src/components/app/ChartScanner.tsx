@@ -26,6 +26,8 @@ export type ExecutionPlan = {
   takeProfit: string;
   riskReward: string;
   confidence: number;
+  /** WAIT blocks execution entirely — the engine refuses low-quality setups. */
+  strength: "WAIT" | "WEAK" | "MODERATE" | "STRONG";
   executionReady: boolean;
   /** True when levels come from the estimated-price fallback — the broker
    *  rejects SL/TP computed from them (they sit on a simulated price scale),
@@ -306,6 +308,7 @@ export default function ChartScanner({
           takeProfit: fmtPrice(analysis.takeProfit),
           riskReward: analysis.riskReward,
           confidence: analysis.confidence,
+          strength: analysis.strength,
           executionReady: analysis.executionReady,
           estimated: analysis.dataSource.startsWith("Estimated"),
         },
@@ -713,6 +716,34 @@ export default function ChartScanner({
                 {analysis.confidence}%
               </span>
             </div>
+            {/* Signal strength — WAIT means the engine refuses to execute this setup. */}
+            <div className="mt-1.5 flex items-center justify-between text-[11px]">
+              <span className="text-white/30">SIGNAL STRENGTH</span>
+              <span
+                data-testid="text-analysis-strength"
+                className="rounded-full px-2 py-0.5 text-[10px] font-black tracking-wide"
+                style={{
+                  background:
+                    analysis.strength === "STRONG"
+                      ? "rgba(34,197,94,0.15)"
+                      : analysis.strength === "MODERATE"
+                        ? "rgba(234,179,8,0.15)"
+                        : analysis.strength === "WEAK"
+                          ? "rgba(249,115,22,0.15)"
+                          : "rgba(239,68,68,0.15)",
+                  color:
+                    analysis.strength === "STRONG"
+                      ? "#4ade80"
+                      : analysis.strength === "MODERATE"
+                        ? "#eab308"
+                        : analysis.strength === "WEAK"
+                          ? "#fb923c"
+                          : "#f87171",
+                }}
+              >
+                {analysis.strength === "WAIT" ? "WAIT — NO TRADE" : analysis.strength}
+              </span>
+            </div>
 
             <div className="mt-3 space-y-1.5">
               {analysis.reasons.map((reason, index) => (
@@ -723,17 +754,28 @@ export default function ChartScanner({
               ))}
             </div>
 
-            {/* EXECUTE TRADE — the single visible action on a valid plan */}
-            <button
-              type="button"
-              onClick={openConfirm}
-              disabled={executing}
-              data-testid="button-execute-trade"
-              className={`plat-pressable mt-4 flex h-[58px] w-full items-center justify-center text-[15px] font-black tracking-wide text-white disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
-              style={{ background: accent, boxShadow: `0 0 24px ${accent}66` }}
-            >
-              {executing ? "EXECUTING..." : `EXECUTE TRADE — ${analysis.signal} ${lot} Lot`}
-            </button>
+            {/* EXECUTE TRADE — the single visible action on a valid plan.
+                WAIT-grade setups are intentionally un-executable: the engine
+                refused them because confluence/candle-agreement is too low. */}
+            {analysis.strength === "WAIT" ? (
+              <div
+                className="mt-4 flex h-[58px] w-full items-center justify-center gap-2 rounded-full border border-red-400/30 bg-red-400/10 text-[13px] font-black tracking-wide text-red-300"
+                data-testid="text-wait-blocked"
+              >
+                ⛔ SETUP TOO WEAK — WAIT FOR A CLEANER TREND
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={openConfirm}
+                disabled={executing}
+                data-testid="button-execute-trade"
+                className={`plat-pressable mt-4 flex h-[58px] w-full items-center justify-center text-[15px] font-black tracking-wide text-white disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
+                style={{ background: accent, boxShadow: `0 0 24px ${accent}66` }}
+              >
+                {executing ? "EXECUTING..." : `EXECUTE TRADE — ${analysis.signal} ${lot} Lot`}
+              </button>
+            )}
 
             {/* Connection lifecycle: Offline → Connecting → Connected → Executing → Executed → Disconnected */}
             <div data-testid="chain-execution-status" className="mt-3 flex flex-wrap items-center gap-1.5">

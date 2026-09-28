@@ -44,7 +44,7 @@ export const Route = createFileRoute("/app/home")({
  * robot/local-state record is the most likely cause, so logging out (which
  * clears the app session) must always be one tap away.
  */
-function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
+function HomeErrorFallback({ error, reset }: { error: Error; reset: () => void }) {
   const router = useRouter();
   const handleLogout = () => {
     appSignOut();
@@ -57,6 +57,10 @@ function HomeErrorFallback({ reset }: { error: Error; reset: () => void }) {
       <p className="mt-2 max-w-xs text-sm text-white/55">
         Something interrupted your robot dashboard. Try again — if it keeps happening, log out and sign back in.
       </p>
+      {/* The raw message is the ONLY way to diagnose a device-specific crash
+          (Android WebView bundles fail differently than desktop Chrome) — and
+          it is rendered in tiny, low-contrast text so normal users ignore it. */}
+      <p className="mt-3 max-w-xs break-words text-[10px] leading-4 text-white/30">{error?.message}</p>
       <div className="mt-6 flex flex-wrap justify-center gap-2">
         <button
           type="button"

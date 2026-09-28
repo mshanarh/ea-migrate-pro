@@ -135,10 +135,25 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
 
   // Live MT5 outcome from the scanner — broadcast on the event bus so every
   // execution surface (this toast AND the floating bot popup) receives it.
+  // Per-trade events ("TRADE N EXECUTED") advance the counter IN SYNC with
+  // the real sequential fills instead of a fake timer; the final summary
+  // event closes the run with the true result.
   useEffect(() => {
     if (!isOpen) return undefined;
     const handler = (event: Event) => {
       const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
+      const perTrade = /^TRADE (\d+) EXECUTED/i.exec(result.message);
+      if (result.ok && perTrade) {
+        playBeep();
+        setPhase("trade");
+        setCurrentTrade(Number(perTrade[1]));
+        return;
+      }
+      if (/TRADE \d+ REFUSED/i.test(result.message)) {
+        setPhase("trade");
+        setTyped(`⚠️ ${result.message}`);
+        return;
+      }
       clearTimers();
       setPhase("done");
       setTyped(result.ok ? `✅ ${result.message}` : `⚠️ ${result.message}`);

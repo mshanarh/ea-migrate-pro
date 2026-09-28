@@ -255,15 +255,17 @@ export default function DraggableBotPopup() {
       // The scanner ALWAYS sends a direction and SL/TP with the plan — no
       // placeholder signal text here; fall back only if a caller omits them.
       const direction = p.direction === "SELL" ? "SELL" : "BUY";
+      // NO fake fills here — the scanner dispatches a REAL per-trade event
+      // ("TRADE N EXECUTED — EA MIGRATE ✓") after each broker confirmation,
+      // and those arrive via onExecutionResult below, keeping this popup,
+      // the top toast and the native floating bubble perfectly in sync.
       const stream: LogLine[] = [
         { text: `NEW SIGNAL: ${p.symbol} ${direction}`, kind: "cmd" },
         { text: `OPEN ${direction}: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
         p.stopLoss != null && p.takeProfit != null
           ? { text: `TP: ${p.takeProfit} | SL: ${p.stopLoss}`, kind: "info" }
           : { text: "SL/TP attached by the trade plan", kind: "info" },
-        { text: `SENDING ${p.max_trades} TRADES TO MT5...`, kind: "info" },
-        { text: `TRADE 1 OPENED — EA MIGRATE ✓`, kind: "last" },
-        { text: `${p.max_trades}/${p.max_trades} TRADES OPENED ON MT5 — EA MIGRATE`, kind: "last" },
+        { text: `EXECUTING ${p.max_trades} TRADE${p.max_trades === 1 ? "" : "S"} ONE BY ONE...`, kind: "info" },
       ];
       setState("executed");
       setLogs([]);
@@ -278,10 +280,17 @@ export default function DraggableBotPopup() {
     const onExecutionResult = (event: Event) => {
       const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
       setLogs((prev) => {
-        const base = prev.filter((line) => line.kind !== "last");
-        return [...base, { text: result.ok ? `✔ ${result.message.toUpperCase()}` : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? "last" : "info" }];
+        // The log BUILDS UP: each executed trade stays as its own line
+        // ("TRADE 1 EXECUTED", then "TRADE 2 EXECUTED", …) — only the bold
+        // "latest" highlight moves. The native bubble mirrors the newest line.
+        const demoted = prev.map((line) => (line.kind === "last" ? { ...line, kind: "ok" as const } : line));
+        return [...demoted, { text: result.ok ? result.message.toUpperCase() : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? ("last" as const) : ("info" as const) }];
       });
-      speakBot(result.ok ? `Trade opened. EA Migrate. ${result.message}` : result.message);
+      // Speak only milestone lines (per-trade fills + the final summary),
+      // not every refusal — the voice would otherwise stack up.
+      if (/TRADE \d+ EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
+        speakBot(result.ok ? result.message : result.message);
+      }
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);
     // Compatibility no-op — visibility is store-driven now.

@@ -235,52 +235,78 @@ function AppScanner() {
         return payload;
       };
 
-      // Fire the FIRST order alone — one clear error beats N identical
-      // failures (and 20 simultaneous broker logins). Only when the first
-      // order reaches the bridge do the rest fire in parallel.
-      let firstPayload: Record<string, unknown>;
-      try {
-        firstPayload = await executeOnce();
-      } catch (error) {
-        // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
-        // market without SL/TP — a filled market order beats a refused one.
-        const raw = error instanceof Error ? error.message : "";
-        if (useStops && /invalid stops|10016/i.test(raw)) {
-          useStops = false;
-          stopLossValue = 0;
-          takeProfitValue = 0;
-          try {
-            firstPayload = await executeOnce();
-          } catch (retryError) {
-            const message =
-              retryError instanceof TypeError
+      // SEQUENTIAL EXECUTION — trades fire ONE BY ONE, never in parallel.
+      // Each order is announced on the event bus ("TRADE N EXECUTED") the
+      // moment its broker confirmation arrives, so the top toast and the
+      // floating bot popup narrate the run together, in order.
+      let opened = 0;
+      let firstPayload: Record<string, unknown> | null = null;
+      let stopRetried = false;
+      let lastError: string | null = null;
+      for (let index = 1; index <= total; index += 1) {
+        try {
+          const payload = await executeOnce();
+          opened += 1;
+          if (index === 1) firstPayload = payload;
+          // Per-trade announcement — toast + popup + native bubble all update.
+          const perTrade = `TRADE ${opened} EXECUTED — EA MIGRATE ✓`;
+          window.dispatchEvent(
+            new CustomEvent("eamp:execution-result", { detail: { ok: true, message: perTrade } }),
+          );
+          // Give the broker a beat between orders — avoids rate-limit
+          // rejections on fast consecutive market orders.
+          if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+        } catch (error) {
+          // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
+          // market without SL/TP — a filled market order beats a refused one.
+          const raw = error instanceof Error ? error.message : "";
+          if (useStops && !stopRetried && /invalid stops|10016/i.test(raw)) {
+            stopRetried = true;
+            useStops = false;
+            stopLossValue = 0;
+            takeProfitValue = 0;
+            try {
+              const payload = await executeOnce();
+              opened += 1;
+              if (index === 1) firstPayload = payload;
+              window.dispatchEvent(
+                new CustomEvent("eamp:execution-result", {
+                  detail: { ok: true, message: `TRADE ${opened} EXECUTED — EA MIGRATE ✓` },
+                }),
+              );
+              if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+              continue;
+            } catch {
+              /* stop-retry also failed — the opened===0 abort below reports it */
+            }
+          }
+          if (opened === 0) {
+            // The FIRST trade is the probe — if it never fills, abort with
+            // one clear error instead of firing N identical failures.
+            lastError =
+              error instanceof TypeError
                 ? "Could not reach the execution bridge — check your connection and try again."
-                : (retryError instanceof Error ? retryError.message : "Execution failed.");
+                : (error instanceof Error ? error.message : "Execution failed.");
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
-                detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
+                detail: { ok: false, message: `${lastError.toUpperCase()} — CONNECTION CLOSED` },
               }),
             );
-            return { ok: false, message };
+            return { ok: false, message: lastError };
           }
-        } else {
-          const message =
-            error instanceof TypeError
-              ? "Could not reach the execution bridge — check your connection and try again."
-              : (error instanceof Error ? error.message : "Execution failed.");
+          // A later trade refused: announce it, keep executing the rest.
+          const refused = error instanceof Error ? error.message : "Order refused.";
           window.dispatchEvent(
             new CustomEvent("eamp:execution-result", {
-              detail: { ok: false, message: `${message.toUpperCase()} — CONNECTION CLOSED` },
+              detail: { ok: false, message: `TRADE ${index} REFUSED — ${refused.toUpperCase()}` },
             }),
           );
-          return { ok: false, message };
         }
       }
-      const rest =
-        total > 1
-          ? await Promise.allSettled(Array.from({ length: total - 1 }, () => executeOnce()))
-          : [];
-      const failed = rest.filter((item) => item.status === "rejected").length;
+      if (opened === 0 || !firstPayload) {
+        return { ok: false, message: lastError ?? "No trades were executed." };
+      }
+      const failed = total - opened;
 
       const rawTicket =
         firstPayload["order"] ?? firstPayload["ticket"] ?? firstPayload["deal"] ?? firstPayload["order_id"] ?? firstPayload["id"];

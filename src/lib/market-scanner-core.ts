@@ -31,6 +31,9 @@ export type ScannerAnalysis = {
   timeframe: string;
   bias: "BULLISH" | "BEARISH" | "NEUTRAL";
   signal: "BUY" | "SELL";
+  /** How trustworthy the setup is: WAIT blocks execution entirely, WEAK is
+   *  a low-confluence edge, STRONG needs ≥5/7 checks + candle agreement. */
+  strength: "WAIT" | "WEAK" | "MODERATE" | "STRONG";
   confidence: number;
   entry: number;
   stopLoss: number;
@@ -230,6 +233,28 @@ async function runScannerAnalysis(
   const achieved = Math.max(bullScore, bearScore);
   const confidenceBase = Math.round(Math.min(95, 38 + achieved * 9));
   const confidence = conditionalSetup ? Math.min(52, confidenceBase) : confidenceBase;
+
+  // ── Signal strength: the last defence against "signal everywhere" noise.
+  // A STRONG call needs a dominant confluence (≥5/7 checks) AND the recent
+  // candles actually travelling that way; an unclear/counter-trending tape
+  // is graded WEAK, and a muddle (≤2 checks or <45% agreement) returns WAIT —
+  // the scanner refuses to fire a plan it does not believe in.
+  const recentCandles = candles.slice(-10);
+  const agreeing = recentCandles.filter((candle) =>
+    bullishLead ? candle.close >= candle.open : candle.close <= candle.open,
+  ).length;
+  const agreement = recentCandles.length > 0 ? agreeing / recentCandles.length : 0;
+  const strength: ScannerAnalysis["strength"] =
+    achieved <= 2 || agreement < 0.45
+      ? "WAIT"
+      : achieved >= 5 && agreement >= 0.6 && !synthesized
+        ? "STRONG"
+        : achieved >= 4 && agreement >= 0.5
+          ? "MODERATE"
+          : "WEAK";
+  // Estimated-price symbols can never claim STRONG — the levels are simulated.
+  const finalStrength: ScannerAnalysis["strength"] =
+    strength === "STRONG" && synthesized ? "MODERATE" : strength;
   const entry = signal === "BUY" ? ask : bid;
 
   // Stops: spread-aware. The spread is a real cost — the SL must clear it
@@ -280,6 +305,15 @@ async function runScannerAnalysis(
   reasons.push(
     `Plan: ${signal} at entry ${fmtPrice(entry)}, stop ${fmtPrice(stopLoss)}, target ${fmtPrice(takeProfit)} at 2R — the stop already covers the spread.`,
   );
+  reasons.push(
+    finalStrength === "WAIT"
+      ? `Signal strength: WAIT — only ${achieved}/7 checks agree and the last 10 candles move ${Math.round(agreement * 100)}% with the call. The scanner will not execute this setup; re-scan later or wait for a cleaner trend.`
+      : finalStrength === "WEAK"
+        ? `Signal strength: WEAK — ${achieved}/7 checks agree (${Math.round(agreement * 100)}% candle agreement). Trade small if at all.`
+        : finalStrength === "MODERATE"
+          ? `Signal strength: MODERATE — ${achieved}/7 checks agree with ${Math.round(agreement * 100)}% candle agreement.`
+          : `Signal strength: STRONG — ${achieved}/7 checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call.`,
+  );
 
   const fmt = (value: number) =>
     value.toFixed(Math.abs(value) >= 1000 ? 2 : Math.abs(value) >= 10 ? 3 : 5);
@@ -315,7 +349,7 @@ async function runScannerAnalysis(
     },
     {
       label: "Signal",
-      value: `${signal}${conditionalSetup ? " · CONDITIONAL" : ""}`,
+      value: `${signal} · ${finalStrength}${conditionalSetup ? " · CONDITIONAL" : ""}`,
       bullish: signal === "BUY",
     },
   ];
@@ -327,6 +361,7 @@ async function runScannerAnalysis(
       timeframe,
       bias,
       signal,
+      strength: finalStrength,
       confidence,
       entry: roundToTick(entry, entry),
       stopLoss: roundToTick(stopLoss, entry),
