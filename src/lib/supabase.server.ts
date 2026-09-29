@@ -165,10 +165,15 @@ export const issueLicenseKeySecure = createServerFn({ method: "POST" })
       };
       if (data.eaName) row["ea_name"] = data.eaName;
       if (data.expiry) row["expiry"] = data.expiry;
-      let result = await db.from("license_keys").upsert(row, { onConflict: "key" });
-      if (result.error?.code === "42703") {
+      // The live table's primary key is `id` (uuid) — `key` has NO unique
+      // constraint, so upsert(onConflict: "key") always failed and the row
+      // never landed. INSERT plainly; upsert only on a real duplicate.
+      let result = await db.from("license_keys").insert(row);
+      if (result.error?.code === "23505") {
+        result = await db.from("license_keys").upsert(row);
+      } else if (result.error?.code === "42703") {
         // Legacy table without the optional columns — core row only.
-        result = await db.from("license_keys").upsert({ key: row["key"], email: row["email"] });
+        result = await db.from("license_keys").insert({ key: row["key"], email: row["email"] });
       }
       return result.error ? { ok: false, error: result.error.message } : { ok: true };
     },

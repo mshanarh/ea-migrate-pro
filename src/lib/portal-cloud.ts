@@ -191,3 +191,73 @@ export async function portalDeleteLicenseKey(key: string): Promise<{ enabled: bo
   if (error) return { enabled: true, ok: false, error: error.message };
   return { enabled: true, ok: true };
 }
+
+/**
+ * Push ONE newly-created license into the mentor's cloud portal record
+ * (portal_accounts). Without this, keys created on the portal lived only in
+ * that device's localStorage: the app on any other surface (the Android
+ * wrapper!) activated against license_keys + portal_accounts and reported
+ * "That license key was not found" even for the owner's own email.
+ * Union-merges by id so re-pushing never duplicates or deletes other keys.
+ */
+export async function portalUpsertLicense(
+  mentorEmail: string,
+  license: Account["licenses"][number],
+): Promise<{ enabled: boolean; ok: boolean; error?: string }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false };
+  const mentor = mentorEmail.trim().toLowerCase();
+  try {
+    const { data: existing, error: readError } = await dbClient
+      .from("portal_accounts")
+      .select("data")
+      .eq("email", mentor)
+      .maybeSingle();
+    if (readError) return { enabled: true, ok: false, error: readError.message };
+    if (!existing) return { enabled: true, ok: false, error: "Mentor has no cloud record yet — register once first." };
+    const account =
+      typeof existing.data === "string" ? (JSON.parse(existing.data) as Account) : (existing.data as Account);
+    const licensesById = new Map(account.licenses.map((item) => [item.id, item]));
+    licensesById.set(license.id, license);
+    const merged: Account = { ...account, licenses: Array.from(licensesById.values()) };
+    const { error: writeError } = await dbClient
+      .from("portal_accounts")
+      .upsert({ email: mentor, data: JSON.stringify(merged) }, { onConflict: "email" });
+    if (writeError) return { enabled: true, ok: false, error: writeError.message };
+    return { enabled: true, ok: true };
+  } catch (error) {
+    return { enabled: true, ok: false, error: error instanceof Error ? error.message : "Cloud push failed" };
+  }
+}
+
+/**
+ * Remove ONE license (by id) from the mentor's cloud portal record, so a
+ * deleted key does not resurrect on the next device restore.
+ */
+export async function portalRemoveLicense(
+  mentorEmail: string,
+  licenseId: string,
+): Promise<{ enabled: boolean; ok: boolean; error?: string }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false };
+  const mentor = mentorEmail.trim().toLowerCase();
+  try {
+    const { data: existing, error: readError } = await dbClient
+      .from("portal_accounts")
+      .select("data")
+      .eq("email", mentor)
+      .maybeSingle();
+    if (readError) return { enabled: true, ok: false, error: readError.message };
+    if (!existing) return { enabled: true, ok: true };
+    const account =
+      typeof existing.data === "string" ? (JSON.parse(existing.data) as Account) : (existing.data as Account);
+    const merged: Account = { ...account, licenses: account.licenses.filter((item) => item.id !== licenseId) };
+    const { error: writeError } = await dbClient
+      .from("portal_accounts")
+      .upsert({ email: mentor, data: JSON.stringify(merged) }, { onConflict: "email" });
+    if (writeError) return { enabled: true, ok: false, error: writeError.message };
+    return { enabled: true, ok: true };
+  } catch (error) {
+    return { enabled: true, ok: false, error: error instanceof Error ? error.message : "Cloud remove failed" };
+  }
+}

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus, Trash2 } from "lucide-rea
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
-import { portalDeleteLicenseKey } from "@/lib/portal-cloud";
+import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
@@ -49,6 +49,8 @@ function Licenses() {
   const [eaId, setEaId] = useState("");
   const [expiry, setExpiry] = useState("Lifetime");
   const [formError, setFormError] = useState("");
+  // Two-tap delete confirmation (Android WebView has no window.confirm).
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
   if (!account) return null;
 
   const used = account.licenses.length;
@@ -86,6 +88,17 @@ function Licenses() {
     if (result2.error) {
       setFormError(result2.error);
       return;
+    }
+    // Push the new key to the CLOUD portal record immediately — a key that
+    // lives only in this device's localStorage is invisible to the app
+    // ("That license key was not found" for the owner's own email).
+    const created = result2.license;
+    if (created) {
+      void portalUpsertLicense(account.email, created).then((push) => {
+        if (push.enabled && !push.ok) {
+          toast.error(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
+        }
+      });
     }
     // Email the key immediately — awaited so "Emailed to client" is real.
     // The license_approved flow also saves the key into the Supabase
@@ -140,14 +153,27 @@ function Licenses() {
    * the key working forever — this makes delete mean delete.
    */
   const handleDeleteKey = async (licenseId: string, key: string) => {
-    if (!window.confirm(`Delete license key ${maskKey(key)}? It will stop working immediately and cannot be recovered.`)) return;
-    removeLicense(account.id, licenseId);
-    const cloud = await portalDeleteLicenseKey(key);
-    if (cloud.enabled && !cloud.ok) {
-      toast.error(`The key was removed here, but the cloud delete failed: ${cloud.error ?? "unknown error"}. The key may still activate — try again.`);
+    // window.confirm is silently suppressed inside the Android WebView — a
+    // confirm() dialog here made delete look dead (nothing happened).
+    // In-app two-tap confirmation instead: first tap arms, second tap within
+    // 4s deletes. Works identically in every browser and the wrapper.
+    if (armedDelete !== licenseId) {
+      setArmedDelete(licenseId);
+      toast.info("Tap delete again to confirm", { description: `${maskKey(key)} will stop working immediately.`, duration: 4000 });
+      window.setTimeout(() => setArmedDelete((current) => (current === licenseId ? null : current)), 4000);
       return;
     }
-    toast.success("License key deleted everywhere");
+    setArmedDelete(null);
+    removeLicense(account.id, licenseId);
+    // Delete BOTH copies: the mentor's cloud portal record (or the key
+    // resurrects on restore) and the license_keys row the app activates
+    // against. Best-effort per target with clear failure messages.
+    const [record, row] = await Promise.allSettled([portalRemoveLicense(account.email, licenseId), portalDeleteLicenseKey(key)]);
+    const recordOk = record.status === "fulfilled" && (!record.value.enabled || record.value.ok);
+    const rowOk = row.status === "fulfilled" && (!row.value.enabled || row.value.ok);
+    if (!recordOk) toast.error(`Cloud record delete failed: ${record.status === "fulfilled" ? record.value.error : "network error"} — the key may come back on restore.`);
+    if (!rowOk) toast.error(`Cloud key delete failed: ${row.status === "fulfilled" ? row.value.error : "network error"} — the key may still activate.`);
+    if (recordOk && rowOk) toast.success("License key deleted everywhere");
   };
 
   const copyKey = async () => {
@@ -395,7 +421,11 @@ function Licenses() {
                   type="button"
                   aria-label={`Delete license key ${maskKey(license.key)}`}
                   onClick={() => void handleDeleteKey(license.id, license.key)}
-                  className="flex size-9 items-center justify-center rounded-full border border-destructive/30 text-destructive/80 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                  className={`flex size-9 items-center justify-center rounded-full border transition-colors ${
+                    armedDelete === license.id
+                      ? "border-destructive bg-destructive text-white"
+                      : "border-destructive/30 text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
+                  }`}
                 >
                   <Trash2 className="size-4" />
                 </button>

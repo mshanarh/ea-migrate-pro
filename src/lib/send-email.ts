@@ -150,23 +150,30 @@ async function saveLicenseKey(input: {
     const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    // The live table's key column is `key` (legacy schema); optional columns
-    // (ea_name/expiry) are only sent when present so legacy tables work too.
+    // The LIVE table's primary key is `id` (uuid default) — `key` is NOT a
+    // unique constraint, so upsert(onConflict: "key") fails with "there is
+    // no unique or exclusion constraint" and the key row never landed (the
+    // app then said "license key was not found" for the owner's own key).
+    // INSERT plainly first; only retry as an upsert when a previous insert
+    // hit a duplicate-key error (42P10 = no unique constraint is NOT it).
     const base: Record<string, unknown> = { key: input.licenseKey, email: input.email };
-    const extras: Record<string, unknown> = {};
-    if (input.eaName) extras["ea_name"] = input.eaName;
-    if (input.expiry) extras["expiry"] = input.expiry;
-
-    let result = await client.from("license_keys").upsert(
-      Object.keys(extras).length > 0 ? { ...base, ...extras } : base,
-      Object.keys(extras).length > 0 ? { onConflict: "key" } : undefined,
-    );
-    if (result.error?.code === "42703") {
-      // Legacy table without the optional columns — write the core row only.
+    if (input.eaName) base["ea_name"] = input.eaName;
+    if (input.expiry) base["expiry"] = input.expiry;
+    let result = await client.from("license_keys").insert(base);
+    if (result.error?.code === "23505") {
+      // Genuine duplicate key value — the row exists; refresh it via upsert
+      // on the key column ONLY if the table actually has that constraint.
       result = await client.from("license_keys").upsert(base);
+    } else if (result.error?.code === "42P10") {
+      // Table without a unique constraint on key: plain insert with the
+      // core columns only.
+      result = await client.from("license_keys").insert({ key: input.licenseKey, email: input.email });
+    } else if (result.error?.code === "42703") {
+      // Legacy table without the ea_name/expiry columns — core row only.
+      result = await client.from("license_keys").insert({ key: input.licenseKey, email: input.email });
     }
     if (result.error) {
-      console.error("[send-email] license_keys upsert failed:", result.error.message);
+      console.error("[send-email] license_keys save failed:", result.error.code, result.error.message);
       return false;
     }
     return true;

@@ -12,6 +12,8 @@ import android.provider.Settings;
 import android.util.Rational;
 import android.view.View;
 import android.webkit.JavascriptInterface;
+import android.webkit.JsResult;
+import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -40,8 +42,10 @@ import android.webkit.ConsoleMessage;
  */
 public class MainActivity extends Activity {
     private static final String START_URL = "https://eamigratepro.vercel.app/app";
+    private static final int FILE_CHOOSER_REQUEST = 4242;
     private WebView web;
     private boolean autoPip = false;
+    private ValueCallback<Uri[]> fileChooserCallback;
     /** Bot image remembered while the overlay permission was missing — launched on return. */
     private String pendingBubbleImage;
 
@@ -95,6 +99,49 @@ public class MainActivity extends Activity {
                     android.util.Log.e("EAMIGRATE", "JS: " + message.message()
                             + " @" + message.sourceLocation());
                 }
+                return true;
+            }
+
+            /**
+             * File chooser — WITHOUT this the scanner's "attach screenshot"
+             * button did nothing on the phone: the HTML <input type=file>
+             * never opened Android's picker. Returning a callback lets the
+             * page receive the picked image(s).
+             */
+            @Override
+            public boolean onShowFileChooser(WebView view,
+                    ValueCallback<Uri[]> filePathCallback,
+                    FileChooserParams fileChooserParams) {
+                try {
+                    fileChooserCallback = filePathCallback;
+                    Intent picker = fileChooserParams.createIntent();
+                    picker.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                    startActivityForResult(picker, FILE_CHOOSER_REQUEST);
+                } catch (Exception e) {
+                    fileChooserCallback = null;
+                    return false;
+                }
+                return true;
+            }
+
+            /** confirm()/alert() from the page — suppressed by default, so
+             *  the portal's delete button appeared completely dead. */
+            @Override
+            public boolean onJsConfirm(WebView view, String url, String message, JsResult result) {
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setMessage(message)
+                        .setPositiveButton("OK", (d, w) -> result.confirm())
+                        .setNegativeButton("Cancel", (d, w) -> result.cancel())
+                        .show();
+                return true;
+            }
+
+            @Override
+            public boolean onJsAlert(WebView view, String url, String message, JsResult result) {
+                new android.app.AlertDialog.Builder(MainActivity.this)
+                        .setMessage(message)
+                        .setPositiveButton("OK", (d, w) -> result.confirm())
+                        .show();
                 return true;
             }
         });
@@ -278,6 +325,21 @@ public class MainActivity extends Activity {
         super.onPictureInPictureModeChanged(isInPipMode, newConfig);
         web.evaluateJavascript(
             "window.dispatchEvent(new CustomEvent('eamigrate:pip',{detail:{active:" + isInPipMode + "}}))", null);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        if (requestCode == FILE_CHOOSER_REQUEST && fileChooserCallback != null) {
+            // Deliver the picked file(s) back to the page (null = cancelled).
+            Uri[] results = null;
+            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
+                results = new Uri[] { data.getData() };
+            }
+            fileChooserCallback.onReceiveValue(results);
+            fileChooserCallback = null;
+            return;
+        }
+        super.onActivityResult(requestCode, resultCode, data);
     }
 
     @Override

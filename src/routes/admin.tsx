@@ -43,7 +43,7 @@ import {
   portalSetPayment,
 } from "@/lib/portal-cloud";
 import { supabaseConfigured } from "@/lib/supabase";
-import { portalCloudConfigured, portalDeleteLicenseKey } from "@/lib/portal-cloud";
+import { portalCloudConfigured, portalDeleteLicenseKey, portalRemoveLicense } from "@/lib/portal-cloud";
 
 /**
  * Server functions exist in dev but 404 on the static production build —
@@ -275,17 +275,30 @@ function AdminConsole() {
     const after = storeRef.current.accounts.find((a) => a.id === selected.id);
     if (after) pushLicenses(selected.email, after.licenses);
   };
+  const [armedDelete, setArmedDelete] = useState<string | null>(null);
   const handleRemoveLicense = (license: Account["licenses"][number]) => {
     if (!selected) return;
-    if (!window.confirm(`Delete license key ${license.key.slice(0, 3)}••••-••${license.key.slice(-2)}? It will stop working immediately.`)) return;
+    // Two-tap confirm — window.confirm is suppressed in the Android WebView,
+    // which made the delete button look dead on the phone.
+    if (armedDelete !== license.id) {
+      setArmedDelete(license.id);
+      toast.info("Tap delete again to confirm", { duration: 4000 });
+      window.setTimeout(() => setArmedDelete((current) => (current === license.id ? null : current)), 4000);
+      return;
+    }
+    setArmedDelete(null);
     removeLicense(selected.id, license.id);
     const after = storeRef.current.accounts.find((a) => a.id === selected.id);
     if (after) pushLicenses(selected.email, after.licenses);
-    // ALSO delete the license_keys row — the app activates against that
-    // table, so leaving it behind made deleted keys work forever.
-    void portalDeleteLicenseKey(license.key)
-      .then((result) => {
-        if (result.enabled && !result.ok) toast.error(`Cloud key delete failed: ${result.error ?? "unknown error"} — the key may still activate.`);
+    // ALSO delete both cloud copies: the license_keys row (what the app
+    // activates against) and the mentor's portal record (or the key
+    // resurrects on the next restore).
+    void Promise.allSettled([portalDeleteLicenseKey(license.key), portalRemoveLicense(selected.email, license.id)])
+      .then(([row, record]) => {
+        if (row.status === "fulfilled" && row.value.enabled && !row.value.ok)
+          toast.error(`Cloud key delete failed: ${row.value.error ?? "unknown error"} — the key may still activate.`);
+        if (record.status === "fulfilled" && record.value.enabled && !record.value.ok)
+          toast.error(`Cloud record delete failed: ${record.value.error ?? "unknown error"}.`);
       })
       .catch(() => toast.error("Cloud key delete could not be reached — the key may still activate."));
   };
@@ -638,9 +651,13 @@ function AdminConsole() {
                               type="button"
                               onClick={() => handleRemoveLicense(license)}
                               aria-label="Remove license"
-                              className="text-muted-foreground hover:text-destructive"
+                              className={
+                                armedDelete === license.id
+                                  ? "font-bold text-destructive"
+                                  : "text-muted-foreground hover:text-destructive"
+                              }
                             >
-                              <Trash2 className="size-4" />
+                              Delete
                             </button>
                           </div>
                         </li>
