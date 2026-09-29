@@ -29,6 +29,9 @@ function AppAccess() {
   // and binds this one (admins included — everyone gets the same flow).
   const [reactivateEmail, setReactivateEmail] = useState<string | null>(null);
   const [reactivating, setReactivating] = useState(false);
+  // Rejection reason shown in the red banner on the reactivation card
+  // ("this is not your email" / "not paid" / SQL not run …).
+  const [reactivateError, setReactivateError] = useState<string | null>(null);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -113,10 +116,14 @@ function AppAccess() {
     const clean = reactivateEmail;
     if (!clean || reactivating) return;
     setReactivating(true);
+    setReactivateError(null);
     const result = await reactivateEmailToDevice(clean, getDeviceId());
     setReactivating(false);
     if (!result.ok) {
-      toast.error(result.error ?? "Reactivation failed — try again.");
+      // The exact rejection — big, red, impossible to miss.
+      const reason = result.error ?? "Reactivation failed — try again.";
+      setReactivateError(reason);
+      toast.error(reason);
       return;
     }
     toast.success("Device reactivated — welcome back!");
@@ -158,7 +165,7 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {reactivateEmail ? <ReactivateView email={reactivateEmail} onConfirm={() => void confirmReactivate()} onCancel={() => setReactivateEmail(null)} busy={reactivating} /> :
+      {reactivateEmail ? <ReactivateView email={reactivateEmail} onConfirm={() => void confirmReactivate()} onCancel={() => setReactivateEmail(null)} busy={reactivating} error={reactivateError} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} onEnterKey={() => {
         const clean = email.trim().toLowerCase();
         if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
@@ -175,12 +182,18 @@ function AppAccess() {
  * email is bound to another device. One tap releases the old device and
  * signs this one in — subscription, license keys and payment untouched.
  */
-function ReactivateView({ email, onConfirm, onCancel, busy }: { email: string; onConfirm: () => void; onCancel: () => void; busy: boolean }) {
+function ReactivateView({ email, onConfirm, onCancel, busy, error }: { email: string; onConfirm: () => void; onCancel: () => void; busy: boolean; error: string | null }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Email already used</h1>
+    {error && (
+      <div role="alert" className="mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left">
+        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950" aria-hidden="true">!</span>
+        <p className="text-sm font-semibold leading-6 text-red-200">{error}</p>
+      </div>
+    )}
     <p className="mt-3 text-base leading-7 text-[#8a9298]">
       <span className="font-semibold text-[#55c7ff]">{email}</span> is activated on another device.
       Reactivate to log in on this one — the previous device is signed out

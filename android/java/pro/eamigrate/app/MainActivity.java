@@ -95,9 +95,10 @@ public class MainActivity extends Activity {
             public boolean onConsoleMessage(ConsoleMessage message) {
                 // Surface page errors to logcat so a black screen is never
                 // undiagnosable: adb logcat -s EAMIGRATE
+                // NOTE: message.sourceLocation() does not exist in newer
+                // build-tools (it broke the CI build) — messageLevel() only.
                 if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
-                    android.util.Log.e("EAMIGRATE", "JS: " + message.message()
-                            + " @" + message.sourceLocation());
+                    android.util.Log.e("EAMIGRATE", "JS: " + message.message());
                 }
                 return true;
             }

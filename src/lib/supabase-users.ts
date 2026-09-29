@@ -134,6 +134,40 @@ export async function setUserFlagAnon(
   return error ? { ok: false, error: error.message } : { ok: true };
 }
 
+/**
+ * Reactivation permission — an admin unlocks the mentor's Re-activate
+ * Client tool per-mentor (users.reactivation_enabled). Locked by default:
+ * a mentor without the flag cannot release ANY device.
+ */
+export async function getReactivationEnabled(email: string): Promise<boolean> {
+  const dbClient = db();
+  if (!dbClient) return false;
+  const { data, error } = await dbClient
+    .from("users")
+    .select("reactivation_enabled")
+    .eq("email", clean(email))
+    .maybeSingle();
+  if (error) {
+    if (error.code !== "42703") console.warn("[reactivation] flag read failed:", error.message);
+    return false; // column missing (SQL not run) = locked
+  }
+  return (data as { reactivation_enabled?: boolean } | null)?.reactivation_enabled === true;
+}
+
+/** Admin toggle for the 🔒 next to Approve in the console. */
+export async function setReactivationEnabled(email: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
+  const dbClient = db();
+  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+  const { error } = await dbClient
+    .from("users")
+    .update({ reactivation_enabled: enabled })
+    .eq("email", clean(email));
+  if (error?.code === "42703") {
+    return { ok: false, error: "Run supabase/fix-license-keys-columns.sql first (reactivation_enabled column missing)." };
+  }
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
+
 /** Count current admins straight from the browser (for owner bootstrap). */
 export async function countAdminsAnon(): Promise<number> {
   const dbClient = db();
@@ -185,20 +219,42 @@ export async function checkDeviceBinding(email: string, localDeviceId: string): 
 }
 
 /**
- * REACTIVATE: release the previously bound device and bind THIS one.
- * The old device simply loses the binding — the email's subscription,
- * license keys and payment state are untouched (mirrors the mentor
- * portal's Re-activate Client semantics, but self-service at sign-in).
+ * REACTIVATE (self-service at sign-in) — enforced against the CLOUD row:
+ *   1. The email must be PAID (is_paid) or an admin — unpaid emails never
+ *      reactivate, and a paid email can never be used to release a
+ *      DIFFERENT email's device.
+ *   2. Reactivation works ONLY for the email the user actually registered
+ *      with — the row itself is the record, so this is inherent.
+ * Releases the previously bound device and binds this one. Subscription,
+ * license keys and payment state are untouched.
  */
 export async function reactivateEmailToDevice(email: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+  const address = clean(email);
+  const { data, error: readError } = await dbClient
+    .from("users")
+    .select("is_paid, is_admin")
+    .eq("email", address)
+    .maybeSingle();
+  if (readError) {
+    if (readError.code === "42703") return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    return { ok: false, error: readError.message };
+  }
+  if (!data) {
+    // No row = this email never registered. It is NOT the user's email.
+    return { ok: false, error: "Not reactivated — this is not your email. Reactivation works only for the email you registered with." };
+  }
+  const row = data as { is_paid?: boolean; is_admin?: boolean };
+  if (!row.is_paid && !row.is_admin) {
+    return { ok: false, error: "Not reactivated — this email has not paid. Reactivation works only for paid users." };
+  }
   const { error } = await dbClient
     .from("users")
-    .update({ device_email: clean(email), device_id: localDeviceId })
-    .eq("email", clean(email));
+    .update({ device_email: address, device_id: localDeviceId })
+    .eq("email", address);
   if (error?.code === "42703") {
-    return { ok: false, error: "Reactivation is not enabled yet — run supabase/device-reactivation.sql in the Supabase SQL Editor." };
+    return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
   }
   return error ? { ok: false, error: error.message } : { ok: true };
 }

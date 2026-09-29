@@ -5,6 +5,8 @@ import {
   CheckCircle2,
   ChevronRight,
   CreditCard,
+  Lock,
+  LockOpen,
   LogOut,
   Plus,
   ShieldCheck,
@@ -43,6 +45,7 @@ import {
   portalSetPayment,
 } from "@/lib/portal-cloud";
 import { supabaseConfigured } from "@/lib/supabase";
+import { getReactivationEnabled, setReactivationEnabled } from "@/lib/supabase-users";
 import { portalCloudConfigured, portalDeleteLicenseKey, portalRemoveLicense } from "@/lib/portal-cloud";
 
 /**
@@ -276,6 +279,22 @@ function AdminConsole() {
     if (after) pushLicenses(selected.email, after.licenses);
   };
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  // Per-mentor reactivation permission (🔒 next to Approve). Loaded from the
+  // cloud row whenever a different mentor is selected.
+  const [reactivationUnlocked, setReactivationUnlocked] = useState(false);
+  useEffect(() => {
+    if (!selected) {
+      setReactivationUnlocked(false);
+      return;
+    }
+    let cancelled = false;
+    void getReactivationEnabled(selected.email).then((enabled) => {
+      if (!cancelled) setReactivationUnlocked(enabled);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.email]);
   const handleRemoveLicense = (license: Account["licenses"][number]) => {
     if (!selected) return;
     // Two-tap confirm — window.confirm is suppressed in the Android WebView,
@@ -530,6 +549,38 @@ function AdminConsole() {
 
                 <div className="mt-5 space-y-2">
                   <p className="text-sm text-muted-foreground">Portal status</p>
+                  {/* REACTIVATION UNLOCK — the 🔒 next to Approve. Only when
+                      the admin unlocks it can this mentor open their
+                      Re-activate Client tool. */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = !reactivationUnlocked;
+                      setReactivationUnlocked(next);
+                      void setReactivationEnabled(selected.email, next)
+                        .then((result) => {
+                          if (result.ok) {
+                            toast.success(next ? `Reactivation UNLOCKED for ${selected.email}` : `Reactivation LOCKED for ${selected.email}`);
+                          } else {
+                            setReactivationUnlocked(!next);
+                            toast.error(result.error ?? "Could not update the reactivation flag.");
+                          }
+                        })
+                        .catch(() => {
+                          setReactivationUnlocked(!next);
+                          toast.error("Could not reach the database — try again.");
+                        });
+                    }}
+                    className={`flex h-11 w-full items-center justify-center gap-2 rounded-full px-4 text-sm font-bold ${
+                      reactivationUnlocked
+                        ? "bg-emerald-400/15 text-emerald-300 border border-emerald-400/40"
+                        : "bg-secondary text-muted-foreground border border-border/60"
+                    }`}
+                    aria-pressed={reactivationUnlocked}
+                  >
+                    {reactivationUnlocked ? <LockOpen className="size-4" /> : <Lock className="size-4" />}
+                    {reactivationUnlocked ? "Reactivation unlocked" : "Reactivation locked"}
+                  </button>
                   {selected.status === "pending" ? (
                     <div className="grid grid-cols-2 gap-2">
                       <button

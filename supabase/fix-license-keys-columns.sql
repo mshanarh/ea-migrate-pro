@@ -15,9 +15,12 @@ alter table public.license_keys add column if not exists expiry  text;
 create unique index if not exists license_keys_key_unique on public.license_keys (key);
 create index if not exists license_keys_email_idx on public.license_keys (email);
 
--- ── 2) users: device binding for sign-in email reactivation ─────────────
+-- ── 2) users: device binding + reactivation permission flag ─────────────
 alter table public.users add column if not exists device_email text;
 alter table public.users add column if not exists device_id    text;
+-- Mentor-controlled reactivation: an admin flips this ON (next to Approve)
+-- to let THAT mentor use their Re-activate Client tool. Off = locked.
+alter table public.users add column if not exists reactivation_enabled boolean not null default false;
 
 -- ── 3) Portal sync tables (columns EXACTLY as the code reads/writes) ────
 create table if not exists public.portal_accounts (
