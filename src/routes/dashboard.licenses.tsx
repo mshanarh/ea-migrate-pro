@@ -1,9 +1,10 @@
 import { useState, type FormEvent, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { addLicense, generateKey, useCurrentAccount } from "@/lib/auth-store";
+import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
+import { portalDeleteLicenseKey } from "@/lib/portal-cloud";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
@@ -131,6 +132,22 @@ function Licenses() {
     setCopied(false);
     resetForm();
     toast.success("License key created");
+  };
+
+  /**
+   * DELETE a key everywhere: the mentor's portal record AND the cloud
+   * license_keys row the app activates against. A local-only removal left
+   * the key working forever — this makes delete mean delete.
+   */
+  const handleDeleteKey = async (licenseId: string, key: string) => {
+    if (!window.confirm(`Delete license key ${maskKey(key)}? It will stop working immediately and cannot be recovered.`)) return;
+    removeLicense(account.id, licenseId);
+    const cloud = await portalDeleteLicenseKey(key);
+    if (cloud.enabled && !cloud.ok) {
+      toast.error(`The key was removed here, but the cloud delete failed: ${cloud.error ?? "unknown error"}. The key may still activate — try again.`);
+      return;
+    }
+    toast.success("License key deleted everywhere");
   };
 
   const copyKey = async () => {
@@ -364,15 +381,25 @@ function Licenses() {
                   {license.clientEmail || account.email}
                 </p>
               </div>
-              <span
-                className={
-                  license.active
-                    ? "rounded-full bg-primary/15 px-3 py-1 text-xs font-semibold uppercase text-primary"
-                    : "rounded-full bg-secondary px-3 py-1 text-xs font-semibold uppercase text-muted-foreground"
-                }
-              >
-                {license.active ? "Active" : "Paused"}
-              </span>
+              <div className="flex shrink-0 items-center gap-2">
+                <span
+                  className={
+                    license.active
+                      ? "rounded-full bg-primary/15 px-3 py-1 text-xs font-semibold uppercase text-primary"
+                      : "rounded-full bg-secondary px-3 py-1 text-xs font-semibold uppercase text-muted-foreground"
+                  }
+                >
+                  {license.active ? "Active" : "Paused"}
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Delete license key ${maskKey(license.key)}`}
+                  onClick={() => void handleDeleteKey(license.id, license.key)}
+                  className="flex size-9 items-center justify-center rounded-full border border-destructive/30 text-destructive/80 transition-colors hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-4" />
+                </button>
+              </div>
             </li>
           ))}
         </ul>

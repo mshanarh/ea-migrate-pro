@@ -188,7 +188,25 @@ export default function DraggableBotPopup() {
   // throws ("non-injected object") — see src/lib/native-bridge.ts.
   useEffect(() => {
     if (running) {
-      callNative("showBubble", eaImage);
+      // "Display over other apps" denied → the native bubble can NEVER float
+      // over MetaTrader. Ask once per session: one tap opens the Android
+      // settings screen for this exact app (wrapper v1.4+), the user flips
+      // the switch, comes back — the next START shows the bubble natively.
+      if (queryNative("canOverlay") === false) {
+        if (!sessionStorage.getItem("eamp.overlay.asked")) {
+          sessionStorage.setItem("eamp.overlay.asked", "1");
+          toast.info("The bot needs permission to float over other apps", {
+            description: "Allow \"Display over other apps\" for EA Migrate — then start the bot again.",
+            duration: 12000,
+            action: {
+              label: "Allow",
+              onClick: () => callNative("requestOverlayPermission"),
+            },
+          });
+        }
+      } else {
+        callNative("showBubble", eaImage);
+      }
     } else {
       callNative("hideBubble");
     }

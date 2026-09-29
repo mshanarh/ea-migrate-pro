@@ -43,7 +43,7 @@ import {
   portalSetPayment,
 } from "@/lib/portal-cloud";
 import { supabaseConfigured } from "@/lib/supabase";
-import { portalCloudConfigured } from "@/lib/portal-cloud";
+import { portalCloudConfigured, portalDeleteLicenseKey } from "@/lib/portal-cloud";
 
 /**
  * Server functions exist in dev but 404 on the static production build —
@@ -277,9 +277,17 @@ function AdminConsole() {
   };
   const handleRemoveLicense = (license: Account["licenses"][number]) => {
     if (!selected) return;
+    if (!window.confirm(`Delete license key ${license.key.slice(0, 3)}••••-••${license.key.slice(-2)}? It will stop working immediately.`)) return;
     removeLicense(selected.id, license.id);
     const after = storeRef.current.accounts.find((a) => a.id === selected.id);
     if (after) pushLicenses(selected.email, after.licenses);
+    // ALSO delete the license_keys row — the app activates against that
+    // table, so leaving it behind made deleted keys work forever.
+    void portalDeleteLicenseKey(license.key)
+      .then((result) => {
+        if (result.enabled && !result.ok) toast.error(`Cloud key delete failed: ${result.error ?? "unknown error"} — the key may still activate.`);
+      })
+      .catch(() => toast.error("Cloud key delete could not be reached — the key may still activate."));
   };
 
   return (

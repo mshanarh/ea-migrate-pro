@@ -333,6 +333,18 @@ async function findLicenseInCloud(
     const extended = data as unknown as { ea_name?: unknown; expiry?: unknown };
     if (typeof extended.ea_name === "string" && extended.ea_name) eaName = extended.ea_name;
     if (typeof extended.expiry === "string" && extended.expiry) expiry = extended.expiry;
+    // The live license_keys table may predate the ea_name/expiry columns, in
+    // which case the EA details are recovered from the mentor's portal
+    // account (the authoritative copy that holds name/symbols/image/video).
+    // This is what turns "Private EA" back into the real robot name.
+    if (!eaName) {
+      const fromPortal = await findLicenseInPortalAccounts(key, email);
+      if (fromPortal?.error) return fromPortal;
+      if (fromPortal?.license) {
+        if (!expiry && fromPortal.license.expiry) expiry = fromPortal.license.expiry;
+        return fromPortal;
+      }
+    }
     const found: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {};
     if (eaName) {
       found.license = { eaName, ...(expiry ? { expiry } : {}) };
@@ -343,6 +355,97 @@ async function findLicenseInCloud(
     return found;
   } catch (lookupError) {
     console.error("[key-activation] cloud lookup error:", lookupError);
+    return null;
+  }
+}
+
+/** Shape of the JSON blob stored in portal_accounts.data (subset we read). */
+type PortalAccountShape = {
+  email?: string;
+  eas?: Array<{ id?: string; name?: string; symbols?: string[]; image?: string; video?: string }>;
+  licenses?: Array<{
+    id?: string;
+    key?: string;
+    eaId?: string;
+    name?: string;
+    robotName?: string;
+    expertAdvisor?: string;
+    clientEmail?: string;
+    symbols?: unknown;
+    active?: boolean;
+    expiresAt?: string;
+  }>;
+};
+
+/**
+ * Portal-account fallback for key activation: scans the mentor portal store
+ * (portal_accounts, readable with the anon key) for a license with this key
+ * that belongs to this email, and returns the EA's live details — name,
+ * symbols, image, video. This is where "Private EA" gets its real name:
+ * keys issued before the license_keys table gained an ea_name column (and
+ * keys whose optional columns were dropped by legacy writes) still carry
+ * every EA detail inside the mentor's account record.
+ */
+async function findLicenseInPortalAccounts(
+  key: string,
+  email: string,
+): Promise<{ error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } | null> {
+  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
+  const anonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
+  if (!url || !anonKey) return null;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const client = createClient(url, anonKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data: rows, error } = await client.from("portal_accounts").select("email, data");
+    if (error) {
+      console.warn("[key-activation] portal_accounts scan failed:", error.message);
+      return null;
+    }
+    for (const row of (rows ?? []) as Array<{ email?: string; data: unknown }>) {
+      let parsed: PortalAccountShape | null = null;
+      try {
+        parsed = typeof row.data === "string" ? (JSON.parse(row.data) as PortalAccountShape) : (row.data as PortalAccountShape);
+      } catch {
+        continue;
+      }
+      if (!parsed) continue;
+      for (const license of parsed.licenses ?? []) {
+        if (typeof license.key !== "string" || license.key.trim().toUpperCase() !== key) continue;
+        const clientEmail = typeof license.clientEmail === "string" ? license.clientEmail.trim().toLowerCase() : "";
+        const accountEmail = (parsed.email ?? row.email ?? "").trim().toLowerCase();
+        // The key must belong to the activating email: either it was issued
+        // TO them (clientEmail) or they are the mentor who holds it.
+        if (clientEmail && clientEmail !== email.trim().toLowerCase()) continue;
+        if (!clientEmail && accountEmail !== email.trim().toLowerCase()) continue;
+        if (license.active === false) return { error: "That license key is paused." };
+        const expiresAt = typeof license.expiresAt === "string" ? license.expiresAt : "";
+        if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return { error: "That license key has expired." };
+        const ea = (parsed.eas ?? []).find((item) => item.id === license.eaId);
+        const eaName = ea?.name || license.robotName || license.expertAdvisor || license.name || "";
+        const symbols = (ea?.symbols ?? (Array.isArray(license.symbols) ? (license.symbols as string[]) : [])).filter(
+          (symbol): symbol is string => typeof symbol === "string",
+        );
+        const result: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {
+          license: {
+            ...(eaName ? { eaName } : {}),
+            ...(expiresAt ? { expiry: expiresAt } : {}),
+          },
+          ea: {
+            ...(ea?.id || license.eaId ? { eaId: (ea?.id ?? license.eaId) as string } : {}),
+            ...(eaName ? { name: eaName } : {}),
+            symbols,
+            ...(ea?.image ? { image: ea.image } : {}),
+            ...(ea?.video ? { video: ea.video } : {}),
+          },
+        };
+        return result;
+      }
+    }
+    return null;
+  } catch (scanError) {
+    console.warn("[key-activation] portal_accounts scan error:", scanError);
     return null;
   }
 }

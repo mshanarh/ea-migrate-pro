@@ -132,6 +132,34 @@ public class MainActivity extends Activity {
             return overlayAllowed();
         }
 
+        /**
+         * Opens the system "Display over other apps" screen for THIS app.
+         * The web app calls it when the user tries to float the bot and the
+         * permission is missing — without it the chat-head bubble can never
+         * appear over MetaTrader or any other app.
+         */
+        @JavascriptInterface
+        public void requestOverlayPermission() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M || overlayAllowed()) return;
+                    try {
+                        Intent intent = new Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:" + getPackageName()));
+                        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        android.widget.Toast.makeText(
+                                MainActivity.this,
+                                "Allow \"Display over other apps\" for EA Migrate, then come back",
+                                android.widget.Toast.LENGTH_LONG).show();
+                    } catch (Exception ignored) {
+                    }
+                }
+            });
+        }
+
         /** Runtime error reporting from the page — visible via adb logcat. */
         @JavascriptInterface
         public void reportError(final String message) {

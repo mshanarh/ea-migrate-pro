@@ -174,3 +174,20 @@ export async function portalSetPayment(email: string, paid: boolean): Promise<{ 
     .upsert({ email: email.trim().toLowerCase(), paid, ...(paid ? { paid_at: new Date().toISOString() } : {}) }, { onConflict: "email" });
   return error ? { enabled: true, ok: false, error: error.message } : { enabled: true, ok: true };
 }
+
+/**
+ * DELETE a license key from the cloud `license_keys` table.
+ *
+ * Removing a key only from the mentor's portal record left the license_keys
+ * row alive — the key kept activating on the app forever. Deleting BOTH is
+ * what makes "delete" mean delete: the row goes from license_keys (the
+ * table the app activates against) and the mentor's portal_accounts record.
+ */
+export async function portalDeleteLicenseKey(key: string): Promise<{ enabled: boolean; ok: boolean; error?: string }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false };
+  const clean = key.trim().toUpperCase();
+  const { error } = await dbClient.from("license_keys").delete().eq("key", clean);
+  if (error) return { enabled: true, ok: false, error: error.message };
+  return { enabled: true, ok: true };
+}

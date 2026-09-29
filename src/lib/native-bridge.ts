@@ -20,6 +20,8 @@ type NativeBridge = {
   enterPip?: () => void;
   setAutoPip?: (on: boolean) => void;
   canOverlay?: () => boolean;
+  /** Opens Android's "Display over other apps" settings for this app (v1.4+ wrappers). */
+  requestOverlayPermission?: () => void;
   showBubble?: (image: string) => void;
   hideBubble?: () => void;
   pushLog?: (line: string) => void;
