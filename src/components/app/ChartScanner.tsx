@@ -5,6 +5,15 @@ import { usePlatform } from "@/lib/platform";
 
 type ScannerTimeframe = "15m" | "1h" | "4h";
 
+const SCANNER_TIMEFRAMES: ScannerTimeframe[] = ["15m", "1h", "4h"];
+
+/** Every timeframe a trader can attach a chart screenshot for. */
+const TIMEFRAME_CHARTS_PLACEHOLDER: Record<ScannerTimeframe, string | null> = {
+  "15m": null,
+  "1h": null,
+  "4h": null,
+};
+
 /**
  * Scanner lifecycle states (per product spec):
  *  loading  — waiting for market data
@@ -150,7 +159,12 @@ export default function ChartScanner({
   const [step, setStep] = useState(0);
   const [analysis, setAnalysis] = useState<ScannerAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState("");
-  const [chartSrc, setChartSrc] = useState<string | null>(null);
+  // ── Per-timeframe screenshot library: each timeframe of the selected symbol
+  // can hold its own chart screenshot (attach several files at once — each is
+  // auto-assigned by the timeframe detected in its filename, e.g.
+  // "XAUUSD_15m.png"; files without a detectable timeframe land on the
+  // currently selected one). Switching timeframe swaps the displayed chart.
+  const [timeframeCharts, setTimeframeCharts] = useState<Record<ScannerTimeframe, string | null>>(TIMEFRAME_CHARTS_PLACEHOLDER);
   const [chartError, setChartError] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -209,25 +223,45 @@ export default function ChartScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbols]);
 
-  const pickChart = (file: File | undefined) => {
-    if (!file) return;
+  const pickCharts = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
     setChartError("");
-    if (file.size > MAX_CHART_BYTES) {
-      setChartError("That image is too large (max 5 MB).");
-      return;
-    }
-    const detectedTimeframe = detectTimeframe(file);
-    const reader = new FileReader();
-    reader.onload = () => {
-      setChartSrc(String(reader.result));
-      setTimeframe(detectedTimeframe);
-      setAnalysis(null);
-      setAnalysisError("");
-      resetResult();
-    };
-    reader.onerror = () => setChartError("Could not read that image.");
-    reader.readAsDataURL(file);
+    let assigned = 0;
+    let lastError = "";
+    // Every selected file is routed to its OWN timeframe slot (detected from
+    // the filename); undetectable files land on the current timeframe.
+    Array.from(files).forEach((file) => {
+      if (!file.type.startsWith("image/")) {
+        lastError = "Only image files can be attached.";
+        return;
+      }
+      if (file.size > MAX_CHART_BYTES) {
+        lastError = `One image is too large (max 5 MB): ${file.name}`;
+        return;
+      }
+      const slot = detectTimeframe(file);
+      assigned += 1;
+      const reader = new FileReader();
+      reader.onload = () => {
+        const dataUrl = String(reader.result);
+        setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
+        // The newest upload switches the view if its timeframe differs —
+        // the trader sees exactly what they just attached.
+        setTimeframe(slot);
+        setAnalysis(null);
+        setAnalysisError("");
+      };
+      reader.onerror = () => {
+        lastError = "Could not read an image.";
+      };
+      reader.readAsDataURL(file);
+    });
+    if (assigned > 0) resetResult();
+    if (lastError) setChartError(lastError);
   };
+
+  const chartSrc = timeframeCharts[timeframe];
+  const attachedTimeframes = SCANNER_TIMEFRAMES.filter((tf) => timeframeCharts[tf] !== null);
 
   const runScan = useCallback(async () => {
     if (scanning) return;
@@ -269,11 +303,15 @@ export default function ChartScanner({
   };
 
   const selectSymbol = (item: string) => {
+    if (item === symbol) return;
     setSymbol(item);
     const saved = pairs.find((pair) => pair.symbol === item);
     setLot(saved?.lotSize || "0.01");
     const savedTrades = Number(saved?.maxTrades ?? 0);
     setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
+    // Screenshots belong to the symbol they were taken on — a new symbol
+    // starts with an empty per-timeframe library (never show chart X on Y).
+    setTimeframeCharts(TIMEFRAME_CHARTS_PLACEHOLDER);
     setAnalysis(null);
     setAnalysisError("");
     resetResult();
@@ -398,16 +436,17 @@ export default function ChartScanner({
         onDrop={(event) => {
           event.preventDefault();
           setDragging(false);
-          pickChart(event.dataTransfer.files?.[0]);
+          pickCharts(event.dataTransfer.files);
         }}
       >
         <input
           ref={fileInputRef}
           type="file"
           accept="image/*"
+          multiple
           className="hidden"
           onChange={(event) => {
-            pickChart(event.target.files?.[0]);
+            pickCharts(event.target.files);
             event.target.value = "";
           }}
         />
@@ -425,11 +464,11 @@ export default function ChartScanner({
                 <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
               </svg>
             </span>
-            <span className="text-[18px] font-black text-white">Attach a chart screenshot</span>
-            <span className="text-[13px] text-white/45">Optional — live MT5 data powers the signal</span>
+            <span className="text-[18px] font-black text-white">Attach chart screenshots</span>
+            <span className="text-[13px] text-white/45">One per timeframe — 15m, 1h, 4h (select all at once)</span>
           </button>
         ) : (
-          <img src={chartSrc} alt="Uploaded chart" className="absolute inset-0 size-full object-cover" />
+          <img src={chartSrc} alt={`Chart on ${timeframe}`} className="absolute inset-0 size-full object-cover" />
         )}
         <div
           className="pointer-events-none absolute inset-0 opacity-30"
@@ -448,9 +487,9 @@ export default function ChartScanner({
         {chartSrc && !scanning && (
           <button
             type="button"
-            aria-label="Remove chart"
+            aria-label={`Remove the ${timeframe} chart`}
             onClick={() => {
-              setChartSrc(null);
+              setTimeframeCharts((prev) => ({ ...prev, [timeframe]: null }));
               setAnalysis(null);
               setAnalysisError("");
               resetResult();
@@ -476,8 +515,13 @@ export default function ChartScanner({
                 className="plat-pressable flex h-12 w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
                 style={{ borderRadius: "var(--plat-radius-control)" }}
               >
-                {chartSrc ? "Replace chart image" : "Attach chart screenshot"}
+                {chartSrc ? `Add / replace screenshots (${attachedTimeframes.length}/3 timeframes)` : "Attach chart screenshots"}
               </button>
+              {attachedTimeframes.length > 0 && (
+                <p className="mt-2 text-[12px] text-white/45">
+                  Attached: {attachedTimeframes.map((tf) => tf.toUpperCase()).join(" · ")}
+                </p>
+              )}
               {chartError && <p className="mt-2 text-[12px] text-red-400">{chartError}</p>}
             </div>
           )}
@@ -544,11 +588,36 @@ export default function ChartScanner({
                 is locked.
               </p>
             )}
+            {/* Timeframe = which screenshot slot is shown / analyzed. */}
             <div className="mt-3 flex items-center justify-between">
               <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
-              <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1.5 text-[12px] font-bold text-white/65">
-                {timeframe}
-              </span>
+              <div className="flex gap-1.5">
+                {SCANNER_TIMEFRAMES.map((tf) => {
+                  const hasChart = timeframeCharts[tf] !== null;
+                  return (
+                    <button
+                      key={tf}
+                      type="button"
+                      aria-label={`Use the ${tf} chart`}
+                      onClick={() => {
+                        setTimeframe(tf);
+                        setAnalysis(null);
+                        setAnalysisError("");
+                        resetResult();
+                      }}
+                      className="rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors"
+                      style={
+                        timeframe === tf
+                          ? { background: accent, color: "#fff" }
+                          : { background: "#222", color: hasChart ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.35)" }
+                      }
+                    >
+                      {hasChart && timeframe !== tf ? "•" : ""}
+                      {tf}
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </div>
 
