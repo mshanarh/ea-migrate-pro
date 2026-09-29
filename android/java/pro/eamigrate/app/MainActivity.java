@@ -42,6 +42,8 @@ public class MainActivity extends Activity {
     private static final String START_URL = "https://eamigratepro.vercel.app/app";
     private WebView web;
     private boolean autoPip = false;
+    /** Bot image remembered while the overlay permission was missing — launched on return. */
+    private String pendingBubbleImage;
 
     private boolean pipSupported() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
@@ -181,13 +183,32 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void showBubble(final String imageUrl) {
-            if (!overlayAllowed()) return;
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Intent intent = new Intent(MainActivity.this, OverlayService.class);
-                    intent.putExtra("image", imageUrl);
-                    startService(intent);
+                    boolean allowed = Build.VERSION.SDK_INT < Build.VERSION_CODES.M
+                            || Settings.canDrawOverlays(MainActivity.this);
+                    if (!allowed) {
+                        // AUTO-PROMPT: pressing Start with the permission missing
+                        // jumps straight into the system "Display over other apps"
+                        // screen for THIS app. When the user returns having granted
+                        // it, onResume launches the bubble they asked for — no
+                        // second Start press needed.
+                        pendingBubbleImage = imageUrl;
+                        try {
+                            Intent intent = new Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName()));
+                            startActivity(intent);
+                            android.widget.Toast.makeText(
+                                    MainActivity.this,
+                                    "Allow \"Display over other apps\" — the bot bubble appears when you come back",
+                                    android.widget.Toast.LENGTH_LONG).show();
+                        } catch (Exception ignored) {
+                        }
+                        return;
+                    }
+                    startBubbleService(imageUrl);
                 }
             });
         }
@@ -197,9 +218,14 @@ public class MainActivity extends Activity {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
+                    pendingBubbleImage = null;
                     Intent intent = new Intent(MainActivity.this, OverlayService.class);
                     intent.putExtra("stop", true);
-                    startService(intent);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent); // the service promotes, then stops — never a "did not call startForeground" crash
+                    } else {
+                        startService(intent);
+                    }
                 }
             });
         }
@@ -207,6 +233,35 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void pushLog(final String line) {
             OverlayService.push(line);
+        }
+    }
+
+    /**
+     * Launch the floating chat-head service. Oreo+ uses startForegroundService
+     * so the process survives MetaTrader and other heavy apps in front.
+     */
+    private void startBubbleService(String image) {
+        Intent intent = new Intent(MainActivity.this, OverlayService.class);
+        intent.putExtra("image", image);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            startForegroundService(intent);
+        } else {
+            startService(intent);
+        }
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        // Returning from the overlay-permission screen: if a bubble was
+        // requested while the permission was missing and it is granted now,
+        // launch it immediately — the bot floats without pressing Start again.
+        if (pendingBubbleImage != null && overlayAllowed()) {
+            startBubbleService(pendingBubbleImage);
+            pendingBubbleImage = null;
+            android.widget.Toast.makeText(this,
+                    "Bot bubble floating over other apps ✓",
+                    android.widget.Toast.LENGTH_SHORT).show();
         }
     }
 

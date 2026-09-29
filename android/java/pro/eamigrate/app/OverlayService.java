@@ -1,7 +1,11 @@
 package pro.eamigrate.app;
 
+import android.app.Notification;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.Service;
 import android.content.Intent;
+import android.os.Build;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.BitmapShader;
@@ -31,6 +35,12 @@ import java.net.URL;
  * the EA Migrate app; long-press dismisses the bubble. The web app pushes
  * the latest trade-log line via OverlayService.push(line) so the bubble
  * always shows what the bot is doing right now.
+ *
+ * Foreground service (Oreo+): runs with a minimal persistent "EA Migrate
+ * Bot Running" notification so Android will NOT kill the floating window
+ * while MetaTrader or another heavy app holds the foreground. The service
+ * promotes to foreground before anything else, whatever the intent says —
+ * the 5-second startForeground contract is never violated.
  */
 public class OverlayService extends Service {
     private static OverlayService instance;
@@ -54,7 +64,16 @@ public class OverlayService extends Service {
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
+        // Oreo+ requires a call to startForeground() within ~5s of
+        // startForegroundService() — promote FIRST, whatever the intent says,
+        // so a stop request can never crash with ForegroundServiceDidNotStart.
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            promoteToForeground();
+        }
         if (intent != null && intent.getBooleanExtra("stop", false)) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                stopForeground(true); // drop the notification before stopping
+            }
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -67,6 +86,30 @@ public class OverlayService extends Service {
         }
         show();
         return START_STICKY;
+    }
+
+    /**
+     * Minimal persistent "EA Migrate Bot Running" notification (Oreo+).
+     * Foreground status is what stops Android from killing the floating
+     * window while MetaTrader or another heavy app holds the foreground.
+     */
+    private void promoteToForeground() {
+        String channelId = "eamigrate_bot";
+        NotificationManager manager = (NotificationManager) getSystemService(NOTIFICATION_SERVICE);
+        NotificationChannel channel = new NotificationChannel(
+                channelId,
+                "EA Migrate Bot Running",
+                NotificationManager.IMPORTANCE_LOW); // silent — no sound/vibration while trading
+        channel.setDescription("Keeps the floating bot bubble alive over other apps");
+        channel.setShowBadge(false);
+        manager.createNotificationChannel(channel);
+        Notification notification = new Notification.Builder(this, channelId)
+                .setContentTitle("EA Migrate Bot Running")
+                .setContentText("Your bot bubble is floating over other apps")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setOngoing(true)
+                .build();
+        startForeground(1001, notification);
     }
 
     private void setLine(final String line) {
