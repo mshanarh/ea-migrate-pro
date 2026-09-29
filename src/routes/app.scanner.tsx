@@ -14,6 +14,7 @@ import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
+import { recordTrade } from "@/lib/trade-history";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -304,6 +305,16 @@ function AppScanner() {
         }
       }
       if (opened === 0 || !firstPayload) {
+        recordTrade({
+          symbol,
+          direction,
+          lot,
+          trades: total,
+          filled: `0/${total}`,
+          ok: false,
+          ...(plan.strength ? { strength: plan.strength } : {}),
+          detail: lastError ?? "No trades were executed.",
+        });
         return { ok: false, message: lastError ?? "No trades were executed." };
       }
       const failed = total - opened;
@@ -321,6 +332,16 @@ function AppScanner() {
             ? `${total}/${total} ${symbol} trades opened on MT5 — EA Migrate.${ticketLabel}`
             : `${symbol} trade opened on MT5 — EA Migrate${ticketLabel}`;
       onProgress("Disconnecting...");
+      recordTrade({
+        symbol,
+        direction,
+        lot,
+        trades: total,
+        filled: `${opened}/${total}`,
+        ok: failed === 0,
+        ...(plan.strength ? { strength: plan.strength } : {}),
+        detail: message,
+      });
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
           detail: { ok: true, message: message.toUpperCase() },

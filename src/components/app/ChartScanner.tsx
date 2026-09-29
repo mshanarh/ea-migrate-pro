@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { analyzeMarket, type ScannerAnalysis } from "@/lib/market-scanner-core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
 import { usePlatform } from "@/lib/platform";
+import { clearTradeHistory, useTradeHistory } from "@/lib/trade-history";
 
 type ScannerTimeframe = "15m" | "1h" | "4h";
 
@@ -168,6 +170,9 @@ export default function ChartScanner({
   const [chartError, setChartError] = useState("");
   const [dragging, setDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Recent-trades viewer (RECENT TRADES button in the header).
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = useTradeHistory();
 
   // ── Execution state ────────────────────────────────────────────────
   const [confirmOpen, setConfirmOpen] = useState(false);
@@ -399,13 +404,93 @@ export default function ChartScanner({
             Public market data builds executable trade plans with entry, stop-loss and take-profit. Execute sends the order to your saved MT5 account.
           </p>
         </div>
-        <span
-          data-testid="text-scans-remaining"
-          className="shrink-0 rounded-[var(--plat-radius-control)] border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
-        >
-          {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
-        </span>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span
+            data-testid="text-scans-remaining"
+            className="rounded-[var(--plat-radius-control)] border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
+          >
+            {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
+          </span>
+          {/* RECENT TRADES — press to review everything that executed. */}
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            data-testid="button-recent-trades"
+            className="flex items-center gap-1.5 rounded-[var(--plat-radius-control)] border px-3 py-2 text-[11px] font-black tracking-wide transition-colors"
+            style={{ borderColor: `${accent}66`, color: accent, background: `${accent}12` }}
+          >
+            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+              <path d="M3 12h4l3-8 4 16 3-8h4" />
+            </svg>
+            RECENT TRADES
+          </button>
+        </div>
       </div>
+
+      {/* Recent trades dialog — full execution log, newest first. */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0f13] p-5 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black tracking-tight">Recent trades</DialogTitle>
+            <DialogDescription className="text-sm text-white/50">
+              Every execution fired from this device, newest first.
+            </DialogDescription>
+          </DialogHeader>
+          {history.length === 0 ? (
+            <p className="py-6 text-center text-sm text-white/40">
+              No trades yet — scan a symbol and press Execute.
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {history.map((trade) => (
+                <li
+                  key={trade.id}
+                  className="rounded-2xl border border-white/8 bg-white/[0.03] p-3"
+                  style={{ borderLeft: `3px solid ${trade.ok ? "#22c55e" : "#f87171"}` }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="rounded-md px-1.5 py-0.5 text-[10px] font-black"
+                        style={{
+                          background: trade.direction === "BUY" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                          color: trade.direction === "BUY" ? "#4ade80" : "#f87171",
+                        }}
+                      >
+                        {trade.direction}
+                      </span>
+                      <span className="truncate text-sm font-bold">{trade.symbol}</span>
+                      <span className="text-[11px] text-white/40">{trade.lot} lot × {trade.trades}</span>
+                    </span>
+                    <span
+                      className="shrink-0 text-[10px] font-black uppercase"
+                      style={{ color: trade.ok ? "#4ade80" : "#f87171" }}
+                    >
+                      {trade.filled}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-white/40">
+                    <span className="truncate">{trade.detail}</span>
+                    <span className="shrink-0">{new Date(trade.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {history.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                clearTradeHistory();
+                toast.success("Trade history cleared");
+              }}
+              className="mt-3 h-11 w-full rounded-full border border-white/10 text-[12px] font-bold text-white/50 hover:text-white/80"
+            >
+              Clear history
+            </button>
+          )}
+        </DialogContent>
+      </Dialog>
 
       {/* SCANNER STATE banner */}
       {phase !== "idle" && (

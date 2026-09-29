@@ -1,8 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, Link, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck, TrendingUp } from "lucide-react";
+import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
@@ -595,29 +595,6 @@ function AppMetatrader() {
             </motion.div>
           </form>
 
-          {/* Trading pairs shortcut */}
-          <motion.div
-            initial={{ opacity: 0, y: 18 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.4, duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <Link
-              to="/app/trading-pairs"
-              className="plat-card mt-8 border p-5 active:scale-[0.99]"
-              style={{ borderColor: `${accent}40`, background: `${accent}0d` }}
-            >
-              <span className="flex items-center gap-4">
-                <span className="flex size-11 items-center justify-center rounded-2xl" style={{ backgroundColor: accent }}>
-                  <TrendingUp className="size-5 text-black" strokeWidth={2.4} />
-                </span>
-                <span>
-                  <span className="block text-base font-black">Trading Pairs</span>
-                  <span className="mt-0.5 block text-xs text-white/50">Choose pairs, lot size &amp; max trades</span>
-                </span>
-              </span>
-              <span className="text-xl" style={{ color: accent }}>→</span>
-            </Link>
-          </motion.div>
         </main>
       </div>
       <FixedBottomNav />
