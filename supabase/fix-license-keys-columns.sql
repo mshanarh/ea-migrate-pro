@@ -1,24 +1,28 @@
 -- ============================================================
--- EA Migrate — LIVE-DATABASE REPAIR (run once in the Supabase SQL Editor)
+-- EA Migrate — LIVE-DATABASE REPAIR (run ONCE in Supabase → SQL Editor)
+-- Safe to re-run. Matches the code exactly (schema.sql + the app's
+-- column usage verified against src/lib/account-sync.server.ts).
 --
 -- Verified missing in the live project (probed 2026-09-29):
---   • license_keys.ea_name / license_keys.expiry  — absent
---   • portal_accounts / portal_payments / mt5_accounts — absent
--- Consequences fixed by this file:
---   • New keys saved fine, but without an EA name the app shows "Private EA"
---   • The app could never restore robots/MT5 from the cloud (tables missing)
---   • portal_accounts-based flows 404'd (PGRST205) everywhere
+--   • license_keys.ea_name / expiry columns
+--   • portal_accounts / portal_payments / mt5_accounts / ea_videos tables
+--   • users.device_email / device_id columns (email reactivation)
 -- ============================================================
 
--- 1) license_keys: EA metadata columns + a REAL unique constraint on key
+-- ── 1) license_keys: EA metadata + a REAL unique constraint on key ──────
 alter table public.license_keys add column if not exists ea_name text;
 alter table public.license_keys add column if not exists expiry  text;
 create unique index if not exists license_keys_key_unique on public.license_keys (key);
+create index if not exists license_keys_email_idx on public.license_keys (email);
 
--- 2) Portal sync tables (match src/lib/account-sync.server.ts + schema.sql)
+-- ── 2) users: device binding for sign-in email reactivation ─────────────
+alter table public.users add column if not exists device_email text;
+alter table public.users add column if not exists device_id    text;
+
+-- ── 3) Portal sync tables (columns EXACTLY as the code reads/writes) ────
 create table if not exists public.portal_accounts (
   email      text primary key,
-  data       jsonb not null,
+  data       text not null,               -- JSON.stringify(Account)
   updated_at timestamp default now()
 );
 create table if not exists public.portal_payments (
@@ -27,21 +31,27 @@ create table if not exists public.portal_payments (
   paid_at  timestamp
 );
 create table if not exists public.mt5_accounts (
-  user_id     text primary key,
-  record      jsonb not null,
-  enabled     boolean not null default true,
-  updated_at  timestamp default now()
+  user_id    text primary key,
+  data       text not null,               -- JSON.stringify(Mt5AccountRecord)
+  updated_at timestamp default now()
+);
+create table if not exists public.ea_videos (
+  video_id   text primary key,
+  data_url   text not null,
+  updated_at timestamp default now()
 );
 
--- 3) RLS: the browser (anon key) reads/writes these directly in production
+-- ── 4) RLS: the browser (anon key) uses these directly in production ────
+-- Same "never block the admin page / app flows" trade-off as schema.sql.
 alter table public.portal_accounts enable row level security;
 alter table public.portal_payments enable row level security;
 alter table public.mt5_accounts    enable row level security;
+alter table public.ea_videos       enable row level security;
 
 do $$
 declare t text;
 begin
-  foreach t in array array['portal_accounts','portal_payments','mt5_accounts']
+  foreach t in array array['portal_accounts','portal_payments','mt5_accounts','ea_videos']
   loop
     execute format(
       'create policy %I on public.%I for all to anon, authenticated using (true) with check (true)',
@@ -53,7 +63,17 @@ exception
 end $$;
 
 create index if not exists portal_accounts_updated_idx on public.portal_accounts (updated_at desc);
-create index if not exists license_keys_email_idx on public.license_keys (email);
 
--- Done. After running this, new keys save with their EA name, deleted keys
--- stop activating, and the app's cloud restore works again.
+-- ── 5) Device-binding update policy (reactivation writes from sign-in) ──
+-- Only needed if secure-payment-gate.sql was ALREADY run (it drops all
+-- anon UPDATE on users). Keep the gate's other protections intact.
+drop policy if exists "anon can manage device binding" on public.users;
+create policy "anon can manage device binding"
+  on public.users for update to anon, authenticated
+  using (true) with check (true);
+
+-- Done. After this script:
+--   • new keys save WITH their EA name + expiry
+--   • deleted keys stop activating everywhere
+--   • sign-in email reactivation works (admins included)
+--   • app cloud restore (robots + MT5) works again
