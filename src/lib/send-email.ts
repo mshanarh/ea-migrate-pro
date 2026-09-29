@@ -25,7 +25,13 @@ const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
 const SUPABASE_URL = (import.meta.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SUPABASE_ANON_KEY = (import.meta.env["VITE_SUPABASE_ANON_KEY"] ?? "").trim();
-const BREVO_API_KEY = (import.meta.env["BREVO_VITE_BREVO_API_KEY"] ?? "").trim();
+// Standard Vite build-time name first; the legacy inverted name kept for
+// environments that were configured before the rename.
+const BREVO_API_KEY = (
+  import.meta.env["VITE_BREVO_API_KEY"] ??
+  import.meta.env["BREVO_VITE_BREVO_API_KEY"] ??
+  ""
+).trim();
 
 /** Raw Brevo v3 send from the browser — logs the FULL response every time. */
 async function sendViaBrevo(options: {
@@ -35,11 +41,24 @@ async function sendViaBrevo(options: {
   html: string;
   text: string;
 }): Promise<{ ok: boolean; error?: string }> {
+  // SERVER FIRST: when the host runs server functions (Vercel full-stack),
+  // the mail goes out with the RUNTIME BREVO_API_KEY — the key never ships
+  // in the public JS bundle and stays valid across rebuilds.
+  try {
+    const { sendPortalEmail: sendViaServer } = await import("@/lib/send-email.server");
+    const viaServer = await sendViaServer({
+      data: { type: "generic", email: options.to, subject: options.subject, html: options.html, text: options.text },
+    });
+    if (viaServer.success) return { ok: true };
+    console.warn("[send-email] server send failed:", viaServer.error, "— trying browser-direct Brevo");
+  } catch {
+    /* static host — server functions 404; the browser path decides below */
+  }
   if (BREVO_API_KEY.length === 0) {
-    console.error("[send-email] BREVO_VITE_BREVO_API_KEY is not set — email skipped for", options.to);
+    console.error("[send-email] VITE_BREVO_API_KEY is not set — email skipped for", options.to);
     return {
       ok: false,
-      error: "Email service is not configured — add BREVO_VITE_BREVO_API_KEY in Settings → Environment and redeploy.",
+      error: "Email service is not configured — add BREVO_API_KEY (and VITE_BREVO_API_KEY for static hosts) in Settings → Environment and redeploy.",
     };
   }
   try {

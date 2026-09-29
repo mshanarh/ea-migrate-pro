@@ -114,13 +114,27 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
 
 export type SendEmailInput =
   | { type: "new_registration"; email: string; firstName?: string; displayName?: string }
-  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string };
+  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string }
+  /** Raw passthrough for the static-host fallback in send-email.ts — sends
+   *  pre-built mail with the RUNTIME server key (never exposed to clients). */
+  | { type: "generic"; email: string; subject: string; html: string; text?: string };
 
 export type SendEmailResult = { success: boolean; error?: string };
 
 export const sendPortalEmail = createServerFn({ method: "POST" })
   .validator((data: SendEmailInput) => data)
   .handler(async ({ data }): Promise<SendEmailResult> => {
+    // Generic passthrough first — the caller has already built the mail.
+    if (data.type === "generic") {
+      const send = await sendViaBrevo({
+        to: data.email.trim().toLowerCase(),
+        toName: data.email.trim().toLowerCase(),
+        subject: data.subject,
+        html: data.html,
+        text: data.text ?? data.subject,
+      });
+      return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+    }
     const email = data.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
       return { success: false, error: "A valid email address is required." };
