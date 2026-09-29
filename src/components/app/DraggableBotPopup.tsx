@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
 import { speakBot } from "@/lib/bot-voice";
+import { callNative, queryNative } from "@/lib/native-bridge";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -154,9 +155,11 @@ export default function DraggableBotPopup() {
    * video-stream API. Must be triggered by a user gesture.
    */
   const enterPip = async () => {
-    const nativeBridge = (window as unknown as { EAMigrate?: { canPip: () => boolean; enterPip: () => void } }).EAMigrate;
-    if (nativeBridge?.canPip?.()) {
-      nativeBridge.enterPip();
+    // Resolve the native bridge FRESH at call time — a cached reference can
+    // be a stale injected object that throws on invocation (Android WebView
+    // recreates the bridge when the activity is rebuilt).
+    if (queryNative("canPip") === true) {
+      callNative("enterPip");
       toast.success("Floating over apps — open MetaTrader, the bot stays on top.");
       return;
     }
@@ -181,45 +184,36 @@ export default function DraggableBotPopup() {
   // Inside the Android app: while a bot runs, show the NATIVE chat-head
   // bubble (round avatar floating above every app — MetaTrader included).
   // Stopping the bot removes it. The popup's float button stays for PiP.
-  const nativeApi = (
-    window as unknown as {
-      EAMigrate?: {
-        canPip?: () => boolean;
-        enterPip?: () => void;
-        setAutoPip?: (on: boolean) => void;
-        canOverlay?: () => boolean;
-        showBubble?: (image: string) => void;
-        hideBubble?: () => void;
-        pushLog?: (line: string) => void;
-      };
-    }
-  ).EAMigrate;
-
+  // All bridge calls resolve window.EAMigrate FRESH and swallow stale-bridge
+  // throws ("non-injected object") — see src/lib/native-bridge.ts.
   useEffect(() => {
-    if (!nativeApi?.showBubble) return;
     if (running) {
-      nativeApi.showBubble?.(eaImage);
+      callNative("showBubble", eaImage);
     } else {
-      nativeApi.hideBubble?.();
+      callNative("hideBubble");
     }
-    return () => nativeApi.hideBubble?.();
-  }, [running, eaImage, nativeApi]);
+    return () => {
+      callNative("hideBubble");
+    };
+  }, [running, eaImage]);
 
   // Stream the newest log line into the native bubble.
   useEffect(() => {
-    if (!nativeApi?.pushLog) return;
     const latest = logs.at(-1);
-    if (latest && running) nativeApi.pushLog(latest.text);
-  }, [logs, running, nativeApi]);
+    if (latest && running) callNative("pushLog", latest.text);
+  }, [logs, running]);
 
   // Auto-PiP stays as the browser fallback when overlays are unavailable.
+  // setAutoPip is the call that crashed the dashboard when the Android
+  // activity was recreated — it now runs inside the safe bridge wrapper, so
+  // a stale bridge is a no-op instead of an uncaught exception.
   useEffect(() => {
-    const setAutoPip = nativeApi?.setAutoPip;
-    if (!setAutoPip) return;
-    const overlayDenied = nativeApi?.canOverlay ? nativeApi.canOverlay() !== true : false;
-    setAutoPip(running && open && overlayDenied);
-    return () => setAutoPip(false);
-  }, [running, open, nativeApi]);
+    const overlayDenied = queryNative("canOverlay") === false;
+    callNative("setAutoPip", running && open && overlayDenied);
+    return () => {
+      callNative("setAutoPip", false);
+    };
+  }, [running, open]);
 
   // Draggable position — fixed coordinates from the viewport, default bottom-right.
   const [pos, setPos] = useState<{ x: number; y: number } | null>(null);
