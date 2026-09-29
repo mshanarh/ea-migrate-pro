@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { getAppState, requireAppAccess, useAppState, WHOP_CHECKOUT_URL } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
@@ -152,7 +153,8 @@ function AppAdmin() {
   }
 
   return (
-    <div className="mx-auto w-full max-w-3xl px-4 py-10">
+    <>
+      <div className="mx-auto w-full max-w-3xl px-4 py-10">
       <div className="flex items-end justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.22em] text-primary">Supabase</p>
@@ -217,7 +219,9 @@ function AppAdmin() {
           ))}
         </ul>
       )}
-    </div>
+      </div>
+      <DraggableBotPopup />
+    </>
   );
 }
 

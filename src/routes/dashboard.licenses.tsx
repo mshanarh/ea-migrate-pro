@@ -1,11 +1,10 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useState, type FormEvent, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Copy, KeyRound, Lock, Mail, Plus, RefreshCcw, Trash2 } from "lucide-react";
+import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
 import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
-import { getReactivationEnabled, reactivateEmailToDevice } from "@/lib/supabase-users";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
@@ -52,11 +51,6 @@ function Licenses() {
   const [formError, setFormError] = useState("");
   // Two-tap delete confirmation (Android WebView has no window.confirm).
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
-  // ── Re-activate Client (admin-gated) ──
-  const [reactivationAllowed, setReactivationAllowed] = useState(false);
-  const [reactivateClientEmail, setReactivateClientEmail] = useState("");
-  const [reactivateClientError, setReactivateClientError] = useState("");
-  const [reactivatingClient, setReactivatingClient] = useState(false);
   if (!account) return null;
 
   const used = account.licenses.length;
@@ -151,69 +145,6 @@ function Licenses() {
     setCopied(false);
     resetForm();
     toast.success("License key created");
-  };
-
-  // Load the admin's reactivation permission for THIS mentor (cloud row).
-  useEffect(() => {
-    if (!account) return;
-    let cancelled = false;
-    void getReactivationEnabled(account.email).then((allowed) => {
-      if (!cancelled) setReactivationAllowed(allowed);
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [account?.email]);
-
-  /**
-   * RE-ACTIVATE a client — enforced by the CLOUD row, not by UI state:
-   *   • the email must be PAID (unpaid → "reactivation works only for paid users")
-   *   • the email must exist in users (a forged/foreign email → "not your email")
-   *   • releasing a device never touches expiry dates or the subscription
-   */
-  const handleReactivateClient = async () => {
-    if (reactivatingClient) return;
-    const cleanEmail = reactivateClientEmail.trim().toLowerCase();
-    if (!cleanEmail) return;
-    setReactivatingClient(true);
-    setReactivateClientError("");
-    // Re-check the permission at action time (the admin may have re-locked).
-    const stillAllowed = await getReactivationEnabled(account.email);
-    if (!stillAllowed) {
-      setReactivatingClient(false);
-      setReactivationAllowed(false);
-      setReactivateClientError("Locked by your admin — reactivation is not enabled for your account.");
-      return;
-    }
-    // Verify the client: paid + real user, through the same cloud rules the
-    // app's own reactivation uses. A "device id" is not needed for the
-    // mentor tool — the release simply clears the binding so the client can
-    // sign in fresh anywhere.
-    const { getUserByEmail } = await import("@/lib/supabase-users");
-    const user = await getUserByEmail(cleanEmail);
-    if (!user) {
-      setReactivatingClient(false);
-      setReactivateClientError("Not reactivated — this is not your client's registered email. Reactivation works only for the email the client registered with.");
-      return;
-    }
-    if (!user.is_paid) {
-      setReactivatingClient(false);
-      setReactivateClientError("Not reactivated — this email has not paid. Reactivation works only for paid users.");
-      return;
-    }
-    // Clear the cloud device binding (set device fields to null).
-    const { supabase } = await import("@/lib/supabase");
-    const { error } = await supabase!
-      .from("users")
-      .update({ device_email: null, device_id: null })
-      .eq("email", cleanEmail);
-    setReactivatingClient(false);
-    if (error) {
-      setReactivateClientError(error.message);
-      return;
-    }
-    setReactivateClientEmail("");
-    toast.success(`${cleanEmail} reactivated — they can sign in on a new device now.`);
   };
 
   /**
@@ -457,76 +388,7 @@ function Licenses() {
       {remaining === 0 && allowed > 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all keys allowed for this account.</p>}
       {allowed === 0 && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet.</p>}
 
-      {/* ── CLIENT ACCESS — Re-activate Client ────────────────────────────
-          Admin-gated: the 🔒 must be opened for THIS mentor (next to
-          Approve in the admin console) before any release can run. */}
-      <div className="panel mt-8 p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-xs font-bold uppercase tracking-[0.22em] text-primary">Client access</p>
-            <h2 className="mt-1 flex items-center gap-2 text-xl font-bold">
-              Re-activate Client
-              {reactivationAllowed ? (
-                <span className="flex items-center gap-1 rounded-full border border-emerald-400/40 bg-emerald-400/10 px-3 py-1 text-[10px] font-black uppercase text-emerald-300">
-                  <Lock className="size-3" style={{ display: "none" }} />
-                  Unlocked
-                </span>
-              ) : (
-                <span className="flex items-center gap-1 rounded-full border border-amber-400/40 bg-amber-400/10 px-3 py-1 text-[10px] font-black uppercase text-amber-300">
-                  <Lock className="size-3" /> Locked
-                </span>
-              )}
-            </h2>
-            <p className="mt-2 text-sm text-muted-foreground">
-              Release a paid client's device without changing their subscription period.
-            </p>
-          </div>
-        </div>
-        {reactivationAllowed ? (
-          <form
-            className="mt-5 space-y-3"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void handleReactivateClient();
-            }}
-          >
-            <label className="block">
-              <span className="text-xs font-bold uppercase tracking-[0.14em] text-muted-foreground">Client email</span>
-              <input
-                type="email"
-                required
-                value={reactivateClientEmail}
-                onChange={(event) => {
-                  setReactivateClientEmail(event.target.value);
-                  setReactivateClientError("");
-                }}
-                placeholder="user@example.com"
-                className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base outline-none placeholder:text-white/30 focus:border-primary/60"
-              />
-            </label>
-            {reactivateClientError && (
-              <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-400/10 p-3 text-sm font-semibold text-red-300">
-                {reactivateClientError}
-              </p>
-            )}
-            <Button type="submit" size="lg" disabled={reactivatingClient} className="h-14 w-full rounded-full text-base font-bold">
-              <RefreshCcw className="size-4" /> {reactivatingClient ? "Reactivating…" : "Re-activate"}
-            </Button>
-            <p className="text-center text-xs text-muted-foreground">
-              Paid clients only · dates protected · the previous device is signed out.
-            </p>
-          </form>
-        ) : (
-          <div className="mt-5 rounded-2xl border border-amber-400/30 bg-amber-400/[0.07] p-4">
-            <p className="flex items-center gap-2 text-sm font-bold text-amber-300">
-              <Lock className="size-4" /> Locked by your admin
-            </p>
-            <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-              Ask your admin to unlock reactivation for your account. Once unlocked, you can release a paid client's device here.
-            </p>
-          </div>
-        )}
-      </div>
+      {/* Re-activate Client lives on its own page: /dashboard/reactivate */}
       {account.licenses.length === 0 ? (
         <div className="panel mt-6 flex flex-col items-center gap-3 p-12 text-center">
           <span className="flex size-14 items-center justify-center rounded-full bg-primary/12">

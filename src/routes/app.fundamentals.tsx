@@ -6,6 +6,7 @@ import {
   Menu,
   RefreshCw,
 } from "lucide-react";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
@@ -68,6 +69,7 @@ function FundamentalsErrorFallback() {
           <RefreshCw className="size-4" /> Try again
         </button>
       </main>
+      <DraggableBotPopup />
       <FixedBottomNav />
     </div>
   );
@@ -597,6 +599,7 @@ function FundamentalsPage() {
         </div>
       </main>
 
+      <DraggableBotPopup />
       <FixedBottomNav />
     </div>
   );

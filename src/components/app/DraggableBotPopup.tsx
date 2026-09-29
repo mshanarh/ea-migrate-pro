@@ -186,6 +186,19 @@ export default function DraggableBotPopup() {
   // Stopping the bot removes it. The popup's float button stays for PiP.
   // All bridge calls resolve window.EAMigrate FRESH and swallow stale-bridge
   // throws ("non-injected object") — see src/lib/native-bridge.ts.
+  //
+  // "GOES WITH ME ANYWHERE": this component is mounted on EVERY app page.
+  // A route change used to unmount it and the cleanup below hid the native
+  // bubble — so navigating to Fundamentals/Admin/pairs erased the floating
+  // bot. The cleanup-hide is GONE: the bubble is hidden only when the bot
+  // actually stops, or when the page itself closes (pagehide = app closed,
+  // not an in-app navigation).
+  useEffect(() => {
+    const release = () => callNative("hideBubble");
+    window.addEventListener("pagehide", release);
+    return () => window.removeEventListener("pagehide", release);
+  }, []);
+
   useEffect(() => {
     if (running) {
       // "Display over other apps" denied → the native bubble can NEVER float
@@ -205,14 +218,14 @@ export default function DraggableBotPopup() {
           });
         }
       } else {
+        // Re-show on every remount (page navigation) — the native service
+        // keeps the existing bubble if it is already up, so this is cheap
+        // and guarantees the bubble follows the user across pages.
         callNative("showBubble", eaImage);
       }
     } else {
       callNative("hideBubble");
     }
-    return () => {
-      callNative("hideBubble");
-    };
   }, [running, eaImage]);
 
   // Stream the newest log line into the native bubble.

@@ -49,6 +49,42 @@ const PLATFORM_PREPAINT_SCRIPT = `
         }
       } catch (e) {}
     };
+    // BELT-AND-BRACES bridge wrap: a recreated Android activity leaves the
+    // old injected object throwing "Java bridge method can't be invoked on a
+    // non-injected object" on ANY call (this is what crashed the dashboard
+    // with setAutoPip). Every method of window.EAMigrate is wrapped so the
+    // worst a stale bridge can do is nothing — never an uncaught throw. The
+    // app's own callNative/queryNative already do this; this covers any
+    // other call site too.
+    var wrapBridge = function () {
+      var bridge = window.EAMigrate;
+      if (!bridge || bridge.__eampSafe) return;
+      var safe = {};
+      safe.__eampSafe = true;
+      for (var key in bridge) {
+        (function (k) {
+          var fn = bridge[k];
+          if (typeof fn === "function") {
+            safe[k] = function () {
+              try {
+                return fn.apply(bridge, arguments);
+              } catch (e) {
+                return undefined; // stale bridge — degrade, never crash
+              }
+            };
+          } else {
+            safe[k] = fn;
+          }
+        })(key);
+      }
+      window.EAMigrate = safe;
+    };
+    wrapBridge();
+    var bridgePoll = 0;
+    var bridgeTimer = setInterval(function () {
+      try { wrapBridge(); } catch (e) {}
+      if (++bridgePoll > 100) clearInterval(bridgeTimer); // ~30s, then callNative covers it
+    }, 300);
     window.addEventListener("error", function (ev) {
       report("ERROR", (ev && ev.message) || "unknown");
     });

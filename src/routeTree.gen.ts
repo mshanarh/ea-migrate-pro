@@ -32,6 +32,7 @@ import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
 import { Route as DashboardPairsRouteImport } from './routes/dashboard.pairs'
 import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile'
+import { Route as DashboardReactivateRouteImport } from './routes/dashboard.reactivate'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
@@ -153,6 +154,11 @@ const DashboardProfileRoute = DashboardProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardReactivateRoute = DashboardReactivateRouteImport.update({
+  id: '/reactivate',
+  path: '/reactivate',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardSignalsRoute = DashboardSignalsRouteImport.update({
   id: '/signals',
   path: '/signals',
@@ -201,6 +207,7 @@ export interface FileRoutesByFullPath {
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -230,6 +237,7 @@ export interface FileRoutesByTo {
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -261,6 +269,7 @@ export interface FileRoutesById {
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -293,6 +302,7 @@ export interface FileRouteTypes {
     | '/dashboard/licenses'
     | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -322,6 +332,7 @@ export interface FileRouteTypes {
     | '/dashboard/licenses'
     | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -352,6 +363,7 @@ export interface FileRouteTypes {
     | '/dashboard/licenses'
     | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -546,6 +558,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardProfileRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/reactivate': {
+      id: '/dashboard/reactivate'
+      path: '/reactivate'
+      fullPath: '/dashboard/reactivate'
+      preLoaderRoute: typeof DashboardReactivateRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/signals': {
       id: '/dashboard/signals'
       path: '/signals'
@@ -589,6 +608,7 @@ interface DashboardRouteChildren {
   DashboardLicensesRoute: typeof DashboardLicensesRoute
   DashboardPairsRoute: typeof DashboardPairsRoute
   DashboardProfileRoute: typeof DashboardProfileRoute
+  DashboardReactivateRoute: typeof DashboardReactivateRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
   DashboardWalletRoute: typeof DashboardWalletRoute
@@ -601,6 +621,7 @@ const DashboardRouteChildren: DashboardRouteChildren = {
   DashboardLicensesRoute: DashboardLicensesRoute,
   DashboardPairsRoute: DashboardPairsRoute,
   DashboardProfileRoute: DashboardProfileRoute,
+  DashboardReactivateRoute: DashboardReactivateRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
   DashboardWalletRoute: DashboardWalletRoute,
