@@ -34,7 +34,7 @@ const sections: { label?: string; items: NavItem[] }[] = [
     items: [
       { to: "/dashboard/stats", label: "Key Stats", icon: BarChart3 },
       { to: "/dashboard/profile", label: "Profile", icon: CircleUserRound },
-      { to: "/admin", label: "Admin console", icon: ShieldCheck, adminOnly: true },
+      { to: "/admin", label: "Admin Portal", icon: ShieldCheck, adminOnly: true },
     ],
   },
   {
