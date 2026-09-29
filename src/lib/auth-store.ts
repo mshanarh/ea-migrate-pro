@@ -144,9 +144,11 @@ export const PAYMENT_EXEMPT_EMAILS = ["biyasentobeko222@gmail", "biyasentobeko22
 
 /**
  * Emails that lost their platform privileges: they must ALWAYS go through
- * payment, even when a device still holds a stale paid/admin record for them.
+ * payment, even when a device still holds a stale paid/admin record for
+ * them. Currently EMPTY — lwethunkandi3@gmail.com was restored to admin by
+ * the platform owner (clearing this list was part of that restoration).
  */
-export const REVOKED_PAYMENT_EMAILS = ["lwethunkandi3@gmail.com"];
+export const REVOKED_PAYMENT_EMAILS: string[] = [];
 
 function cleanEmail(email: string) {
   return email.trim().toLowerCase();

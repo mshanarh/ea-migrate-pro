@@ -57,10 +57,11 @@ export function cloudSyncConfigured(): boolean {
 
 /**
  * Emails stripped of admin status by the platform owner. Any cloud/local
- * account record for these emails is demoted to a regular mentor wherever it
- * is loaded, and they can never sign in through the admin console path.
+ * account record for these emails is demoted to a regular mentor wherever
+ * it is loaded. Currently EMPTY — lwethunkandi3@gmail.com was restored to
+ * admin by the platform owner (this list blocked their admin role).
  */
-export const REMOVED_ADMIN_EMAILS = ["lwethunkandi3@gmail.com"];
+export const REMOVED_ADMIN_EMAILS: string[] = [];
 
 /**
  * Emails whose cloud record was lost (registered during the old sync-bug
