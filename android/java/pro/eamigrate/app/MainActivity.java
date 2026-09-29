@@ -4,19 +4,33 @@ import android.app.Activity;
 import android.app.PictureInPictureParams;
 import android.content.Intent;
 import android.content.res.Configuration;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.util.Rational;
+import android.view.View;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebChromeClient;
+import android.webkit.ConsoleMessage;
 
 /**
  * EA Migrate Android wrapper — a fast, full-screen WebView over the live
  * platform. Opens straight into the APP experience (/app).
+ *
+ * Reliability hardening:
+ *  - LOAD_NO_CACHE: never serves a stale bundle from the HTTP cache — the
+ *    "app won't load after a deploy" class of bug dies here.
+ *  - MIXED_CONTENT_COMPATIBILITY + safe browsing defaults: the platform is
+ *    HTTPS, but embedded broker/feed resources are not always.
+ *  - window.EAMigrate.reportError(msg): every JS crash inside the page is
+ *    forwarded to logcat with an "EAMIGRATE" tag — `adb logcat -s EAMIGRATE`
+ *    shows the real error instead of a black screen. The page also shows the
+ *    message in its own error UI.
  *
  * Floating bot bubble: while a bot runs, the web app calls
  * EAMigrate.showBubble(imageUrl) — a round chat-head avatar that floats
@@ -55,8 +69,33 @@ public class MainActivity extends Activity {
         settings.setDomStorageEnabled(true);
         settings.setDatabaseEnabled(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
+        // Never serve a stale cached bundle: every load hits the network
+        // (static assets are immutable-hashed, so this costs nothing).
+        settings.setCacheMode(WebSettings.LOAD_NO_CACHE);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_COMPATIBILITY_MODE);
+        // WebGL/derivative content used by chart views.
+        settings.setLoadWithOverviewMode(true);
+        settings.setUseWideViewPort(true);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Modern default; avoids SafeBrowsing interstitials on some
+            // carriers for the embedded feed hosts.
+            settings.setSafeBrowsingEnabled(true);
+        }
+        web.setBackgroundColor(Color.parseColor("#07090b"));
         web.addJavascriptInterface(new Bridge(), "EAMigrate");
         web.setWebViewClient(new WebViewClient());
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onConsoleMessage(ConsoleMessage message) {
+                // Surface page errors to logcat so a black screen is never
+                // undiagnosable: adb logcat -s EAMIGRATE
+                if (message.messageLevel() == ConsoleMessage.MessageLevel.ERROR) {
+                    android.util.Log.e("EAMIGRATE", "JS: " + message.message()
+                            + " @" + message.sourceLocation());
+                }
+                return true;
+            }
+        });
         web.loadUrl(START_URL);
         setContentView(web);
     }
@@ -93,29 +132,31 @@ public class MainActivity extends Activity {
             return overlayAllowed();
         }
 
-        /** Opens the system "Display over other apps" settings page. */
+        /** Runtime error reporting from the page — visible via adb logcat. */
         @JavascriptInterface
-        public void requestOverlay() {
+        public void reportError(final String message) {
+            android.util.Log.e("EAMIGRATE", "REPORTED: " + message);
+        }
+
+        @JavascriptInterface
+        public void openUrl(final String url) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Intent intent = new Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                            Uri.parse("package:" + getPackageName()));
-                    intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                    startActivity(intent);
+                    try {
+                        startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                    } catch (Exception ignored) {
+                    }
                 }
             });
         }
 
         @JavascriptInterface
         public void showBubble(final String imageUrl) {
+            if (!overlayAllowed()) return;
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    if (!overlayAllowed()) {
-                        requestOverlay();
-                        return;
-                    }
                     Intent intent = new Intent(MainActivity.this, OverlayService.class);
                     intent.putExtra("image", imageUrl);
                     startService(intent);
@@ -141,33 +182,24 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** Leaving the app while a bot runs → shrink to the floating window. */
     @Override
-    public void onUserLeaveHint() {
+    protected void onUserLeaveHint() {
         super.onUserLeaveHint();
-        if (autoPip && pipSupported() && !isInPictureInPictureMode() && !overlayAllowed()) {
+        if (autoPip && pipSupported()) {
             enterPipMode();
         }
     }
 
     @Override
-    public void onPictureInPictureModeChanged(boolean isInPip, Configuration newConfig) {
-        super.onPictureInPictureModeChanged(isInPip, newConfig);
-        if (web != null) {
-            String js = "document.documentElement.classList." + (isInPip ? "add" : "remove")
-                    + "('pip-active');"
-                    + "window.dispatchEvent(new Event('" + (isInPip ? "eamigrate:pip-enter" : "eamigrate:pip-exit") + "'));";
-            web.evaluateJavascript(js, null);
-        }
+    public void onPictureInPictureModeChanged(boolean isInPipMode, Configuration newConfig) {
+        super.onPictureInPictureModeChanged(isInPipMode, newConfig);
+        web.evaluateJavascript(
+            "window.dispatchEvent(new CustomEvent('eamigrate:pip',{detail:{active:" + isInPipMode + "}}))", null);
     }
 
     @Override
     public void onBackPressed() {
-        if (isInPictureInPictureMode()) {
-            finish();
-            return;
-        }
-        if (web != null && web.canGoBack()) {
+        if (web.canGoBack()) {
             web.goBack();
         } else {
             super.onBackPressed();
@@ -175,10 +207,10 @@ public class MainActivity extends Activity {
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
+    protected void onDestroy() {
         if (web != null) {
-            web.saveState(outState);
+            web.destroy();
         }
+        super.onDestroy();
     }
 }

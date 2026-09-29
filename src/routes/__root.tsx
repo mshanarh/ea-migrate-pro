@@ -36,6 +36,27 @@ const PLATFORM_PREPAINT_SCRIPT = `
       navigator.serviceWorker.register("/sw.js").catch(function () {});
     }
   } catch (e) {}
+  // Runtime error reporting: in the Android wrapper the page's crashes are
+  // forwarded to logcat via the EAMigrate bridge so a black screen is never
+  // undiagnosable; elsewhere they land in the console.
+  try {
+    var report = function (kind, msg) {
+      try {
+        var line = kind + ": " + msg;
+        console.error("[EAMIGRATE-REPORT] " + line);
+        if (window.EAMigrate && typeof window.EAMigrate.reportError === "function") {
+          window.EAMigrate.reportError(line);
+        }
+      } catch (e) {}
+    };
+    window.addEventListener("error", function (ev) {
+      report("ERROR", (ev && ev.message) || "unknown");
+    });
+    window.addEventListener("unhandledrejection", function (ev) {
+      var r = ev && ev.reason;
+      report("PROMISE", (r && (r.message || String(r))) || "unknown rejection");
+    });
+  } catch (e) {}
 })();
 `;
 import { Toaster } from "@/components/ui/sonner";
