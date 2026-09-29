@@ -6,9 +6,9 @@
  * email silently failed. Brevo's v3 API allows CORS from the app's origin
  * (verified), so the browser sends the request itself.
  *
- * Secrets: BREVO_API_KEY is provided as BREVO_VITE_BREVO_API_KEY (VITE_
- * prefixed so Vite inlines it at build time; the BREVO_* name is NOT
- * auto-exposed). Add it in Settings → Environment and redeploy.
+ * Secrets: the Brevo key is read at send time from VITE_BREVO_API_KEY
+ * (standard Vite build-time name) with BREVO_API_KEY as a fallback. Add it
+ * in Vercel settings (or Settings → Environment) and redeploy.
  *
  *   type: "new_registration"
  *     → emails the admin to approve the new user (pending row is saved by
@@ -25,13 +25,6 @@ const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
 const SUPABASE_URL = (import.meta.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SUPABASE_ANON_KEY = (import.meta.env["VITE_SUPABASE_ANON_KEY"] ?? "").trim();
-// Standard Vite build-time name first; the legacy inverted name kept for
-// environments that were configured before the rename.
-const BREVO_API_KEY = (
-  import.meta.env["VITE_BREVO_API_KEY"] ??
-  import.meta.env["BREVO_VITE_BREVO_API_KEY"] ??
-  ""
-).trim();
 
 /** Raw Brevo v3 send from the browser — logs the FULL response every time. */
 async function sendViaBrevo(options: {
@@ -54,20 +47,25 @@ async function sendViaBrevo(options: {
   } catch {
     /* static host — server functions 404; the browser path decides below */
   }
-  if (BREVO_API_KEY.length === 0) {
-    console.error("[send-email] VITE_BREVO_API_KEY is not set — email skipped for", options.to);
+  const apiKey = (
+    import.meta.env["VITE_BREVO_API_KEY"] ||
+    import.meta.env["BREVO_API_KEY"] ||
+    ""
+  ).trim();
+  if (apiKey.length === 0) {
+    console.error("[send-email] VITE_BREVO_API_KEY is missing — email skipped for", options.to);
     return {
       ok: false,
-      error: "Email service is not configured — add BREVO_API_KEY (and VITE_BREVO_API_KEY for static hosts) in Settings → Environment and redeploy.",
+      error: "VITE_BREVO_API_KEY is missing. Add it in Vercel settings and redeploy.",
     };
   }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
       headers: {
-        accept: "application/json",
-        "api-key": BREVO_API_KEY,
+        "api-key": apiKey,
         "content-type": "application/json",
+        "accept": "application/json",
       },
       body: JSON.stringify({
         sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
@@ -81,7 +79,7 @@ async function sendViaBrevo(options: {
     const body = await response.text().catch(() => "");
     console.log(`[send-email] Brevo response for ${options.to}: HTTP ${response.status}`, body.slice(0, 300));
     if (!response.ok) {
-      return { ok: false, error: `Brevo rejected the send (HTTP ${response.status}): ${body.slice(0, 200)}` };
+      return { ok: false, error: `Brevo error (${response.status}): ${body.slice(0, 300)}` };
     }
     return { ok: true };
   } catch {
@@ -225,9 +223,16 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
 
   if (data.type === "new_registration") {
     // Save the pending approval row (insert-if-missing) before notifying.
-    const saved = await savePendingApproval(email);
-    if (!saved) {
-      return { success: false, error: "Could not save the pending approval — check the Supabase configuration." };
+    // RESILIENT: a missing table or a database hiccup must NEVER block the
+    // notification email — the admin can still approve from the console,
+    // and the pending row can be recreated on the next attempt.
+    try {
+      const saved = await savePendingApproval(email);
+      if (!saved) {
+        console.warn("[send-email] pending-approval save returned false for", email, "— sending the notification email anyway");
+      }
+    } catch (saveError) {
+      console.warn("[send-email] pending-approval save failed for", email, "— sending the notification email anyway:", saveError);
     }
     const name = (data.displayName ?? data.firstName ?? "").trim();
     const send = await sendViaBrevo({
@@ -254,14 +259,21 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
 
   const eaName = data.eaName?.trim() || "Your EA";
   const expiry = data.expiry?.trim() || "Lifetime";
-  const keySaved = await saveLicenseKey({
-    licenseKey,
-    email,
-    eaName: data.eaName?.trim() || null,
-    expiry: data.expiry?.trim() || null,
-  });
-  if (!keySaved) {
-    return { success: false, error: "Could not save the license key — check the Supabase configuration." };
+  // RESILIENT: a missing license_keys table or a database error must NEVER
+  // block the key from reaching the client by email — the key is also stored
+  // in the mentor's local license list, so delivery always wins.
+  try {
+    const keySaved = await saveLicenseKey({
+      licenseKey,
+      email,
+      eaName: data.eaName?.trim() || null,
+      expiry: data.expiry?.trim() || null,
+    });
+    if (!keySaved) {
+      console.warn("[send-email] license_keys save returned false for", email, "— sending the key email anyway");
+    }
+  } catch (saveError) {
+    console.warn("[send-email] license_keys save failed for", email, "— sending the key email anyway:", saveError);
   }
 
   const send = await sendViaBrevo({

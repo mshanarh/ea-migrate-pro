@@ -18,6 +18,8 @@ type KeyResult = {
   expiry: string;
   imageUrl: string | null;
   emailed: boolean;
+  /** Set when the key email failed — the exact reason shows on the result card. */
+  deliveryError?: string;
 };
 
 function Pill({ children }: { children: ReactNode }) {
@@ -89,6 +91,7 @@ function Licenses() {
     // license_keys table (server-side) before sending.
     setSending(true);
     let emailed = false;
+    let deliveryError: string | null = null;
     try {
       const send = await sendPortalEmail({
         data: {
@@ -100,9 +103,17 @@ function Licenses() {
         },
       });
       emailed = send.success;
-      if (!send.success) toast.error(send.error ?? "Email could not be sent — the key is still saved.");
-    } catch {
-      toast.error("Email could not be sent — the key is still saved.");
+      if (!send.success) {
+        // Surface the EXACT delivery failure on screen — the admin must see
+        // the real reason (missing key, Brevo rejection, network) right away.
+        deliveryError = send.error ?? "Email could not be sent — the key is still saved.";
+        toast.error(deliveryError, { duration: 10000 });
+        window.alert(`Email delivery failed:\n\n${deliveryError}\n\nThe license key itself was created and is shown below.`);
+      }
+    } catch (sendError) {
+      deliveryError = sendError instanceof Error ? sendError.message : "Email could not be sent — the key is still saved.";
+      toast.error(deliveryError, { duration: 10000 });
+      window.alert(`Email delivery failed:\n\n${deliveryError}\n\nThe license key itself was created and is shown below.`);
     } finally {
       setSending(false);
     }
@@ -114,6 +125,7 @@ function Licenses() {
       expiry,
       imageUrl: selectedEa.image ?? null,
       emailed,
+      ...(deliveryError ? { deliveryError } : {}),
     });
     setMode("result");
     setCopied(false);
@@ -191,6 +203,12 @@ function Licenses() {
             <Mail className="size-4" />
             {result.emailed ? "Emailed to client" : "Saved — email delivery failed"}
           </p>
+          {result.deliveryError && (
+            <div className="mt-3 rounded-2xl border border-red-400/40 bg-red-400/10 p-4 text-left" role="alert">
+              <p className="text-xs font-black uppercase tracking-wide text-red-300">Delivery failure reason</p>
+              <p className="mt-1 break-words text-sm leading-relaxed text-red-200">{result.deliveryError}</p>
+            </div>
+          )}
 
           <Button
             type="button"
