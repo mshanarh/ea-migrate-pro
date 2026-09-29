@@ -95,7 +95,9 @@ function SignIn() {
                 adoptCloudPassword(email.trim(), password);
                 setCurrentAccount(email.trim());
                 markWelcome();
-                navigate({ to: cloud.account.role === "admin" ? "/admin" : "/dashboard" });
+                // EVERYONE lands on the mentor portal — admins reach the
+                // admin console from its sidebar link inside the portal.
+                navigate({ to: "/dashboard" });
                 return;
               }
               setError(res.error);
@@ -105,7 +107,8 @@ function SignIn() {
               (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
             );
             markWelcome();
-            navigate({ to: res.role === "admin" || account?.role === "admin" ? "/admin" : "/dashboard" });
+            // Same rule for local accounts: mentor portal for everyone.
+            navigate({ to: "/dashboard" });
           } catch (submitError) {
             console.error("[sign-in] unexpected failure:", submitError);
             setError("Sign in hit an unexpected error. Check your connection and try again.");
@@ -161,9 +164,6 @@ function SignIn() {
         </Button>
 
         <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-          <Link to="/admin" className="hover:text-primary">
-            Admin login
-          </Link>
           <Link to="/" className="hover:text-primary">
             Back home
           </Link>

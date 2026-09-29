@@ -184,7 +184,7 @@ export function useAppState() {
   );
 }
 
-function getDeviceId() {
+export function getDeviceId() {
   if (typeof window === "undefined") return "server";
   const key = "eamp.device.id";
   const saved = window.localStorage.getItem(key);

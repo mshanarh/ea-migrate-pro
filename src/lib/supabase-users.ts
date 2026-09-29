@@ -144,3 +144,61 @@ export async function countAdminsAnon(): Promise<number> {
     .eq("is_admin", true);
   return count ?? 0;
 }
+
+/* ── Device binding + email reactivation ───────────────────────────────
+ * One email = one device, enforced in the CLOUD (users.device_email /
+ * device_id) so it holds across browsers and the Android wrapper. Sign-in
+ * compares the local device id against the cloud binding; a mismatch
+ * offers "Reactivate", which releases the old device and binds this one.
+ * Works for EVERY email — clients and admins alike. When the columns are
+ * missing (pre-SQL) the check degrades to "no binding" — never a lockout.
+ */
+
+export type DeviceBindingCheck = { boundToOtherDevice: boolean; error?: string };
+
+/** Read the cloud binding for one email (null = unbound / unreadable). */
+export async function getDeviceBinding(email: string): Promise<{ deviceEmail: string | null; deviceId: string | null } | null> {
+  const dbClient = db();
+  if (!dbClient) return null;
+  const { data, error } = await dbClient
+    .from("users")
+    .select("device_email, device_id")
+    .eq("email", clean(email))
+    .maybeSingle();
+  if (error) {
+    // 42703 = columns not added yet (SQL not run) — treat as unbound.
+    if (error.code !== "42703") console.warn("[device-binding] read failed:", error.message);
+    return null;
+  }
+  const row = data as { device_email?: string | null; device_id?: string | null } | null;
+  return { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null };
+}
+
+/**
+ * Check whether this email is bound to a DIFFERENT device.
+ * Used at sign-in: true → the UI offers "Reactivate to sign in here".
+ */
+export async function checkDeviceBinding(email: string, localDeviceId: string): Promise<DeviceBindingCheck> {
+  const binding = await getDeviceBinding(email);
+  if (!binding || !binding.deviceId) return { boundToOtherDevice: false };
+  return { boundToOtherDevice: binding.deviceId !== localDeviceId };
+}
+
+/**
+ * REACTIVATE: release the previously bound device and bind THIS one.
+ * The old device simply loses the binding — the email's subscription,
+ * license keys and payment state are untouched (mirrors the mentor
+ * portal's Re-activate Client semantics, but self-service at sign-in).
+ */
+export async function reactivateEmailToDevice(email: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
+  const dbClient = db();
+  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+  const { error } = await dbClient
+    .from("users")
+    .update({ device_email: clean(email), device_id: localDeviceId })
+    .eq("email", clean(email));
+  if (error?.code === "42703") {
+    return { ok: false, error: "Reactivation is not enabled yet — run supabase/device-reactivation.sql in the Supabase SQL Editor." };
+  }
+  return error ? { ok: false, error: error.message } : { ok: true };
+}
