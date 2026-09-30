@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { ArrowRight, Bot, Infinity as InfinityIcon, KeyRound, ShieldCheck, UserCheck } from "lucide-react";
-import { useCurrentAccount } from "@/lib/auth-store";;
+import { useCurrentAccount } from "@/lib/auth-store";
+import { mirrorAccount } from "./dashboard.eas";
 
 export const Route = createFileRoute("/dashboard/")({
   ssr: false,
@@ -10,6 +12,14 @@ export const Route = createFileRoute("/dashboard/")({
 
 function Overview() {
   const account = useCurrentAccount();
+  // RE-MIRROR the account (EAs included) to the cloud on every portal visit —
+  // repairs cloud records that predate the working mirror (they hold licenses
+  // but zero EAs, so key activation and the robot bubble had no picture to
+  // show). Merge rules keep cloud-owned fields intact.
+  useEffect(() => {
+    if (account && account.eas.length > 0) mirrorAccount(account);
+  }, [account?.email, account?.eas.length]);
+
   if (!account) return null;
 
   const activeSubscriptions = account.licenses.filter((license) => license.active).length;

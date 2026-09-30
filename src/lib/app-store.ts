@@ -354,17 +354,26 @@ async function findLicenseInCloud(
     const extended = data as unknown as { ea_name?: unknown; expiry?: unknown };
     if (typeof extended.ea_name === "string" && extended.ea_name) eaName = extended.ea_name;
     if (typeof extended.expiry === "string" && extended.expiry) expiry = extended.expiry;
-    // The live license_keys table may predate the ea_name/expiry columns, in
-    // which case the EA details are recovered from the mentor's portal
-    // account (the authoritative copy that holds name/symbols/image/video).
-    // This is what turns "Private EA" back into the real robot name.
-    if (!eaName) {
-      const fromPortal = await findLicenseInPortalAccounts(key, email);
-      if (fromPortal?.error) return fromPortal;
-      if (fromPortal?.license) {
-        if (!expiry && fromPortal.license.expiry) expiry = fromPortal.license.expiry;
-        return fromPortal;
-      }
+    // The mentor's portal account is the AUTHORITATIVE copy of the EA — it
+    // holds the picture, video and symbols. The portal lookup used to run
+    // only when license_keys.ea_name was missing, so a key WITH a name
+    // activated with a name but NO picture (the robot showed the platform
+    // logo). Always consult it and merge what it finds; license_keys only
+    // fills the gaps.
+    const fromPortal = await findLicenseInPortalAccounts(key, email);
+    if (fromPortal?.error) return fromPortal;
+    if (fromPortal?.license) {
+      const mergedLicense: { eaName?: string; expiry?: string } = {};
+      const mergedName = fromPortal.license.eaName || eaName;
+      const mergedExpiry = fromPortal.license.expiry || expiry;
+      if (mergedName) mergedLicense.eaName = mergedName;
+      if (mergedExpiry) mergedLicense.expiry = mergedExpiry;
+      const merged: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {
+        license: mergedLicense,
+      };
+      if (fromPortal.ea) merged.ea = fromPortal.ea;
+      else if (eaName) merged.ea = { name: eaName };
+      return merged;
     }
     const found: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {};
     if (eaName) {
@@ -629,6 +638,80 @@ export function syncRobotsFromPortal() {
     persist();
   } catch {
     /* ignore malformed portal data */
+  }
+}
+
+/**
+ * CLOUD refresh of activated robots' media — the counterpart to
+ * syncRobotsFromPortal (which only reads the LOCAL mentor store, empty on a
+ * client's phone). Scans portal_accounts for licenses issued to the signed-in
+ * email and pulls the mentor's live EA name/symbols/image/video into every
+ * matching robot. This is what repaints a robot that was activated BEFORE
+ * the activation path started carrying the picture — no re-activation needed.
+ */
+export async function syncRobotsFromCloudPortal(): Promise<number> {
+  load();
+  if (typeof window === "undefined" || !state.email || state.robots.length === 0) return 0;
+  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
+  const anonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
+  if (!url || !anonKey) return 0;
+  try {
+    const { createClient } = await import("@supabase/supabase-js");
+    const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    const { data: rows, error } = await client.from("portal_accounts").select("email, data");
+    if (error || !rows) return 0;
+    const email = state.email.trim().toLowerCase();
+    // key → EA details, from every mentor account holding a license for me.
+    const byKey = new Map<string, { name?: string; symbols?: string[]; image?: string; video?: string }>();
+    for (const row of rows as Array<{ email?: string; data: unknown }>) {
+      let parsed: PortalAccountShape | null = null;
+      try {
+        parsed = typeof row.data === "string" ? (JSON.parse(row.data) as PortalAccountShape) : (row.data as PortalAccountShape);
+      } catch {
+        continue;
+      }
+      if (!parsed) continue;
+      for (const license of parsed.licenses ?? []) {
+        if (typeof license.key !== "string" || !license.key) continue;
+        const clientEmail = typeof license.clientEmail === "string" ? license.clientEmail.trim().toLowerCase() : "";
+        const accountEmail = (parsed.email ?? row.email ?? "").trim().toLowerCase();
+        if (clientEmail !== email && (!clientEmail && accountEmail !== email)) continue;
+        const ea = (parsed.eas ?? []).find((item) => item.id === license.eaId);
+        const eaName = ea?.name || license.robotName || license.expertAdvisor || license.name;
+        byKey.set(license.key.trim().toUpperCase(), {
+          ...(eaName ? { name: eaName } : {}),
+          symbols: (ea?.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
+          ...(ea?.image ? { image: ea.image } : {}),
+          ...(ea?.video ? { video: ea.video } : {}),
+        });
+      }
+    }
+    if (byKey.size === 0) return 0;
+    let updated = 0;
+    const robots = state.robots.map((robot) => {
+      const fresh = byKey.get(robot.key);
+      if (!fresh) return robot;
+      const symbols = fresh.symbols && fresh.symbols.length > 0 ? fresh.symbols : robot.symbols;
+      const oldPairs = robot.pairs ?? [];
+      const pairs = symbols.map((symbol) => oldPairs.find((pair) => pair.symbol === symbol) ?? { symbol, lotSize: "0.01", maxTrades: "0" });
+      if (fresh.image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name) && symbols.length === robot.symbols.length) return robot;
+      updated += 1;
+      return {
+        ...robot,
+        symbols,
+        pairs,
+        ...(fresh.image ? { image: fresh.image } : {}),
+        ...(fresh.video ? { video: fresh.video } : {}),
+        ...(fresh.name ? { name: fresh.name } : {}),
+      };
+    });
+    if (updated > 0) {
+      state = { ...state, robots };
+      persist();
+    }
+    return updated;
+  } catch {
+    return 0;
   }
 }
 

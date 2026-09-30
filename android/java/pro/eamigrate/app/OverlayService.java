@@ -266,6 +266,15 @@ public class OverlayService extends Service {
                             moved[0] = true;
                             params.x += (int) dx;
                             params.y += (int) dy;
+                            down[0] = event.getRawX();
+                            down[1] = event.getRawY();
+                            // Keep the bubble GLUED to the finger. Without
+                            // clamping, a fast fling could park it off-screen;
+                            // with clamping it always lands where the finger
+                            // leaves it and STAYS there.
+                            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                            params.x = Math.max(4, Math.min(params.x, dm.widthPixels - dp(66)));
+                            params.y = Math.max(4, Math.min(params.y, dm.heightPixels - dp(66)));
                             try {
                                 wm.updateViewLayout(container, params);
                             } catch (Exception ignored) {
@@ -274,14 +283,21 @@ public class OverlayService extends Service {
                         return true;
                     case MotionEvent.ACTION_UP:
                         long held = System.currentTimeMillis() - downAt[0];
-                        if (held > 600) {
-                            stopSelf(); // long-press dismisses the bubble
+                        // Long-press DISMISS only for a press that never moved
+                        // — a drag of any length must NEVER make the bubble
+                        // disappear (that was the "while dragging it does its
+                        // own thing then disappears" bug: any >600ms drag was
+                        // read as a long-press and killed the service).
+                        if (held > 600 && !moved[0]) {
+                            stopSelf();
                         } else if (!moved[0]) {
                             // TAP = expand the trade-log card IN PLACE, over
                             // whatever app is in front. Never re-open the app —
                             // that used to yank the trader out of MetaTrader.
                             toggleExpanded();
                         }
+                        // A drag ends by doing NOTHING — the bubble simply
+                        // rests where the finger left it.
                         return true;
                     default:
                         return false;

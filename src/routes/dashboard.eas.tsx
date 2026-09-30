@@ -8,12 +8,26 @@ import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type ExpertAdvisor } from "@/lib/auth-store";
 import { deleteVideoBlob, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
 import { syncRegister } from "@/lib/account-sync.server";
+import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 
-/** Mirrors the account (EAs + video refs) to the cloud so every device sees the same EAs. */
-function mirrorAccount(account: Account) {
-  // Sent exactly like registration does — the cloud record needs the full
-  // shape for cross-device sign-in; reads always strip the password server-side.
-  void syncRegister({ data: { account } }).catch(() => {});
+/**
+ * Mirrors the account (EAs + video refs) to the cloud so every device — and
+ * the APP's key activation — sees the same EAs. syncRegister is a server
+ * function that 404s on the static Vercel build, which left the cloud
+ * record with licenses but ZERO EAs (no picture to show). The browser-direct
+ * portalRegisterAccount (anon key, same merge rules) is the fallback that
+ * actually lands the EAs in production.
+ */
+export async function mirrorAccount(account: Account) {
+  try {
+    await syncRegister({ data: { account } });
+  } catch {
+    /* server functions unavailable on static hosting */
+  }
+  if (portalCloudConfigured()) {
+    const direct = await portalRegisterAccount(account);
+    if (!direct.ok && direct.error) console.warn("[eas] cloud mirror failed:", direct.error);
+  }
 }
 
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });

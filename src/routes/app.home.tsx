@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
@@ -200,8 +200,12 @@ function AppHome() {
 
   // Pull the mentor's latest EA data (symbols, image, video) into the activated
   // robots whenever the home screen mounts — portal edits appear instantly.
+  // LOCAL store covers mentors on their own device; the CLOUD portal scan
+  // covers clients (their local mentor store is empty) — this repaints
+  // robots activated before the picture started travelling with activation.
   useEffect(() => {
     syncRobotsFromPortal();
+    void syncRobotsFromCloudPortal();
   }, []);
 
   // Swipe left anywhere on the screen opens the customization drawer.
