@@ -44,7 +44,7 @@ import {
   portalSetPayment,
 } from "@/lib/portal-cloud";
 import { supabaseConfigured } from "@/lib/supabase";
-import { getReactivationEnabled, setReactivationEnabled } from "@/lib/supabase-users";
+import { getReactivationEnabled, setUserFlagAnon, setReactivationEnabled } from "@/lib/supabase-users";
 import { portalCloudConfigured, portalDeleteLicenseKey, portalRemoveLicense } from "@/lib/portal-cloud";
 
 /**
@@ -75,6 +75,19 @@ async function setCloudPayment(email: string, paid: boolean) {
     () => syncSetPayment({ data: { adminEmail: "", email, paid } }),
     () => portalSetPayment(email, paid),
   );
+}
+
+/**
+ * Mark an email paid/unpaid IN THE CLOUD users table — not just localStorage.
+ * The app's payment gate, the Re-activate Client page and the device-binding
+ * rules all read users.is_paid; the console's Paid button used to write only
+ * the browser store, so a "paid" user still had is_paid=false in the database
+ * and reactivation refused them ("this email has not paid").
+ */
+async function setCloudUserPaid(email: string, paid: boolean): Promise<boolean> {
+  const result = await setUserFlagAnon(email, { is_paid: paid });
+  if (!result.ok && result.error) console.warn("[admin] users.is_paid write failed:", result.error);
+  return result.ok;
 }
 import { BrandLogo } from "@/components/BrandLogo";
 
@@ -768,7 +781,16 @@ function AdminConsole() {
                       <div className="mt-3 flex gap-2">
                         <button
                           type="button"
-                          onClick={() => setEmailPaymentStatus(email, true)}
+                          onClick={() => {
+                            setEmailPaymentStatus(email, true);
+                            // ALSO write users.is_paid=true in the cloud — the
+                            // app gate, reactivation page and device binding all
+                            // read the DATABASE, not this browser's localStorage.
+                            void setCloudUserPaid(email, true).then((ok) => {
+                              if (ok) toast.success(`${email} marked PAID in the cloud`);
+                              else toast.error(`${email} marked paid locally — cloud write failed, reactivation may still refuse them`);
+                            });
+                          }}
                           className={
                             status === "paid"
                               ? "h-9 flex-1 rounded-xl bg-emerald-400/20 text-xs font-bold uppercase text-emerald-300"
@@ -779,7 +801,12 @@ function AdminConsole() {
                         </button>
                         <button
                           type="button"
-                          onClick={() => setEmailPaymentStatus(email, false)}
+                          onClick={() => {
+                            setEmailPaymentStatus(email, false);
+                            void setCloudUserPaid(email, false).then((ok) => {
+                              if (ok) toast.success(`${email} marked UNPAID in the cloud`);
+                            });
+                          }}
                           className={
                             status === "unpaid"
                               ? "h-9 flex-1 rounded-xl bg-destructive/20 text-xs font-bold uppercase text-destructive"

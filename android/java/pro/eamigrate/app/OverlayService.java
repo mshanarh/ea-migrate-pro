@@ -67,8 +67,19 @@ public class OverlayService extends Service {
         // Oreo+ requires a call to startForeground() within ~5s of
         // startForegroundService() — promote FIRST, whatever the intent says,
         // so a stop request can never crash with ForegroundServiceDidNotStart.
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            promoteToForeground();
+        // v1.7 HARDENING: a missing FOREGROUND_SERVICE permission (or a
+        // SecurityException from OEM-specific foreground-service rules) used
+        // to CRASH the whole app — "EA Migrate keeps stopping" right after
+        // license activation, repeatedly, because the service is sticky.
+        // The bubble now degrades to "not shown" instead of ever crashing.
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                promoteToForeground();
+            }
+        } catch (Exception e) {
+            android.util.Log.e("EAMIGRATE", "startForeground failed — bubble disabled this session: " + e);
+            stopSelf();
+            return START_NOT_STICKY;
         }
         if (intent != null && intent.getBooleanExtra("stop", false)) {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -200,10 +211,16 @@ public class OverlayService extends Service {
                         if (held > 600) {
                             stopSelf(); // long-press dismisses the bubble
                         } else if (!moved[0]) {
-                            Intent open = new Intent(OverlayService.this, MainActivity.class);
-                            open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
-                                    | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
-                            startActivity(open); // tap jumps back into the app
+                            try {
+                                Intent open = new Intent(OverlayService.this, MainActivity.class);
+                                open.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK
+                                        | Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+                                startActivity(open); // tap jumps back into the app
+                            } catch (Exception e) {
+                                // Android 14+ restricts background activity starts —
+                                // never crash from a tap on the bubble.
+                                android.util.Log.e("EAMIGRATE", "bubble tap open failed: " + e);
+                            }
                         }
                         return true;
                     default:
@@ -212,7 +229,15 @@ public class OverlayService extends Service {
             }
         });
 
-        wm.addView(container, params);
+        try {
+            wm.addView(container, params);
+        } catch (Exception e) {
+            // No overlay permission after all, or the OEM blocked the window:
+            // never crash — just don't show the bubble.
+            android.util.Log.e("EAMIGRATE", "bubble addView failed: " + e);
+            stopSelf();
+            return;
+        }
         bubble = container;
     }
 
@@ -265,9 +290,13 @@ public class OverlayService extends Service {
 
     @Override
     public void onDestroy() {
-        if (bubble != null) {
-            wm.removeView(bubble);
-            bubble = null;
+        try {
+            if (bubble != null) {
+                wm.removeView(bubble);
+                bubble = null;
+            }
+        } catch (Exception ignored) {
+            // window already gone — nothing to clean up
         }
         instance = null;
         super.onDestroy();

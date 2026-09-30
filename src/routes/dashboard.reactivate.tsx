@@ -3,8 +3,8 @@ import { createFileRoute } from "@tanstack/react-router";
 import { CalendarClock, Check, Copy, Lock, RefreshCcw, ShieldCheck, Users } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { OWNER_EMAILS, useCurrentAccount } from "@/lib/auth-store";
-import { getReactivationEnabled, getUserByEmail } from "@/lib/supabase-users";
+import { OWNER_EMAILS, isPaymentExemptEmail, useCurrentAccount } from "@/lib/auth-store";
+import { emailHasLicenseKey, getReactivationEnabled, getUserByEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/dashboard/reactivate")({
   ssr: false,
@@ -115,7 +115,13 @@ function ReactivateClientPage() {
       setError("Not reactivated — this is not your client's registered email. Reactivation works only for the email the client registered with.");
       return;
     }
-    if (!user.is_paid) {
+    // PAID means any of: users.is_paid (set by the admin console's Paid
+    // button, which now writes the cloud), a license key issued to this
+    // email (the key IS the payment), or a platform admin/owner email —
+    // an admin's device can always be released so THEY can also be asked
+    // to reactivate after delete + reinstall.
+    const paid = user.is_paid || isPaymentExemptEmail(cleanEmail) || OWNER_EMAILS.includes(cleanEmail) || (await emailHasLicenseKey(cleanEmail));
+    if (!paid) {
       setBusy(false);
       setError("Not reactivated — this email has not paid. Reactivation works only for paid users.");
       return;

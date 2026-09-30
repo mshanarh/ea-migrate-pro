@@ -555,7 +555,24 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   state = { ...state, activeRobotId: state.activeRobotId || robot.id, robots: [...state.robots, robot] };
   // A valid license key IS proof of payment — mark the email paid so the
   // app gate never bounces a freshly-activated user to checkout.
-  if (state.email) markEmailPaid(state.email);
+  const activationEmail = state.email;
+  if (activationEmail) markEmailPaid(activationEmail);
+  // CLOUD PROOF (awaited): claim the key on its license_keys row, set
+  // users.is_paid=true and bind THIS device in the DATABASE — all before
+  // the redirect to /app/home fires, because /app/home re-verifies against
+  // the cloud. Fire-and-forget used to lose that race: the local flag only
+  // lives in localStorage, so the gate still saw "unpaid" and bounced the
+  // freshly-activated user to Whop checkout (the "activated my key and got
+  // kicked out" bug).
+  if (activationEmail) {
+    try {
+      const { recordKeyActivationInCloud } = await import("@/lib/supabase-users");
+      const proof = await recordKeyActivationInCloud(clean, activationEmail, getDeviceId());
+      if (!proof.ok && proof.error) console.warn("[key-activation] cloud proof failed:", proof.error);
+    } catch {
+      /* a failed cloud write must never block activation */
+    }
+  }
   persist();
   return { robot };
 }

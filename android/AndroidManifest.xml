@@ -1,11 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="pro.eamigrate.app"
-    android:versionCode="7"
-    android:versionName="1.6">
+    android:versionCode="8"
+    android:versionName="1.7">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <!-- REQUIRED: OverlayService promotes itself to a foreground service
+         (the "Bot Running" notification). Without this permission the
+         startForeground() call throws a SecurityException on targetSdk 34+
+         and the app shows "EA Migrate keeps stopping" the moment the bot
+         bubble starts. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <application
@@ -27,6 +34,11 @@
 
         <service
             android:name=".OverlayService"
-            android:exported="false" />
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="Floating trading bot status bubble shown over the user\'s trading apps" />
+        </service>
     </application>
 </manifest>

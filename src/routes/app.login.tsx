@@ -23,7 +23,9 @@ function AppAccess() {
   const [redirecting, setRedirecting] = useState(false);
   // The license key IS the payment — this path lets the user skip checkout
   // entirely and go straight to entering the key their mentor issued.
+  // The CLICK is gated in enterKeyMode: paid → key screen, unpaid → Whop.
   const [keyMode, setKeyMode] = useState(false);
+  const [keyGateChecking, setKeyGateChecking] = useState(false);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -122,10 +124,49 @@ function AppAccess() {
   /** Dismiss the blocked card and try a different email. */
   const dismissBlocked = () => setBlockedEmail(null);
 
+  /** "I already have a license key" — PAID emails get the key screen;
+   *  UNPAID emails are redirected to Whop checkout. The cloud decides
+   *  (users.is_paid / admin / a key already bound to the email) — never
+   *  localStorage. A device-bound email shows the blocked card first. */
+  const enterKeyMode = async () => {
+    const clean = email.trim().toLowerCase();
+    if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
+    setKeyGateChecking(true);
+    try {
+      // Device binding first: an email already used on another device is
+      // blocked no matter what they were about to do (admins included).
+      try {
+        const binding = await checkDeviceBinding(clean, getDeviceId());
+        if (binding.boundToOtherDevice) {
+          setBlockedEmail(clean);
+          return;
+        }
+      } catch {
+        /* unreachable cloud — fall through to the payment check */
+      }
+      const access = await requireVerifiedAccess(clean);
+      if (access.action === "pay") {
+        setRedirecting(true);
+        window.location.assign(WHOP_CHECKOUT_URL);
+        return;
+      }
+      const signInResult = appSignIn(clean);
+      if (signInResult.error) { toast.error(signInResult.error); return; }
+      setKeyMode(true);
+    } finally {
+      setKeyGateChecking(false);
+    }
+  };
+
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!app.email) {
-      const signInResult = appSignIn(email.trim().toLowerCase());
+      const clean = email.trim().toLowerCase();
+      // Register FIRST so the users row exists — the cloud proof write
+      // inside activateKey (is_paid + device bind) needs that row, and a
+      // fresh reinstall has none.
+      try { await registerWithEmail(clean); } catch { /* fail open */ }
+      const signInResult = appSignIn(clean);
       if (signInResult.error) { toast.error(signInResult.error); return; }
     }
     // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
@@ -141,13 +182,7 @@ function AppAccess() {
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} onEnterKey={() => {
-        const clean = email.trim().toLowerCase();
-        if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
-        const signInResult = appSignIn(clean);
-        if (signInResult.error) { toast.error(signInResult.error); return; }
-        setKeyMode(true);
-      }} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn || keyMode} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn || keyMode} />}
     </main>
   </div>;
 }

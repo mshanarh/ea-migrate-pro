@@ -95,6 +95,9 @@ export async function registerWithEmail(
   if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
   if (user.is_admin) return { outcome: "admin", user };
   if (user.is_paid) return { outcome: "allow", user };
+  // A license key bound to this email IS payment — a client who already
+  // received their key must reach the key-entry screen, never Whop.
+  if (await emailHasLicenseKey(address)) return { outcome: "allow", user };
   return { outcome: "checkout", user };
 }
 
@@ -109,6 +112,77 @@ export async function getUserByEmail(email: string): Promise<UserRow | null> {
     .eq("email", address)
     .maybeSingle();
   return (data as UserRow | null) ?? null;
+}
+
+/**
+ * Does ANY license_keys row belong to this email? A mentor-issued key IS
+ * proof of payment — the same rule the app's payment gate applies — so the
+ * Re-activate Client page must accept key-holders whose users.is_paid flag
+ * was never set (e.g. the admin console's Paid button only wrote
+ * localStorage before the cloud write existed).
+ */
+export async function emailHasLicenseKey(email: string): Promise<boolean> {
+  const dbClient = db();
+  const address = clean(email);
+  if (!dbClient || !address) return false;
+  const { data } = await dbClient.from("license_keys").select("key").eq("email", address).limit(1).maybeSingle();
+  if (data) return true;
+  const { data: loose } = await dbClient.from("license_keys").select("key").ilike("email", address).limit(1).maybeSingle();
+  return !!loose;
+}
+
+/**
+ * CLOUD PROOF OF PAYMENT after a real key activation. Three writes, all via
+ * the anon key (RLS allows them):
+ *   1. CLAIM the key — an open key (email null) gets the activator's email
+ *      written onto the license_keys row. Without this the payment gate's
+ *      "license_keys bound to this email" check still missed, users.is_paid
+ *      stayed false and the user was bounced to Whop checkout RIGHT AFTER
+ *      activating — the "put my key in and it kicked me out" bug.
+ *   2. Set users.is_paid = true in the CLOUD (the local markEmailPaid only
+ *      wrote localStorage, which a new device or the route guards ignore).
+ *   3. BIND the device in the cloud — the sign-in path binds too, but the
+ *      License view (which admins and locally-paid users see directly)
+ *      used to skip binding completely, which is why admins were never
+ *      asked to reactivate after delete + reinstall.
+ */
+export async function recordKeyActivationInCloud(
+  key: string,
+  email: string,
+  deviceId?: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const dbClient = db();
+  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+  const address = clean(email);
+  const cleanKey = key.trim().toUpperCase().replace(/\s+/g, "");
+  if (!address || !cleanKey) return { ok: false, error: "Missing email or key." };
+  // 1. Claim an open key (row bound to someone else is left alone — the
+  //    license lookup already rejected that case before activation).
+  const { error: claimError } = await dbClient
+    .from("license_keys")
+    .update({ email: address })
+    .eq("key", cleanKey)
+    .is("email", null);
+  if (claimError && claimError.code !== "42703") {
+    console.warn("[key-activation] cloud claim failed:", claimError.message);
+  }
+  // 2. Mark the email paid IN THE DATABASE so every future gate check —
+  //    this device, a reinstall, the Re-activate Client page — passes.
+  const { error: paidError } = await dbClient.from("users").update({ is_paid: true }).eq("email", address);
+  if (paidError) return { ok: false, error: paidError.message };
+  // 3. Bind THIS device (only when the row is unbound — never steal).
+  if (deviceId) {
+    const { data: bound } = await dbClient.from("users").select("device_id").eq("email", address).maybeSingle();
+    const boundDeviceId = (bound as { device_id?: string | null } | null)?.device_id ?? null;
+    if (!boundDeviceId) {
+      const { error: bindError } = await dbClient
+        .from("users")
+        .update({ device_email: address, device_id: deviceId })
+        .eq("email", address);
+      if (bindError) console.warn("[key-activation] device bind failed:", bindError.message);
+    }
+  }
+  return { ok: true };
 }
 
 /*
