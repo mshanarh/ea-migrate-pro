@@ -335,6 +335,7 @@ public class OverlayService extends Service {
         }
         // While expanded the bubble is hidden, and the card NEVER folds on a
         // tap — only the ✕ zone closes it (the owner wants it to stay showing).
+    }
 
     /**
      * The expanded trade-log card — the SAME layout as the in-app popup:
