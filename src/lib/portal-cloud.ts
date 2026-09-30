@@ -80,14 +80,51 @@ export async function portalListAccounts(): Promise<SyncListResult> {
     return { enabled: true, accounts: [], payments: [] };
   }
   const accounts: PublicAccount[] = [];
+  const seen = new Set<string>();
   for (const row of (accountsRes.data ?? []) as Array<{ email: string; data: string }>) {
+    seen.add(row.email.toLowerCase());
     try {
       const parsed = JSON.parse(row.data) as Account;
       const approval = approvals.get(row.email.toLowerCase());
       accounts.push({ ...toPublic({ ...parsed, email: row.email }), status: approval ?? parsed.status });
     } catch {
-      /* corrupted row — skip it */
+      /* corrupted row — still surfaced below as a skeleton entry */
+      accounts.push({
+        id: "cloud-" + row.email,
+        email: row.email,
+        firstName: "",
+        displayName: row.email.split("@")[0] ?? row.email,
+        username: row.email.split("@")[0] ?? row.email,
+        whatsapp: "",
+        role: "mentor",
+        status: approvals.get(row.email.toLowerCase()) ?? "pending",
+        createdAt: "",
+        licenseLimit: 0,
+        licenses: [],
+        eas: [],
+      });
     }
+  }
+  // REGISTRATIONS WITHOUT AN ACCOUNT ROW: some signups only ever created a
+  // mentor_approvals row (their account write hit the old server-function
+  // 404). They MUST still appear on the admin console's Pending tab —
+  // otherwise people think the platform ate their registration.
+  for (const [approvalEmail, approvalStatus] of approvals) {
+    if (seen.has(approvalEmail)) continue;
+    accounts.push({
+      id: "approval-" + approvalEmail,
+      email: approvalEmail,
+      firstName: "",
+      displayName: approvalEmail.split("@")[0] ?? approvalEmail,
+      username: approvalEmail.split("@")[0] ?? approvalEmail,
+      whatsapp: "",
+      role: "mentor",
+      status: approvalStatus,
+      createdAt: "",
+      licenseLimit: 0,
+      licenses: [],
+      eas: [],
+    });
   }
   const payments: PaymentRecord[] = ((paymentsRes.data ?? []) as Array<{ email: string; paid: boolean; paid_at: string | null }>).map(
     (row) => ({ email: row.email, paid: row.paid, ...(row.paid_at ? { paidAt: row.paid_at } : {}) }),

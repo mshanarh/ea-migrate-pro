@@ -246,58 +246,69 @@ public class OverlayService extends Service {
         params.x = dp(12);
         params.y = dp(320);
 
-        final float[] down = new float[2];
-        final boolean[] moved = new boolean[1];
+        // Drag model: TOTAL displacement from the original press decides what
+        // a release means. Per-event deltas miss slow drags (each event moves
+        // only 2–3px, never crossing a per-event threshold, so the gesture
+        // was misread as a long-press and the bubble DISAPPEARED mid-drag).
+        final float[] origin = new float[2];       // where the finger went down
+        final float[] last = new float[2];         // previous event position
+        final boolean[] dragged = new boolean[1];  // total displacement > slop
         final long[] downAt = new long[1];
+        final int touchSlop = dp(8);
         container.setOnTouchListener(new View.OnTouchListener() {
             @Override
             public boolean onTouch(View v, MotionEvent event) {
                 switch (event.getActionMasked()) {
                     case MotionEvent.ACTION_DOWN:
-                        down[0] = event.getRawX();
-                        down[1] = event.getRawY();
-                        moved[0] = false;
+                        origin[0] = event.getRawX();
+                        origin[1] = event.getRawY();
+                        last[0] = origin[0];
+                        last[1] = origin[1];
+                        dragged[0] = false;
                         downAt[0] = System.currentTimeMillis();
                         return true;
                     case MotionEvent.ACTION_MOVE:
-                        float dx = event.getRawX() - down[0];
-                        float dy = event.getRawY() - down[1];
-                        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-                            moved[0] = true;
-                            params.x += (int) dx;
-                            params.y += (int) dy;
-                            down[0] = event.getRawX();
-                            down[1] = event.getRawY();
-                            // Keep the bubble GLUED to the finger. Without
-                            // clamping, a fast fling could park it off-screen;
-                            // with clamping it always lands where the finger
-                            // leaves it and STAYS there.
-                            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
-                            params.x = Math.max(4, Math.min(params.x, dm.widthPixels - dp(66)));
-                            params.y = Math.max(4, Math.min(params.y, dm.heightPixels - dp(66)));
-                            try {
-                                wm.updateViewLayout(container, params);
-                            } catch (Exception ignored) {
-                            }
+                        float dx = event.getRawX() - last[0];
+                        float dy = event.getRawY() - last[1];
+                        last[0] = event.getRawX();
+                        last[1] = event.getRawY();
+                        params.x += (int) dx;
+                        params.y += (int) dy;
+                        // TOTAL displacement from the press point marks this
+                        // gesture as a drag — however SLOWLY the finger moves.
+                        float totalDx = event.getRawX() - origin[0];
+                        float totalDy = event.getRawY() - origin[1];
+                        if (Math.hypot(totalDx, totalDy) > touchSlop) {
+                            dragged[0] = true;
+                        }
+                        // Clamp inside the screen: the bubble lands exactly
+                        // where the finger leaves it and STAYS there.
+                        android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                        params.x = Math.max(4, Math.min(params.x, dm.widthPixels - dp(66)));
+                        params.y = Math.max(4, Math.min(params.y, dm.heightPixels - dp(66)));
+                        try {
+                            wm.updateViewLayout(container, params);
+                        } catch (Exception ignored) {
                         }
                         return true;
                     case MotionEvent.ACTION_UP:
                         long held = System.currentTimeMillis() - downAt[0];
-                        // Long-press DISMISS only for a press that never moved
-                        // — a drag of any length must NEVER make the bubble
-                        // disappear (that was the "while dragging it does its
-                        // own thing then disappears" bug: any >600ms drag was
-                        // read as a long-press and killed the service).
-                        if (held > 600 && !moved[0]) {
+                        if (dragged[0]) {
+                            // A DRAG — any duration, any speed — just moves
+                            // the bubble. It rests where dropped. Never
+                            // dismisses, never expands.
+                        } else if (held > 600) {
+                            // Long-press (finger held still) dismisses.
                             stopSelf();
-                        } else if (!moved[0]) {
+                        } else {
                             // TAP = expand the trade-log card IN PLACE, over
-                            // whatever app is in front. Never re-open the app —
-                            // that used to yank the trader out of MetaTrader.
+                            // whatever app is in front. Never re-open the app.
                             toggleExpanded();
                         }
-                        // A drag ends by doing NOTHING — the bubble simply
-                        // rests where the finger left it.
+                        return true;
+                    case MotionEvent.ACTION_CANCEL:
+                        // A system steal (notification shade, home gesture)
+                        // ends the gesture like a drop — no dismissal.
                         return true;
                     default:
                         return false;

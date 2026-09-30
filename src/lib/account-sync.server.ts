@@ -283,6 +283,34 @@ export const syncListAccounts = createServerFn({ method: "POST" }).handler(async
     .map(enforceRoles)
     .map(toPublic);
 
+  // REGISTRATIONS WITHOUT AN ACCOUNT ROW: some signups only ever created a
+  // mentor_approvals row (their account write hit a server-function 404 on
+  // the static build). They MUST still appear on the console's Pending tab —
+  // a missing entry reads as "the platform ate my registration".
+  {
+    const seen = new Set(accounts.map((account) => account.email.toLowerCase()));
+    for (const [approvalEmail, approvalStatus] of approvals) {
+      if (seen.has(approvalEmail)) continue;
+      accounts.push(
+        toPublic({
+          id: "approval-" + approvalEmail,
+          firstName: "",
+          displayName: approvalEmail.split("@")[0] ?? approvalEmail,
+          email: approvalEmail,
+          username: approvalEmail.split("@")[0] ?? approvalEmail,
+          password: "",
+          whatsapp: "",
+          role: "mentor",
+          status: approvalStatus,
+          createdAt: new Date().toISOString(),
+          licenseLimit: 0,
+          licenses: [],
+          eas: [],
+        }),
+      );
+    }
+  }
+
   const payments = ((paymentsRes.data ?? []) as Array<{ email: string; paid: boolean; paid_at: string | null }>)
     .filter((row) => typeof row.paid === "boolean")
     .map((row) => ({ email: row.email, paid: row.paid, ...(row.paid && row.paid_at ? { paidAt: row.paid_at } : {}) }));
