@@ -140,7 +140,12 @@ export const OWNER_EMAILS = [
  */
 export const MENTOR_ONLY_EMAILS = ["ntobekotraders.official@gmail.com"];
 
-export const PAYMENT_EXEMPT_EMAILS = ["biyasentobeko222@gmail", "biyasentobeko222@gmail.com"];
+export const PAYMENT_EXEMPT_EMAILS = [
+  "biyasentobeko222@gmail",
+  "biyasentobeko222@gmail.com",
+  // Restored platform owner — same admin exemption as the owner list.
+  "lwethunkandi3@gmail.com",
+];
 
 /**
  * Emails that lost their platform privileges: they must ALWAYS go through

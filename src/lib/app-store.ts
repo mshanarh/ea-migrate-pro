@@ -309,13 +309,33 @@ async function findLicenseInCloud(
     const client = createClient(url, anonKey, {
       auth: { persistSession: false, autoRefreshToken: false },
     });
-    // The live table's key column is `key` (legacy schema); select only the
-    // columns that exist there — optional extras are read defensively below.
-    const { data, error } = await client
-      .from("license_keys")
-      .select("id, key, email, created_at")
-      .eq("key", key)
-      .maybeSingle();
+    // Select ea_name/expiry WITH the core columns. On a legacy table missing
+    // those columns PostgREST rejects the ENTIRE select with 42703 — which
+    // used to make eaName permanently undefined so the app showed "Private
+    // EA" even though the mentor had named their EA. Retry with core columns
+    // only, then recover the EA details from the mentor's portal account.
+    type LicenseKeyRow = { id: unknown; key: unknown; email: unknown; created_at?: unknown; ea_name?: unknown; expiry?: unknown };
+    let data: LicenseKeyRow | null = null;
+    let error: { code?: string; message: string } | null = null;
+    {
+      const full = await client
+        .from("license_keys")
+        .select("id, key, email, created_at, ea_name, expiry")
+        .eq("key", key)
+        .maybeSingle();
+      if (full.error?.code === "42703") {
+        const retry = await client
+          .from("license_keys")
+          .select("id, key, email, created_at")
+          .eq("key", key)
+          .maybeSingle();
+        data = (retry.data as unknown as LicenseKeyRow | null);
+        error = retry.error;
+      } else {
+        data = (full.data as unknown as LicenseKeyRow | null);
+        error = full.error;
+      }
+    }
     if (error) {
       console.error("[key-activation] cloud lookup failed:", error.message);
       return null;
@@ -323,7 +343,8 @@ async function findLicenseInCloud(
     if (!data) return null;
     // A key issued to a specific email belongs to THAT email (unset email =
     // open key, activated by whoever enters it first).
-    if (data.email && data.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
+    const rowEmail = typeof data.email === "string" ? data.email : "";
+    if (rowEmail && rowEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
       return { error: "That license key belongs to a different email." };
     }
     // Optional columns (ea_name/expiry) exist only in the updated schema —

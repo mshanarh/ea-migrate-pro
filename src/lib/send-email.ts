@@ -20,6 +20,8 @@
  */
 
 const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
+/** Second admin inbox — the known-good recipient for registration alerts. */
+const ADMIN_EMAIL_2 = "eamigratepro@gmail.com";
 const DEFAULT_SENDER = "eamigratepro@gmail.com";
 const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
@@ -242,22 +244,27 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
       console.warn("[send-email] pending-approval save failed for", email, "— sending the notification email anyway:", saveError);
     }
     const name = (data.displayName ?? data.firstName ?? "").trim();
-    const send = await sendViaBrevo({
-      to: ADMIN_EMAIL,
-      toName: "EA Migrate Admin",
-      subject: "New user registered - EA Migrate",
-      html: brandHtml(
-        "New user registered",
-        [
-          `New user registered: <strong style="color:#FFFFFF;">${email}</strong>${name ? ` (${name})` : ""}`,
-          "Approve them in the admin console so they can start issuing license keys.",
-        ],
-        "Open Admin Console",
-        "#E7B53A",
-      ),
-      text: `New user registered: ${email}${name ? ` (${name})` : ""} - Approve in admin.\n\nAdmin console: ${PORTAL_URL}`,
-    });
-    return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+    const html = brandHtml(
+      "New user registered",
+      [
+        `New user registered: <strong style="color:#FFFFFF;">${email}</strong>${name ? ` (${name})` : ""}`,
+        "Approve them in the admin console so they can start issuing license keys.",
+      ],
+      "Open Admin Console",
+      "#E7B53A",
+    );
+    const text = `New user registered: ${email}${name ? ` (${name})` : ""} - Approve in admin.\n\nAdmin console: ${PORTAL_URL}`;
+    // BOTH admin inboxes — a single recipient that silently filters or
+    // clusters these alerts made "new registrations never arrive". Brevo
+    // sends one message per recipient; any address that receives it is enough.
+    const [first, second] = await Promise.allSettled([
+      sendViaBrevo({ to: ADMIN_EMAIL, toName: "EA Migrate Admin", subject: "New user registered - EA Migrate", html, text }),
+      sendViaBrevo({ to: ADMIN_EMAIL_2, toName: "EA Migrate Admin", subject: "New user registered - EA Migrate", html, text }),
+    ]);
+    if (first.status === "fulfilled" && first.value.ok) return { success: true };
+    if (second.status === "fulfilled" && second.value.ok) return { success: true };
+    const failure = (first.status === "rejected" ? String(first.reason) : first.value.error) ?? (second.status === "rejected" ? String(second.reason) : second.value.error) ?? "Brevo send failed.";
+    return { success: false, error: failure };
   }
 
   // license_approved — save the key, then email it to the user.

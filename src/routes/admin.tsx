@@ -19,7 +19,6 @@ import {
   PAYMENT_EXEMPT_EMAILS,
   addLicense,
   generateKey,
-  maskEaId,
   paymentStatusForEmail,
   removeLicense,
   setEmailPaymentStatus,
@@ -287,6 +286,10 @@ function AdminConsole() {
       setReactivationUnlocked(false);
       return;
     }
+    // getReactivationEnabled already returns TRUE for admin/owner emails
+    // (they are never lockable), and now also returns the DB truth for
+    // mentors — including rows created by the toggle's own upsert, so a
+    // fresh unlock SURVIVES signing out of the portal and back in.
     let cancelled = false;
     void getReactivationEnabled(selected.email).then((enabled) => {
       if (!cancelled) setReactivationUnlocked(enabled);
@@ -687,7 +690,7 @@ function AdminConsole() {
                             </span>
                           </div>
                           <p className="mt-2 text-xs text-muted-foreground">
-                            Linked to: {maskEaId(license.eaId || "legacy")} · Expiry:{" "}
+                            Linked to: {license.robotName || license.expertAdvisor || license.name || "Unlinked"} · Expiry:{" "}
                             {license.expiry || license.plan}
                           </p>
                           <div className="mt-3 flex gap-3">

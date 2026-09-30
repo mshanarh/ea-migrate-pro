@@ -1,11 +1,11 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowRight, CheckCircle2, LockKeyhole, Mail, RefreshCcw } from "lucide-react";
+import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { requireVerifiedAccess, verifyPaymentReturn } from "@/lib/payment-gate";
-import { checkDeviceBinding, reactivateEmailToDevice, registerWithEmail } from "@/lib/supabase-users";
+import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
   ssr: false,
@@ -24,14 +24,12 @@ function AppAccess() {
   // The license key IS the payment — this path lets the user skip checkout
   // entirely and go straight to entering the key their mentor issued.
   const [keyMode, setKeyMode] = useState(false);
-  // EMAIL REACTIVATION — the email is bound to another device. The sign-in
-  // form swaps for a reactivation card; confirming releases the old device
-  // and binds this one (admins included — everyone gets the same flow).
-  const [reactivateEmail, setReactivateEmail] = useState<string | null>(null);
-  const [reactivating, setReactivating] = useState(false);
-  // Rejection reason shown in the red banner on the reactivation card
-  // ("this is not your email" / "not paid" / SQL not run …).
-  const [reactivateError, setReactivateError] = useState<string | null>(null);
+  // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
+  // The sign-in form swaps for a blocked card: the user must ask their
+  // mentor to release the device (Re-activate Client in the mentor portal).
+  // NO self-reactivation: delete + reinstall must NOT unlock the account.
+  // Applies to EVERYONE — clients and admins alike.
+  const [blockedEmail, setBlockedEmail] = useState<string | null>(null);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -65,12 +63,13 @@ function AppAccess() {
     const clean = email.trim().toLowerCase();
     console.log("[app-login] Trying login:", clean);
     // CLOUD DEVICE BINDING FIRST: if this email is already bound to another
-    // device, do NOT sign in — offer reactivation instead ("email already
-    // used — reactivate to log in"). Applies to admins and clients alike.
+    // device, do NOT sign in — show the blocked card ("account already used,
+    // please tell your mentor to reactivate"). Applies to admins and
+    // clients alike — there is no self-service unlock.
     try {
       const binding = await checkDeviceBinding(clean, getDeviceId());
       if (binding.boundToOtherDevice) {
-        setReactivateEmail(clean);
+        setBlockedEmail(clean);
         return;
       }
     } catch {
@@ -87,15 +86,10 @@ function AppAccess() {
     window.sessionStorage.setItem("eamp_pending_welcome", "1");
     if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
 
-    // Bind THIS device in the cloud (best-effort — a failure never blocks).
-    void import("@/lib/supabase-users").then(({ reactivateEmailToDevice }) =>
-      reactivateEmailToDevice(clean, getDeviceId()).catch(() => {}),
-    );
-
-    // Supabase registration: upsert the user, create the session row, then
-    // decide the gate from the DATABASE — unpaid goes to checkout, paid or
-    // admin comes in. Falls back to the legacy local payment store while
-    // Supabase is unconfigured, so the flow never blocks.
+    // Supabase registration FIRST: upsert the user (so the row EXISTS),
+    // create the session row, then decide the gate from the DATABASE —
+    // unpaid goes to checkout, paid or admin comes in. The device bind
+    // below needs the row to exist, so registration must come before it.
     const registration = await registerWithEmail(clean);
     if (registration.outcome === "checkout") {
       if (successReturn) {
@@ -109,43 +103,24 @@ function AppAccess() {
       return;
     }
     if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
+
+    // Bind THIS device in the cloud AFTER the row exists. The binding is
+    // what makes "delete the app, reinstall → account already used" work —
+    // the old code bound BEFORE registration, silently hit "no row" and
+    // the account was never actually bound. If the row is already bound to
+    // another device, the user is told to ask their mentor.
+    try {
+      const bound = await bindDeviceToEmail(clean, getDeviceId());
+      if (!bound.ok && bound.error) {
+        toast.error(bound.error);
+      }
+    } catch {
+      /* a failed bind must never block sign-in */
+    }
   };
 
-  /** Confirm reactivation: release the old device, bind this one, sign in. */
-  const confirmReactivate = async () => {
-    const clean = reactivateEmail;
-    if (!clean || reactivating) return;
-    setReactivating(true);
-    setReactivateError(null);
-    const result = await reactivateEmailToDevice(clean, getDeviceId());
-    setReactivating(false);
-    if (!result.ok) {
-      // The exact rejection — big, red, impossible to miss.
-      const reason = result.error ?? "Reactivation failed — try again.";
-      setReactivateError(reason);
-      toast.error(reason);
-      return;
-    }
-    toast.success("Device reactivated — welcome back!");
-    setReactivateEmail(null);
-    // Normal sign-in continues (the local guard now also passes because the
-    // local binding either matches or is absent on a fresh device).
-    const signInResult = appSignIn(clean);
-    if (signInResult.error) {
-      // Local binding from an OLD device on THIS storage — clear it; the
-      // cloud just ruled this device the active one.
-      window.localStorage.removeItem("eamp.pending-payment-email");
-    }
-    window.sessionStorage.setItem("eamp_pending_welcome", "1");
-    void import("@/lib/supabase-users").then(({ registerWithEmail }) => registerWithEmail(clean)).then((registration) => {
-      if (registration.outcome === "checkout") {
-        setRedirecting(true);
-        window.location.assign(WHOP_CHECKOUT_URL);
-        return;
-      }
-      if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
-    });
-  };
+  /** Dismiss the blocked card and try a different email. */
+  const dismissBlocked = () => setBlockedEmail(null);
 
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -165,7 +140,7 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {reactivateEmail ? <ReactivateView email={reactivateEmail} onConfirm={() => void confirmReactivate()} onCancel={() => setReactivateEmail(null)} busy={reactivating} error={reactivateError} /> :
+      {blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} onEnterKey={() => {
         const clean = email.trim().toLowerCase();
         if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
@@ -178,32 +153,32 @@ function AppAccess() {
 }
 
 /**
- * Email-already-used → Reactivate card. Shown when the cloud says the
- * email is bound to another device. One tap releases the old device and
- * signs this one in — subscription, license keys and payment untouched.
+ * Email-already-used → BLOCKED card. The cloud says this email is bound to
+ * another device. There is deliberately NO self-service unlock: deleting
+ * and reinstalling the app must NOT get back in. The user asks their
+ * mentor, who releases the device from the portal (Re-activate Client).
+ * This applies to every email — clients and admins alike.
  */
-function ReactivateView({ email, onConfirm, onCancel, busy, error }: { email: string; onConfirm: () => void; onCancel: () => void; busy: boolean; error: string | null }) {
+function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => void }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
-    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Email already used</h1>
-    {error && (
-      <div role="alert" className="mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left">
-        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950" aria-hidden="true">!</span>
-        <p className="text-sm font-semibold leading-6 text-red-200">{error}</p>
-      </div>
-    )}
+    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Account already used</h1>
+    <div role="alert" className="mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left">
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950" aria-hidden="true">!</span>
+      <p className="text-sm font-semibold leading-6 text-red-200">
+        Account already used — please tell your mentor to reactivate.
+      </p>
+    </div>
     <p className="mt-3 text-base leading-7 text-[#8a9298]">
-      <span className="font-semibold text-[#55c7ff]">{email}</span> is activated on another device.
-      Reactivate to log in on this one — the previous device is signed out
-      and your licence, payment and robots stay exactly as they are.
+      <span className="font-semibold text-[#55c7ff]">{email}</span> is already activated on another device.
+      One email works on one device only. Ask your mentor to re-activate your account —
+      they can release your device from their portal in seconds, and your licence,
+      payment and robots stay exactly as they are.
     </p>
     <div className="mt-10 space-y-4">
-      <button type="button" onClick={onConfirm} disabled={busy} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">
-        {busy ? <span className="flex items-center gap-3"><span className="size-5 animate-spin rounded-full border-[3px] border-[#061018]/70 border-t-transparent" />Reactivating…</span> : <><RefreshCcw className="size-6" /> Reactivate &amp; log in</>}
-      </button>
-      <button type="button" onClick={onCancel} disabled={busy} className="h-14 w-full rounded-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white">
+      <button type="button" onClick={onCancel} className="h-14 w-full rounded-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white">
         Use a different email
       </button>
     </div>

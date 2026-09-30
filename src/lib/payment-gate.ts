@@ -106,6 +106,10 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
  */
 export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
   if (!email) return { action: "signin" };
+  // PLATFORM OWNERS pass EVERY gate instantly — before any database/Whop
+  // call. A stale users row (is_admin/is_paid false) must never bounce the
+  // owner to checkout (the "scanner says paid emails only" bug).
+  if (isOwnerEmail(email)) return { action: "pass" };
   let cloud: CloudAccess | null = null;
   try {
     cloud = await resolveCloudAccess(email);

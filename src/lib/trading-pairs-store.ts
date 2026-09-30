@@ -159,8 +159,13 @@ export function sastToday(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "Africa/Johannesburg" });
 }
 
-/** Platform admins — unlimited daily scans. */
-const ADMIN_EMAILS = new Set(["biyasentobeko222@gmail.com", "ntobekotraders.official@gmail.com"]);
+/** Platform admins — unlimited daily scans. Kept in sync with auth-store. */
+import { OWNER_EMAILS } from "./auth-store";
+
+const ADMIN_EMAILS = new Set([
+  ...OWNER_EMAILS,
+  "ntobekotraders.official@gmail.com",
+]);
 
 export function isUnlimitedScanner(email: string | null | undefined): boolean {
   return Boolean(email && ADMIN_EMAILS.has(email.trim().toLowerCase()));

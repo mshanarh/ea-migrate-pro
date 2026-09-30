@@ -10,6 +10,7 @@
  * partially-migrated schema (e.g. a missing column) must never lock a
  * customer out either — failures here fail open to the legacy local gate.
  */
+import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
 export type RegistrationOutcome = "allow" | "checkout" | "admin";
@@ -39,8 +40,12 @@ export async function registerWithEmail(
   if (!dbClient || !address) {
     return { outcome: "allow", user: null, ...(supabaseConfigured ? {} : { error: "supabase-not-configured" }) };
   }
+  const isOwner = OWNER_EMAILS.includes(address);
 
   // 1. Upsert — an existing row is NOT modified (admin/paid flags stay).
+  // Runs for EVERY email INCLUDING owners: the device-binding write below
+  // (bindDeviceToEmail at sign-in) needs the row to exist, and an owner who
+  // never registered would otherwise have no row to bind.
   const { data: inserted, error: upsertError } = await dbClient
     .from("users")
     .upsert({ email: address }, { onConflict: "email", ignoreDuplicates: true })
@@ -82,6 +87,12 @@ export async function registerWithEmail(
 
   // An unreadable row must NOT force the user to pay — fail open.
   if (!user) return { outcome: "allow", user: null };
+  // PLATFORM OWNERS are admins BEFORE the database is consulted. Their live
+  // users row can lag (is_admin/is_paid false — e.g. created before the flag
+  // existed), and that stale row used to bounce the owner to Whop checkout
+  // right after sign-in (the "app kicks me out" bug) and blocked the
+  // scanner. The hardcoded owner list decides first, everywhere.
+  if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
   if (user.is_admin) return { outcome: "admin", user };
   if (user.is_paid) return { outcome: "allow", user };
   return { outcome: "checkout", user };
@@ -140,6 +151,10 @@ export async function setUserFlagAnon(
  * a mentor without the flag cannot release ANY device.
  */
 export async function getReactivationEnabled(email: string): Promise<boolean> {
+  const address = clean(email);
+  // ADMINS are always unlocked — a database hiccup (or the PostgREST schema
+  // cache lagging after a column was added) must never re-lock the owner.
+  if (OWNER_EMAILS.includes(address) || isPaymentExemptEmail(address)) return true;
   const dbClient = db();
   if (!dbClient) return false;
   const { data, error } = await dbClient
@@ -158,14 +173,46 @@ export async function getReactivationEnabled(email: string): Promise<boolean> {
 export async function setReactivationEnabled(email: string, enabled: boolean): Promise<{ ok: boolean; error?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
-  const { error } = await dbClient
+  const address = clean(email);
+  // UPDATE ... select() makes the write VERIFIABLE: an UPDATE that matches
+  // zero rows (mentor never entered their email in the app, so no users row)
+  // used to return success and the flag "locked again" on every reload.
+  const { data, error } = await dbClient
     .from("users")
     .update({ reactivation_enabled: enabled })
-    .eq("email", clean(email));
+    .eq("email", address)
+    .select("email");
   if (error?.code === "42703") {
     return { ok: false, error: "Run supabase/fix-license-keys-columns.sql first (reactivation_enabled column missing)." };
   }
-  return error ? { ok: false, error: error.message } : { ok: true };
+  if (error) return { ok: false, error: error.message };
+  if ((data ?? []).length === 0) {
+    // Row missing — create it so the flag has something to stick to. The
+    // insert policy only allows unpaid/non-admin rows, which is exactly
+    // what a not-yet-seen mentor is.
+    const { error: insertError } = await dbClient
+      .from("users")
+      .upsert({ email: address, reactivation_enabled: enabled }, { onConflict: "email", ignoreDuplicates: false });
+    if (insertError?.code === "42501") {
+      return { ok: false, error: "This email has a protected row (paid/admin) — toggle it from the app admin console instead." };
+    }
+    if (insertError?.code === "42703") {
+      return { ok: false, error: "Run supabase/fix-license-keys-columns.sql first (reactivation_enabled column missing)." };
+    }
+    if (insertError) return { ok: false, error: insertError.message };
+  }
+  // Read-back confirmation: the PostgREST schema cache has briefly served a
+  // stale schema after new columns were added (the 42703 toast). Verify the
+  // value actually stuck and say so.
+  const { data: verify, error: verifyError } = await dbClient
+    .from("users")
+    .select("reactivation_enabled")
+    .eq("email", address)
+    .maybeSingle();
+  if (verifyError) return { ok: false, error: "Saved, but the read-back failed: " + verifyError.message };
+  const saved = (verify as { reactivation_enabled?: boolean } | null)?.reactivation_enabled === true;
+  if (saved !== enabled) return { ok: false, error: "The database did not confirm the change — try again in a moment." };
+  return { ok: true };
 }
 
 /** Count current admins straight from the browser (for owner bootstrap). */
@@ -219,42 +266,48 @@ export async function checkDeviceBinding(email: string, localDeviceId: string): 
 }
 
 /**
- * REACTIVATE (self-service at sign-in) — enforced against the CLOUD row:
- *   1. The email must be PAID (is_paid) or an admin — unpaid emails never
- *      reactivate, and a paid email can never be used to release a
- *      DIFFERENT email's device.
- *   2. Reactivation works ONLY for the email the user actually registered
- *      with — the row itself is the record, so this is inherent.
- * Releases the previously bound device and binds this one. Subscription,
- * license keys and payment state are untouched.
+ * BIND this device to the email (first activation) — the write that makes
+ * "one email, one device" hold across reinstalls:
+ *   • the users row must exist (registerWithEmail upserts it first — this
+ *     is why the old bind call silently failed: it ran BEFORE the row was
+ *     created, so a delete+reinstall never detected the old device),
+ *   • an UNBOUND row (device_id null) binds to this device,
+ *   • a row already bound to THIS device is a no-op,
+ *   • a row bound to a DIFFERENT device is REFUSED — the user must ask
+ *     their mentor to release it (/dashboard/reactivate). Applies to
+ *     EVERYONE — clients and admins alike.
+ * Subscription, license keys and payment state are untouched.
  */
-export async function reactivateEmailToDevice(email: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
+export async function bindDeviceToEmail(email: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
   const address = clean(email);
+  if (!address || !localDeviceId) return { ok: false, error: "Missing email or device." };
   const { data, error: readError } = await dbClient
     .from("users")
-    .select("is_paid, is_admin")
+    .select("device_id")
     .eq("email", address)
     .maybeSingle();
   if (readError) {
-    if (readError.code === "42703") return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    if (readError.code === "42703") return { ok: false, error: "Device binding is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
     return { ok: false, error: readError.message };
   }
   if (!data) {
     // No row = this email never registered. It is NOT the user's email.
-    return { ok: false, error: "Not reactivated — this is not your email. Reactivation works only for the email you registered with." };
+    return { ok: false, error: "Not bound — this is not a registered email. Sign in with the email you registered with." };
   }
-  const row = data as { is_paid?: boolean; is_admin?: boolean };
-  if (!row.is_paid && !row.is_admin) {
-    return { ok: false, error: "Not reactivated — this email has not paid. Reactivation works only for paid users." };
+  const boundDeviceId = (data as { device_id?: string | null }).device_id ?? null;
+  if (boundDeviceId === localDeviceId) return { ok: true }; // already this device
+  if (boundDeviceId) {
+    // Bound elsewhere — never steal the binding from the sign-in screen.
+    return { ok: false, error: "Account already used — please tell your mentor to reactivate." };
   }
   const { error } = await dbClient
     .from("users")
     .update({ device_email: address, device_id: localDeviceId })
     .eq("email", address);
   if (error?.code === "42703") {
-    return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    return { ok: false, error: "Device binding is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
   }
   return error ? { ok: false, error: error.message } : { ok: true };
 }
