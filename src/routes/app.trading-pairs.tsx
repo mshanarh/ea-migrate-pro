@@ -96,6 +96,8 @@ function TradingPairsScreen() {
         : [...mine, entry],
     );
     toast.success(exists ? `${configSymbol} updated` : `${configSymbol} added to Selected Quotes`);
+    // A newly configured symbol MOVES to the other side — show it there.
+    setTab("selected");
     setConfigSymbol(null);
   };
 
