@@ -3,7 +3,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { House, Server, ScanLine } from "lucide-react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { requestVideoPlayback } from "@/lib/video-playback";
+import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 
 const tabs = [
   { to: "/app/metatrader", label: "METATRADER", icon: Server },
@@ -49,10 +49,16 @@ export function FixedBottomNav() {
     lastHomeTap.current = now;
 
     if (isDoubleTap) {
-      requestVideoPlayback();
-      toast.success(robotHasVideo() ? "Playing your video" : "No robot video yet — your mentor can upload one");
-    } else {
-      toast.info("Press HOME again to play your video");
+      // TOGGLE — double-press starts the background video; double-press again
+      // stops it (both iOS and Android).
+      if (!robotHasVideo()) {
+        toast.info("No robot video yet — your mentor can upload one");
+        return;
+      }
+      toggleVideoPlayback();
+      toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+    } else if (robotHasVideo()) {
+      toast.info("Press HOME twice to play your video");
     }
   };
 

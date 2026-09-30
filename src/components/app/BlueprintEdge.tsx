@@ -57,7 +57,10 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
     <>
       {/* The robot's video plays full-bleed behind the whole console — the
           black background is NOT empty; without a video the image shows. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} />
+      {/* The black console's static image background — when the HOME
+          double-press starts the video, the universal backdrop in ThemeContent
+          plays it, so this layer never runs a second <video> decoder. */}
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section

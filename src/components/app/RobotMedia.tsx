@@ -1,44 +1,32 @@
 import { useEffect, useRef, useState } from "react";
 import { loadVideoUrl } from "@/lib/media-store";
-import {
-  isRobotVideoAuto,
-  subscribeVideoAuto,
-  subscribeVideoRequests,
-  wasPlaybackRequestedRecently,
-} from "@/lib/video-playback";
+import { isVideoActive, subscribeVideoActive } from "@/lib/video-playback";
 
 type RobotMediaProps = {
   image: string;
   video?: string | undefined;
-  /** "hero" = background layer (no controls); "avatar" = framed player with controls. */
-  variant: "hero" | "avatar";
+  /** Kept for call-site compatibility — the media slot is ALWAYS the picture. */
+  variant?: "hero" | "avatar";
   className: string;
-  /** ALWAYS the picture — used by the circle/rounded interface styles, where
-   * the rounded slot keeps the photo and video playback happens elsewhere
-   * (the black background), never inside the circle. */
+  /** Kept for call-site compatibility — ignored: every slot shows the picture. */
   preferImage?: boolean;
 };
 
 /**
- * Renders the robot's uploaded video when one exists (from the mentor
- * dashboard's EA Video/GIF upload), otherwise the static image.
+ * The robot's PICTURE, always — on every interface style, in every media slot.
  *
- * Playback is deliberate, never automatic-by-default: pressing the HOME button
- * twice → the video starts playing, wherever the media sits (picture slot on
- * circle themes, background on black themes). The Settings → Back Animation →
- * Robot Video toggle can also start (and keep) playback via the persisted
- * auto flag. All mounted RobotMedia instances subscribe to the playback bus.
- *
- * Videos live in IndexedDB and are handed to the element as an instant object
- * URL, so the double-press starts playback immediately with no decode lag.
+ * The uploaded video never replaces the picture here anymore: it plays only in
+ * the full-screen VideoBackdrop layer (started and stopped with the HOME
+ * double-press), so the card keeps showing the current bot picture exactly as
+ * the owner asked.
  */
-export function RobotMedia({ image, video, variant, className, preferImage = false }: RobotMediaProps) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [playableSrc, setPlayableSrc] = useState<string>();
-  const [activated, setActivated] = useState(false);
+export function RobotMedia({ image, className }: RobotMediaProps) {
+  return <img src={image} alt="" className={className} />;
+}
 
-  // Resolve IndexedDB video references to a fast object URL; plain URLs and
-  // legacy data URLs pass straight through.
+/** Resolve an IndexedDB/data/http video reference to a playback-ready src. */
+function usePlayableVideo(video: string | undefined) {
+  const [playableSrc, setPlayableSrc] = useState<string>();
   useEffect(() => {
     if (!video) {
       setPlayableSrc(undefined);
@@ -63,35 +51,14 @@ export function RobotMedia({ image, video, variant, className, preferImage = fal
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
   }, [video]);
+  return playableSrc;
+}
 
-  // Playback requests: live bus for already-mounted media, plus the recent
-  // request check for media that mounted a moment later (the first HOME press
-  // can navigate and remount the home screen — the second press must still win).
-  // The Robot Video toggle (auto flag) also activates, and live-updates via its
-  // own bus so switching off returns the picture slot to the image.
+/** Keep a <video> element actually playing while active (slow decoders, etc.). */
+function useEnsurePlaying(active: boolean, playableSrc: string | undefined) {
+  const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (!playableSrc) return;
-    if (wasPlaybackRequestedRecently()) setActivated(true);
-    if (isRobotVideoAuto()) setActivated(true);
-    const offRequests = subscribeVideoRequests(() => setActivated(true));
-    const offAuto = subscribeVideoAuto(() => {
-      if (isRobotVideoAuto()) setActivated(true);
-      else {
-        videoRef.current?.pause();
-        setActivated(false);
-      }
-    });
-    return () => {
-      offRequests();
-      offAuto();
-    };
-  }, [playableSrc]);
-
-  // Once activated, actually start playback: try now, and keep retrying until
-  // the element reports it is really playing (slow mobile decoders, browser
-  // autoplay policies, codec probing — the first play() call can fail silently).
-  useEffect(() => {
-    if (!activated || !playableSrc) return;
+    if (!active || !playableSrc) return;
     const el = videoRef.current;
     if (!el) return;
     let cancelled = false;
@@ -102,8 +69,6 @@ export function RobotMedia({ image, video, variant, className, preferImage = fal
     attemptPlay();
     el.addEventListener("loadeddata", attemptPlay);
     el.addEventListener("canplay", attemptPlay);
-    // A short retry window catches browsers that reject the first play() before
-    // the element is ready, without running forever.
     const retries = window.setTimeout(attemptPlay, 350);
     const confirmTimer = window.setInterval(() => {
       if (!el.paused) {
@@ -121,52 +86,73 @@ export function RobotMedia({ image, video, variant, className, preferImage = fal
       window.clearInterval(confirmTimer);
       window.clearTimeout(stopConfirming);
     };
-  }, [activated, playableSrc]);
-
-  // Show the picture whenever the slot is a circle/rounded picture slot
-  // (preferImage) — the video belongs on the background layer, not here —
-  // or when no usable video exists.
-  if (preferImage) {
-    return <img src={image} alt="" className={className} />;
-  }
-  if (!video || !playableSrc) {
-    return <img src={image} alt="" className={className} />;
-  }
-
-  return (
-    <video
-      ref={videoRef}
-      src={playableSrc}
-      className={className}
-      loop
-      muted
-      playsInline
-      preload="auto"
-      controls={variant === "avatar"}
-    />
-  );
+  }, [active, playableSrc]);
+  return videoRef;
 }
 
 /**
- * Full-bleed fixed backdrop that plays the robot's video edge-to-edge across
- * the whole screen — used by the black-background interface styles, where the
- * media belongs behind the content instead of inside the small rounded screen.
- * Falls back to a static image layer, then to nothing.
+ * Full-bleed fixed backdrop driven by the HOME double-press toggle:
+ *   • video ACTIVE  → the robot's video plays edge-to-edge behind the content.
+ *   • video STOPPED → showImageWhenInactive keeps the static image layer
+ *     (themes that use this as their permanent background), otherwise nothing.
+ *
+ * iOS + Android both play the muted inline video (autoplay policies satisfied).
  */
-export function VideoBackdrop({ image, video, accent }: { image: string; video?: string | undefined; accent: string }) {
-  return (
-    <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-      <RobotMedia image={image} video={video} variant="hero" className="size-full object-cover opacity-50" />
-      {/* Legibility scrims over the media */}
-      <div className="absolute inset-0 bg-black/45" />
-      <div
-        className="absolute inset-0"
-        style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
-      />
-      <div
-        className="absolute inset-x-0 bottom-0 h-56"
-        style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
-      />
-    </div>
-  );
+export function VideoBackdrop({
+  image,
+  video,
+  accent,
+  showImageWhenInactive = true,
+  videoWhenActive = true,
+}: {
+  image: string;
+  video?: string | undefined;
+  accent: string;
+  /** Inactive state: keep the static image layer (theme backgrounds) or nothing. */
+  showImageWhenInactive?: boolean;
+  /** Set false when another (universal) backdrop already plays the video. */
+  videoWhenActive?: boolean;
+}) {
+  const [active, setActive] = useState(isVideoActive());
+  useEffect(() => subscribeVideoActive(() => setActive(isVideoActive())), []);
+  const playableSrc = usePlayableVideo(video);
+  const videoRef = useEnsurePlaying(active, playableSrc);
+
+  const playing = Boolean(active && video && playableSrc && videoWhenActive);
+  if (playing) {
+    return (
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
+        <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-50" loop muted playsInline preload="auto" />
+        {/* Legibility scrims over the media */}
+        <div className="absolute inset-0 bg-black/45" />
+        <div
+          className="absolute inset-0"
+          style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
+        />
+        <div
+          className="absolute inset-x-0 bottom-0 h-56"
+          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+        />
+      </div>
+    );
+  }
+
+  if (showImageWhenInactive) {
+    return (
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
+        <img src={image} alt="" className="size-full object-cover opacity-50" />
+        <div className="absolute inset-0 bg-black/45" />
+        <div
+          className="absolute inset-0"
+          style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
+        />
+        <div
+          className="absolute inset-x-0 bottom-0 h-56"
+          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+        />
+      </div>
+    );
+  }
+
+  return null;
 }

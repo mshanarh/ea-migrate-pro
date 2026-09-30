@@ -4,7 +4,7 @@ import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customi
 import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
-import { RobotMedia } from "@/components/app/RobotMedia";
+import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
 import {
   BlackStudioLayout,
   CrimsonNavigator,
@@ -316,6 +316,24 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 /* ---------------- SWITCH ---------------- */
 
 export function ThemeContent(props: ThemeContentProps) {
+  const { color } = useCustomization();
+  // The HOME double-press video — ONE universal backdrop for every interface
+  // style. When stopped this renders nothing (the slots keep the picture);
+  // when playing, the video runs edge-to-edge behind the theme's content.
+  return (
+    <>
+      <VideoBackdrop
+        image={props.robot?.image || "/logo.png"}
+        video={props.robot?.video}
+        accent={accentColorValue(color)}
+        showImageWhenInactive={false}
+      />
+      <ThemeContentInner {...props} />
+    </>
+  );
+}
+
+function ThemeContentInner(props: ThemeContentProps) {
   const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);

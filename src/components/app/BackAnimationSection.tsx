@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { BG_EFFECTS, BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
 import { isBotVoiceEnabled, setBotVoiceEnabled, warmBotVoice } from "@/lib/bot-voice";
-import { isRobotVideoAuto, requestVideoPlayback, setRobotVideoAuto } from "@/lib/video-playback";
+import { isRobotVideoAuto, setRobotVideoAuto, setVideoActive } from "@/lib/video-playback";
 
 type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice";
 
@@ -246,10 +246,10 @@ export function BackAnimationSection() {
       if (!hasRobotVideo) return; // locked until the mentor uploads a video
       const next = !robotVideoAuto;
       setRobotVideoAutoState(next);
-      // The flag setter notifies every mounted RobotMedia: on → swap to video
-      // and play, off → pause and return the picture slot to the image.
+      // The flag persists across visits; the session state starts/stops the
+      // background video right away (on → play, off → stop).
       setRobotVideoAuto(next);
-      if (next) requestVideoPlayback();
+      setVideoActive(next);
     }
   };
 

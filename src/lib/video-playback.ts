@@ -1,32 +1,56 @@
 /**
- * Double-tap-HOME video playback trigger.
+ * Double-tap-HOME video playback — now a TOGGLE.
  *
- * The user's uploaded robot video does NOT autoplay — the owner asked for a
- * deliberate gesture: pressing the HOME button twice starts playback. The nav
- * publishes a request here; every mounted RobotMedia subscribes and starts
- * playing wherever its media sits (picture slot on circle themes, background
- * on black themes).
+ * The robot's picture always shows in the interface slots; the uploaded video
+ * plays only as the full-screen background layer. Pressing HOME twice starts
+ * it, pressing HOME twice again stops it (both iOS and Android — the muted
+ * inline <video> is allowed to play on both). The nav publishes the toggle
+ * here; the VideoBackdrop layers subscribe.
  *
- * Navigation-safe: the first HOME press can mount the home screen (its
- * RobotMedia instances did not exist when the second press fires), so the
- * request timestamp is kept and freshly-mounted media checks it on mount.
- *
- * The "Robot Video" toggle in Settings → Back Animation uses the same bus,
- * plus a persisted auto flag so the video keeps playing on later visits.
+ * State survives navigation (module state): toggled on while on another tab,
+ * the video is already playing when the user returns home. The "Robot Video"
+ * toggle in Settings → Back Animation persists via the auto flag — with it
+ * on, playback starts by itself on later visits.
  */
 
-const listeners = new Set<() => void>();
+const activeListeners = new Set<() => void>();
 const autoListeners = new Set<() => void>();
-
-let lastRequestAt = 0;
-const RECENT_WINDOW_MS = 1600;
 
 const AUTO_KEY = "robotVideoAuto";
 
-/** Called by the bottom nav when HOME is pressed twice in quick succession. */
-export function requestVideoPlayback() {
-  lastRequestAt = Date.now();
-  listeners.forEach((listener) => listener());
+/** Persisted "play the robot video as background" preference (Settings toggle). */
+export function isRobotVideoAuto(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(AUTO_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+/** Session playback state — starts on when the persisted auto flag is set. */
+let videoActive = isRobotVideoAuto();
+
+/** HOME double-press: play the background video — or stop it if playing. */
+export function toggleVideoPlayback(): void {
+  videoActive = !videoActive;
+  activeListeners.forEach((listener) => listener());
+}
+
+/** Direct state setter (Settings → Robot Video toggle uses this). */
+export function setVideoActive(value: boolean): void {
+  if (videoActive === value) return;
+  videoActive = value;
+  activeListeners.forEach((listener) => listener());
+}
+
+export function isVideoActive(): boolean {
+  return videoActive;
+}
+
+export function subscribeVideoActive(listener: () => void): () => void {
+  activeListeners.add(listener);
+  return () => activeListeners.delete(listener);
 }
 
 /** Called whenever the Robot Video auto flag changes (on or off). */
@@ -39,21 +63,7 @@ export function subscribeVideoAuto(listener: () => void): () => void {
   return () => autoListeners.delete(listener);
 }
 
-/** True when a playback request fired moments ago (covers navigation remounts). */
-export function wasPlaybackRequestedRecently(): boolean {
-  return Date.now() - lastRequestAt < RECENT_WINDOW_MS;
-}
-
 /** Persisted "play the robot video as background" preference. */
-export function isRobotVideoAuto(): boolean {
-  if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(AUTO_KEY) === "true";
-  } catch {
-    return false;
-  }
-}
-
 export function setRobotVideoAuto(value: boolean): void {
   if (typeof window === "undefined") return;
   try {
@@ -62,9 +72,4 @@ export function setRobotVideoAuto(value: boolean): void {
     /* ignore */
   }
   notifyRobotVideoAutoChanged();
-}
-
-export function subscribeVideoRequests(listener: () => void): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
 }

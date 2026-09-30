@@ -14,7 +14,6 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
-import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -265,10 +264,10 @@ function AppHome() {
       .catch(() => {});
   };
 
-  // ── LIVE QUOTES — the QUOTES button opens a real-time price sheet for the
-  // robot's EA symbols (shared with the scanner's LIVE QUOTES toggle).
-  const [quotesOpen, setQuotesOpen] = useState(false);
-  const handleQuotes = () => setQuotesOpen(true);
+  // ── QUOTES — the QUOTES button opens the redesigned quotes page (Selected
+  // Quotes / Allowed Quotes with the per-symbol Configure modal), identical
+  // on iOS, Android and the web.
+  const handleQuotes = () => window.location.assign("/app/trading-pairs");
 
   const handleRemove = () => {
     if (!robot) return;
@@ -307,14 +306,6 @@ function AppHome() {
       </div>
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
-
-      {/* LIVE QUOTES sheet — the robot's EA symbols with real-time prices. */}
-      <LiveQuotesSheet
-        open={quotesOpen}
-        onOpenChange={setQuotesOpen}
-        symbols={robot?.symbols ?? []}
-        {...(robot?.name ? { robotName: robot.name } : {})}
-      />
 
       <WelcomeMaster />
       <DraggableBotPopup />
