@@ -156,23 +156,17 @@ async function runScannerAnalysis(
   const trendUp = ema21 > ema50;
   const priceAboveEma = close > ema21;
 
-  // ── Confluence engine — STRICT, no-trade-aware ────────────────────
-  // The scanner no longer forces BUY/SELL on mixed conditions. A signal is
-  // only actionable when TREND, MOMENTUM and RECENT CANDLES all agree, and
-  // the 7-check confluence scores at least 5. Everything else returns
-  // strength WAIT + executionReady false ("Market in consolidation / low
-  // confluence — wait for clear breakout.").
+  // ── Confluence engine — 5 core checks, tuned for ACTIONABLE plans ──
+  // The full 21>50>200 stack requirement parked the scanner on WAIT most of
+  // the time. Trend is now simply EMA21 vs EMA50, with price holding the
+  // trend side. RSI: bullish above 48 (veto only above 75 — overbought),
+  // bearish below 52 (veto only below 25 — oversold). 3+ of 5 checks agree
+  // → actionable MODERATE, 4+ → STRONG. WAIT is reserved for a genuinely
+  // flat market (0–1 checks) and for simulated/synthetic data.
   const ema200 = closes.length >= 60 ? ema(closes, Math.min(200, closes.length)) : ema50;
   const emaStackedUp = ema21 > ema50 && ema50 > ema200;
   const emaStackedDown = ema21 < ema50 && ema50 < ema200;
-  const macroFast = emaSeries(closes, 21);
-  const macroSlow = emaSeries(closes, 50);
-  const macroUp = (macroFast.at(-1) ?? 0) > (macroSlow.at(-1) ?? 0);
   const histogram = macdHistogram(closes);
-  const bodyRatio =
-    lastCandle && lastCandle.high - lastCandle.low > 0
-      ? Math.abs(lastCandle.close - lastCandle.open) / (lastCandle.high - lastCandle.low)
-      : 0;
   const higherLows =
     candles.length >= 30 &&
     (() => {
@@ -201,34 +195,29 @@ async function runScannerAnalysis(
   const candleDirectionUp = bullishCandles > bearishCandles;
   const candleAgreement = recentCandles.length > 0 ? (candleDirectionUp ? bullishCandles : bearishCandles) / recentCandles.length : 0;
 
-  // RSI bands: momentum present but NOT overbought/oversold (chasing tops
-  // and bottoms loses). BUY only in 52–68; SELL only in 32–48.
-  const rsiBullBand = rsiValue >= 52 && rsiValue <= 68;
-  const rsiBearBand = rsiValue >= 32 && rsiValue <= 48;
+  // RSI: momentum on the trend side with generous bands. Bullish above 48
+  // (only vetoed above 75 — overbought), bearish below 52 (vetoed below 25).
+  const rsiBullBand = rsiValue > 48 && rsiValue < 75;
+  const rsiBearBand = rsiValue < 52 && rsiValue > 25;
 
+  // The 5 CORE checks. 3+ agreeing = tradeable momentum in one direction.
   const bullChecks = {
-    /** Full EMA stack aligned up: 21 > 50 > 200. */
-    trend: emaStackedUp,
-    /** Macro trend agrees. */
-    macroTrend: macroUp,
-    /** Price on the right side of the fast EMA. */
+    /** Trend direction: EMA21 above EMA50. */
+    trend: trendUp,
+    /** Price holding the trend side of the fast EMA. */
     position: priceAboveEma,
-    /** MACD histogram positive — momentum confirms the trend. */
+    /** MACD histogram positive — momentum confirms. */
     momentum: histogram > 0,
-    /** RSI in the bullish band (52–68) — not overbought. */
+    /** RSI on the bullish side (not overbought). */
     rsi: rsiBullBand,
-    /** Market structure: higher lows on the second half of the window. */
-    structure: higherLows,
-    /** Recent candles travelling up (strict majority of last 10). */
+    /** Recent candles travelling up (majority of last 10). */
     conviction: candleDirectionUp,
   };
   const bearChecks = {
-    trend: emaStackedDown,
-    macroTrend: !macroUp,
+    trend: !trendUp,
     position: !priceAboveEma,
     momentum: histogram < 0,
     rsi: rsiBearBand,
-    structure: lowerHighs,
     conviction: !candleDirectionUp,
   };
   const bullScore = Object.values(bullChecks).filter(Boolean).length;
@@ -245,39 +234,31 @@ async function runScannerAnalysis(
 
   const conditionalSetup = !hasLiveQuote;
 
-  // ── The STRICT GATE — every condition must hold for an actionable signal:
-  //   1. ≥ 5 of the 7 confluence checks on the leading side,
-  //   2. trend, momentum band and recent candles ALL aligned that way,
-  //   3. the market is NOT ranging (clean higher-lows / lower-highs
-  //      structure must agree with the direction),
-  //   4. REAL feed data — synthesized candles AND synthetic-proxy candles
-  //      (BTC standing in for FLAME etc.) are never tradable: the levels
-  //      describe a different instrument than the one being traded.
+  // ── The ACTIONABLE GATE — tuned to deliver executable plans ───────
+  // WAIT only when the market is genuinely flat (0–1 of 5 core checks)
+  // or the data is simulated/synthetic. 3+ checks → MODERATE (tradeable),
+  // 4+ → STRONG. The structural stop and 1:2.5 target stay — risk control
+  // is NOT relaxed, only the entry filter is.
   const leadingScore = Math.max(bullScore, bearScore);
-  const leadingAligned = bullishLead
-    ? emaStackedUp && rsiBullBand && candleDirectionUp
-    : emaStackedDown && rsiBearBand && !candleDirectionUp;
   const structureAligned = bullishLead ? higherLows : lowerHighs;
   const ranging = !higherLows && !lowerHighs;
-  const confluenceOk = leadingScore >= 5;
   const tradableData = !synthesized && !synthetic;
-  const gatePassed = confluenceOk && leadingAligned && structureAligned && !ranging && tradableData;
+  const flatMarket = leadingScore <= 1;
+  const gatePassed = leadingScore >= 3 && !flatMarket && tradableData;
 
-  // Confidence mirrors the confluence achieved, capped hard for
-  // conditional (no-live-quote) plans and for WAIT-grade setups.
-  const confidenceBase = Math.round(Math.min(95, 38 + leadingScore * 9));
-  const confidence = !gatePassed ? Math.min(35, confidenceBase) : conditionalSetup ? Math.min(52, confidenceBase) : confidenceBase;
+  // Confidence mirrors the confluence achieved, capped for conditional
+  // (no-live-quote) plans and WAIT-grade setups.
+  const confidenceBase = Math.round(Math.min(95, 40 + leadingScore * 10));
+  const confidence = !gatePassed ? Math.min(35, confidenceBase) : conditionalSetup ? Math.min(55, confidenceBase) : confidenceBase;
 
-  // Strength: WAIT is the default for anything the strict gate rejects;
-  // STRONG additionally requires the candle agreement of the last 10 bars.
+  // Strength: 3/5 → MODERATE, 4/5 → STRONG (5/5 + candle agreement →
+  // STRONG with extra confidence). Only a flat market (0–1) stays WAIT.
   const agreement = candleAgreement;
   const finalStrength: ScannerAnalysis["strength"] = !gatePassed
     ? "WAIT"
-    : leadingScore >= 6 && agreement >= 0.7
+    : leadingScore >= 4
       ? "STRONG"
-      : leadingScore >= 5 && agreement >= 0.6
-        ? "MODERATE"
-        : "WEAK";
+      : "MODERATE";
   const entry = signal === "BUY" ? ask : bid;
 
   // ── Structure-aware SL/TP (smart-money style) ─────────────────────
@@ -296,11 +277,9 @@ async function runScannerAnalysis(
 
   const waitReason = synthesized
     ? `No public feed covers ${symbol} — the levels below are planned from SIMULATED data (estimated price ${fmtPrice(referenceClose)}). Execution is disabled: never trade live money on synthetic candles. Load a standard symbol (EURUSD, XAUUSD, US30, BTCUSD) for an executable plan.`
-    : ranging
-      ? "Market in consolidation / low confluence — wait for clear breakout."
-      : !leadingAligned
-        ? `Trend, momentum and recent candles disagree — EMA stack is ${emaStackedUp ? "aligned up" : emaStackedDown ? "aligned down" : "mixed"}, RSI ${rsiValue.toFixed(1)} is ${rsiBullBand ? "in the bullish band" : rsiBearBand ? "in the bearish band" : "outside both trade bands"}, and the last 10 candles run ${Math.round(candleAgreement * 100)}% ${candleDirectionUp ? "up" : "down"}. Wait for all three to align.`
-        : `Only ${leadingScore}/7 confluence checks agree — below the 5/7 minimum. Market in consolidation / low confluence — wait for clear breakout.`;
+    : synthetic
+      ? `${symbol} is a broker synthetic index tracked by a volatility proxy — plans are never executable.`
+      : "Market is flat — only " + leadingScore + " of 5 core checks agree. Wait for the trend to pick a direction.";
 
   const reasons: string[] = [];
   reasons.push(
@@ -315,13 +294,13 @@ async function runScannerAnalysis(
   }
   if (candles.length >= 50) {
     reasons.push(
-      `EMA stack: 21 ${ema21 > ema50 ? ">" : "<"} 50 ${ema50 > ema200 ? ">" : "<"} 200 — ${emaStackedUp ? "fully bullish alignment" : emaStackedDown ? "fully bearish alignment" : "mixed alignment"} on ${timeframe}.`,
+      `EMA stack: 21 ${ema21 > ema50 ? ">" : "<"} 50 ${ema50 > ema200 ? ">" : "<"} 200 — ${emaStackedUp ? "fully bullish alignment" : emaStackedDown ? "fully bearish alignment" : "partial alignment (21 vs 50 leads the call)"} on ${timeframe}.`,
     );
     reasons.push(
-      `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 68 ? "overbought (no fresh longs)" : rsiValue < 32 ? "oversold (no fresh shorts)" : rsiBullBand ? "in the bullish trade band (52–68)" : rsiBearBand ? "in the bearish trade band (32–48)" : "neutral zone"}.`,
+      `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue >= 75 ? "overbought (no fresh longs)" : rsiValue <= 25 ? "oversold (no fresh shorts)" : rsiBullBand ? "bullish side" : rsiBearBand ? "bearish side" : "neutral zone"}.`,
     );
     reasons.push(
-      `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression (ranging)"}. Confluence ${bullScore}–${bearScore} (bull–bear).`,
+      `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression (ranging)"}. Confluence ${bullScore}–${bearScore} of 5 (bull–bear).`,
     );
     reasons.push(
       `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level; the last 10 candles are ${Math.round(bullishCandles / Math.max(1, recentCandles.length) * 100)}% bullish / ${Math.round(bearishCandles / Math.max(1, recentCandles.length) * 100)}% bearish.`,
@@ -337,16 +316,14 @@ async function runScannerAnalysis(
   reasons.push(
     gatePassed
       ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.`
-      : `NO TRADE — ${waitReason} Strength: WAIT; execution is blocked until the scanner sees a clean, aligned setup.`,
+      : `NO TRADE — ${waitReason} Strength: WAIT; execution is blocked until the market picks a direction.`,
   );
   reasons.push(
     finalStrength === "WAIT"
-      ? `Signal strength: WAIT — the strict gate rejected this setup (${leadingScore}/7 checks, ${Math.round(agreement * 100)}% candle agreement${synthesized ? ", simulated data" : ""}). The scanner will not execute it; re-scan later or wait for a cleaner trend.`
-      : finalStrength === "WEAK"
-        ? `Signal strength: WEAK — ${leadingScore}/7 checks agree (${Math.round(agreement * 100)}% candle agreement). Trade small if at all.`
-        : finalStrength === "MODERATE"
-          ? `Signal strength: MODERATE — ${leadingScore}/7 checks agree with ${Math.round(agreement * 100)}% candle agreement.`
-          : `Signal strength: STRONG — ${leadingScore}/7 checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call.`,
+      ? `Signal strength: WAIT — the market is flat (${leadingScore}/5 core checks, ${Math.round(agreement * 100)}% candle agreement${synthesized ? ", simulated data" : ""}). The scanner will not execute it; re-scan later or wait for a cleaner trend.`
+      : finalStrength === "MODERATE"
+        ? `Signal strength: MODERATE — ${leadingScore}/5 core checks agree with ${Math.round(agreement * 100)}% candle agreement. Executable with standard risk.`
+        : `Signal strength: STRONG — ${leadingScore}/5 core checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call. High-conviction execution.`,
   );
 
   const fmt = (value: number) =>
@@ -354,14 +331,14 @@ async function runScannerAnalysis(
   const readouts: ScannerAnalysis["readouts"] = [
     {
       label: "Trend (EMA 21/50/200)",
-      value: emaStackedUp ? "Stacked Up · Bullish" : emaStackedDown ? "Stacked Down · Bearish" : "Mixed",
-      bullish: candles.length >= 50 ? (emaStackedUp ? true : emaStackedDown ? false : null) : null,
+      value: emaStackedUp ? "Stacked Up · Bullish" : emaStackedDown ? "Stacked Down · Bearish" : ema21 > ema50 ? "21 > 50 · Bullish lean" : ema21 < ema50 ? "21 < 50 · Bearish lean" : "Mixed",
+      bullish: candles.length >= 50 ? (ema21 > ema50 ? true : ema21 < ema50 ? false : null) : null,
     },
     {
       label: "Momentum (RSI 14)",
       value:
         closes.length >= 15
-          ? `${rsiValue.toFixed(1)} ${rsiBullBand ? "· Bull band" : rsiBearBand ? "· Bear band" : "· No-trade zone"}`
+          ? `${rsiValue.toFixed(1)} ${rsiBullBand ? "· Bullish side" : rsiBearBand ? "· Bearish side" : "· Neutral"}`
           : "n/a",
       bullish: closes.length >= 15 ? (rsiBullBand ? true : rsiBearBand ? false : null) : null,
     },
@@ -383,7 +360,7 @@ async function runScannerAnalysis(
     },
     {
       label: "Confluence",
-      value: `${leadingScore}/7 · ${gatePassed ? "gate passed" : "gate blocked"}`,
+      value: `${leadingScore}/5 · ${gatePassed ? "actionable" : "flat market"}`,
       bullish: gatePassed ? (signal === "BUY" ? true : false) : null,
     },
     {

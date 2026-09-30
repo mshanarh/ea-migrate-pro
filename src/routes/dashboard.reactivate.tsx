@@ -23,9 +23,12 @@ export const Route = createFileRoute("/dashboard/reactivate")({
   component: ReactivateClientPage,
 });
 
-// Configure your Whop checkout link for tokens here:
-const TOKEN_CHECKOUT_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+// Configure your Whop checkout link for tokens here — set the
+// VITE_TOKEN_CHECKOUT_URL env var in Vercel (or edit the fallback below).
+const TOKEN_CHECKOUT_URL = (import.meta.env["VITE_TOKEN_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
 const TOKEN_PRICE_ZAR = 100;
+/** Admins never run out: their balance is pinned to 1,000,000 tokens. */
+const ADMIN_TOKEN_BALANCE = 1_000_000;
 
 const GUARANTEES = [
   {
@@ -73,8 +76,15 @@ function ReactivateClientPage() {
 
   useEffect(() => {
     if (!account) return;
+    // ADMINS: pin the balance to 1,000,000 — reactivation is never
+    // token-limited for the platform owner.
+    if (isAdmin) {
+      setStoredTokens(account.email, ADMIN_TOKEN_BALANCE);
+      setTokens(ADMIN_TOKEN_BALANCE);
+      return;
+    }
     setTokens(getStoredTokens(account.email));
-  }, [account]);
+  }, [account, isAdmin]);
 
   // Mentors: load cloud lock
   useEffect(() => {
@@ -252,10 +262,10 @@ function ReactivateClientPage() {
                 type="button"
                 variant="ghost"
                 size="sm"
-                onClick={() => handleClaimTokens(5)}
+                onClick={() => handleClaimTokens(ADMIN_TOKEN_BALANCE)}
                 className="gap-1 text-xs text-amber-300"
               >
-                <PlusCircle className="size-3.5" /> +5 Admin Free
+                <PlusCircle className="size-3.5" /> Admin — refill to 1,000,000
               </Button>
             )}
           </div>
