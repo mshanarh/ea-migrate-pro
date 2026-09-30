@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { Waves } from "lucide-react";
 import { analyzeMarket, type ScannerAnalysis } from "@/lib/market-scanner-core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
+import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
 import { usePlatform } from "@/lib/platform";
 import { clearTradeHistory, useTradeHistory } from "@/lib/trade-history";
 
@@ -161,6 +163,8 @@ export default function ChartScanner({
   const [step, setStep] = useState(0);
   const [analysis, setAnalysis] = useState<ScannerAnalysis | null>(null);
   const [analysisError, setAnalysisError] = useState("");
+  // LIVE QUOTES sheet — the same EA symbols, real-time prices.
+  const [quotesOpen, setQuotesOpen] = useState(false);
   // ── Per-timeframe screenshot library: each timeframe of the selected symbol
   // can hold its own chart screenshot (attach several files at once — each is
   // auto-assigned by the timeframe detected in its filename, e.g.
@@ -644,11 +648,19 @@ export default function ChartScanner({
             </div>
           )}
 
-          {/* SYMBOL — exactly the mentor's EA symbols; the user picks one */}
+          {/* SYMBOL — exactly the mentor's EA symbols; the user picks one.
+              LIVE QUOTES toggle: the same EA symbols with real-time prices. */}
           <div className={`mx-3 mt-4 border border-white/8 bg-[#151a20] p-4 sm:mx-6 ${cardRadius}`}>
             <div className="mb-3 flex items-center justify-between">
               <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
-              <p className="text-[10px] font-bold text-white/25">{symbols.length} FROM YOUR EA</p>
+              <button
+                type="button"
+                onClick={() => setQuotesOpen(true)}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-black tracking-widest transition-opacity hover:opacity-80"
+                style={{ background: `${accent}22`, color: accent }}
+              >
+                <Waves className="size-3.5" /> LIVE QUOTES
+              </button>
             </div>
             <div className="flex flex-wrap gap-2">
               {symbols.map((item) => (
@@ -1085,6 +1097,9 @@ export default function ChartScanner({
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* LIVE QUOTES — the EA's symbols with real-time prices. */}
+      <LiveQuotesSheet open={quotesOpen} onOpenChange={setQuotesOpen} symbols={symbols} />
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect, useRouter } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, RefreshCcw, Waves } from "lucide-react";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -15,7 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
-import { fetchLiveQuotes, fmtQuotePrice, type LiveQuote } from "@/lib/live-quotes";
+import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -267,25 +266,9 @@ function AppHome() {
   };
 
   // ── LIVE QUOTES — the QUOTES button opens a real-time price sheet for the
-  // robot's symbols (public feed, works identically on Android and iOS).
+  // robot's EA symbols (shared with the scanner's LIVE QUOTES toggle).
   const [quotesOpen, setQuotesOpen] = useState(false);
-  const [quotes, setQuotes] = useState<LiveQuote[]>([]);
-  const [quotesBusy, setQuotesBusy] = useState(false);
-  const loadQuotes = async () => {
-    if (!robot) return;
-    const symbols = robot.symbols.length > 0 ? robot.symbols : ["XAUUSD"];
-    setQuotesBusy(true);
-    try {
-      setQuotes(await fetchLiveQuotes(symbols));
-    } finally {
-      setQuotesBusy(false);
-    }
-  };
-  const handleQuotes = () => {
-    if (!robot) return;
-    setQuotesOpen(true);
-    void loadQuotes();
-  };
+  const handleQuotes = () => setQuotesOpen(true);
 
   const handleRemove = () => {
     if (!robot) return;
@@ -325,58 +308,13 @@ function AppHome() {
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
 
-      {/* LIVE QUOTES sheet — real-time prices for the robot's symbols. */}
-      <Dialog open={quotesOpen} onOpenChange={setQuotesOpen}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b0d] p-5 pt-safe text-white sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-lg font-black">
-              <Waves className="size-5 text-primary" /> Live quotes — {robot?.name ?? "Robot"}
-            </DialogTitle>
-            <DialogDescription className="text-xs text-muted-foreground">
-              Real-time prices from the public market feed. Swipe down to close.
-            </DialogDescription>
-          </DialogHeader>
-          <button
-            type="button"
-            onClick={() => void loadQuotes()}
-            disabled={quotesBusy}
-            className="flex h-11 w-full items-center justify-center gap-2 rounded-full bg-primary/15 text-sm font-bold text-primary transition-colors hover:bg-primary/25 disabled:opacity-60"
-          >
-            <RefreshCcw className={`size-4 ${quotesBusy ? "animate-spin" : ""}`} />
-            {quotesBusy ? "Loading prices…" : "Refresh prices"}
-          </button>
-          <div className="space-y-2">
-            {quotes.length === 0 && !quotesBusy && (
-              <p className="py-6 text-center text-sm text-muted-foreground">Press refresh to load prices.</p>
-            )}
-            {quotes.map((quote) => (
-              <div
-                key={quote.symbol}
-                className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-sm font-bold">{quote.symbol.toUpperCase()}</p>
-                  <p className="text-[11px] text-muted-foreground">
-                    {quote.simulated
-                      ? "Simulated — no public feed for this symbol"
-                      : quote.resolved
-                        ? `Feed: ${quote.resolved} · H ${fmtQuotePrice(quote.dayHigh)} · L ${fmtQuotePrice(quote.dayLow)}`
-                        : "No public feed"}
-                  </p>
-                </div>
-                <div className="shrink-0 text-right">
-                  <p className="font-mono text-base font-black">{fmtQuotePrice(quote.price)}</p>
-                  <p className={`flex items-center justify-end gap-1 text-xs font-bold ${quote.change >= 0 ? "text-emerald-400" : "text-red-400"}`}>
-                    {quote.change >= 0 ? <ArrowUp className="size-3" /> : <ArrowDown className="size-3" />}
-                    {quote.change >= 0 ? "+" : ""}
-                    {quote.changePercent.toFixed(2)}%
-                  </p>
-                </div>
-              </div>
-            ))}
-          </div>
-        </DialogContent>
-      </Dialog>
+      {/* LIVE QUOTES sheet — the robot's EA symbols with real-time prices. */}
+      <LiveQuotesSheet
+        open={quotesOpen}
+        onOpenChange={setQuotesOpen}
+        symbols={robot?.symbols ?? []}
+        {...(robot?.name ? { robotName: robot.name } : {})}
+      />
 
       <WelcomeMaster />
       <DraggableBotPopup />
