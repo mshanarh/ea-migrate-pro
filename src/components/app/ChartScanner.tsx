@@ -921,14 +921,15 @@ export default function ChartScanner({
             </div>
 
             {/* EXECUTE TRADE — the single visible action on a valid plan.
-                WAIT-grade setups are intentionally un-executable: the engine
-                refused them because confluence/candle-agreement is too low. */}
+                Only WAIT (simulated/synthetic data) is un-executable: the
+                levels would not describe the traded instrument. WEAK setups
+                are executable — the reasons panel says to trade small. */}
             {analysis.strength === "WAIT" ? (
               <div
                 className="mt-4 flex h-[58px] w-full items-center justify-center gap-2 rounded-full border border-red-400/30 bg-red-400/10 text-[13px] font-black tracking-wide text-red-300"
                 data-testid="text-wait-blocked"
               >
-                ⛔ SETUP TOO WEAK — WAIT FOR A CLEANER TREND
+                ⛔ SIMULATED DATA — EXECUTION DISABLED
               </div>
             ) : (
               <button

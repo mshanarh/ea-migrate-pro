@@ -234,31 +234,33 @@ async function runScannerAnalysis(
 
   const conditionalSetup = !hasLiveQuote;
 
-  // ── The ACTIONABLE GATE — tuned to deliver executable plans ───────
-  // WAIT only when the market is genuinely flat (0–1 of 5 core checks)
-  // or the data is simulated/synthetic. 3+ checks → MODERATE (tradeable),
-  // 4+ → STRONG. The structural stop and 1:2.5 target stay — risk control
-  // is NOT relaxed, only the entry filter is.
+  // ── The EXECUTABLE GATE — the trader decides, the scanner informs ──
+  // Every REAL-feed setup produces an executable plan (BUY/SELL with entry,
+  // structural stop and 1:2.5 target). Confluence only sets the STRENGTH
+  // label, never blocks: 4+/5 → STRONG, 3 → MODERATE, ≤2 → WEAK (trade
+  // small). WAIT is reserved for simulated/synthetic data — the levels
+  // would describe a different instrument than the one being traded.
   const leadingScore = Math.max(bullScore, bearScore);
   const structureAligned = bullishLead ? higherLows : lowerHighs;
   const ranging = !higherLows && !lowerHighs;
   const tradableData = !synthesized && !synthetic;
-  const flatMarket = leadingScore <= 1;
-  const gatePassed = leadingScore >= 3 && !flatMarket && tradableData;
+  const gatePassed = tradableData;
 
   // Confidence mirrors the confluence achieved, capped for conditional
-  // (no-live-quote) plans and WAIT-grade setups.
+  // (no-live-quote) plans and low-confluence setups.
   const confidenceBase = Math.round(Math.min(95, 40 + leadingScore * 10));
   const confidence = !gatePassed ? Math.min(35, confidenceBase) : conditionalSetup ? Math.min(55, confidenceBase) : confidenceBase;
 
-  // Strength: 3/5 → MODERATE, 4/5 → STRONG (5/5 + candle agreement →
-  // STRONG with extra confidence). Only a flat market (0–1) stays WAIT.
+  // Strength: 4/5 → STRONG, 3 → MODERATE, ≤2 → WEAK (executable, trade
+  // small). Only simulated/synthetic data returns WAIT.
   const agreement = candleAgreement;
   const finalStrength: ScannerAnalysis["strength"] = !gatePassed
     ? "WAIT"
     : leadingScore >= 4
       ? "STRONG"
-      : "MODERATE";
+      : leadingScore === 3
+        ? "MODERATE"
+        : "WEAK";
   const entry = signal === "BUY" ? ask : bid;
 
   // ── Structure-aware SL/TP (smart-money style) ─────────────────────
@@ -279,7 +281,7 @@ async function runScannerAnalysis(
     ? `No public feed covers ${symbol} — the levels below are planned from SIMULATED data (estimated price ${fmtPrice(referenceClose)}). Execution is disabled: never trade live money on synthetic candles. Load a standard symbol (EURUSD, XAUUSD, US30, BTCUSD) for an executable plan.`
     : synthetic
       ? `${symbol} is a broker synthetic index tracked by a volatility proxy — plans are never executable.`
-      : "Market is flat — only " + leadingScore + " of 5 core checks agree. Wait for the trend to pick a direction.";
+      : "No tradable market data.";
 
   const reasons: string[] = [];
   reasons.push(
@@ -316,14 +318,16 @@ async function runScannerAnalysis(
   reasons.push(
     gatePassed
       ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.`
-      : `NO TRADE — ${waitReason} Strength: WAIT; execution is blocked until the market picks a direction.`,
+      : `NO TRADE — ${waitReason} Strength: WAIT; execution is disabled on simulated data.`,
   );
   reasons.push(
     finalStrength === "WAIT"
-      ? `Signal strength: WAIT — the market is flat (${leadingScore}/5 core checks, ${Math.round(agreement * 100)}% candle agreement${synthesized ? ", simulated data" : ""}). The scanner will not execute it; re-scan later or wait for a cleaner trend.`
-      : finalStrength === "MODERATE"
-        ? `Signal strength: MODERATE — ${leadingScore}/5 core checks agree with ${Math.round(agreement * 100)}% candle agreement. Executable with standard risk.`
-        : `Signal strength: STRONG — ${leadingScore}/5 core checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call. High-conviction execution.`,
+      ? `Signal strength: WAIT — no tradable data${synthesized ? " (simulated)" : " (synthetic proxy)"}. Execution is blocked.`
+      : finalStrength === "WEAK"
+        ? `Signal strength: WEAK — only ${leadingScore}/5 core checks agree (${Math.round(agreement * 100)}% candle agreement). The plan is executable — trade SMALL and respect the stop.`
+        : finalStrength === "MODERATE"
+          ? `Signal strength: MODERATE — ${leadingScore}/5 core checks agree with ${Math.round(agreement * 100)}% candle agreement. Executable with standard risk.`
+          : `Signal strength: STRONG — ${leadingScore}/5 core checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call. High-conviction execution.`,
   );
 
   const fmt = (value: number) =>
