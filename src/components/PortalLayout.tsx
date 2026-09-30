@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { signOut, useCurrentAccount } from "@/lib/auth-store";
+import { mirrorAccount } from "@/routes/dashboard.eas";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; badge?: boolean; mentorOnly?: boolean; adminOnly?: boolean };
 
@@ -71,6 +72,18 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("portal-bright", bright);
     window.localStorage.setItem("eamp.portal.bright", bright ? "1" : "0");
   }, [bright]);
+
+  // CLOUD EA MIRROR — re-publish the mentor's account (EAs with their
+  // pictures included) once per browser session, from ANY portal page.
+  // This is what puts the real robot picture into the cloud so clients'
+  // phones can show it (robot card, floating bubble). Deduped per session
+  // so navigating the portal doesn't spam writes.
+  useEffect(() => {
+    if (!account || account.eas.length === 0) return;
+    if (sessionStorage.getItem("eamp.ea-mirror.done")) return;
+    sessionStorage.setItem("eamp.ea-mirror.done", "1");
+    void mirrorAccount(account);
+  }, [account?.email, account?.eas.length]);
 
   const pageBg = bright ? "bg-[#10151c]" : "bg-[#0A0A0A]";
   const surfaceBg = bright ? "bg-[#151b23]" : "bg-[#0A0A0A]";

@@ -457,6 +457,10 @@ async function findLicenseInPortalAccounts(
         const symbols = (ea?.symbols ?? (Array.isArray(license.symbols) ? (license.symbols as string[]) : [])).filter(
           (symbol): symbol is string => typeof symbol === "string",
         );
+        // Media from the EA entry first, then the license record itself
+        // (issuance embeds the image/video on the license as a fallback).
+        const image = ea?.image ?? (license as { image?: unknown }).image;
+        const video = ea?.video ?? (license as { video?: unknown }).video;
         const result: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {
           license: {
             ...(eaName ? { eaName } : {}),
@@ -466,8 +470,8 @@ async function findLicenseInPortalAccounts(
             ...(ea?.id || license.eaId ? { eaId: (ea?.id ?? license.eaId) as string } : {}),
             ...(eaName ? { name: eaName } : {}),
             symbols,
-            ...(ea?.image ? { image: ea.image } : {}),
-            ...(ea?.video ? { video: ea.video } : {}),
+            ...(typeof image === "string" && image ? { image } : {}),
+            ...(typeof video === "string" && video ? { video } : {}),
           },
         };
         return result;
@@ -678,11 +682,16 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
         if (clientEmail !== email && (!clientEmail && accountEmail !== email)) continue;
         const ea = (parsed.eas ?? []).find((item) => item.id === license.eaId);
         const eaName = ea?.name || license.robotName || license.expertAdvisor || license.name;
+        // IMAGE/VIDEO come from the EA entry, falling back to the license
+        // record itself (newer issuance embeds the media on the license so
+        // the picture reaches the cloud even when the EA list has not).
+        const image = ea?.image ?? (license as { image?: unknown }).image;
+        const video = ea?.video ?? (license as { video?: unknown }).video;
         byKey.set(license.key.trim().toUpperCase(), {
           ...(eaName ? { name: eaName } : {}),
           symbols: (ea?.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
-          ...(ea?.image ? { image: ea.image } : {}),
-          ...(ea?.video ? { video: ea.video } : {}),
+          ...(typeof image === "string" && image ? { image } : {}),
+          ...(typeof video === "string" && video ? { video } : {}),
         });
       }
     }

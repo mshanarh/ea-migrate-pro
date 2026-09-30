@@ -9,7 +9,7 @@
  * same tables the schema grants full anon access (portal_accounts,
  * mentor_approvals, portal_payments).
  */
-import type { Account, PaymentRecord, PortalStatus } from "@/lib/auth-store";
+import type { Account, ExpertAdvisor, PaymentRecord, PortalStatus } from "@/lib/auth-store";
 
 export type PublicAccount = Omit<Account, "password">;
 export type AdminPatch = {
@@ -264,6 +264,7 @@ export async function portalDeleteLicenseKey(key: string): Promise<{ enabled: bo
 export async function portalUpsertLicense(
   mentorEmail: string,
   license: Account["licenses"][number],
+  eaMedia?: { image?: string; video?: string },
 ): Promise<{ enabled: boolean; ok: boolean; error?: string }> {
   const dbClient = await db();
   if (!dbClient) return { enabled: false, ok: false };
@@ -278,9 +279,36 @@ export async function portalUpsertLicense(
     if (!existing) return { enabled: true, ok: false, error: "Mentor has no cloud record yet — register once first." };
     const account =
       typeof existing.data === "string" ? (JSON.parse(existing.data) as Account) : (existing.data as Account);
-    const licensesById = new Map(account.licenses.map((item) => [item.id, item]));
+    // GUARANTEE the EA media (picture/video) exists in the cloud record:
+    // the license alone gives the app a name, but clients' phones need the
+    // IMAGE for the robot card and the floating bubble. The mentor's local
+    // EA list is the source — carry the linked EA (image included) along
+    // with every issued key.
+    let eas = account.eas ?? [];
+    if (eaMedia?.image || eaMedia?.video) {
+      const linked = eas.find((ea) => ea.id === license.eaId);
+      if (linked) {
+        if (eaMedia.image && !linked.image) linked.image = eaMedia.image;
+        if (eaMedia.video && !linked.video) linked.video = eaMedia.video;
+      } else if (license.eaId) {
+        eas = [
+          ...eas,
+          {
+            id: license.eaId,
+            name: license.robotName || license.expertAdvisor || license.name || "EA",
+            ...(license.symbols && Array.isArray(license.symbols)
+              ? { symbols: (license.symbols as string[]).filter((s): s is string => typeof s === "string") }
+              : {}),
+            ...(eaMedia.image ? { image: eaMedia.image } : {}),
+            ...(eaMedia.video ? { video: eaMedia.video } : {}),
+            createdAt: new Date().toISOString(),
+          } as ExpertAdvisor,
+        ];
+      }
+    }
+    const licensesById = new Map((account.licenses ?? []).map((item) => [item.id, item]));
     licensesById.set(license.id, license);
-    const merged: Account = { ...account, licenses: Array.from(licensesById.values()) };
+    const merged: Account = { ...account, eas, licenses: Array.from(licensesById.values()) };
     const { error: writeError } = await dbClient
       .from("portal_accounts")
       .upsert({ email: mentor, data: JSON.stringify(merged) }, { onConflict: "email" });

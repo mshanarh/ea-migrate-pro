@@ -94,7 +94,13 @@ function Licenses() {
     // ("That license key was not found" for the owner's own email).
     const created = result2.license;
     if (created) {
-      void portalUpsertLicense(account.email, created).then((push) => {
+      // Carry the EA PICTURE (and video) with the key into the cloud record —
+      // this is how the client's phone gets the robot's real image even when
+      // the full account mirror has not run there yet.
+      void portalUpsertLicense(account.email, created, {
+        ...(selectedEa.image ? { image: selectedEa.image } : {}),
+        ...(selectedEa.video ? { video: selectedEa.video } : {}),
+      }).then((push) => {
         if (push.enabled && !push.ok) {
           toast.error(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
         }

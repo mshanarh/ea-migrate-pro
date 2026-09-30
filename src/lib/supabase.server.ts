@@ -153,7 +153,7 @@ export const whopVerifyMembership = createServerFn({ method: "POST" })
  */
 export const issueLicenseKeySecure = createServerFn({ method: "POST" })
   .validator(
-    (data: { licenseKey: string; email: string; eaName?: string | null; expiry?: string | null }) => data,
+    (data: { licenseKey: string; email: string; eaName?: string | null; expiry?: string | null; eaImage?: string | null }) => data,
   )
   .handler(
     async ({ data }): Promise<{ ok: boolean; error?: string }> => {
@@ -165,6 +165,10 @@ export const issueLicenseKeySecure = createServerFn({ method: "POST" })
       };
       if (data.eaName) row["ea_name"] = data.eaName;
       if (data.expiry) row["expiry"] = data.expiry;
+      // The EA PICTURE rides on the key row: activation on any device can
+      // then show the mentor's uploaded image without needing the mentor's
+      // portal record (which may not have mirrored yet).
+      if (data.eaImage) row["ea_image"] = data.eaImage;
       // The live table's primary key is `id` (uuid) — `key` has NO unique
       // constraint, so upsert(onConflict: "key") always failed and the row
       // never landed. INSERT plainly; upsert only on a real duplicate.

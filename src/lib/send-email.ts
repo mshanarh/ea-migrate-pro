@@ -126,6 +126,7 @@ async function saveLicenseKey(input: {
   email: string;
   eaName: string | null;
   expiry: string | null;
+  eaImage?: string | null;
 }): Promise<boolean> {
   if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return false;
   // SECURE PATH FIRST: issue through the server function with the
@@ -140,6 +141,7 @@ async function saveLicenseKey(input: {
         email: input.email,
         eaName: input.eaName,
         expiry: input.expiry,
+        eaImage: input.eaImage ?? null,
       },
     });
     if (secure.ok) return true;
@@ -161,6 +163,8 @@ async function saveLicenseKey(input: {
     const base: Record<string, unknown> = { key: input.licenseKey, email: input.email };
     if (input.eaName) base["ea_name"] = input.eaName;
     if (input.expiry) base["expiry"] = input.expiry;
+    // Picture travels with the key (same retry rules as the other extras).
+    if (input.eaImage) base["ea_image"] = input.eaImage;
     let result = await client.from("license_keys").insert(base);
     if (result.error?.code === "23505") {
       // Genuine duplicate key value — the row exists; refresh it via upsert
@@ -215,7 +219,7 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
 
 export type SendEmailInput =
   | { type: "new_registration"; email: string; firstName?: string; displayName?: string }
-  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string };
+  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string; eaImage?: string };
 
 export type SendEmailResult = { success: boolean; error?: string };
 
@@ -282,6 +286,7 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
       email,
       eaName: data.eaName?.trim() || null,
       expiry: data.expiry?.trim() || null,
+      eaImage: data.eaImage ?? null,
     });
     if (!keySaved) {
       console.warn("[send-email] license_keys save returned false for", email, "— sending the key email anyway");
