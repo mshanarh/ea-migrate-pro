@@ -62,7 +62,7 @@ type Props = {
   /** Symbols the mentor attached to this bot (EA creation on the mentor portal). */
   symbols: string[];
   /** Per-symbol lot/max trades saved on the robot (falls back to sensible defaults). */
-  pairs?: { symbol: string; lotSize: string; maxTrades: string }[];
+  pairs?: { symbol: string; lotSize: string; maxTrades: string; direction?: "BOTH" | "BUY" | "SELL" }[];
   /** Accent color hex, applied to buttons, bullets and highlights. */
   accent: string;
   /** Remaining scans today (out of 5). Infinity for unlimited admins. */
@@ -336,6 +336,16 @@ export default function ChartScanner({
   // Confirmed → fire the real order through the server-side integration.
   const confirmExecute = useCallback(async () => {
     if (!analysis || executing) return;
+    // Pair type filter (Quotes page): BUY ONLY / SELL ONLY pairs refuse
+    // setups on the other side of the market.
+    const pairDirection = pairs.find((pair) => pair.symbol === analysis.symbol)?.direction ?? "BOTH";
+    if (pairDirection !== "BOTH" && analysis.signal !== pairDirection) {
+      setConfirmOpen(false);
+      setExecError(
+        `This pair is ${pairDirection === "BUY" ? "BUY ONLY" : "SELL ONLY"} — the scan found a ${analysis.signal} setup. Change the pair type on the Quotes page.`,
+      );
+      return;
+    }
     setConfirmOpen(false);
     setExecuting(true);
     setExecuted(false);
@@ -388,7 +398,7 @@ export default function ChartScanner({
       setExecuting(false);
       setExecProgress("");
     }
-  }, [analysis, executing, lot, onExecute, trades]);
+  }, [analysis, executing, lot, onExecute, pairs, trades]);
 
   const phase = phaseOf(scanning, analysis, analysisError, executing, execError);
 

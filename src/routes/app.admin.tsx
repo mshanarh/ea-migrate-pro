@@ -81,9 +81,14 @@ function AppAdmin() {
         setLoading(false);
         return;
       }
-      // UI-level admin check: only DB admins see the controls.
+      // UI-level admin check: only admins see the controls. PLATFORM OWNERS
+      // are admins BEFORE the database is consulted (the same rule
+      // registerWithEmail applies) — their raw users row can lag (is_admin
+      // false on a row created before the flag existed), which used to wall
+      // the owner off this page so registered users never showed up.
       const me = app.email ? await getUserByEmail(app.email) : null;
-      if (!cancelled) setIsAdmin(Boolean(me?.is_admin));
+      const owner = OWNER_EMAILS.includes((app.email ?? "").trim().toLowerCase());
+      if (!cancelled) setIsAdmin(Boolean(me?.is_admin) || owner);
       await refresh();
     };
     void boot();

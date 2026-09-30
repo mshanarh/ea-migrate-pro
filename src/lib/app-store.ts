@@ -43,6 +43,8 @@ export type PairSetting = {
   symbol: string;
   lotSize: string;
   maxTrades: string;
+  /** Trade-direction filter for this pair — BOTH by default. */
+  direction?: "BOTH" | "BUY" | "SELL";
 };
 
 export type MtAccount = {
@@ -746,6 +748,7 @@ export function setRobotPairs(id: string, pairs: PairSetting[]) {
     symbol: pair.symbol.trim().toUpperCase(),
     lotSize: pair.lotSize || "0.01",
     maxTrades: pair.maxTrades || "0",
+    ...(pair.direction && pair.direction !== "BOTH" ? { direction: pair.direction } : {}),
   }));
   state = {
     ...state,

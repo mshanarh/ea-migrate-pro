@@ -402,7 +402,7 @@ function AppScanner() {
       <div className="app-scroll-area">
         <ChartScanner
           symbols={robot?.symbols ?? []}
-          pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades }))}
+          pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades, ...(pair.direction ? { direction: pair.direction } : {}) }))}
           accent={accent}
           scansLeft={scansLeft}
           onScanStart={handleScanStart}
