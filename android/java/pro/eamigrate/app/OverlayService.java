@@ -328,14 +328,13 @@ public class OverlayService extends Service {
         bubble = container;
     }
 
-    /** Tap bubble → show the expanded trade-log card; ✕ → back to bubble. */
+    /** Tap bubble → show the expanded trade-log card; ✕ on the card closes it. */
     private void toggleExpanded() {
-        if (expanded != null) {
-            collapseExpanded();
-        } else {
+        if (expanded == null) {
             expandCard();
         }
-    }
+        // While expanded the bubble is hidden, and the card NEVER folds on a
+        // tap — only the ✕ zone closes it (the owner wants it to stay showing).
 
     /**
      * The expanded trade-log card — the SAME layout as the in-app popup:
@@ -395,12 +394,6 @@ public class OverlayService extends Service {
                     Gravity.TOP | Gravity.END);
             closeParams.setMargins(0, dp(10), dp(10), 0);
             close.setLayoutParams(closeParams);
-            close.setOnClickListener(new View.OnClickListener() {
-                @Override
-                public void onClick(View v) {
-                    collapseExpanded();
-                }
-            });
             header.addView(close);
 
             LinearLayout info = new LinearLayout(this);
@@ -472,6 +465,68 @@ public class OverlayService extends Service {
             if (bubble != null) {
                 bubble.setVisibility(View.GONE);
             }
+
+            // ── CARD GESTURES: drag it anywhere, tap does NOT close it. ──
+            // The card consumes every touch itself (so the ✕ zone and the
+            // drag are handled here — the child views never see the events).
+            //   • DRAG (any speed) → the card moves and rests where dropped.
+            //   • TAP on the ✕ zone (top-right corner) → folds back to the
+            //     bubble — the ONLY way to close it.
+            //   • TAP anywhere else → intentionally nothing: the card STAYS.
+            final float[] cardOrigin = new float[2];
+            final float[] cardLast = new float[2];
+            final boolean[] cardDragged = new boolean[1];
+            final int cardSlop = dp(8);
+            card.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    switch (event.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            cardOrigin[0] = event.getRawX();
+                            cardOrigin[1] = event.getRawY();
+                            cardLast[0] = cardOrigin[0];
+                            cardLast[1] = cardOrigin[1];
+                            cardDragged[0] = false;
+                            return true;
+                        case MotionEvent.ACTION_MOVE: {
+                            float dx = event.getRawX() - cardLast[0];
+                            float dy = event.getRawY() - cardLast[1];
+                            cardLast[0] = event.getRawX();
+                            cardLast[1] = event.getRawY();
+                            cardParams.x += (int) dx;
+                            cardParams.y += (int) dy;
+                            if (Math.hypot(event.getRawX() - cardOrigin[0], event.getRawY() - cardOrigin[1]) > cardSlop) {
+                                cardDragged[0] = true;
+                            }
+                            android.util.DisplayMetrics dm = getResources().getDisplayMetrics();
+                            cardParams.x = Math.max(4, Math.min(cardParams.x, dm.widthPixels - width));
+                            cardParams.y = Math.max(4, Math.min(cardParams.y, dm.heightPixels - dp(120)));
+                            try {
+                                wm.updateViewLayout(card, cardParams);
+                            } catch (Exception ignored) {
+                            }
+                            return true;
+                        }
+                        case MotionEvent.ACTION_UP: {
+                            if (!cardDragged[0]) {
+                                int[] location = new int[2];
+                                v.getLocationOnScreen(location);
+                                float tapX = event.getRawX() - location[0];
+                                float tapY = event.getRawY() - location[1];
+                                if (tapX >= width - dp(46) && tapY <= dp(46)) {
+                                    collapseExpanded();
+                                }
+                                // Any other tap: the card stays exactly as it is.
+                            }
+                            return true;
+                        }
+                        case MotionEvent.ACTION_CANCEL:
+                            return true;
+                        default:
+                            return false;
+                    }
+                }
+            });
         } catch (Exception e) {
             android.util.Log.e("EAMIGRATE", "expand card failed: " + e);
             expanded = null;

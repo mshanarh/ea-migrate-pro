@@ -5,6 +5,7 @@ import android.app.PictureInPictureParams;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
+import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -337,14 +338,52 @@ public class MainActivity extends Activity {
         if (requestCode == FILE_CHOOSER_REQUEST && fileChooserCallback != null) {
             // Deliver the picked file(s) back to the page (null = cancelled).
             Uri[] results = null;
-            if (resultCode == RESULT_OK && data != null && data.getData() != null) {
-                results = new Uri[] { data.getData() };
+            if (resultCode == RESULT_OK && data != null) {
+                results = pickedFileUris(data);
             }
             fileChooserCallback.onReceiveValue(results);
             fileChooserCallback = null;
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
+    }
+
+    /**
+     * Every picked file as a READABLE content:// URI. Different OEM pickers
+     * return different extras — some fill getData(), the multi-select ones
+     * CLIP_DATA, and Samsung's document provider returns getClipData() even
+     * for a single pick. Reading only getData() made the scanner's screenshot
+     * upload silently fail on those phones: the picker closed, the page
+     * received null, nothing appeared. The URIs are also forced through
+     * takePersistableUriPermission where the provider allows it so the
+     * WebView's pipeline can still read them after the picker is gone.
+     */
+    private Uri[] pickedFileUris(Intent data) {
+        java.util.ArrayList<Uri> uris = new java.util.ArrayList<>();
+        if (data.getClipData() != null) {
+            android.content.ClipDescription description = data.getClipData().getDescription();
+            for (int index = 0; index < data.getClipData().getItemCount(); index++) {
+                Uri uri = data.getClipData().getItemAt(index).getUri();
+                if (uri != null) {
+                    grantReadPermission(uri, description);
+                    uris.add(uri);
+                }
+            }
+        }
+        if (uris.isEmpty() && data.getData() != null) {
+            grantReadPermission(data.getData(), null);
+            uris.add(data.getData());
+        }
+        return uris.isEmpty() ? null : uris.toArray(new Uri[0]);
+    }
+
+    private void grantReadPermission(Uri uri, android.content.ClipDescription description) {
+        try {
+            getContentResolver().takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        } catch (SecurityException e) {
+            // Provider does not offer persistable grants — the transient
+            // read grant from the picker is enough.
+        }
     }
 
     @Override

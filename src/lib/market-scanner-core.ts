@@ -755,57 +755,95 @@ async function fetchPublicCandles(symbol: string, timeframe: string): Promise<Ca
     if (binance.length > 0) return binance;
   }
 
+  const chartUrl =
+    `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(publicSymbol)}?interval=${interval}&range=${range}`;
+
+  // 1. DIRECT — works in bun/scripts, but Yahoo sends NO CORS headers, so a
+  // browser (and the Android/iOS WebViews) block reading the response. In the
+  // app every scan used to fall through to the simulated generator → WAIT
+  // wall on EVERY symbol. The proxy hops below fix the app.
   for (const host of ["query1.finance.yahoo.com", "query2.finance.yahoo.com"]) {
+    const candles = await fetchYahooDirect(host, publicSymbol, interval, range);
+    if (candles.length > 0) return aggregateCandles(candles, agg).slice(-120);
+  }
+
+  // 2. CORS PROXY — the same chart endpoint through public CORS-enabled
+  // proxies (each response carries Access-Control-Allow-Origin: *).
+  for (const proxy of [
+    `https://api.allorigins.win/raw?url=${encodeURIComponent(chartUrl)}`,
+    `https://corsproxy.io/?url=${encodeURIComponent(chartUrl)}`,
+    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(chartUrl)}`,
+  ]) {
     try {
-      const response = await fetch(
-        `https://${host}/v8/finance/chart/${encodeURIComponent(publicSymbol)}?interval=${interval}&range=${range}`,
-        {
-          headers: {
-            Accept: "application/json",
-            "User-Agent": BROWSER_UA,
-            "Accept-Language": "en-US,en;q=0.9",
-          },
-          signal: AbortSignal.timeout(8_000),
-        },
-      );
+      const response = await fetch(proxy, {
+        headers: { Accept: "application/json" },
+        signal: AbortSignal.timeout(10_000),
+      });
       if (!response.ok) continue;
-      const payload = (await response.json()) as {
-        chart?: {
-          result?: {
-            timestamp?: number[];
-            indicators?: {
-              quote?: {
-                open?: (number | null)[];
-                high?: (number | null)[];
-                low?: (number | null)[];
-                close?: (number | null)[];
-              }[];
-            };
-          }[];
-        };
-      };
-      const result = payload.chart?.result?.[0];
-      const stamps = result?.timestamp ?? [];
-      const quote = result?.indicators?.quote?.[0];
-      if (!quote || stamps.length === 0) continue;
-      const candles: Candle[] = [];
-      for (let index = 0; index < stamps.length; index += 1) {
-        const stamp = stamps[index];
-        const open = quote.open?.[index];
-        const high = quote.high?.[index];
-        const low = quote.low?.[index];
-        const close = quote.close?.[index];
-        if (stamp === undefined) continue;
-        if (open == null || high == null || low == null || close == null) continue;
-        candles.push({ time: new Date(stamp * 1000).toISOString(), open, high, low, close });
-      }
-      const merged = aggregateCandles(candles, agg).slice(-120);
-      if (merged.length > 0) return merged;
+      const payload = (await response.json()) as unknown;
+      const candles = parseYahooChart(payload);
+      if (candles.length > 0) return aggregateCandles(candles, agg).slice(-120);
     } catch {
-      continue;
+      /* next proxy */
     }
   }
   return [];
+}
+
+/** Direct Yahoo chart fetch (no CORS headers — server-side/bun only). */
+async function fetchYahooDirect(
+  host: string,
+  publicSymbol: string,
+  interval: string,
+  range: string,
+): Promise<Candle[]> {
+  try {
+    const response = await fetch(
+      `https://${host}/v8/finance/chart/${encodeURIComponent(publicSymbol)}?interval=${interval}&range=${range}`,
+      {
+        headers: {
+          Accept: "application/json",
+          "User-Agent": BROWSER_UA,
+          "Accept-Language": "en-US,en;q=0.9",
+        },
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!response.ok) return [];
+    return parseYahooChart(await response.json());
+  } catch {
+    return [];
+  }
+}
+
+/** Extracts clean candles from a Yahoo chart response payload. */
+function parseYahooChart(payload: unknown): Candle[] {
+  try {
+    const chart = (payload as { chart?: { result?: Array<Record<string, unknown>> } }).chart;
+    const result = chart?.result?.[0];
+    if (!result) return [];
+    const stamps = (result["timestamp"] as number[] | undefined) ?? [];
+    const quote = (
+      ((result["indicators"] as { quote?: Array<Record<string, unknown>> } | undefined)?.quote ?? [])
+    )[0] as
+      | { open?: (number | null)[]; high?: (number | null)[]; low?: (number | null)[]; close?: (number | null)[] }
+      | undefined;
+    if (!quote || stamps.length === 0) return [];
+    const candles: Candle[] = [];
+    for (let index = 0; index < stamps.length; index += 1) {
+      const stamp = stamps[index];
+      const open = quote.open?.[index];
+      const high = quote.high?.[index];
+      const low = quote.low?.[index];
+      const close = quote.close?.[index];
+      if (stamp === undefined) continue;
+      if (open == null || high == null || low == null || close == null) continue;
+      candles.push({ time: new Date(stamp * 1000).toISOString(), open, high, low, close });
+    }
+    return candles;
+  } catch {
+    return [];
+  }
 }
 
 const BINANCE_INTERVALS: Record<string, string> = {
