@@ -57,8 +57,15 @@ function AppAccess() {
   }, [app.email, app.robots.length, successReturn]);
 
   const activeEmail = app.email || email.trim().toLowerCase();
-  const paymentStatus = activeEmail ? paymentStatusForEmail(activeEmail) : "unpaid";
-  const showLicenseView = keyMode || successReturn || paymentStatus !== "unpaid";
+  // Only a SIGNED-IN session (app.email) may open the license view directly.
+  // The TYPED email must never pre-switch the view: an owner typing their
+  // email used to jump straight to the key screen WITHOUT pressing Proceed,
+  // which skipped the cloud device-binding check — the exact reason admins
+  // were never asked to reactivate after delete + reinstall. A typed email
+  // always goes through continueWithEmail / enterKeyMode, which run the
+  // binding check for EVERY email — admins included.
+  const sessionPaymentStatus = app.email ? paymentStatusForEmail(app.email) : "unpaid";
+  const showLicenseView = keyMode || successReturn || sessionPaymentStatus !== "unpaid";
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -182,7 +189,7 @@ function AppAccess() {
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={paymentStatus === "admin"} paid={paymentStatus === "paid" || successReturn || keyMode} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} />}
     </main>
   </div>;
 }

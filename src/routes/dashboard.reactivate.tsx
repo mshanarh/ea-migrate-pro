@@ -1,6 +1,18 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { CalendarClock, Check, Copy, Lock, RefreshCcw, ShieldCheck, Users } from "lucide-react";
+import {
+  CalendarClock,
+  Check,
+  Coins,
+  Copy,
+  ExternalLink,
+  Lock,
+  PlusCircle,
+  RefreshCcw,
+  ShieldCheck,
+  Sparkles,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { OWNER_EMAILS, isPaymentExemptEmail, useCurrentAccount } from "@/lib/auth-store";
@@ -11,20 +23,9 @@ export const Route = createFileRoute("/dashboard/reactivate")({
   component: ReactivateClientPage,
 });
 
-/**
- * CLIENT ACCESS — Re-activate Client (its OWN dedicated page, like every
- * other portal page — never crammed onto the Generate Key screen).
- *
- * What it does: release a paid client's device binding so they can sign in
- * on a new phone/laptop WITHOUT touching their licence key, subscription
- * or expiry dates.
- *
- * WHO CAN USE IT:
- *  • ADMINS (owner emails / admin role) are ALWAYS unlocked — reactivation
- *    is never locked for them, no admin toggle needed.
- *  • Mentors must be unlocked by an admin (users.reactivation_enabled,
- *    the 🔒 next to Approve in the admin console).
- */
+// Configure your Whop checkout link for tokens here:
+const TOKEN_CHECKOUT_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+const TOKEN_PRICE_ZAR = 100;
 
 const GUARANTEES = [
   {
@@ -44,9 +45,21 @@ const GUARANTEES = [
   },
 ];
 
+function getStoredTokens(email: string): number {
+  if (typeof window === "undefined") return 0;
+  const key = `eamp.tokens.${email.toLowerCase()}`;
+  const stored = window.localStorage.getItem(key);
+  return stored !== null ? Number(stored) : 0;
+}
+
+function setStoredTokens(email: string, amount: number) {
+  if (typeof window === "undefined") return;
+  const key = `eamp.tokens.${email.toLowerCase()}`;
+  window.localStorage.setItem(key, Math.max(0, amount).toString());
+}
+
 function ReactivateClientPage() {
   const account = useCurrentAccount();
-  // Admins bypass the per-mentor lock entirely.
   const isAdmin = !!account && (account.role === "admin" || OWNER_EMAILS.includes(account.email));
   const [cloudAllowed, setCloudAllowed] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -54,7 +67,16 @@ function ReactivateClientPage() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  // Mentors: load the cloud lock. Admins skip it — always unlocked.
+  // Token state
+  const [tokens, setTokens] = useState(0);
+  const [selectedTokens, setSelectedTokens] = useState<number>(1);
+
+  useEffect(() => {
+    if (!account) return;
+    setTokens(getStoredTokens(account.email));
+  }, [account]);
+
+  // Mentors: load cloud lock
   useEffect(() => {
     if (!account || isAdmin) return;
     let cancelled = false;
@@ -80,23 +102,33 @@ function ReactivateClientPage() {
     }
   };
 
-  /**
-   * RE-ACTIVATE a client — enforced by the CLOUD row, not by UI state:
-   *   • the email must be PAID (unpaid → "reactivation works only for paid users")
-   *   • the email must exist in users (a forged/foreign email → "not your email")
-   *   • releasing a device never touches expiry dates or the subscription
-   * Admins skip the lock re-check — reactivation is automatically unlocked
-   * for admin accounts.
-   */
+  const handleBuyTokens = () => {
+    window.open(TOKEN_CHECKOUT_URL, "_blank");
+  };
+
+  const handleClaimTokens = (amountToAdd: number) => {
+    const updated = tokens + amountToAdd;
+    setStoredTokens(account.email, updated);
+    setTokens(updated);
+    toast.success(`Success! Added ${amountToAdd} token(s). Current balance: ${updated}`);
+  };
+
   const handleReactivateClient = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
     const cleanEmail = clientEmail.trim().toLowerCase();
     if (!cleanEmail) return;
+
+    // Check token balance (admins can bypass if balance is 0)
+    if (tokens < 1 && !isAdmin) {
+      setError("No reactivation tokens left. Each reactivation costs 1 token (R100). Please purchase tokens above.");
+      return;
+    }
+
     setBusy(true);
     setError("");
+
     if (!isAdmin) {
-      // Re-check the permission at action time (the admin may have re-locked).
       const stillAllowed = await getReactivationEnabled(account.email);
       if (!stillAllowed) {
         setBusy(false);
@@ -105,40 +137,50 @@ function ReactivateClientPage() {
         return;
       }
     }
-    // Verify the client: paid + real user, through the same cloud rules the
-    // app's own reactivation uses. A "device id" is not needed for the
-    // mentor tool — the release simply clears the binding so the client can
-    // sign in fresh anywhere.
+
     const user = await getUserByEmail(cleanEmail);
     if (!user) {
       setBusy(false);
-      setError("Not reactivated — this is not your client's registered email. Reactivation works only for the email the client registered with.");
+      setError("Not reactivated — this is not your client's registered email. Reactivation works only for registered clients.");
       return;
     }
     // PAID means any of: users.is_paid (set by the admin console's Paid
     // button, which now writes the cloud), a license key issued to this
     // email (the key IS the payment), or a platform admin/owner email —
-    // an admin's device can always be released so THEY can also be asked
-    // to reactivate after delete + reinstall.
-    const paid = user.is_paid || isPaymentExemptEmail(cleanEmail) || OWNER_EMAILS.includes(cleanEmail) || (await emailHasLicenseKey(cleanEmail));
+    // an admin's device can always be released so THEY are also asked to
+    // reactivate after delete + reinstall.
+    const paid =
+      user.is_paid ||
+      isPaymentExemptEmail(cleanEmail) ||
+      OWNER_EMAILS.includes(cleanEmail) ||
+      (await emailHasLicenseKey(cleanEmail));
     if (!paid) {
       setBusy(false);
       setError("Not reactivated — this email has not paid. Reactivation works only for paid users.");
       return;
     }
-    // Clear the cloud device binding (set device fields to null).
+
     const { supabase } = await import("@/lib/supabase");
     const { error: updateError } = await supabase!
       .from("users")
       .update({ device_email: null, device_id: null })
       .eq("email", cleanEmail);
+
     setBusy(false);
     if (updateError) {
       setError(updateError.message);
       return;
     }
+
+    // Deduct 1 token
+    if (tokens > 0) {
+      const updated = tokens - 1;
+      setStoredTokens(account.email, updated);
+      setTokens(updated);
+    }
+
     setClientEmail("");
-    toast.success(`${cleanEmail} reactivated — they can sign in on a new device now.`);
+    toast.success(`${cleanEmail} reactivated! 1 token deducted. Remaining tokens: ${Math.max(0, tokens - 1)}`);
   };
 
   return (
@@ -149,8 +191,78 @@ function ReactivateClientPage() {
         Release a paid client's device so they can sign in on a new one — keys, dates and subscriptions stay exactly as they are.
       </p>
 
+      {/* TOKEN BALANCE & TOP UP CARD */}
+      <div className="mt-6 rounded-3xl border border-primary/30 bg-primary/[0.04] p-6 shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/20 text-primary">
+              <Coins className="size-6" />
+            </span>
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.18em] text-primary">Reactivation Tokens</p>
+              <h3 className="text-2xl font-black">{tokens} Token{tokens === 1 ? "" : "s"} Available</h3>
+            </div>
+          </div>
+          <div className="text-right">
+            <span className="inline-block rounded-full bg-white/10 px-3 py-1 text-xs font-bold text-white/90">
+              R{TOKEN_PRICE_ZAR} per token
+            </span>
+            <p className="mt-1 text-[11px] text-muted-foreground">1 Token = 1 Client Reactivation</p>
+          </div>
+        </div>
+
+        {/* PACKAGE SELECTOR & PURCHASE BUTTONS */}
+        <div className="mt-5 border-t border-white/10 pt-4">
+          <p className="text-xs font-semibold text-muted-foreground">Select Quantity:</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {[1, 2, 5, 10].map((qty) => (
+              <button
+                key={qty}
+                type="button"
+                onClick={() => setSelectedTokens(qty)}
+                className={`rounded-xl border px-3.5 py-1.5 text-xs font-bold transition ${
+                  selectedTokens === qty
+                    ? "border-primary bg-primary text-black"
+                    : "border-white/10 bg-white/5 text-white/80 hover:bg-white/10"
+                }`}
+              >
+                {qty} {qty === 1 ? "Token" : "Tokens"} (R{qty * TOKEN_PRICE_ZAR})
+              </button>
+            ))}
+          </div>
+
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              onClick={handleBuyTokens}
+              className="gap-2 rounded-xl bg-primary font-bold text-black hover:bg-primary/90"
+            >
+              <ExternalLink className="size-4" /> Pay R{selectedTokens * TOKEN_PRICE_ZAR} on Whop
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => handleClaimTokens(selectedTokens)}
+              className="gap-2 rounded-xl border-white/15 bg-white/5 font-semibold text-white hover:bg-white/10"
+            >
+              <Sparkles className="size-4 text-emerald-400" /> Confirm Paid — Add {selectedTokens} Token{selectedTokens === 1 ? "" : "s"}
+            </Button>
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => handleClaimTokens(5)}
+                className="gap-1 text-xs text-amber-300"
+              >
+                <PlusCircle className="size-3.5" /> +5 Admin Free
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       <div className="panel mt-6 p-6">
-        {/* Header card with Copy link + lock badge */}
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-center gap-3">
             <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
@@ -177,7 +289,6 @@ function ReactivateClientPage() {
           </div>
         </div>
 
-        {/* Three guarantees */}
         <div className="mt-5 grid gap-3 sm:grid-cols-3">
           {GUARANTEES.map(({ icon: Icon, title, body }) => (
             <div key={title} className="rounded-2xl border border-white/10 bg-white/[0.03] p-4">
@@ -190,7 +301,6 @@ function ReactivateClientPage() {
           ))}
         </div>
 
-        {/* Info banner — expiry dates are safe */}
         <div className="mt-5 rounded-2xl border border-primary/25 bg-primary/5 p-4">
           <p className="flex items-center gap-2 text-sm font-bold text-primary">
             <CalendarClock className="size-4" /> Expiry dates are protected
@@ -223,10 +333,10 @@ function ReactivateClientPage() {
               </p>
             )}
             <Button type="submit" size="lg" disabled={busy} className="h-14 w-full rounded-full text-base font-bold">
-              <RefreshCcw className="size-4" /> {busy ? "Reactivating…" : "Re-activate"}
+              <RefreshCcw className="size-4" /> {busy ? "Reactivating…" : "Re-activate (Cost: 1 Token)"}
             </Button>
             <p className="text-center text-xs text-muted-foreground">
-              Paid clients only · dates protected · the previous device is signed out.
+              Paid clients only · costs 1 token · previous device is signed out.
             </p>
           </form>
         ) : (
