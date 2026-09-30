@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
 import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
+import { inlineVideoForCloud } from "@/lib/media-store";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
@@ -97,10 +98,14 @@ function Licenses() {
       // Carry the EA PICTURE (and video) with the key into the cloud record —
       // this is how the client's phone gets the robot's real image even when
       // the full account mirror has not run there yet.
-      void portalUpsertLicense(account.email, created, {
-        ...(selectedEa.image ? { image: selectedEa.image } : {}),
-        ...(selectedEa.video ? { video: selectedEa.video } : {}),
-      }).then((push) => {
+      void inlineVideoForCloud(selectedEa.video)
+        .then((video) =>
+          portalUpsertLicense(account.email, created, {
+            ...(selectedEa.image ? { image: selectedEa.image } : {}),
+            ...(video ? { video } : {}),
+          }),
+        )
+        .then((push) => {
         if (push.enabled && !push.ok) {
           toast.error(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
         }

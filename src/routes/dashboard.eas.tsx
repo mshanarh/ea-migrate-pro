@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type ExpertAdvisor } from "@/lib/auth-store";
-import { deleteVideoBlob, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
+import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
 import { syncRegister } from "@/lib/account-sync.server";
 import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 
@@ -19,13 +19,32 @@ import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud
  * actually lands the EAs in production.
  */
 export async function mirrorAccount(account: Account) {
+  // Videos live in IndexedDB on THIS device — a bare `idb-video:` ref means
+  // nothing on another device, which is exactly why the robot picture arrived
+  // everywhere while the video never played. Inline each EA's video as a
+  // size-capped data URL so the cloud record carries playable media.
+  let travelable = account;
   try {
-    await syncRegister({ data: { account } });
+    travelable = {
+      ...account,
+      eas: await Promise.all(
+        account.eas.map(async (ea) => {
+          if (!ea.video) return ea;
+          const video = await inlineVideoForCloud(ea.video);
+          return { ...ea, ...(video ? { video } : { video: undefined }) };
+        }),
+      ),
+    };
+  } catch {
+    /* fall back to the raw refs — the mirror still carries the picture */
+  }
+  try {
+    await syncRegister({ data: { account: travelable } });
   } catch {
     /* server functions unavailable on static hosting */
   }
   if (portalCloudConfigured()) {
-    const direct = await portalRegisterAccount(account);
+    const direct = await portalRegisterAccount(travelable);
     if (!direct.ok && direct.error) console.warn("[eas] cloud mirror failed:", direct.error);
   }
 }

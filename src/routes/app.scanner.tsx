@@ -13,7 +13,7 @@ import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
+import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -69,7 +69,7 @@ function AppScanner() {
     plan: ExecutionPlan,
     onProgress: (message: string) => void,
   ): Promise<ExecutionOutcome> => {
-    const { symbol, lot, trades, direction, entry, stopLoss, takeProfit, estimated } = plan;
+    let { symbol, lot, trades, direction, entry, stopLoss, takeProfit, estimated } = plan;
 
     if (!app.mt) {
       toast.error("Save your MT5 details first — MetaTrader page.");
@@ -179,7 +179,7 @@ function AppScanner() {
       const withStops = stopLossValue > 0 || takeProfitValue > 0;
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
-      const executeOnce = async (): Promise<Record<string, unknown>> => {
+      const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
         const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
           method: "POST",
           headers: {
@@ -202,7 +202,9 @@ function AppScanner() {
             (typeof payload["detail"] === "string" && payload["detail"]) ||
             (typeof payload["message"] === "string" && payload["message"]) ||
             `The bridge rejected the order (HTTP ${response.status}).`;
-          throw new Error(friendlyTradeError(detail));
+          const failure = new Error(friendlyTradeError(detail)) as Error & { raw?: string };
+          failure.raw = detail; // keep the bridge's original words for symbol-retry detection
+          throw failure;
         }
         // HTTP 200 is NOT enough — the broker's verdict lives in the body.
         // The retcode is the source of truth when present (top level or
@@ -224,16 +226,53 @@ function AppScanner() {
               (typeof payload["comment"] === "string" && payload["comment"]) ||
               (typeof result["comment"] === "string" && result["comment"]) ||
               "";
-            throw new Error(brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message);
+            const refusal = new Error(
+              brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message,
+            ) as Error & { raw?: string };
+            refusal.raw = message;
+            throw refusal;
           }
         } else if (payload["success"] === false) {
           const rawDetail =
             (typeof payload["message"] === "string" && payload["message"]) ||
             (typeof payload["detail"] === "string" && payload["detail"]) ||
             "The broker refused the order.";
-          throw new Error(friendlyTradeError(rawDetail));
+          const refusal = new Error(friendlyTradeError(rawDetail)) as Error & { raw?: string };
+          refusal.raw = rawDetail;
+          throw refusal;
         }
         return payload;
+      };
+
+      // ANY-BROKER SYMBOL MATCHING — brokers brand the same market differently
+      // (BTCUSDm on Exness, glued XAUUSDM, XAUUSD.i, US30Cash…). When the
+      // exact name is refused, retry once through the candidate list (the
+      // bridge v0.3+ also resolves names against the broker's own symbol
+      // list) and keep the name that actually filled for the remaining trades.
+      let symbolRetried = false;
+      const isSymbolMismatch = (text: string) =>
+        /symbol/i.test(text) &&
+        /not found|unknown|invalid|no such|not available|not listed|renamed|rejected that symbol|isn't available|couldn't match/i.test(text);
+      const executeWithSymbolFallback = async (): Promise<Record<string, unknown>> => {
+        try {
+          return await executeOnce(symbol);
+        } catch (error) {
+          const raw = ((error as Error & { raw?: string }).raw ?? (error instanceof Error ? error.message : "")) as string;
+          if (symbolRetried || !(error instanceof Error) || !isSymbolMismatch(raw)) throw error;
+          symbolRetried = true;
+          let lastCandidateError: unknown = error;
+          for (const candidate of bridgeSymbolCandidates(symbol)) {
+            if (candidate.toUpperCase() === symbol.trim().toUpperCase()) continue;
+            try {
+              const payload = await executeOnce(candidate);
+              symbol = candidate; // the working name drives the remaining trades and the report
+              return payload;
+            } catch (candidateError) {
+              lastCandidateError = candidateError;
+            }
+          }
+          throw lastCandidateError;
+        }
       };
 
       // SEQUENTIAL EXECUTION — trades fire ONE BY ONE, never in parallel.
@@ -246,7 +285,7 @@ function AppScanner() {
       let lastError: string | null = null;
       for (let index = 1; index <= total; index += 1) {
         try {
-          const payload = await executeOnce();
+          const payload = await executeWithSymbolFallback();
           opened += 1;
           if (index === 1) firstPayload = payload;
           // Per-trade announcement — toast + popup + native bubble all update.
@@ -267,7 +306,7 @@ function AppScanner() {
             stopLossValue = 0;
             takeProfitValue = 0;
             try {
-              const payload = await executeOnce();
+              const payload = await executeWithSymbolFallback();
               opened += 1;
               if (index === 1) firstPayload = payload;
               window.dispatchEvent(

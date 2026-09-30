@@ -25,7 +25,7 @@ export function friendlyTradeError(raw: string): string {
     return "MT5 rejected the order comment — the app strips unsafe characters automatically; simplify the bot's name if this keeps happening.";
   }
   if (text.includes("symbol") && (text.includes("unknown") || text.includes("not found") || text.includes("invalid"))) {
-    return "This broker does not list that symbol — check the exact name in your MT5 app (e.g. HW_100 vs FLAME).";
+    return "Couldn't match that symbol on your broker under any known name — open MT5 → Market Watch, find the exact symbol there and use that exact name in your robot's pairs.";
   }
   return raw;
 }

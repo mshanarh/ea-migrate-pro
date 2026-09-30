@@ -122,6 +122,71 @@ export async function deleteVideoBlob(ref: string | undefined): Promise<void> {
   }
 }
 
+/* ── Cross-device travel helpers ─────────────────────────────────────────── */
+
+/** Largest video inlined into the cloud mirror (an ~8 MB data URL row). */
+const CLOUD_VIDEO_MAX_BYTES = 8 * 1024 * 1024;
+/** Data URLs above this size never ride inside localStorage robots — they are
+ * stashed in IndexedDB and the robot keeps a tiny `idb-video:` ref instead. */
+const INLINE_VIDEO_MAX_CHARS = 768 * 1024;
+
+/**
+ * Turns a local IndexedDB video REF into a self-contained data URL so the
+ * cloud portal record carries playable media to every other device. Bare
+ * refs mean nothing off this device — this is why the robot picture used to
+ * arrive everywhere while the video never played. Data URLs and http URLs
+ * already travel and pass straight through; oversized blobs return
+ * undefined (the image still travels).
+ */
+export async function inlineVideoForCloud(video: string | undefined): Promise<string | undefined> {
+  if (!video) return undefined;
+  if (!video.startsWith(REF_PREFIX)) return video;
+  try {
+    const url = await loadVideoUrl(video);
+    if (!url) return undefined;
+    try {
+      const blob = await (await fetch(url)).blob();
+      if (blob.size > CLOUD_VIDEO_MAX_BYTES) return undefined;
+      return await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(String(reader.result));
+        reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+        reader.readAsDataURL(blob);
+      });
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Makes a cloud-sourced video safe to keep in the app's localStorage robots:
+ * small data URLs pass through, big ones are stashed in IndexedDB behind a
+ * tiny ref so persist() never hits the quota wall. Refs and http URLs pass
+ * through untouched.
+ */
+export async function travelSizedVideo(video: string | undefined): Promise<string | undefined> {
+  if (!video || !video.startsWith("data:")) return video;
+  if (video.length <= INLINE_VIDEO_MAX_CHARS) return video;
+  try {
+    const blob = await (await fetch(video)).blob();
+    const id = `c_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    const db = await openDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).put(blob, id);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error ?? new Error("Could not store the video"));
+    });
+    db.close();
+    return REF_PREFIX + id;
+  } catch {
+    return undefined;
+  }
+}
+
 /* ── Music tracks (uploaded audio) — same pattern as the video store ─────── */
 
 /** Saves an audio file and returns the tiny reference string for localStorage. */

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { travelSizedVideo } from "@/lib/media-store";
 
 /** Same checkout the app login redirects unpaid users to. */
 export const WHOP_CHECKOUT_URL =
@@ -461,6 +462,9 @@ async function findLicenseInPortalAccounts(
         // (issuance embeds the image/video on the license as a fallback).
         const image = ea?.image ?? (license as { image?: unknown }).image;
         const video = ea?.video ?? (license as { video?: unknown }).video;
+        // Fat cloud data URLs are stashed in IndexedDB behind a tiny ref so
+        // the robot record never hits the localStorage quota wall.
+        const resolvedVideo = typeof video === "string" && video ? await travelSizedVideo(video) : undefined;
         const result: { error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } = {
           license: {
             ...(eaName ? { eaName } : {}),
@@ -471,7 +475,7 @@ async function findLicenseInPortalAccounts(
             ...(eaName ? { name: eaName } : {}),
             symbols,
             ...(typeof image === "string" && image ? { image } : {}),
-            ...(typeof video === "string" && video ? { video } : {}),
+            ...(resolvedVideo ? { video: resolvedVideo } : {}),
           },
         };
         return result;
@@ -665,6 +669,17 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
     const { data: rows, error } = await client.from("portal_accounts").select("email, data");
     if (error || !rows) return 0;
     const email = state.email.trim().toLowerCase();
+    // Stash each distinct cloud video once per sync (IndexedDB behind a tiny
+    // ref) — the same EA media would otherwise be re-processed per license.
+    const videoCache = new Map<string, Promise<string | undefined>>();
+    const stashCloudVideo = (value: string): Promise<string | undefined> => {
+      let cached = videoCache.get(value);
+      if (!cached) {
+        cached = travelSizedVideo(value);
+        videoCache.set(value, cached);
+      }
+      return cached;
+    };
     // key → EA details, from every mentor account holding a license for me.
     const byKey = new Map<string, { name?: string; symbols?: string[]; image?: string; video?: string }>();
     for (const row of rows as Array<{ email?: string; data: unknown }>) {
@@ -687,11 +702,12 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
         // the picture reaches the cloud even when the EA list has not).
         const image = ea?.image ?? (license as { image?: unknown }).image;
         const video = ea?.video ?? (license as { video?: unknown }).video;
+        const resolvedVideo = typeof video === "string" && video ? await stashCloudVideo(video) : undefined;
         byKey.set(license.key.trim().toUpperCase(), {
           ...(eaName ? { name: eaName } : {}),
           symbols: (ea?.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
           ...(typeof image === "string" && image ? { image } : {}),
-          ...(typeof video === "string" && video ? { video } : {}),
+          ...(resolvedVideo ? { video: resolvedVideo } : {}),
         });
       }
     }

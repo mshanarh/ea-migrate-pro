@@ -1,5 +1,5 @@
 """
-MT5 Execution Bridge — v0.2
+MT5 Execution Bridge — v0.3
 
 Runs on the user's VPS next to the MetaTrader 5 terminal.
 
@@ -9,12 +9,17 @@ Runs on the user's VPS next to the MetaTrader 5 terminal.
 Endpoints (all POSTs require header `x-bridge-key`):
     GET  /health           → liveness probe
     POST /account/verify   → login + live account info (balance/equity/margin)
-    POST /symbol/price     → LIVE bid/ask/digits for a symbol (NEW in v0.2 —
-                             lets the web app anchor SL/TP to real prices)
+    POST /symbol/price     → LIVE bid/ask/digits for a symbol
     POST /trade/execute    → place a market order with filling-mode fallback
+
+v0.3: symbol resolution against the BROKER'S OWN symbol list. Brokers brand
+the same market differently (BTCUSDm on Exness, BTCUSD.i elsewhere, glued
+XAUUSDM, broker-only US30Cash…) — every endpoint now maps the requested name
+onto a real, selectable broker symbol before trading.
 """
 
 import os
+import re
 from typing import Optional
 
 import MetaTrader5 as mt5
@@ -24,7 +29,7 @@ from pydantic import BaseModel
 
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
 
-app = FastAPI(title="MT5 Execution Bridge", version="0.2.0")
+app = FastAPI(title="MT5 Execution Bridge", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # the web app is served from multiple hosts
@@ -57,6 +62,74 @@ def connect(creds: Credentials):
 
 def disconnect() -> None:
     mt5.shutdown()
+
+
+_SYMBOL_GLUE = re.compile(r"[^A-Z0-9]+")
+_SUFFIX_TAILS = {"M", "C", "I", "Z", "PRO"}
+
+
+def _norm(symbol: str) -> str:
+    """Uppercase alphanumeric-only form — case/punctuation differences gone."""
+    return _SYMBOL_GLUE.sub("", (symbol or "").upper())
+
+
+def resolve_symbol(requested: str) -> Optional[str]:
+    """Map a requested symbol onto a REAL symbol this broker lists.
+
+    Tries, in order: exact name, case-insensitive, punctuation-insensitive
+    (BTCUSD.m == BTCUSDM), broker-suffix prefixes (BTCUSD → BTCUSDm),
+    glued-suffix bases (XAUUSDM → XAUUSD) and finally a containment match.
+    Returns the broker's exact selectable name, or None when nothing fits.
+    """
+    if not requested:
+        return None
+    rows = mt5.symbols_get() or []
+    names = [row.name for row in rows if getattr(row, "name", None)]
+    if not names:
+        return None
+    if requested in names:
+        return requested
+    upper = requested.upper()
+    for name in names:
+        if name.upper() == upper:
+            return name
+    req = _norm(requested)
+    if not req:
+        return None
+    for name in names:  # BTCUSD.m == BTCUSDM
+        if _norm(name) == req:
+            return name
+    prefix_hits = []  # broker adds a brand suffix: BTCUSD → BTCUSDm
+    for name in names:
+        norm = _norm(name)
+        if norm.startswith(req) and 0 < len(norm) - len(req) <= 3:
+            prefix_hits.append(name)
+    if prefix_hits:
+        def tail_rank(name: str):
+            tail = _norm(name)[len(req):]
+            return (0 if tail in _SUFFIX_TAILS else 1, len(name))
+
+        return sorted(prefix_hits, key=tail_rank)[0]
+    base_hits = []  # requested carries the suffix: XAUUSDM → broker's XAUUSD
+    for name in names:
+        norm = _norm(name)
+        if req.startswith(norm) and 0 < len(req) - len(norm) <= 3:
+            base_hits.append(name)
+    if base_hits:
+        return sorted(base_hits, key=lambda name: (-len(_norm(name)), len(name)))[0]
+    contains = [name for name in names if req in _norm(name) or _norm(name) in req]
+    if contains:
+        return sorted(contains, key=lambda name: abs(len(_norm(name)) - len(req)))[0]
+    return None
+
+
+def select_broker_symbol(requested: str):
+    """symbol_select the best real match for `requested`; returns (name, error)."""
+    resolved = resolve_symbol(requested)
+    trade_symbol = resolved or requested
+    if not mt5.symbol_select(trade_symbol, True):
+        return None, f"Symbol {requested} not found on this broker"
+    return trade_symbol, None
 
 
 @app.get("/health")
@@ -101,15 +174,16 @@ def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
         disconnect()
         return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
     try:
-        if not mt5.symbol_select(req.symbol, True):
-            return {"success": False, "message": f"Symbol {req.symbol} not found on this broker"}
-        tick = mt5.symbol_info_tick(req.symbol)
-        info = mt5.symbol_info(req.symbol)
+        trade_symbol, select_error = select_broker_symbol(req.symbol)
+        if trade_symbol is None:
+            return {"success": False, "message": select_error}
+        tick = mt5.symbol_info_tick(trade_symbol)
+        info = mt5.symbol_info(trade_symbol)
         if tick is None or info is None:
             return {"success": False, "message": f"No live price for {req.symbol} right now"}
         return {
             "success": True,
-            "symbol": req.symbol,
+            "symbol": trade_symbol,
             "bid": tick.bid,
             "ask": tick.ask,
             "digits": info.digits,
@@ -139,9 +213,10 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
         disconnect()
         return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
     try:
-        if not mt5.symbol_select(req.symbol, True):
-            return {"success": False, "message": f"Symbol {req.symbol} not found on this broker"}
-        tick = mt5.symbol_info_tick(req.symbol)
+        trade_symbol, select_error = select_broker_symbol(req.symbol)
+        if trade_symbol is None:
+            return {"success": False, "message": select_error}
+        tick = mt5.symbol_info_tick(trade_symbol)
         if tick is None or tick.bid <= 0 or tick.ask <= 0:
             return {"success": False, "message": f"No live price for {req.symbol}"}
 
@@ -151,7 +226,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
 
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
-            "symbol": req.symbol,
+            "symbol": trade_symbol,
             "volume": req.volume,
             "type": order_type,
             "price": price,
@@ -183,6 +258,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
         return {
             "success": filled,
             "retcode": last_result.retcode,
+            "symbol": trade_symbol,
             "order": last_result.order,
             "deal": last_result.deal,
             "price": last_result.price,
