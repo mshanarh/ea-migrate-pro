@@ -9,6 +9,7 @@ import {
   LockOpen,
   LogOut,
   Plus,
+  Search,
   ShieldCheck,
   Trash2,
   Users,
@@ -43,8 +44,8 @@ import {
   portalListAccounts,
   portalSetPayment,
 } from "@/lib/portal-cloud";
-import { supabaseConfigured } from "@/lib/supabase";
-import { getReactivationEnabled, setUserFlagAnon, setReactivationEnabled } from "@/lib/supabase-users";
+import { supabaseConfigured, type UserRow } from "@/lib/supabase";
+import { getReactivationEnabled, listUsersAnon, setUserFlagAnon, setReactivationEnabled } from "@/lib/supabase-users";
 import { portalCloudConfigured, portalDeleteLicenseKey, portalRemoveLicense } from "@/lib/portal-cloud";
 
 /**
@@ -115,6 +116,11 @@ function AdminConsole() {
   // for approval are the first thing the admin sees.
   const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [limit, setLimit] = useState(0);
+  // Registered APP users (the Supabase users table) — every /app/login
+  // signup, distinct from the mentor portal accounts above.
+  const [registered, setRegistered] = useState<UserRow[]>([]);
+  const [registeredError, setRegisteredError] = useState<string | null>(null);
+  const [userQuery, setUserQuery] = useState("");
   const [cloud, setCloud] = useState<{ enabled: boolean; accounts: PublicAccount[] }>({
     enabled: false,
     accounts: [],
@@ -174,6 +180,15 @@ function AdminConsole() {
       const result = await listCloudAccounts();
       setCloud({ enabled: result.enabled, accounts: result.accounts });
       if (result.enabled && result.accounts.length > 0) hydrateFromCloud(result.accounts);
+      // Same poll refreshes the registered-app-users list, so a brand-new
+      // signup appears here within seconds too.
+      const usersResult = await listUsersAnon();
+      if (usersResult.error) {
+        setRegisteredError(usersResult.error);
+      } else {
+        setRegistered(usersResult.users);
+        setRegisteredError(null);
+      }
     } catch {
       /* transient network error — keep the last snapshot */
     }
@@ -186,8 +201,7 @@ function AdminConsole() {
   }, [pollCloud]);
 
   const pushCloudUpdate = useCallback(
-    (targetEmail: string, patch: AdminPatch) => {
-      if (!account) return;
+    (targetEmail: string, patch: AdminPatch) => {      if (!account) return;
       const fail = (reason?: string) =>
         toast.error(
           reason
@@ -204,6 +218,18 @@ function AdminConsole() {
     },
     [account],
   );
+
+  /** Paid/Unpaid for a registered app user — writes users.is_paid in the cloud. */
+  const markRegisteredPaid = (email: string, paid: boolean) => {
+    void setCloudUserPaid(email, paid).then((ok) => {
+      if (ok) {
+        setRegistered((current) => current.map((user) => (user.email === email ? { ...user, is_paid: paid } : user)));
+        toast.success(`${email} marked ${paid ? "PAID" : "UNPAID"} in the cloud`);
+      } else {
+        toast.error(`Cloud write failed for ${email} — try again.`);
+      }
+    });
+  };
 
   if (!account) return null;
   if (account.role !== "admin")
@@ -401,12 +427,13 @@ function AdminConsole() {
           </div>
         )}
 
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
           {[
             { label: "Pending portals", value: pending.length },
             { label: "Approved users", value: approved.length },
             { label: "Keys issued", value: totalLicenses },
             { label: "Paid emails", value: paidCount },
+            { label: "Registered users", value: registered.length },
           ].map((stat) => (
             <div key={stat.label} className="panel p-4 glow-ring sm:p-5">
               <p className="text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
@@ -821,6 +848,106 @@ function AdminConsole() {
                 );
               })}
             </div>
+          </section>
+
+          {/* ---------------- registered app users ---------------- */}
+          <section className="panel p-4 sm:p-5 lg:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="flex items-center gap-2 text-lg font-semibold">
+                  <Users className="size-4 text-primary" /> Registered users
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Every email that signed up in the app — newest first, refreshed live.
+                </p>
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={userQuery}
+                  onChange={(event) => setUserQuery(event.target.value)}
+                  placeholder="Search email"
+                  className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
+                  aria-label="Search registered users"
+                />
+              </div>
+            </div>
+            {registeredError && (
+              <p className="mt-4 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
+                Could not load registered users: {registeredError}
+              </p>
+            )}
+            {!registeredError && registered.length === 0 && (
+              <p className="mt-4 rounded-2xl border border-border/60 bg-secondary/30 p-6 text-center text-sm text-muted-foreground">
+                No registered users yet.
+              </p>
+            )}
+            {registered.length > 0 && (
+              <>
+                <p className="mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  {registered.length} registered · {registered.filter((user) => user.is_paid).length} paid
+                </p>
+                <ul className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {registered
+                    .filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
+                    .map((user) => (
+                      <li key={user.email} className="rounded-2xl border border-border/60 bg-secondary/30 p-3.5">
+                        <div className="flex items-center justify-between gap-3">
+                          <span className="min-w-0 truncate text-sm font-semibold">{user.email}</span>
+                          <div className="flex shrink-0 items-center gap-1.5">
+                            {user.is_admin && (
+                              <span className="rounded-full bg-primary/15 px-2 py-0.5 text-[10px] font-bold uppercase text-primary">
+                                Admin
+                              </span>
+                            )}
+                            <span
+                              className={
+                                user.is_paid
+                                  ? "rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
+                                  : "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
+                              }
+                            >
+                              {user.is_paid ? "Paid" : "Unpaid"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="mt-2 flex items-center justify-between gap-2">
+                          <p className="min-w-0 truncate text-[11px] text-muted-foreground">
+                            {user.created_at && !Number.isNaN(new Date(user.created_at).getTime())
+                              ? `Registered ${new Date(user.created_at).toLocaleString()}`
+                              : "Registered"}
+                          </p>
+                          <div className="flex shrink-0 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => markRegisteredPaid(user.email, true)}
+                              className={
+                                user.is_paid
+                                  ? "h-8 rounded-xl bg-emerald-400/20 px-3 text-[11px] font-bold uppercase text-emerald-300"
+                                  : "h-8 rounded-xl bg-secondary px-3 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                              }
+                            >
+                              Paid
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => markRegisteredPaid(user.email, false)}
+                              className="h-8 rounded-xl bg-secondary px-3 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                            >
+                              Unpaid
+                            </button>
+                          </div>
+                        </div>
+                      </li>
+                    ))}
+                </ul>
+                {userQuery.trim() &&
+                  registered.filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
+                    .length === 0 && (
+                    <p className="mt-3 text-center text-sm text-muted-foreground">No users match "{userQuery}".</p>
+                  )}
+              </>
+            )}
           </section>
         </div>
       </main>
