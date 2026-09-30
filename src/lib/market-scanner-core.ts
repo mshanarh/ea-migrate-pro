@@ -103,8 +103,11 @@ async function runScannerAnalysis(
 
   // REAL candles from the public market feed. Broker-specific aliases are
   // resolved through several strip-down passes before a synthetic fallback.
-  let candles = await fetchPublicCandles(symbol, timeframe);
-  let resolvedSymbol = publicSymbolFor(symbol) ?? "";
+  // STRIP BROKER SUFFIXES FIRST (XAUUSD.m, US30_m, GER40m, BTCUSD.pro…):
+  // fetching the raw broker name fails the feed and falls through to the
+  // synthetic generator — the user then sees fake prices for a real symbol.
+  let candles = await fetchPublicCandles(stripBrokerSuffixes(symbol), timeframe);
+  let resolvedSymbol = publicSymbolFor(stripBrokerSuffixes(symbol)) ?? "";
   if (candles.length === 0) {
     for (const candidate of symbolCandidates(symbol)) {
       candles = await fetchPublicCandles(candidate, timeframe);
@@ -118,10 +121,9 @@ async function runScannerAnalysis(
   // GUARANTEED SETUP: when the public feed has no usable data for a symbol
   // (broker-specific names like HW_100 or a temporary feed outage), fall
   // back to a synthesized 50-candle series around an estimated base price
-  // and continue through the normal confluence engine (EMA/RSI/ATR/MACD).
-  // Every symbol then produces an actionable BUY/SELL with Entry/SL/TP —
-  // and the trade still executes at the broker's REAL market price, so the
-  // estimate only shapes the plan, never the fill.
+  // and CONTINUE THE ANALYSIS — but such plans are never executable: they
+  // return strength WAIT + executionReady false, because simulated candles
+  // must never drive live-money trades (see the confluence gate below).
   let synthesized = false;
   let lastCandle = candles.at(-1);
   let referenceClose = lastCandle?.close ?? 0;
@@ -154,12 +156,15 @@ async function runScannerAnalysis(
   const trendUp = ema21 > ema50;
   const priceAboveEma = close > ema21;
 
-  // ── Confluence engine ─────────────────────────────────────────────
-  // The scanner ALWAYS returns a direction — BUY or SELL, never "NO
-  // TRADE". The 7 confluence checks drive confidence; the dominant side
-  // of the bull/bear score drives the direction, and a rare exact tie
-  // falls back to RSI (above 50 = bullish), then the last candle's own
-  // direction, so every scan ends with an executable plan.
+  // ── Confluence engine — STRICT, no-trade-aware ────────────────────
+  // The scanner no longer forces BUY/SELL on mixed conditions. A signal is
+  // only actionable when TREND, MOMENTUM and RECENT CANDLES all agree, and
+  // the 7-check confluence scores at least 5. Everything else returns
+  // strength WAIT + executionReady false ("Market in consolidation / low
+  // confluence — wait for clear breakout.").
+  const ema200 = closes.length >= 60 ? ema(closes, Math.min(200, closes.length)) : ema50;
+  const emaStackedUp = ema21 > ema50 && ema50 > ema200;
+  const emaStackedDown = ema21 < ema50 && ema50 < ema200;
   const macroFast = emaSeries(closes, 21);
   const macroSlow = emaSeries(closes, 50);
   const macroUp = (macroFast.at(-1) ?? 0) > (macroSlow.at(-1) ?? 0);
@@ -189,113 +194,140 @@ async function runScannerAnalysis(
       return laterHigh < earlierHigh;
     })();
 
+  // Recent candle direction: majority of the last 10 candles on one side.
+  const recentCandles = candles.slice(-10);
+  const bullishCandles = recentCandles.filter((candle) => candle.close >= candle.open).length;
+  const bearishCandles = recentCandles.length - bullishCandles;
+  const candleDirectionUp = bullishCandles > bearishCandles;
+  const candleAgreement = recentCandles.length > 0 ? (candleDirectionUp ? bullishCandles : bearishCandles) / recentCandles.length : 0;
+
+  // RSI bands: momentum present but NOT overbought/oversold (chasing tops
+  // and bottoms loses). BUY only in 52–68; SELL only in 32–48.
+  const rsiBullBand = rsiValue >= 52 && rsiValue <= 68;
+  const rsiBearBand = rsiValue >= 32 && rsiValue <= 48;
+
   const bullChecks = {
-    /** Entry timeframe trend: EMA21 above EMA50. */
-    trend: trendUp,
-    /** Macro (chart) trend agrees — 4× the entry timeframe. */
+    /** Full EMA stack aligned up: 21 > 50 > 200. */
+    trend: emaStackedUp,
+    /** Macro trend agrees. */
     macroTrend: macroUp,
     /** Price on the right side of the fast EMA. */
     position: priceAboveEma,
     /** MACD histogram positive — momentum confirms the trend. */
     momentum: histogram > 0,
-    /** RSI in the bullish band but NOT overbought (chasing tops loses). */
-    rsi: rsiValue > 52 && rsiValue < 72,
+    /** RSI in the bullish band (52–68) — not overbought. */
+    rsi: rsiBullBand,
     /** Market structure: higher lows on the second half of the window. */
     structure: higherLows,
-    /** Decisive candle: body ≥ 40% of the bar's range. */
-    conviction: bodyRatio >= 0.4,
+    /** Recent candles travelling up (strict majority of last 10). */
+    conviction: candleDirectionUp,
   };
   const bearChecks = {
-    trend: !trendUp,
+    trend: emaStackedDown,
     macroTrend: !macroUp,
     position: !priceAboveEma,
     momentum: histogram < 0,
-    rsi: rsiValue < 48 && rsiValue > 28,
+    rsi: rsiBearBand,
     structure: lowerHighs,
-    conviction: bodyRatio >= 0.4,
+    conviction: !candleDirectionUp,
   };
   const bullScore = Object.values(bullChecks).filter(Boolean).length;
   const bearScore = Object.values(bearChecks).filter(Boolean).length;
 
-  // Direction: the stronger confluence side wins. A rare exact tie is
-  // broken by RSI (above 50 = bullish), then by the latest candle's own
-  // direction — the scanner never answers "NO TRADE".
-  const tieBreakRsi =
-    rsiValue !== 50 ? rsiValue > 50 : (lastCandle?.close ?? close) >= (lastCandle?.open ?? close);
+  // Direction: the stronger confluence side wins; a tie is broken by the
+  // RSI side (above 50 = bullish). The DIRECTION is only meaningful when
+  // the strict gate below passes.
+  const tieBreakRsi = rsiValue !== 50 ? rsiValue > 50 : (lastCandle?.close ?? close) >= (lastCandle?.open ?? close);
   const bullishLead = bullScore > bearScore || (bullScore === bearScore && tieBreakRsi);
   const signal: ScannerAnalysis["signal"] = bullishLead ? "BUY" : "SELL";
-  const bias: ScannerAnalysis["bias"] = bullishLead ? "BULLISH" : "BEARISH";
+  const bias: ScannerAnalysis["bias"] =
+    bullScore === bearScore ? "NEUTRAL" : bullishLead ? "BULLISH" : "BEARISH";
 
   const conditionalSetup = !hasLiveQuote;
 
-  // Confidence mirrors the confluence actually achieved (7 checks, each
-  // worth ~9%) and is capped hard for conditional (no-live-quote) plans.
-  const achieved = Math.max(bullScore, bearScore);
-  const confidenceBase = Math.round(Math.min(95, 38 + achieved * 9));
-  const confidence = conditionalSetup ? Math.min(52, confidenceBase) : confidenceBase;
+  // ── The STRICT GATE — every condition must hold for an actionable signal:
+  //   1. ≥ 5 of the 7 confluence checks on the leading side,
+  //   2. trend, momentum band and recent candles ALL aligned that way,
+  //   3. the market is NOT ranging (clean higher-lows / lower-highs
+  //      structure must agree with the direction),
+  //   4. REAL feed data — synthesized candles AND synthetic-proxy candles
+  //      (BTC standing in for FLAME etc.) are never tradable: the levels
+  //      describe a different instrument than the one being traded.
+  const leadingScore = Math.max(bullScore, bearScore);
+  const leadingAligned = bullishLead
+    ? emaStackedUp && rsiBullBand && candleDirectionUp
+    : emaStackedDown && rsiBearBand && !candleDirectionUp;
+  const structureAligned = bullishLead ? higherLows : lowerHighs;
+  const ranging = !higherLows && !lowerHighs;
+  const confluenceOk = leadingScore >= 5;
+  const tradableData = !synthesized && !synthetic;
+  const gatePassed = confluenceOk && leadingAligned && structureAligned && !ranging && tradableData;
 
-  // ── Signal strength: the last defence against "signal everywhere" noise.
-  // A STRONG call needs a dominant confluence (≥5/7 checks) AND the recent
-  // candles actually travelling that way; an unclear/counter-trending tape
-  // is graded WEAK, and a muddle (≤2 checks or <45% agreement) returns WAIT —
-  // the scanner refuses to fire a plan it does not believe in.
-  const recentCandles = candles.slice(-10);
-  const agreeing = recentCandles.filter((candle) =>
-    bullishLead ? candle.close >= candle.open : candle.close <= candle.open,
-  ).length;
-  const agreement = recentCandles.length > 0 ? agreeing / recentCandles.length : 0;
-  const strength: ScannerAnalysis["strength"] =
-    achieved <= 2 || agreement < 0.45
-      ? "WAIT"
-      : achieved >= 5 && agreement >= 0.6 && !synthesized
-        ? "STRONG"
-        : achieved >= 4 && agreement >= 0.5
-          ? "MODERATE"
-          : "WEAK";
-  // Estimated-price symbols can never claim STRONG — the levels are simulated.
-  const finalStrength: ScannerAnalysis["strength"] =
-    strength === "STRONG" && synthesized ? "MODERATE" : strength;
+  // Confidence mirrors the confluence achieved, capped hard for
+  // conditional (no-live-quote) plans and for WAIT-grade setups.
+  const confidenceBase = Math.round(Math.min(95, 38 + leadingScore * 9));
+  const confidence = !gatePassed ? Math.min(35, confidenceBase) : conditionalSetup ? Math.min(52, confidenceBase) : confidenceBase;
+
+  // Strength: WAIT is the default for anything the strict gate rejects;
+  // STRONG additionally requires the candle agreement of the last 10 bars.
+  const agreement = candleAgreement;
+  const finalStrength: ScannerAnalysis["strength"] = !gatePassed
+    ? "WAIT"
+    : leadingScore >= 6 && agreement >= 0.7
+      ? "STRONG"
+      : leadingScore >= 5 && agreement >= 0.6
+        ? "MODERATE"
+        : "WEAK";
   const entry = signal === "BUY" ? ask : bid;
 
-  // Stops: spread-aware. The spread is a real cost — the SL must clear it
-  // on the broker side or the trade can be stopped out by the cost alone.
+  // ── Structure-aware SL/TP (smart-money style) ─────────────────────
+  // SL goes BEYOND the actual recent swing high/low (fractal S/R) plus a
+  // 1.8× ATR buffer — a tight static stop gets wicked out by spread and
+  // noise. TP is placed at a MINIMUM 1:2.5 risk-reward from that risk.
   const spread = Math.max(ask - bid, atrValue * 0.05);
   const direction = signal === "SELL" ? -1 : 1;
-  const swingStop = signal === "SELL" ? swing.high + atrValue * 0.5 : swing.low - atrValue * 0.5;
-  const atrStop = entry - direction * atrValue * 1.5;
-  const stopLoss =
+  const structuralStop =
     signal === "SELL"
-      ? Math.max(swingStop, atrStop)
-      : Math.min(swingStop, atrStop);
+      ? Math.max(swing.high, entry) + atrValue * 1.8
+      : Math.min(swing.low, entry) - atrValue * 1.8;
+  const stopLoss = signal === "SELL" ? Math.max(structuralStop, entry + spread * 2) : Math.min(structuralStop, entry - spread * 2);
   const risk = Math.abs(entry - stopLoss);
-  const takeProfit = entry + direction * risk * 2;
+  const takeProfit = entry + direction * risk * 2.5;
+
+  const waitReason = synthesized
+    ? `No public feed covers ${symbol} — the levels below are planned from SIMULATED data (estimated price ${fmtPrice(referenceClose)}). Execution is disabled: never trade live money on synthetic candles. Load a standard symbol (EURUSD, XAUUSD, US30, BTCUSD) for an executable plan.`
+    : ranging
+      ? "Market in consolidation / low confluence — wait for clear breakout."
+      : !leadingAligned
+        ? `Trend, momentum and recent candles disagree — EMA stack is ${emaStackedUp ? "aligned up" : emaStackedDown ? "aligned down" : "mixed"}, RSI ${rsiValue.toFixed(1)} is ${rsiBullBand ? "in the bullish band" : rsiBearBand ? "in the bearish band" : "outside both trade bands"}, and the last 10 candles run ${Math.round(candleAgreement * 100)}% ${candleDirectionUp ? "up" : "down"}. Wait for all three to align.`
+        : `Only ${leadingScore}/7 confluence checks agree — below the 5/7 minimum. Market in consolidation / low confluence — wait for clear breakout.`;
 
   const reasons: string[] = [];
   reasons.push(
     synthesized
-      ? `No public feed covers ${symbol} — levels are planned from an estimated price (${fmtPrice(referenceClose)}) with realistic simulated volatility. Pressing Execute sends the order at the broker's REAL ${symbol} price, at market and without SL/TP (planned stops would not match the live price).`
+      ? waitReason
       : `Candles came from the public market feed${resolvedSymbol ? ` (${resolvedSymbol} tracks ${symbol})` : ""} — pressing Execute sends the order at the broker's real market price.`,
   );
   if (synthetic) {
     reasons.push(
-      `${symbol} is a broker synthetic index — no public provider tracks it, so structure and levels use a 24/7 volatility proxy of the same character. The trade itself executes on the real ${symbol} price through your broker.`,
+      `${symbol} is a broker synthetic index — no public provider tracks it, so structure and levels use a 24/7 volatility proxy of the same character. Plans on proxy data are never executable.`,
     );
   }
   if (candles.length >= 50) {
     reasons.push(
-      `EMA21 is ${ema21 > ema50 ? "above" : "below"} EMA50 — ${trendUp ? "uptrend" : "downtrend"} structure on ${timeframe}.`,
+      `EMA stack: 21 ${ema21 > ema50 ? ">" : "<"} 50 ${ema50 > ema200 ? ">" : "<"} 200 — ${emaStackedUp ? "fully bullish alignment" : emaStackedDown ? "fully bearish alignment" : "mixed alignment"} on ${timeframe}.`,
     );
     reasons.push(
-      `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 60 ? "strong bullish momentum" : rsiValue > 52 ? "mild bullish momentum" : rsiValue < 40 ? "strong bearish momentum" : rsiValue < 48 ? "mild bearish momentum" : "momentum neutral"}.`,
+      `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue > 68 ? "overbought (no fresh longs)" : rsiValue < 32 ? "oversold (no fresh shorts)" : rsiBullBand ? "in the bullish trade band (52–68)" : rsiBearBand ? "in the bearish trade band (32–48)" : "neutral zone"}.`,
     );
     reasons.push(
-      `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression"}. Confluence ${bullScore}–${bearScore} (bull–bear) — ${signal} leads the score.`,
+      `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression (ranging)"}. Confluence ${bullScore}–${bearScore} (bull–bear).`,
     );
     reasons.push(
-      `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level.`,
+      `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level; the last 10 candles are ${Math.round(bullishCandles / Math.max(1, recentCandles.length) * 100)}% bullish / ${Math.round(bearishCandles / Math.max(1, recentCandles.length) * 100)}% bearish.`,
     );
     reasons.push(
-      `ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — levels are provided for planning; the bridge executes at the live market price.`,
+      `ATR(14) ${atrValue.toFixed(Math.abs(close) >= 100 ? 2 : 5)} — the stop sits beyond the recent swing with a 1.8× ATR buffer.`,
     );
   } else {
     reasons.push(
@@ -303,33 +335,35 @@ async function runScannerAnalysis(
     );
   }
   reasons.push(
-    `Plan: ${signal} at entry ${fmtPrice(entry)}, stop ${fmtPrice(stopLoss)}, target ${fmtPrice(takeProfit)} at 2R — the stop already covers the spread.`,
+    gatePassed
+      ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.`
+      : `NO TRADE — ${waitReason} Strength: WAIT; execution is blocked until the scanner sees a clean, aligned setup.`,
   );
   reasons.push(
     finalStrength === "WAIT"
-      ? `Signal strength: WAIT — only ${achieved}/7 checks agree and the last 10 candles move ${Math.round(agreement * 100)}% with the call. The scanner will not execute this setup; re-scan later or wait for a cleaner trend.`
+      ? `Signal strength: WAIT — the strict gate rejected this setup (${leadingScore}/7 checks, ${Math.round(agreement * 100)}% candle agreement${synthesized ? ", simulated data" : ""}). The scanner will not execute it; re-scan later or wait for a cleaner trend.`
       : finalStrength === "WEAK"
-        ? `Signal strength: WEAK — ${achieved}/7 checks agree (${Math.round(agreement * 100)}% candle agreement). Trade small if at all.`
+        ? `Signal strength: WEAK — ${leadingScore}/7 checks agree (${Math.round(agreement * 100)}% candle agreement). Trade small if at all.`
         : finalStrength === "MODERATE"
-          ? `Signal strength: MODERATE — ${achieved}/7 checks agree with ${Math.round(agreement * 100)}% candle agreement.`
-          : `Signal strength: STRONG — ${achieved}/7 checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call.`,
+          ? `Signal strength: MODERATE — ${leadingScore}/7 checks agree with ${Math.round(agreement * 100)}% candle agreement.`
+          : `Signal strength: STRONG — ${leadingScore}/7 checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call.`,
   );
 
   const fmt = (value: number) =>
     value.toFixed(Math.abs(value) >= 1000 ? 2 : Math.abs(value) >= 10 ? 3 : 5);
   const readouts: ScannerAnalysis["readouts"] = [
     {
-      label: "Trend (EMA 21/50)",
-      value: trendUp ? "Up · Bullish" : "Down · Bearish",
-      bullish: candles.length >= 50 ? trendUp : null,
+      label: "Trend (EMA 21/50/200)",
+      value: emaStackedUp ? "Stacked Up · Bullish" : emaStackedDown ? "Stacked Down · Bearish" : "Mixed",
+      bullish: candles.length >= 50 ? (emaStackedUp ? true : emaStackedDown ? false : null) : null,
     },
     {
       label: "Momentum (RSI 14)",
       value:
         closes.length >= 15
-          ? `${rsiValue.toFixed(1)} ${rsiValue > 52 ? "· Bullish" : rsiValue < 48 ? "· Bearish" : "· Neutral"}`
+          ? `${rsiValue.toFixed(1)} ${rsiBullBand ? "· Bull band" : rsiBearBand ? "· Bear band" : "· No-trade zone"}`
           : "n/a",
-      bullish: closes.length >= 15 ? (rsiValue > 52 ? true : rsiValue < 48 ? false : null) : null,
+      bullish: closes.length >= 15 ? (rsiBullBand ? true : rsiBearBand ? false : null) : null,
     },
     {
       label: "MACD (12/26/9)",
@@ -343,14 +377,19 @@ async function runScannerAnalysis(
       bullish: null,
     },
     {
-      label: synthesized ? "Reference price (estimated)" : "Reference price (feed close)",
+      label: synthesized ? "Reference price (SIMULATED)" : "Reference price (feed close)",
       value: fmt(close),
       bullish: null,
     },
     {
+      label: "Confluence",
+      value: `${leadingScore}/7 · ${gatePassed ? "gate passed" : "gate blocked"}`,
+      bullish: gatePassed ? (signal === "BUY" ? true : false) : null,
+    },
+    {
       label: "Signal",
-      value: `${signal} · ${finalStrength}${conditionalSetup ? " · CONDITIONAL" : ""}`,
-      bullish: signal === "BUY",
+      value: gatePassed ? `${signal} · ${finalStrength}${conditionalSetup ? " · CONDITIONAL" : ""}` : `WAIT · No trade`,
+      bullish: gatePassed ? signal === "BUY" : null,
     },
   ];
 
@@ -360,22 +399,22 @@ async function runScannerAnalysis(
       symbol: symbolInput || symbol,
       timeframe,
       bias,
-      signal,
+      signal: gatePassed ? signal : bias === "BEARISH" ? "SELL" : "BUY",
       strength: finalStrength,
       confidence,
       entry: roundToTick(entry, entry),
       stopLoss: roundToTick(stopLoss, entry),
       takeProfit: roundToTick(takeProfit, entry),
-      riskReward: "1:2",
-      executionReady: hasLiveQuote,
+      riskReward: "1:2.5",
+      executionReady: gatePassed && hasLiveQuote,
       atr: atrValue,
       rsi: rsiValue,
       reasons,
       readouts,
       dataStatus: "public",
       dataSource: synthesized
-        ? "Estimated feed · simulated structure (conditional)"
-        : `Public market feed${resolvedSymbol ? ` · ${resolvedSymbol}` : ""}${synthetic ? " · synthetic proxy" : ""} (conditional)`,
+        ? "Estimated feed · SIMULATED — not tradable"
+        : `Public market feed${resolvedSymbol ? ` · ${resolvedSymbol}` : ""}${synthetic ? " · synthetic proxy — not tradable" : ""}${gatePassed ? " (conditional)" : " · WAIT"}`,
       livePrice: referenceClose,
       lastCandle: lastCandle ? { time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close } : null,
       candleCount: candles.length,
@@ -599,6 +638,25 @@ const SYNTHETIC_PROXY_RULES: [RegExp, string][] = [
 export function isSyntheticSymbol(symbol: string): boolean {
   const cleaned = symbol.toUpperCase().replace(/[^A-Z0-9]/g, "");
   return SYNTHETIC_PROXY_RULES.some(([pattern]) => pattern.test(cleaned));
+}
+
+/**
+ * Strips broker price-feed suffixes so REAL candles load instead of failing
+ * over to the synthetic generator: "US30.m" → "US30", "XAUUSD_m" →
+ * "XAUUSD", "GER40m" → "GER40", "BTCUSD.pro" → "BTCUSD". The trailing
+ * bare-"m" case runs LAST and only when what remains still looks like a
+ * real instrument (letters/digits, length ≥ 3) — it never eats genuine
+ * symbols such as "CAD" or "m5".
+ */
+export function stripBrokerSuffixes(symbol: string): string {
+  let cleaned = symbol.trim();
+  // Dotted suffixes: XAUUSD.m / .M / .pro / .PRO / .i / .c / .z
+  cleaned = cleaned.replace(/[._-]?(m|pro|i|c|z)$/i, "").trim();
+  // Underscored suffixes: US30_m, EURUSD_mini, XAUUSD_M
+  cleaned = cleaned.replace(/_[a-z0-9]{1,4}$/i, "").trim();
+  // Broker prefixes: HW_, VH_, AX_, BM_, BO_, ICE_
+  cleaned = cleaned.replace(/^(HW|VH|AX|BM|BO|ICE)_/i, "").trim();
+  return cleaned;
 }
 
 /** Maps a broker symbol (HW_100, XAUUSD.M, FLAME, EURUSD…) to a public ticker. */

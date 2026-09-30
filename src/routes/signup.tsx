@@ -7,6 +7,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
 import { syncRegister } from "@/lib/account-sync.server";
+import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/signup")({
@@ -77,6 +78,21 @@ function SignUp() {
               const synced = await syncRegister({ data: { account: res.account } });
               if (synced.enabled && !synced.ok) {
                 console.error("[signup] Shared registration sync failed");
+              }
+              // STATIC-HOST FALLBACK: server functions 404 on the production
+              // build, so the account row never reached the cloud store and
+              // the admin console never showed the new user (only the email
+              // alert's approvals row landed). Mirror the registration to
+              // portal_accounts DIRECTLY from the browser with the anon key.
+              if (!synced.enabled && portalCloudConfigured()) {
+                const direct = await portalRegisterAccount(res.account);
+                if (!direct.ok) {
+                  console.error("[signup] Direct cloud registration failed:", direct.error);
+                }
+              } else if (synced.enabled && !synced.ok && portalCloudConfigured()) {
+                // Server reachable but the write failed — try the direct path too.
+                const direct = await portalRegisterAccount(res.account);
+                if (!direct.ok) console.error("[signup] Direct cloud registration also failed:", direct.error);
               }
               // Admin alert — "New user registered: <email> - Approve in
               // admin". Also saves the pending approval row. Fire-and-forget:

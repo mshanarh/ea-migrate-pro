@@ -101,6 +101,67 @@ export async function portalListAccounts(): Promise<SyncListResult> {
  * later poll can't resurrect "pending"), and license pushes union-merge by
  * id so a stale device can't delete another session's keys.
  */
+/**
+ * Registration — writes the FULL account (minus password) into the shared
+ * store + the approval row, straight from the browser.
+ *
+ * This is the missing piece that made new registrations INVISIBLE in the
+ * admin console: the old signup flow only called syncRegister (a TanStack
+ * server function), which 404s on the static Vercel build — the
+ * mentor_approvals row (written by the email sender) landed, but the
+ * portal_accounts row the admin list reads never did. The merge rules match
+ * syncRegister: cloud-controlled fields (status/role/limit/licenses) win
+ * from an existing row; brand-new rows are stored as they registered.
+ */
+export async function portalRegisterAccount(account: Account): Promise<{ enabled: boolean; ok: boolean; error?: string }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false };
+  const email = account.email.trim().toLowerCase();
+  if (!email) return { enabled: true, ok: false, error: "Missing email" };
+  try {
+    const { data: existingRow, error: readError } = await dbClient
+      .from("portal_accounts")
+      .select("data")
+      .eq("email", email)
+      .maybeSingle();
+    if (readError) return { enabled: true, ok: false, error: readError.message };
+    // MERGE, never clobber: cloud-controlled fields of an existing row win.
+    let merged: Account = { ...account, email };
+    if (existingRow?.data) {
+      try {
+        const existing = JSON.parse(existingRow.data) as Account;
+        const licensesById = new Map(existing.licenses.map((license) => [license.id, license]));
+        for (const license of account.licenses) licensesById.set(license.id, license);
+        merged = {
+          ...account,
+          email,
+          status: existing.status,
+          role: existing.role,
+          licenseLimit: existing.licenseLimit,
+          licenses: Array.from(licensesById.values()),
+        };
+      } catch {
+        /* corrupted existing row — the fresh account replaces it */
+      }
+    }
+    const { error: writeError } = await dbClient
+      .from("portal_accounts")
+      .upsert({ email, data: JSON.stringify(merged), updated_at: new Date().toISOString() }, { onConflict: "email" });
+    if (writeError) return { enabled: true, ok: false, error: writeError.message };
+    // Approval row: keeps the console's Pending/Approved tabs authoritative.
+    // Never overwrite an existing admin decision (approved/rejected).
+    if (!existingRow?.data) {
+      const { error: approvalError } = await dbClient
+        .from("mentor_approvals")
+        .upsert({ email, status: "pending" }, { onConflict: "email", ignoreDuplicates: true });
+      if (approvalError) console.warn("[portal-cloud] approval row write failed:", approvalError.message);
+    }
+    return { enabled: true, ok: true };
+  } catch (error) {
+    return { enabled: true, ok: false, error: error instanceof Error ? error.message : "Cloud registration failed" };
+  }
+}
+
 export async function portalAdminUpdate(
   targetEmail: string,
   patch: AdminPatch,
