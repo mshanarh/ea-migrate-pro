@@ -637,7 +637,23 @@ export function stripBrokerSuffixes(symbol: string): string {
   cleaned = cleaned.replace(/_[a-z0-9]{1,4}$/i, "").trim();
   // Broker prefixes: HW_, VH_, AX_, BM_, BO_, ICE_
   cleaned = cleaned.replace(/^(HW|VH|AX|BM|BO|ICE)_/i, "").trim();
+  // GLUED broker markers with NO separator — Exness appends a bare "m"
+  // (XAUUSDM, US30m), other brokers glue c/i/z/pro. Guarded by a
+  // known-base check: XAUUSDM → XAUUSD, BTCUSDM → BTCUSD, while a plain
+  // BTCUSD stays intact (the marker strip only applies when what remains
+  // is a recognized instrument).
+  const glued = cleaned.replace(/(m|pro|i|c|z)$/i, "");
+  if (glued !== cleaned && glued.length >= 5 && isKnownBase(glued)) {
+    cleaned = glued;
+  }
   return cleaned;
+}
+
+/** True when the string is a recognizable instrument base (XAUUSD, US30, BTCUSD, NAS100…). */
+function isKnownBase(symbol: string): boolean {
+  const s = symbol.toUpperCase();
+  if (publicSymbolFor(s) !== undefined) return true;
+  return s.length === 6 && FX_CURRENCIES.has(s.slice(0, 3)) && FX_CURRENCIES.has(s.slice(3));
 }
 
 /** Maps a broker symbol (HW_100, XAUUSD.M, FLAME, EURUSD…) to a public ticker. */
@@ -666,8 +682,15 @@ function symbolCandidates(symbol: string): string[] {
   // Broker prefixes: HW_, VH_, AX_, BM_, BO_, ICE_ …
   const prefixStripped = cleaned.replace(/^[A-Z]{2,5}_/, "");
   if (prefixStripped && prefixStripped !== cleaned) candidates.add(prefixStripped);
-  // Broker suffixes: XAUUSD.m, BTCUSD.pro, EURUSD.i …
-  const suffixStripped = cleaned.replace(/\.(M|PRO|I|C|Z)$/i, "").replace(/^(HW|VH|AX|BM|BO|ICE)/, "");
+  // Broker suffixes: dotted (XAUUSD.m, BTCUSD.pro) AND GLUED (XAUUSDM,
+  // US30m — Exness style with no separator).
+  const suffixStripped = cleaned
+    .replace(/\.(M|PRO|I|C|Z)$/i, "")
+    .replace(/(M|PRO|I|C|Z)$/i, (match, _offset, full) => {
+      const base = full.slice(0, full.length - match.length);
+      return base.length >= 5 ? base : full;
+    })
+    .replace(/^(HW|VH|AX|BM|BO|ICE)/, "");
   if (suffixStripped && suffixStripped !== cleaned) candidates.add(suffixStripped);
   // Index words hidden inside the name: HW_100 → 100, US100IDX → US100
   const indexWord = /\d{2,4}$/.exec(cleaned)?.[0];
