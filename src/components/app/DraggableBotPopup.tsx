@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
 import { speakBot } from "@/lib/bot-voice";
-import { callNative, queryNative } from "@/lib/native-bridge";
+import { callNative, hasNativeBridge, queryNative } from "@/lib/native-bridge";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -42,6 +42,11 @@ export default function DraggableBotPopup() {
   const running = robot?.running ?? false;
   const eaName = robot?.name ?? "My EA";
   const eaImage = robot?.image || "/logo.png";
+  // INSIDE THE ANDROID APP the NATIVE chat-head bubble is THE popup — it
+  // floats over MetaTrader and expands in place when tapped. Rendering the
+  // web popup as well showed TWO popups on START. Only a plain browser
+  // (no native bridge) renders the web popup.
+  const nativeApp = hasNativeBridge();
 
   const [open, setOpen] = useState(false);
   const [logs, setLogs] = useState<LogLine[]>([]);
@@ -220,8 +225,9 @@ export default function DraggableBotPopup() {
       } else {
         // Re-show on every remount (page navigation) — the native service
         // keeps the existing bubble if it is already up, so this is cheap
-        // and guarantees the bubble follows the user across pages.
-        callNative("showBubble", eaImage);
+        // and guarantees the bubble follows the user across pages. The EA
+        // NAME rides along so the native expansion shows the real robot.
+        callNative("showBubble", eaImage, eaName);
       }
     } else {
       callNative("hideBubble");
@@ -362,6 +368,8 @@ export default function DraggableBotPopup() {
 
   // The floating BUTTON only exists while the robot is running, but the popup
   // must always be able to appear (scanner Execute shows it even when idle).
+  // Native app → never render web floating UI (the native bubble is the popup).
+  if (nativeApp) return null;
   if (!running && !open) return null;
 
   const style: React.CSSProperties = {

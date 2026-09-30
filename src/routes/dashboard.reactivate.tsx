@@ -10,7 +10,6 @@ import {
   PlusCircle,
   RefreshCcw,
   ShieldCheck,
-  Sparkles,
   Users,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -248,14 +247,6 @@ function ReactivateClientPage() {
               className="gap-2 rounded-xl bg-primary font-bold text-black hover:bg-primary/90"
             >
               <ExternalLink className="size-4" /> Pay R{selectedTokens * TOKEN_PRICE_ZAR} on Whop
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={() => handleClaimTokens(selectedTokens)}
-              className="gap-2 rounded-xl border-white/15 bg-white/5 font-semibold text-white hover:bg-white/10"
-            >
-              <Sparkles className="size-4 text-emerald-400" /> Confirm Paid — Add {selectedTokens} Token{selectedTokens === 1 ? "" : "s"}
             </Button>
             {isAdmin && (
               <Button

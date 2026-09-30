@@ -230,7 +230,7 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void showBubble(final String imageUrl) {
+        public void showBubble(final String imageUrl, final String name) {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
@@ -256,7 +256,7 @@ public class MainActivity extends Activity {
                         }
                         return;
                     }
-                    startBubbleService(imageUrl);
+                    startBubbleService(imageUrl, name);
                 }
             });
         }
@@ -287,10 +287,14 @@ public class MainActivity extends Activity {
     /**
      * Launch the floating chat-head service. Oreo+ uses startForegroundService
      * so the process survives MetaTrader and other heavy apps in front.
+     * The EA name rides along — the bubble's expanded popup shows it.
      */
-    private void startBubbleService(String image) {
+    private void startBubbleService(String image, String name) {
         Intent intent = new Intent(MainActivity.this, OverlayService.class);
         intent.putExtra("image", image);
+        if (name != null && !name.trim().isEmpty()) {
+            intent.putExtra("name", name.trim());
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             startForegroundService(intent);
         } else {
@@ -305,7 +309,7 @@ public class MainActivity extends Activity {
         // requested while the permission was missing and it is granted now,
         // launch it immediately — the bot floats without pressing Start again.
         if (pendingBubbleImage != null && overlayAllowed()) {
-            startBubbleService(pendingBubbleImage);
+            startBubbleService(pendingBubbleImage, null);
             pendingBubbleImage = null;
             android.widget.Toast.makeText(this,
                     "Bot bubble floating over other apps ✓",

@@ -22,7 +22,7 @@ type NativeBridge = {
   canOverlay?: () => boolean;
   /** Opens Android's "Display over other apps" settings for this app (v1.4+ wrappers). */
   requestOverlayPermission?: () => void;
-  showBubble?: (image: string) => void;
+  showBubble?: (image: string, name?: string) => void;
   hideBubble?: () => void;
   pushLog?: (line: string) => void;
   reportError?: (message: string) => void;
@@ -37,6 +37,16 @@ function currentBridge(): NativeBridge | null {
   } catch {
     return null;
   }
+}
+
+/**
+ * True when the web app runs inside the Android wrapper (a native bridge is
+ * injected). Used to suppress WEB-side floating UI that would duplicate the
+ * NATIVE chat-head bubble — inside the app there must be exactly ONE popup:
+ * the native one that floats over MetaTrader.
+ */
+export function hasNativeBridge(): boolean {
+  return currentBridge() !== null;
 }
 
 /**
