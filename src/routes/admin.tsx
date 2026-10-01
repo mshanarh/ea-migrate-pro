@@ -233,25 +233,28 @@ function AdminConsole() {
     [account],
   );
 
-  /** Approve = is_paid true + issue the configured number of keys to that
-   * user (each key is its OWN license_keys row, each emailed). Unpaid clears
-   * the flag; Rejected hides the user into the Rejected tab (client-side
-   * list — the users table has no status column) and forces unpaid. */
-  const [rejectedEmails, setRejectedEmails] = useState<Set<string>>(() => {
+  /** PORTAL STATUS ONLY — Approve/Reject decide the user's portal state
+   * (Approved/Rejected tabs, keys issued on approval). They deliberately
+   * NEVER write users.is_paid: app access/payment is a separate decision
+   * (the app gate, license keys and Whop flow own that). */
+  const readSet = (storageKey: string): Set<string> => {
     try {
-      const raw = window.localStorage.getItem("eamp.admin.rejected.v1");
+      const raw = window.localStorage.getItem(storageKey);
       return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
     } catch {
       return new Set<string>();
     }
-  });
+  };
+  const APPROVED_KEY = "eamp.admin.approved.v1";
+  const REJECTED_KEY = "eamp.admin.rejected.v1";
+  const [approvedEmails, setApprovedEmails] = useState<Set<string>>(() => readSet(APPROVED_KEY));
+  const [rejectedEmails, setRejectedEmails] = useState<Set<string>>(() => readSet(REJECTED_KEY));
   const [userTab, setUserTab] = useState<"all" | "approved" | "rejected">("all");
   const [keysPerUser, setKeysPerUser] = useState(1);
 
-  const persistRejected = (next: Set<string>) => {
-    setRejectedEmails(next);
+  const persistSet = (storageKey: string, next: Set<string>) => {
     try {
-      window.localStorage.setItem("eamp.admin.rejected.v1", JSON.stringify(Array.from(next)));
+      window.localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
     } catch {
       /* private mode — the list just resets on reload */
     }
@@ -275,49 +278,52 @@ function AdminConsole() {
   };
 
   const approveRegistered = async (user: UserRow) => {
-    const paid = await setCloudUserPaid(user.email, true);
-    if (!paid) {
-      toast.error(`Could not approve ${user.email} — try again.`);
-      return;
-    }
-    setRegistered((current) => current.map((entry) => (entry.email === user.email ? { ...entry, is_paid: true } : entry)));
+    const nextApproved = new Set(approvedEmails);
+    nextApproved.add(user.email);
+    setApprovedEmails(nextApproved);
+    persistSet(APPROVED_KEY, nextApproved);
     if (rejectedEmails.has(user.email)) {
-      const next = new Set(rejectedEmails);
-      next.delete(user.email);
-      persistRejected(next);
+      const nextRejected = new Set(rejectedEmails);
+      nextRejected.delete(user.email);
+      setRejectedEmails(nextRejected);
+      persistSet(REJECTED_KEY, nextRejected);
     }
     const issued = keysPerUser > 0 ? await issueKeysToUser(user.email, keysPerUser) : 0;
     toast.success(
-      `${user.email} approved${keysPerUser > 0 ? ` — ${issued}/${keysPerUser} key${keysPerUser === 1 ? "" : "s"} emailed` : ""}`,
+      `${user.email} approved in the portal${keysPerUser > 0 ? ` — ${issued}/${keysPerUser} key${keysPerUser === 1 ? "" : "s"} emailed` : " (no keys configured)"}`,
       { duration: 6000 },
     );
   };
 
   const rejectRegistered = (user: UserRow) => {
-    const next = new Set(rejectedEmails);
-    next.add(user.email);
-    persistRejected(next);
-    void setCloudUserPaid(user.email, false);
-    setRegistered((current) => current.map((entry) => (entry.email === user.email ? { ...entry, is_paid: false } : entry)));
+    const nextRejected = new Set(rejectedEmails);
+    nextRejected.add(user.email);
+    setRejectedEmails(nextRejected);
+    persistSet(REJECTED_KEY, nextRejected);
+    const nextApproved = new Set(approvedEmails);
+    nextApproved.delete(user.email);
+    setApprovedEmails(nextApproved);
+    persistSet(APPROVED_KEY, nextApproved);
     toast.success(`${user.email} moved to Rejected`);
   };
 
   const restoreRegistered = (user: UserRow) => {
-    const next = new Set(rejectedEmails);
-    next.delete(user.email);
-    persistRejected(next);
+    const nextRejected = new Set(rejectedEmails);
+    nextRejected.delete(user.email);
+    setRejectedEmails(nextRejected);
+    persistSet(REJECTED_KEY, nextRejected);
     toast.success(`${user.email} restored to the list`);
   };
 
-  // ── APPROVE ALL — approves every unpaid, non-rejected user and issues the
-  // configured number of keys TO EACH (individual keys per user, never one
-  // shared key). Approved users then show under the Approved tab.
+  // ── APPROVE ALL — approves every not-yet-approved, non-rejected user in
+  // the PORTAL and issues the configured number of keys TO EACH (individual
+  // keys per user, never one shared key). App payment flags are untouched.
   const [approveAllArmed, setApproveAllArmed] = useState(false);
   const [approvingAll, setApprovingAll] = useState(false);
   const [approveAllProgress, setApproveAllProgress] = useState("");
   const approveAllUsers = async () => {
     if (approvingAll) return;
-    const targets = registered.filter((user) => !user.is_paid && !rejectedEmails.has(user.email));
+    const targets = registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email));
     if (targets.length === 0) {
       toast.info("Every user is already approved.");
       setApproveAllArmed(false);
@@ -339,25 +345,21 @@ function AdminConsole() {
       index += 1;
       setApproveAllProgress(`Approving ${index}/${targets.length} — ${user.email}`);
       try {
-        const paid = await setCloudUserPaid(user.email, true);
-        if (!paid) {
-          failures.push(user.email);
-          continue;
-        }
         approved += 1;
         keysIssued += await issueKeysToUser(user.email, keysPerUser);
       } catch {
         failures.push(user.email);
       }
     }
-    setRegistered((current) =>
-      current.map((user) => (rejectedEmails.has(user.email) ? user : { ...user, is_paid: true })),
-    );
+    const nextApproved = new Set(approvedEmails);
+    for (const user of targets) nextApproved.add(user.email);
+    setApprovedEmails(nextApproved);
+    persistSet(APPROVED_KEY, nextApproved);
     setApprovingAll(false);
     setApproveAllProgress("");
     setUserTab("approved");
     toast.success(
-      `Approved ${approved}/${targets.length} — ${keysIssued} keys emailed.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
+      `Approved ${approved}/${targets.length} in the portal — ${keysIssued} keys emailed.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
       { duration: 9000 },
     );
   };
@@ -456,6 +458,9 @@ function AdminConsole() {
       ...PAYMENT_EXEMPT_EMAILS,
       ...store.payments.map((payment) => payment.email),
       ...mentors.map((mentor) => mentor.email),
+      // Registered app users get their Paid/Unpaid controls HERE (the
+      // Approve buttons are portal status and never touch payment).
+      ...registered.map((user) => user.email),
     ]),
   ).sort();
   const paidCount = paymentEmails.filter(
@@ -730,12 +735,15 @@ function AdminConsole() {
                 No registered users yet.
               </p>
             )}
-            {/* All / Approved / Rejected — users MOVE between the tabs. */}
+            {/* All / Approved / Rejected — PORTAL STATUS ONLY. Every signup
+                starts Pending; Approve/Reject move it between the tabs and
+                NEVER touch the payment flag (that lives in the Payment
+                status section at the bottom). */}
             <div className="mt-4 flex items-center gap-2">
               {(
                 [
                   ["all", "All", registered.filter((user) => !rejectedEmails.has(user.email)).length],
-                  ["approved", "Approved", registered.filter((user) => user.is_paid && !rejectedEmails.has(user.email)).length],
+                  ["approved", "Approved", approvedEmails.size],
                   ["rejected", "Rejected", rejectedEmails.size],
                 ] as const
               ).map(([key, label, count]) => (
@@ -762,7 +770,7 @@ function AdminConsole() {
                       userTab === "all"
                         ? !rejectedEmails.has(user.email)
                         : userTab === "approved"
-                          ? user.is_paid && !rejectedEmails.has(user.email)
+                          ? approvedEmails.has(user.email) && !rejectedEmails.has(user.email)
                           : rejectedEmails.has(user.email),
                     )
                     .filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
@@ -780,15 +788,13 @@ function AdminConsole() {
                               <span className="rounded-full bg-red-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-red-300">
                                 Rejected
                               </span>
+                            ) : approvedEmails.has(user.email) ? (
+                              <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-300">
+                                Approved
+                              </span>
                             ) : (
-                              <span
-                                className={
-                                  user.is_paid
-                                    ? "rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
-                                    : "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
-                                }
-                              >
-                                {user.is_paid ? "Approved" : "Unpaid"}
+                              <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
+                                Pending
                               </span>
                             )}
                           </div>
@@ -810,7 +816,7 @@ function AdminConsole() {
                               </button>
                             ) : (
                               <>
-                                {!user.is_paid && (
+                                {!approvedEmails.has(user.email) && (
                                   <button
                                     type="button"
                                     onClick={() => void approveRegistered(user)}
