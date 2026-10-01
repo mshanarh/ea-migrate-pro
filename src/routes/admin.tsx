@@ -233,10 +233,11 @@ function AdminConsole() {
     [account],
   );
 
-  /** PORTAL STATUS ONLY — Approve/Reject decide the user's portal state
-   * (Approved/Rejected tabs, keys issued on approval). They deliberately
-   * NEVER write users.is_paid: app access/payment is a separate decision
-   * (the app gate, license keys and Whop flow own that). */
+  /** PORTAL STATUS ONLY — Approve/Reject just move the email between the
+   * Pending/Approved/Rejected tabs. They deliberately NEVER write
+   * users.is_paid: app access/payment is a separate decision (the app gate,
+   * license keys and Whop flow own that). Same shape as the old mentor
+   * Pending/Approved/Rejected flow. */
   const readSet = (storageKey: string): Set<string> => {
     try {
       const raw = window.localStorage.getItem(storageKey);
@@ -249,8 +250,7 @@ function AdminConsole() {
   const REJECTED_KEY = "eamp.admin.rejected.v1";
   const [approvedEmails, setApprovedEmails] = useState<Set<string>>(() => readSet(APPROVED_KEY));
   const [rejectedEmails, setRejectedEmails] = useState<Set<string>>(() => readSet(REJECTED_KEY));
-  const [userTab, setUserTab] = useState<"all" | "approved" | "rejected">("all");
-  const [keysPerUser, setKeysPerUser] = useState(1);
+  const [userTab, setUserTab] = useState<"pending" | "approved" | "rejected">("pending");
 
   const persistSet = (storageKey: string, next: Set<string>) => {
     try {
@@ -260,24 +260,7 @@ function AdminConsole() {
     }
   };
 
-  /** Issues `count` individual keys to one email (row + email each). */
-  const issueKeysToUser = async (email: string, count: number): Promise<number> => {
-    let issued = 0;
-    for (let index = 0; index < count; index += 1) {
-      const key = generateKey();
-      try {
-        const mail = await sendPortalEmail({
-          data: { type: "license_approved", email, licenseKey: key, eaName: "EA Migrate", expiry: "Lifetime" },
-        });
-        if (mail.success) issued += 1;
-      } catch {
-        /* count only the successful ones */
-      }
-    }
-    return issued;
-  };
-
-  const approveRegistered = async (user: UserRow) => {
+  const approveRegistered = (user: UserRow) => {
     const nextApproved = new Set(approvedEmails);
     nextApproved.add(user.email);
     setApprovedEmails(nextApproved);
@@ -288,11 +271,7 @@ function AdminConsole() {
       setRejectedEmails(nextRejected);
       persistSet(REJECTED_KEY, nextRejected);
     }
-    const issued = keysPerUser > 0 ? await issueKeysToUser(user.email, keysPerUser) : 0;
-    toast.success(
-      `${user.email} approved in the portal${keysPerUser > 0 ? ` — ${issued}/${keysPerUser} key${keysPerUser === 1 ? "" : "s"} emailed` : " (no keys configured)"}`,
-      { duration: 6000 },
-    );
+    toast.success(`${user.email} approved in the portal`, { duration: 6000 });
   };
 
   const rejectRegistered = (user: UserRow) => {
@@ -313,55 +292,6 @@ function AdminConsole() {
     setRejectedEmails(nextRejected);
     persistSet(REJECTED_KEY, nextRejected);
     toast.success(`${user.email} restored to the list`);
-  };
-
-  // ── APPROVE ALL — approves every not-yet-approved, non-rejected user in
-  // the PORTAL and issues the configured number of keys TO EACH (individual
-  // keys per user, never one shared key). App payment flags are untouched.
-  const [approveAllArmed, setApproveAllArmed] = useState(false);
-  const [approvingAll, setApprovingAll] = useState(false);
-  const [approveAllProgress, setApproveAllProgress] = useState("");
-  const approveAllUsers = async () => {
-    if (approvingAll) return;
-    const targets = registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email));
-    if (targets.length === 0) {
-      toast.info("Every user is already approved.");
-      setApproveAllArmed(false);
-      return;
-    }
-    if (!approveAllArmed) {
-      setApproveAllArmed(true);
-      toast.info(`Tap again to approve ${targets.length} users (${keysPerUser} key${keysPerUser === 1 ? "" : "s"} each)`, { duration: 5000 });
-      window.setTimeout(() => setApproveAllArmed((current) => (current ? current : false)), 6000);
-      return;
-    }
-    setApproveAllArmed(false);
-    setApprovingAll(true);
-    let approved = 0;
-    let keysIssued = 0;
-    const failures: string[] = [];
-    let index = 0;
-    for (const user of targets) {
-      index += 1;
-      setApproveAllProgress(`Approving ${index}/${targets.length} — ${user.email}`);
-      try {
-        approved += 1;
-        keysIssued += await issueKeysToUser(user.email, keysPerUser);
-      } catch {
-        failures.push(user.email);
-      }
-    }
-    const nextApproved = new Set(approvedEmails);
-    for (const user of targets) nextApproved.add(user.email);
-    setApprovedEmails(nextApproved);
-    persistSet(APPROVED_KEY, nextApproved);
-    setApprovingAll(false);
-    setApproveAllProgress("");
-    setUserTab("approved");
-    toast.success(
-      `Approved ${approved}/${targets.length} in the portal — ${keysIssued} keys emailed.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
-      { duration: 9000 },
-    );
   };
 
   // ── BROADCAST — the message typer ON the admin console: write once, email
@@ -654,19 +584,6 @@ function AdminConsole() {
                 </p>
               </div>
               <div className="flex flex-wrap items-center gap-2">
-                {/* KEYS PER USER — how many keys each approved user receives. */}
-                <label className="flex h-10 items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  Keys each
-                  <input
-                    type="number"
-                    min={0}
-                    max={10}
-                    value={keysPerUser}
-                    onChange={(event) => setKeysPerUser(Math.max(0, Math.min(10, Number(event.target.value) || 0)))}
-                    className="h-7 w-12 rounded-lg border border-border/70 bg-background/60 text-center text-sm font-bold text-foreground"
-                    aria-label="Keys per approved user"
-                  />
-                </label>
                 <div className="relative">
                   <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
                   <input
@@ -677,22 +594,8 @@ function AdminConsole() {
                     aria-label="Search registered users"
                   />
                 </div>
-                <button
-                  type="button"
-                  onClick={() => void approveAllUsers()}
-                  disabled={approvingAll}
-                  className={
-                    approveAllArmed
-                      ? "flex h-10 items-center gap-2 rounded-full bg-emerald-500 px-5 text-[11px] font-black uppercase text-white"
-                      : "flex h-10 items-center gap-2 rounded-full bg-primary/15 px-5 text-[11px] font-bold uppercase text-primary disabled:opacity-60"
-                  }
-                >
-                  <CheckCircle2 className="size-4" />
-                  {approvingAll ? "Approving…" : approveAllArmed ? "Confirm" : "Approve all"}
-                </button>
               </div>
             </div>
-            {approvingAll && <p className="mt-3 text-xs font-bold text-primary">{approveAllProgress}</p>}
             {/* MESSAGE TYPER — write once, email every mentor + user. */}
             <div className="mt-4 rounded-2xl border border-border/60 bg-card/50 p-4">
               <label htmlFor="admin-broadcast" className="text-sm font-semibold">
@@ -735,14 +638,15 @@ function AdminConsole() {
                 No registered users yet.
               </p>
             )}
-            {/* All / Approved / Rejected — PORTAL STATUS ONLY. Every signup
-                starts Pending; Approve/Reject move it between the tabs and
-                NEVER touch the payment flag (that lives in the Payment
-                status section at the bottom). */}
+            {/* Pending / Approved / Rejected — the OLD approval flow, same
+                shape as the mentor tabs above. Every signup starts Pending;
+                Approve/Reject just move it between the tabs and NEVER touch
+                the payment flag (that lives in the Payment status section at
+                the bottom). */}
             <div className="mt-4 flex items-center gap-2">
               {(
                 [
-                  ["all", "All", registered.filter((user) => !rejectedEmails.has(user.email)).length],
+                  ["pending", "Pending", registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)).length],
                   ["approved", "Approved", approvedEmails.size],
                   ["rejected", "Rejected", rejectedEmails.size],
                 ] as const
@@ -767,8 +671,8 @@ function AdminConsole() {
                 <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                   {registered
                     .filter((user) =>
-                      userTab === "all"
-                        ? !rejectedEmails.has(user.email)
+                      userTab === "pending"
+                        ? !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)
                         : userTab === "approved"
                           ? approvedEmails.has(user.email) && !rejectedEmails.has(user.email)
                           : rejectedEmails.has(user.email),
