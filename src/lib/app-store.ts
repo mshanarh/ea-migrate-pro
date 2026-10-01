@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
-import { travelSizedVideo } from "@/lib/media-store";
+import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 /** Same checkout the app login redirects unpaid users to. */
@@ -165,7 +165,22 @@ function load() {
 }
 
 function persist() {
-  if (typeof window !== "undefined") { window.localStorage.setItem(KEY, JSON.stringify(state)); window.localStorage.setItem("layout", state.settings.interfaceStyle); window.localStorage.setItem("themeColor", state.settings.accentColor); }
+  if (typeof window !== "undefined") {
+    // A quota failure (a huge robot picture, for instance) used to throw out
+    // of persist() BEFORE the listeners fired — the UI froze on stale state
+    // AND nothing was saved. Guard the save, always notify.
+    try {
+      window.localStorage.setItem(KEY, JSON.stringify(state));
+    } catch (error) {
+      console.warn("[app-store] state save failed (storage full?) — kept in memory only", error);
+    }
+    try {
+      window.localStorage.setItem("layout", state.settings.interfaceStyle);
+      window.localStorage.setItem("themeColor", state.settings.accentColor);
+    } catch {
+      /* cosmetic keys — never worth breaking the app over */
+    }
+  }
   listeners.forEach((l) => l());
 }
 
@@ -557,6 +572,10 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };
   const savedEa = licenseResult.ea;
+  // The mentor's EA picture can be a multi-MB data URL — shrink it BEFORE it
+  // enters the robot/localStorage or persist() hits the quota wall and the
+  // picture (and every later save) silently fails.
+  const robotImage = savedEa?.image ? await travelSizedImage(savedEa.image) : undefined;
   const symbols: string[] = savedEa?.symbols ?? [];
   const robot: Robot = {
     id: "r-" + Date.now(),
@@ -566,7 +585,7 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     symbols,
     pairs: symbols.map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
-    ...(savedEa?.image ? { image: savedEa.image } : {}),
+    ...(robotImage ? { image: robotImage } : {}),
     ...(savedEa?.video ? { video: savedEa.video } : {}),
     running: false,
   };
@@ -606,7 +625,7 @@ export function setActiveRobot(id: string) {
  * without the user re-activating. Existing per-pair settings are preserved for
  * symbols the EA still has; symbols the mentor removed are dropped.
  */
-export function syncRobotsFromPortal() {
+export async function syncRobotsFromPortal() {
   load();
   if (typeof window === "undefined" || state.robots.length === 0) return;
   let raw: string | null = null;
@@ -621,25 +640,35 @@ export function syncRobotsFromPortal() {
     const store = JSON.parse(raw) as { accounts?: { eas?: { id?: string; name?: string; symbols?: string[]; image?: string; video?: string }[] }[] };
     const eas = (store.accounts ?? []).flatMap((account) => account.eas ?? []);
     if (eas.length === 0) return;
-    const robots = state.robots.map((robot) => {
+    const robots: Robot[] = [];
+    for (const robot of state.robots) {
       const ea = eas.find((candidate) => candidate.id && candidate.id === robot.eaId);
-      if (!ea) return robot;
+      if (!ea) {
+        robots.push(robot);
+        continue;
+      }
       const symbols = Array.isArray(ea.symbols) ? ea.symbols : [];
       const oldPairs = robot.pairs ?? [];
       const pairs = symbols.map((symbol) => oldPairs.find((pair) => pair.symbol === symbol) ?? { symbol, lotSize: "0.01", maxTrades: "0" });
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
-      if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) return robot;
+      if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) {
+        robots.push(robot);
+        continue;
+      }
       changed = true;
-      return {
+      // Shrink oversized pictures BEFORE they enter the robot — a raw photo
+      // data URL blows the localStorage quota and the image never persists.
+      const robotImage = ea.image ? await travelSizedImage(ea.image) : undefined;
+      robots.push({
         ...robot,
         symbols,
         pairs,
-        ...(ea.image ? { image: ea.image } : {}),
+        ...(robotImage ? { image: robotImage } : {}),
         ...(ea.video ? { video: ea.video } : {}),
         ...(ea.name ? { name: ea.name } : {}),
-      };
-    });
+      });
+    }
     if (!changed) return;
     state = { ...state, robots };
     persist();
@@ -679,6 +708,18 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       }
       return cached;
     };
+    // Same treatment for PICTURES — a raw mentor photo must be shrunk before
+    // it lands in the robot, or persist() hits the quota wall and the image
+    // (plus every later save) silently fails.
+    const imageCache = new Map<string, Promise<string | undefined>>();
+    const stashCloudImage = (value: string): Promise<string | undefined> => {
+      let cached = imageCache.get(value);
+      if (!cached) {
+        cached = travelSizedImage(value);
+        imageCache.set(value, cached);
+      }
+      return cached;
+    };
     // key → EA details, from every mentor account holding a license for me.
     const byKey = new Map<string, { name?: string; symbols?: string[]; image?: string; video?: string }>();
     for (const row of rows as Array<{ email?: string; data: unknown }>) {
@@ -702,10 +743,11 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
         const image = ea?.image ?? (license as { image?: unknown }).image;
         const video = ea?.video ?? (license as { video?: unknown }).video;
         const resolvedVideo = typeof video === "string" && video ? await stashCloudVideo(video) : undefined;
+        const resolvedImage = typeof image === "string" && image ? await stashCloudImage(image) : undefined;
         byKey.set(license.key.trim().toUpperCase(), {
           ...(eaName ? { name: eaName } : {}),
           symbols: (ea?.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
-          ...(typeof image === "string" && image ? { image } : {}),
+          ...(resolvedImage ? { image: resolvedImage } : {}),
           ...(resolvedVideo ? { video: resolvedVideo } : {}),
         });
       }

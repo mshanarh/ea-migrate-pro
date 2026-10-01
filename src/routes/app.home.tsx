@@ -214,7 +214,7 @@ function AppHome() {
   // covers clients (their local mentor store is empty) — this repaints
   // robots activated before the picture started travelling with activation.
   useEffect(() => {
-    syncRobotsFromPortal();
+    void syncRobotsFromPortal();
     void syncRobotsFromCloudPortal();
   }, []);
 

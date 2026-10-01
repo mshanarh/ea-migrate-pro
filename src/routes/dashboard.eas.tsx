@@ -90,6 +90,36 @@ function readAsDataUrl(file: File, maxBytes: number) {
   });
 }
 
+/**
+ * Compresses a picked EA picture to a small JPEG (max 512px). A raw phone
+ * photo is up to 5 MB ≈ 6.8 MB of base64 — that blows the client's
+ * localStorage quota, so the picture never reached the app. A ~60 KB JPEG
+ * travels through the cloud portal row and every device reliably.
+ */
+async function compressEaImage(file: File): Promise<string> {
+  const raw = await readAsDataUrl(file, MAX_IMAGE_BYTES);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("decode failed"));
+      img.src = raw;
+    });
+    const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+    if (scale >= 1 && raw.length <= 300_000) return raw; // already small
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return raw;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL("image/jpeg", 0.82);
+    return encoded.startsWith("data:image/") && encoded.length < raw.length ? encoded : raw;
+  } catch {
+    return raw;
+  }
+}
+
 const labelClass = "text-sm font-bold text-white/80";
 const fieldClass = "mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base outline-none placeholder:text-white/35 focus:border-primary/60";
 
@@ -210,7 +240,7 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
     if (!file) return;
     setError("");
     if (kind === "image") {
-      readAsDataUrl(file, MAX_IMAGE_BYTES)
+      compressEaImage(file)
         .then(setImage)
         .catch((reason: Error) => setError(reason.message));
       return;

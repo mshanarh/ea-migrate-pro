@@ -187,6 +187,46 @@ export async function travelSizedVideo(video: string | undefined): Promise<strin
   }
 }
 
+/* ── Robot PICTURES — the image twin of the video travel helpers ─────────── */
+
+/** Data URLs above this size get downscaled before riding in a robot. */
+const INLINE_IMAGE_MAX_CHARS = 384 * 1024;
+/** Longest edge of a traveling robot picture (a 512px JPEG is ~60KB). */
+const TRAVEL_IMAGE_DIMENSION = 512;
+
+/**
+ * Shrinks an oversized robot PICTURE data URL to a small JPEG so it survives
+ * the whole trip — cloud portal row → activation → localStorage robots. A
+ * mentor photo saved raw (up to 5 MB ≈ 6.8 MB of base64) blows the
+ * localStorage quota, persist() fails silently, and the picture never shows
+ * on the phone. Data URLs within budget pass through untouched, as do http(s)
+ * URLs and IndexedDB refs. On any decode/encode hiccup the original returns.
+ */
+export async function travelSizedImage(value: string | undefined): Promise<string | undefined> {
+  if (!value) return undefined;
+  if (!value.startsWith("data:image/")) return value;
+  if (value.length <= INLINE_IMAGE_MAX_CHARS) return value;
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("decode failed"));
+      img.src = value;
+    });
+    const scale = Math.min(1, TRAVEL_IMAGE_DIMENSION / Math.max(img.width, img.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return value;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL("image/jpeg", 0.82);
+    return encoded.startsWith("data:image/") && encoded.length < value.length ? encoded : value;
+  } catch {
+    return value;
+  }
+}
+
 /* ── Music tracks (uploaded audio) — same pattern as the video store ─────── */
 
 /** Saves an audio file and returns the tiny reference string for localStorage. */
