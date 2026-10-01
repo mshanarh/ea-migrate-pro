@@ -89,7 +89,11 @@ const SCAN_STEPS = [
   "Building entry, stop-loss and take-profit...",
 ];
 
-const MAX_CHART_BYTES = 5 * 1024 * 1024;
+// Phone screenshots run 2–8 MB — the old 5 MB cap rejected them with the
+// "screenshots error" before anything displayed. 12 MB covers every device;
+// big files are recompressed to a max 1600px-wide data URL below.
+const MAX_CHART_BYTES = 12 * 1024 * 1024;
+const MAX_CHART_DIMENSION = 1600;
 
 function detectTimeframe(file: File): ScannerTimeframe {
   const name = file.name.toLowerCase();
@@ -232,41 +236,76 @@ export default function ChartScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbols]);
 
+  /** Downscales an image file to a max-1600px data URL (JPEG, quality 0.85). */
+  const compressImage = (file: File): Promise<string> =>
+    new Promise((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.max(1, Math.round(img.height * scale)));
+        const ctx = canvas.getContext("2d");
+        if (!ctx) {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error("canvas"));
+          return;
+        }
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        URL.revokeObjectURL(objectUrl);
+        resolve(canvas.toDataURL("image/jpeg", 0.85));
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("decode"));
+      };
+      img.src = objectUrl;
+    });
+
   const pickCharts = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     setChartError("");
     let assigned = 0;
-    let lastError = "";
+    const errors: string[] = [];
     // Every selected file is routed to its OWN timeframe slot (detected from
     // the filename); undetectable files land on the current timeframe.
     Array.from(files).forEach((file) => {
       if (!file.type.startsWith("image/")) {
-        lastError = "Only image files can be attached.";
+        errors.push(`${file.name}: only image files can be attached.`);
         return;
       }
       if (file.size > MAX_CHART_BYTES) {
-        lastError = `One image is too large (max 5 MB): ${file.name}`;
+        errors.push(`${file.name}: too large (max 12 MB).`);
         return;
       }
       const slot = detectTimeframe(file);
       assigned += 1;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const dataUrl = String(reader.result);
-        setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
-        // The newest upload switches the view if its timeframe differs —
-        // the trader sees exactly what they just attached.
-        setTimeframe(slot);
-        setAnalysis(null);
-        setAnalysisError("");
-      };
-      reader.onerror = () => {
-        lastError = "Could not read an image.";
-      };
-      reader.readAsDataURL(file);
+      compressImage(file)
+        .then((dataUrl) => {
+          setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
+          // The newest upload switches the view — the trader sees exactly
+          // what they just attached (this was silently skipped before when
+          // the WebView returned files the old path could not read).
+          setTimeframe(slot);
+          setAnalysis(null);
+          setAnalysisError("");
+        })
+        .catch(() => {
+          // Decoder failed (rare OEM quirk) — fall back to the raw read.
+          const reader = new FileReader();
+          reader.onload = () => {
+            setTimeframeCharts((prev) => ({ ...prev, [slot]: String(reader.result) }));
+            setTimeframe(slot);
+            setAnalysis(null);
+            setAnalysisError("");
+          };
+          reader.onerror = () => errors.push(`${file.name}: could not be read.`);
+          reader.readAsDataURL(file);
+        });
     });
     if (assigned > 0) resetResult();
-    if (lastError) setChartError(lastError);
+    if (errors.length > 0) setChartError(errors.join(" "));
   };
 
   const chartSrc = timeframeCharts[timeframe];

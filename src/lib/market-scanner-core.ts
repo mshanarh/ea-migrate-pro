@@ -767,20 +767,26 @@ async function fetchPublicCandles(symbol: string, timeframe: string): Promise<Ca
     if (candles.length > 0) return aggregateCandles(candles, agg).slice(-120);
   }
 
-  // 2. CORS PROXY — the same chart endpoint through public CORS-enabled
-  // proxies (each response carries Access-Control-Allow-Origin: *).
-  for (const proxy of [
-    `https://api.allorigins.win/raw?url=${encodeURIComponent(chartUrl)}`,
-    `https://corsproxy.io/?url=${encodeURIComponent(chartUrl)}`,
-    `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(chartUrl)}`,
-  ]) {
+  // 2. CORS PROXIES — public CORS-enabled hops. allorigins /get is FIRST and
+  // most reliable (its /raw and codetabs/corsproxy rate-limit or die often;
+  // /get wraps the body in { contents }).
+  const proxyAttempts: Array<{ url: string; unwrap?: boolean }> = [
+    { url: `https://api.allorigins.win/get?url=${encodeURIComponent(chartUrl)}`, unwrap: true },
+    { url: `https://api.allorigins.win/raw?url=${encodeURIComponent(chartUrl)}` },
+    { url: `https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(chartUrl)}` },
+  ];
+  for (const proxy of proxyAttempts) {
     try {
-      const response = await fetch(proxy, {
+      const response = await fetch(proxy.url, {
         headers: { Accept: "application/json" },
-        signal: AbortSignal.timeout(10_000),
+        signal: AbortSignal.timeout(12_000),
       });
       if (!response.ok) continue;
-      const payload = (await response.json()) as unknown;
+      let payload: unknown = await response.json();
+      if (proxy.unwrap && payload && typeof payload === "object" && "contents" in (payload as Record<string, unknown>)) {
+        const contents = (payload as { contents?: unknown }).contents;
+        if (typeof contents === "string") payload = JSON.parse(contents);
+      }
       const candles = parseYahooChart(payload);
       if (candles.length > 0) return aggregateCandles(candles, agg).slice(-120);
     } catch {

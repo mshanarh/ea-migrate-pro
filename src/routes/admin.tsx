@@ -233,45 +233,133 @@ function AdminConsole() {
     [account],
   );
 
-  /** Approve/Unpaid for a registered app user — writes users.is_paid in the cloud. */
-  const markRegisteredPaid = (email: string, paid: boolean) => {
-    void setCloudUserPaid(email, paid).then((ok) => {
-      if (ok) {
-        setRegistered((current) => current.map((user) => (user.email === email ? { ...user, is_paid: paid } : user)));
-        toast.success(`${email} ${paid ? "APPROVED" : "set to unpaid"}`);
-      } else {
-        toast.error(`Cloud write failed for ${email} — try again.`);
-      }
-    });
+  /** Approve = is_paid true + issue the configured number of keys to that
+   * user (each key is its OWN license_keys row, each emailed). Unpaid clears
+   * the flag; Rejected hides the user into the Rejected tab (client-side
+   * list — the users table has no status column) and forces unpaid. */
+  const [rejectedEmails, setRejectedEmails] = useState<Set<string>>(() => {
+    try {
+      const raw = window.localStorage.getItem("eamp.admin.rejected.v1");
+      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
+    } catch {
+      return new Set<string>();
+    }
+  });
+  const [userTab, setUserTab] = useState<"all" | "approved" | "rejected">("all");
+  const [keysPerUser, setKeysPerUser] = useState(1);
+
+  const persistRejected = (next: Set<string>) => {
+    setRejectedEmails(next);
+    try {
+      window.localStorage.setItem("eamp.admin.rejected.v1", JSON.stringify(Array.from(next)));
+    } catch {
+      /* private mode — the list just resets on reload */
+    }
   };
 
-  // ── APPROVE ALL (PORTAL ONLY) — approves every PENDING mentor in the
-  // shared store (mentor_approvals + the portal record). It deliberately
-  // does NOT touch users.is_paid — payment stays a per-user decision.
+  /** Issues `count` individual keys to one email (row + email each). */
+  const issueKeysToUser = async (email: string, count: number): Promise<number> => {
+    let issued = 0;
+    for (let index = 0; index < count; index += 1) {
+      const key = generateKey();
+      try {
+        const mail = await sendPortalEmail({
+          data: { type: "license_approved", email, licenseKey: key, eaName: "EA Migrate", expiry: "Lifetime" },
+        });
+        if (mail.success) issued += 1;
+      } catch {
+        /* count only the successful ones */
+      }
+    }
+    return issued;
+  };
+
+  const approveRegistered = async (user: UserRow) => {
+    const paid = await setCloudUserPaid(user.email, true);
+    if (!paid) {
+      toast.error(`Could not approve ${user.email} — try again.`);
+      return;
+    }
+    setRegistered((current) => current.map((entry) => (entry.email === user.email ? { ...entry, is_paid: true } : entry)));
+    if (rejectedEmails.has(user.email)) {
+      const next = new Set(rejectedEmails);
+      next.delete(user.email);
+      persistRejected(next);
+    }
+    const issued = keysPerUser > 0 ? await issueKeysToUser(user.email, keysPerUser) : 0;
+    toast.success(
+      `${user.email} approved${keysPerUser > 0 ? ` — ${issued}/${keysPerUser} key${keysPerUser === 1 ? "" : "s"} emailed` : ""}`,
+      { duration: 6000 },
+    );
+  };
+
+  const rejectRegistered = (user: UserRow) => {
+    const next = new Set(rejectedEmails);
+    next.add(user.email);
+    persistRejected(next);
+    void setCloudUserPaid(user.email, false);
+    setRegistered((current) => current.map((entry) => (entry.email === user.email ? { ...entry, is_paid: false } : entry)));
+    toast.success(`${user.email} moved to Rejected`);
+  };
+
+  const restoreRegistered = (user: UserRow) => {
+    const next = new Set(rejectedEmails);
+    next.delete(user.email);
+    persistRejected(next);
+    toast.success(`${user.email} restored to the list`);
+  };
+
+  // ── APPROVE ALL — approves every unpaid, non-rejected user and issues the
+  // configured number of keys TO EACH (individual keys per user, never one
+  // shared key). Approved users then show under the Approved tab.
   const [approveAllArmed, setApproveAllArmed] = useState(false);
   const [approvingAll, setApprovingAll] = useState(false);
-  const approveAllMentors = () => {
+  const [approveAllProgress, setApproveAllProgress] = useState("");
+  const approveAllUsers = async () => {
     if (approvingAll) return;
-    const targets = mentors.filter((mentor) => mentor.status === "pending");
+    const targets = registered.filter((user) => !user.is_paid && !rejectedEmails.has(user.email));
     if (targets.length === 0) {
-      toast.info("No pending mentors to approve.");
+      toast.info("Every user is already approved.");
       setApproveAllArmed(false);
       return;
     }
     if (!approveAllArmed) {
       setApproveAllArmed(true);
-      toast.info(`Tap again to approve ${targets.length} pending mentor${targets.length === 1 ? "" : "s"}`, { duration: 5000 });
+      toast.info(`Tap again to approve ${targets.length} users (${keysPerUser} key${keysPerUser === 1 ? "" : "s"} each)`, { duration: 5000 });
       window.setTimeout(() => setApproveAllArmed((current) => (current ? current : false)), 6000);
       return;
     }
     setApproveAllArmed(false);
     setApprovingAll(true);
-    for (const mentor of targets) {
-      setStatus(mentor.id, "approved");
-      pushCloudUpdate(mentor.email, { status: "approved" });
+    let approved = 0;
+    let keysIssued = 0;
+    const failures: string[] = [];
+    let index = 0;
+    for (const user of targets) {
+      index += 1;
+      setApproveAllProgress(`Approving ${index}/${targets.length} — ${user.email}`);
+      try {
+        const paid = await setCloudUserPaid(user.email, true);
+        if (!paid) {
+          failures.push(user.email);
+          continue;
+        }
+        approved += 1;
+        keysIssued += await issueKeysToUser(user.email, keysPerUser);
+      } catch {
+        failures.push(user.email);
+      }
     }
+    setRegistered((current) =>
+      current.map((user) => (rejectedEmails.has(user.email) ? user : { ...user, is_paid: true })),
+    );
     setApprovingAll(false);
-    toast.success(`${targets.length} mentor${targets.length === 1 ? "" : "s"} approved in the portal.`);
+    setApproveAllProgress("");
+    setUserTab("approved");
+    toast.success(
+      `Approved ${approved}/${targets.length} — ${keysIssued} keys emailed.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
+      { duration: 9000 },
+    );
   };
 
   // ── BROADCAST — the message typer ON the admin console: write once, email
@@ -560,17 +648,46 @@ function AdminConsole() {
                   Every email that signed up in the app — newest first, refreshed live.
                 </p>
               </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  value={userQuery}
-                  onChange={(event) => setUserQuery(event.target.value)}
-                  placeholder="Search email"
-                  className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
-                  aria-label="Search registered users"
-                />
+              <div className="flex flex-wrap items-center gap-2">
+                {/* KEYS PER USER — how many keys each approved user receives. */}
+                <label className="flex h-10 items-center gap-2 rounded-xl border border-border/70 bg-card/60 px-3 text-xs font-bold uppercase tracking-wide text-muted-foreground">
+                  Keys each
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={keysPerUser}
+                    onChange={(event) => setKeysPerUser(Math.max(0, Math.min(10, Number(event.target.value) || 0)))}
+                    className="h-7 w-12 rounded-lg border border-border/70 bg-background/60 text-center text-sm font-bold text-foreground"
+                    aria-label="Keys per approved user"
+                  />
+                </label>
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={userQuery}
+                    onChange={(event) => setUserQuery(event.target.value)}
+                    placeholder="Search email"
+                    className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
+                    aria-label="Search registered users"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void approveAllUsers()}
+                  disabled={approvingAll}
+                  className={
+                    approveAllArmed
+                      ? "flex h-10 items-center gap-2 rounded-full bg-emerald-500 px-5 text-[11px] font-black uppercase text-white"
+                      : "flex h-10 items-center gap-2 rounded-full bg-primary/15 px-5 text-[11px] font-bold uppercase text-primary disabled:opacity-60"
+                  }
+                >
+                  <CheckCircle2 className="size-4" />
+                  {approvingAll ? "Approving…" : approveAllArmed ? "Confirm" : "Approve all"}
+                </button>
               </div>
             </div>
+            {approvingAll && <p className="mt-3 text-xs font-bold text-primary">{approveAllProgress}</p>}
             {/* MESSAGE TYPER — write once, email every mentor + user. */}
             <div className="mt-4 rounded-2xl border border-border/60 bg-card/50 p-4">
               <label htmlFor="admin-broadcast" className="text-sm font-semibold">
@@ -613,13 +730,41 @@ function AdminConsole() {
                 No registered users yet.
               </p>
             )}
+            {/* All / Approved / Rejected — users MOVE between the tabs. */}
+            <div className="mt-4 flex items-center gap-2">
+              {(
+                [
+                  ["all", "All", registered.filter((user) => !rejectedEmails.has(user.email)).length],
+                  ["approved", "Approved", registered.filter((user) => user.is_paid && !rejectedEmails.has(user.email)).length],
+                  ["rejected", "Rejected", rejectedEmails.size],
+                ] as const
+              ).map(([key, label, count]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setUserTab(key)}
+                  className={
+                    userTab === key
+                      ? "flex h-9 items-center gap-1.5 rounded-full border border-primary/60 bg-primary/15 px-4 text-[11px] font-bold uppercase text-primary"
+                      : "flex h-9 items-center gap-1.5 rounded-full border border-border/70 bg-card/60 px-4 text-[11px] font-bold uppercase text-muted-foreground"
+                  }
+                >
+                  {label}
+                  <span className="rounded-full bg-secondary px-1.5 py-0.5 text-[10px]">{count}</span>
+                </button>
+              ))}
+            </div>
             {registered.length > 0 && (
               <>
-                <p className="mt-4 text-xs font-bold uppercase tracking-wide text-muted-foreground">
-                  {registered.length} registered · {registered.filter((user) => user.is_paid).length} paid
-                </p>
                 <ul className="mt-3 grid gap-2 sm:grid-cols-2">
                   {registered
+                    .filter((user) =>
+                      userTab === "all"
+                        ? !rejectedEmails.has(user.email)
+                        : userTab === "approved"
+                          ? user.is_paid && !rejectedEmails.has(user.email)
+                          : rejectedEmails.has(user.email),
+                    )
                     .filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
                     .map((user) => (
                       <li key={user.email} className="rounded-2xl border border-border/60 bg-secondary/30 p-3.5">
@@ -631,15 +776,21 @@ function AdminConsole() {
                                 Admin
                               </span>
                             )}
-                            <span
-                              className={
-                                user.is_paid
-                                  ? "rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
-                                  : "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
-                              }
-                            >
-                              {user.is_paid ? "Paid" : "Unpaid"}
-                            </span>
+                            {rejectedEmails.has(user.email) ? (
+                              <span className="rounded-full bg-red-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-red-300">
+                                Rejected
+                              </span>
+                            ) : (
+                              <span
+                                className={
+                                  user.is_paid
+                                    ? "rounded-full bg-emerald-400/15 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
+                                    : "rounded-full bg-secondary px-2 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
+                                }
+                              >
+                                {user.is_paid ? "Approved" : "Unpaid"}
+                              </span>
+                            )}
                           </div>
                         </div>
                         <div className="mt-2 flex items-center justify-between gap-2">
@@ -649,24 +800,34 @@ function AdminConsole() {
                               : "Registered"}
                           </p>
                           <div className="flex shrink-0 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => markRegisteredPaid(user.email, true)}
-                              className={
-                                user.is_paid
-                                  ? "h-8 rounded-xl bg-emerald-400/20 px-3 text-[11px] font-bold uppercase text-emerald-300"
-                                  : "h-8 rounded-xl bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground hover:opacity-90"
-                              }
-                            >
-                              Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => markRegisteredPaid(user.email, false)}
-                              className="h-8 rounded-xl bg-secondary px-3 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
-                            >
-                              Unpaid
-                            </button>
+                            {rejectedEmails.has(user.email) ? (
+                              <button
+                                type="button"
+                                onClick={() => restoreRegistered(user)}
+                                className="h-8 rounded-xl bg-secondary px-3 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                              >
+                                Restore
+                              </button>
+                            ) : (
+                              <>
+                                {!user.is_paid && (
+                                  <button
+                                    type="button"
+                                    onClick={() => void approveRegistered(user)}
+                                    className="h-8 rounded-xl bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground hover:opacity-90"
+                                  >
+                                    Approve
+                                  </button>
+                                )}
+                                <button
+                                  type="button"
+                                  onClick={() => rejectRegistered(user)}
+                                  className="h-8 rounded-xl bg-destructive/20 px-3 text-[11px] font-bold uppercase text-destructive hover:bg-destructive/30"
+                                >
+                                  Reject
+                                </button>
+                              </>
+                            )}
                           </div>
                         </div>
                       </li>
@@ -721,21 +882,6 @@ function AdminConsole() {
                   </span>
                 </button>
               ))}
-              {tab === "pending" && pending.length > 0 && (
-                <button
-                  type="button"
-                  onClick={approveAllMentors}
-                  disabled={approvingAll}
-                  className={
-                    approveAllArmed
-                      ? "ml-auto flex h-10 shrink-0 items-center gap-2 rounded-full bg-emerald-500 px-4 text-[11px] font-black uppercase text-white"
-                      : "ml-auto flex h-10 shrink-0 items-center gap-2 rounded-full bg-primary/15 px-4 text-[11px] font-bold uppercase text-primary"
-                  }
-                >
-                  <CheckCircle2 className="size-4" />
-                  {approvingAll ? "Approving…" : approveAllArmed ? "Confirm" : "Approve all"}
-                </button>
-              )}
             </div>
 
             <div className="space-y-3">
