@@ -7,15 +7,18 @@ import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
 import { usePlatform } from "@/lib/platform";
 import { clearTradeHistory, useTradeHistory } from "@/lib/trade-history";
 
-type ScannerTimeframe = "15m" | "1h" | "4h";
+type ScannerTimeframe = "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
 
-const SCANNER_TIMEFRAMES: ScannerTimeframe[] = ["15m", "1h", "4h"];
+const SCANNER_TIMEFRAMES: ScannerTimeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
 
 /** Every timeframe a trader can attach a chart screenshot for. */
 const TIMEFRAME_CHARTS_PLACEHOLDER: Record<ScannerTimeframe, string | null> = {
+  "5m": null,
   "15m": null,
+  "30m": null,
   "1h": null,
   "4h": null,
+  "1d": null,
 };
 
 /**
@@ -95,11 +98,44 @@ const SCAN_STEPS = [
 const MAX_CHART_BYTES = 12 * 1024 * 1024;
 const MAX_CHART_DIMENSION = 1600;
 
+const DETECTED_TIMEFRAMES: Record<string, ScannerTimeframe> = {
+  // MT5 period codes (XAUUSD,H1.png / BTCUSD_M15_2026.png) in both orders.
+  m1: "5m", "1m": "5m", "1min": "5m", "1minute": "5m",
+  m5: "5m", "5m": "5m", "5min": "5m", "5minute": "5m",
+  m15: "15m", "15m": "15m", "15min": "15m", "15minute": "15m",
+  m30: "30m", "30m": "30m", "30min": "30m", "30minute": "30m",
+  h1: "1h", "1h": "1h", "1hr": "1h", "1hour": "1h", hourly: "1h",
+  h2: "1h",
+  h4: "4h", "4h": "4h", "4hr": "4h", "4hour": "4h",
+  h8: "4h", h12: "4h",
+  d1: "1d", "1d": "1d", "1day": "1d", daily: "1d",
+  w1: "1d", "1w": "1d", "1week": "1d", weekly: "1d",
+  mn1: "1d", mn: "1d", "1mo": "1d", monthly: "1d",
+};
+
+/**
+ * Reads the timeframe out of the screenshot's FILENAME. MT5 saves chart
+ * pictures as "SYMBOL,PERIOD.png" (XAUUSD,H4.png) or "SYMBOL_PERIOD_date"
+ * (BTCUSD_M15_2026.png), and phones produce names like "15m chart.png" —
+ * both token orders (H1 and 1H, M15 and 15M) are matched, so the scan runs
+ * on the chart that was ACTUALLY uploaded instead of silently falling back
+ * to H1 (that mismatch is what caused trades against the analyzed chart).
+ * Falls back to 1h only when the name carries no timeframe hint at all.
+ */
 function detectTimeframe(file: File): ScannerTimeframe {
-  const name = file.name.toLowerCase();
-  if (/(^|[^\d])15(?:m|min|minute)(?=[^a-z]|$)/.test(name)) return "15m";
-  if (/(^|[^\d])4(?:h|hour)(?=[^a-z]|$)/.test(name)) return "4h";
-  if (/(^|[^\d])1(?:h|hour)(?=[^a-z]|$)/.test(name)) return "1h";
+  const raw = (file.name || "").toLowerCase().replace(/\.[a-z0-9]+$/, "");
+  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const token of tokens) {
+    const hit = DETECTED_TIMEFRAMES[token];
+    if (hit) return hit;
+  }
+  // Separated pairs the tokenizer splits: "4 hour", "15 min", "1 h".
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const number = tokens[index] ?? "";
+    const unit = (tokens[index + 1] ?? "").replace(/s$/, "");
+    const hit = DETECTED_TIMEFRAMES[`${number}${unit}`];
+    if (hit) return hit;
+  }
   return "1h";
 }
 

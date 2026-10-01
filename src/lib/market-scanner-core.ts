@@ -716,6 +716,8 @@ function publicTimeframe(timeframe: string): { interval: string; range: string; 
       return { interval: "5m", range: "5d", agg: 1 };
     case "15m":
       return { interval: "15m", range: "1mo", agg: 1 };
+    case "30m":
+      return { interval: "30m", range: "1mo", agg: 1 };
     case "4h":
       return { interval: "1h", range: "6mo", agg: 4 };
     case "1d":
@@ -862,6 +864,7 @@ function parseYahooChart(payload: unknown): Candle[] {
 const BINANCE_INTERVALS: Record<string, string> = {
   "5m": "5m",
   "15m": "15m",
+  "30m": "30m",
   "1h": "1h",
   "4h": "4h",
   "1d": "1d",
