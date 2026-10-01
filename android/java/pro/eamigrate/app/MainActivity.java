@@ -107,17 +107,22 @@ public class MainActivity extends Activity {
             /**
              * File chooser — WITHOUT this the scanner's "attach screenshot"
              * button did nothing on the phone: the HTML <input type=file>
-             * never opened Android's picker. Returning a callback lets the
-             * page receive the picked image(s).
+             * never opened Android's picker. NO FLAG_ACTIVITY_NEW_TASK: it
+             * makes Android cancel the chooser immediately (null result
+             * before the user picks anything). A stale pending callback is
+             * cancelled first so a second pick never dead-ends.
              */
             @Override
             public boolean onShowFileChooser(WebView view,
                     ValueCallback<Uri[]> filePathCallback,
                     FileChooserParams fileChooserParams) {
+                if (fileChooserCallback != null) {
+                    fileChooserCallback.onReceiveValue(null);
+                    fileChooserCallback = null;
+                }
+                fileChooserCallback = filePathCallback;
                 try {
-                    fileChooserCallback = filePathCallback;
                     Intent picker = fileChooserParams.createIntent();
-                    picker.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                     startActivityForResult(picker, FILE_CHOOSER_REQUEST);
                 } catch (Exception e) {
                     fileChooserCallback = null;

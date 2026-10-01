@@ -158,7 +158,9 @@ function AppScanner() {
             // A broker can report a zero/very small stops level while still
             // rejecting levels that fall inside the spread or move by the
             // time order_send runs. Keep a small live-price safety buffer.
-            const minDistance = Math.max(stopsLevelPoints * point, Math.abs(ask - bid) * 2, point * 10);
+            // Generous buffer — brokers reject stops that sit too close to the
+            // live price (10016), and the bridge then fills WITHOUT them.
+            const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
             const round = (value: number) => Number(value.toFixed(digits));
             if (riskPct > 0) {
               const raw = direction === "BUY" ? liveEntry * (1 - riskPct) : liveEntry * (1 + riskPct);
@@ -224,18 +226,23 @@ function AppScanner() {
               ? Number(rawRetcode)
               : null;
         if (retcode !== null) {
-          const message = friendlyRetcode(retcode) ?? `The broker refused the order (MT5 code ${retcode}).`;
-          if (message) {
-            const brokerComment =
-              (typeof payload["comment"] === "string" && payload["comment"]) ||
-              (typeof result["comment"] === "string" && result["comment"]) ||
-              "";
-            const refusal = new Error(
-              brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message,
-            ) as Error & { raw?: string };
-            refusal.raw = message;
-            throw refusal;
+          // 10008 PLACED / 10009 DONE / 10010 DONE_PARTIAL — the broker FILLED
+          // the order. The `?? fallback` below used to fire on the null
+          // "success" marker and reported EXECUTION ERROR on trades that were
+          // actually live on the account — success must return, never throw.
+          if (retcode === 10008 || retcode === 10009 || retcode === 10010) {
+            return payload;
           }
+          const message = friendlyRetcode(retcode) ?? `The broker refused the order (MT5 code ${retcode}).`;
+          const brokerComment =
+            (typeof payload["comment"] === "string" && payload["comment"]) ||
+            (typeof result["comment"] === "string" && result["comment"]) ||
+            "";
+          const refusal = new Error(
+            brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message,
+          ) as Error & { raw?: string };
+          refusal.raw = message;
+          throw refusal;
         } else if (payload["success"] === false) {
           const rawDetail =
             (typeof payload["message"] === "string" && payload["message"]) ||
@@ -394,6 +401,14 @@ function AppScanner() {
           : total > 1
             ? `${total}/${total} ${symbol} trades opened on MT5 — EA Migrate.${ticketLabel}`
             : `${symbol} trade opened on MT5 — EA Migrate${ticketLabel}`;
+      // The bridge drops SL/TP and fills when the broker refuses the stop
+      // levels (10016) — the fill is real, so say so AND flag the missing
+      // stops instead of a silent no-SL/TP position.
+      const stopsWarning =
+        firstPayload["stops_removed"] === true
+          ? " ⚠ Broker rejected the SL/TP levels — position opened WITHOUT them. Set stop-loss and take-profit manually in MT5."
+          : "";
+      const finalMessage = `${message}${stopsWarning}`;
       onProgress("Disconnecting...");
       recordTrade({
         symbol,
@@ -403,14 +418,14 @@ function AppScanner() {
         filled: `${opened}/${total}`,
         ok: failed === 0,
         ...(plan.strength ? { strength: plan.strength } : {}),
-        detail: message,
+        detail: finalMessage,
       });
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
-          detail: { ok: true, message: message.toUpperCase() },
+          detail: { ok: true, message: finalMessage.toUpperCase() },
         }),
       );
-      return { ok: true, message };
+      return { ok: true, message: finalMessage };
     } catch (error) {
       const message =
         error instanceof TypeError

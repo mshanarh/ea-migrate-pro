@@ -237,62 +237,43 @@ export default function ChartScanner({
   }, [symbols]);
 
   /**
-   * Reads a file straight to a JPEG data URL (max-1600px, quality 0.85).
-   * ANDROID WEBVIEW: decode via createImageBitmap(blob) — the old
-   * URL.createObjectURL + <img> path fails on many WebViews for files picked
-   * from content:// (Gallery/Drive), so the picture never appeared.
+   * Reads the file straight to a JPEG data URL (max-1600px, quality 0.85).
+   * ANDROID GALLERY PHOTOS: the file is read with FileReader FIRST (data URLs
+   * decode in every WebView, unlike object URLs created from content://
+   * picks); the canvas only DOWNSCALES, and any decode/encode failure just
+   * resolves with the raw data URL so the picture ALWAYS shows.
    */
   const compressImage = (file: File): Promise<string> =>
-    new Promise((resolve, reject) => {
-      const draw = (source: ImageBitmap | HTMLImageElement, width: number, height: number) => {
-        const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(width, height));
-        const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(width * scale));
-        canvas.height = Math.max(1, Math.round(height * scale));
-        const ctx = canvas.getContext("2d");
-        if (!ctx) {
-          reject(new Error("canvas"));
-          return;
-        }
-        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-        // ANDROID WEBVIEW: canvas memory pressure makes toDataURL return
-        // "data:," (an EMPTY image) — resolved as success, the slot then held
-        // a dead URL and the picture never displayed. Reject so the caller's
-        // raw FileReader fallback takes over with a valid data URL.
-        const encoded = canvas.toDataURL("image/jpeg", 0.85);
-        if (!encoded || !encoded.startsWith("data:image/") || encoded.length < 1024) {
-          reject(new Error("encode"));
-          return;
-        }
-        resolve(encoded);
-      };
-      const fallbackObjectUrl = () => {
-        const objectUrl = URL.createObjectURL(file);
+    new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result);
         const img = new Image();
         img.onload = () => {
           try {
-            draw(img, img.width, img.height);
-          } catch (error) {
-            reject(error instanceof Error ? error : new Error("canvas"));
-          } finally {
-            URL.revokeObjectURL(objectUrl);
+            const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(result);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            // A failed canvas encode on Android returns "data:," — keep the
+            // raw data URL instead of storing a dead image.
+            const encoded = canvas.toDataURL("image/jpeg", 0.85);
+            resolve(encoded.startsWith("data:image/") && encoded.length >= 1024 ? encoded : result);
+          } catch {
+            resolve(result);
           }
         };
-        img.onerror = () => {
-          URL.revokeObjectURL(objectUrl);
-          reject(new Error("decode"));
-        };
-        img.src = objectUrl;
+        img.onerror = () => resolve(result);
+        img.src = result;
       };
-      if (typeof createImageBitmap === "function") {
-        createImageBitmap(file)
-          .then((bitmap) => {
-            draw(bitmap, bitmap.width, bitmap.height);
-          })
-          .catch(fallbackObjectUrl);
-      } else {
-        fallbackObjectUrl();
-      }
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
     });
 
   const pickCharts = (files: FileList | null) => {
@@ -303,44 +284,45 @@ export default function ChartScanner({
     // Every selected file is routed to its OWN timeframe slot (detected from
     // the filename); undetectable files land on the current timeframe.
     Array.from(files).forEach((file) => {
-      // ANDROID WEBVIEW: files picked from the system picker frequently arrive
-      // with an EMPTY file.type (content:// URIs carry no MIME) — the old
-      // check rejected them as "not an image" so nothing ever displayed.
-      // Accept empty types (sniff by extension) and only refuse REAL non-images.
-      const looksLikeImage =
+      // ANDROID GALLERY PHOTOS: the picker frequently sends an EMPTY file.type
+      // (content:// URIs carry no MIME) — accept by MIME, empty type (the
+      // decoder decides), or a known image extension; refuse the rest.
+      const isImage =
         file.type.startsWith("image/") ||
         file.type === "" ||
-        /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(file.name);
-      if (!looksLikeImage) {
-        errors.push(`${file.name || "That file"}: only image files can be attached.`);
+        /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(file.name);
+      if (!isImage) {
+        errors.push(`${file.name}: only image files can be attached.`);
         return;
       }
       if (file.size > MAX_CHART_BYTES) {
-        errors.push(`${file.name || "That file"}: too large (max 12 MB).`);
+        errors.push(`${file.name}: too large (max 12 MB).`);
         return;
       }
       const slot = detectTimeframe(file);
       assigned += 1;
-      const adopt = (dataUrl: string) => {
-        setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
-        // The newest upload switches the view — the trader sees exactly
-        // what they just attached (this was silently skipped before when
-        // the WebView returned files the old path could not read).
-        setTimeframe(slot);
-        setAnalysis(null);
-        setAnalysisError("");
-      };
       compressImage(file)
-        .then(adopt)
+        .then((dataUrl) => {
+          if (!dataUrl) {
+            errors.push(`${file.name || "That file"}: could not be read.`);
+            return;
+          }
+          // The newest upload switches the view — the trader sees exactly
+          // what they just attached, and its auto-detected timeframe drives
+          // the next scan.
+          setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
+          setTimeframe(slot);
+          setAnalysis(null);
+          setAnalysisError("");
+        })
         .catch(() => {
-          // Decoder failed (rare OEM quirk) — fall back to the raw read.
           const reader = new FileReader();
           reader.onload = () => {
-            const raw = String(reader.result);
-            if (raw.startsWith("data:")) adopt(raw);
-            else errors.push(`${file.name || "That file"}: could not be read.`);
+            setTimeframeCharts((prev) => ({ ...prev, [slot]: String(reader.result) }));
+            setTimeframe(slot);
+            setAnalysis(null);
+            setAnalysisError("");
           };
-          reader.onerror = () => errors.push(`${file.name}: could not be read.`);
           reader.readAsDataURL(file);
         });
     });
@@ -643,7 +625,7 @@ export default function ChartScanner({
               </svg>
             </span>
             <span className="text-[18px] font-black text-white">Attach chart screenshots</span>
-            <span className="text-[13px] text-white/45">One per timeframe — 15m, 1h, 4h (select all at once)</span>
+            <span className="text-[13px] text-white/45">The timeframe is detected automatically from the screenshot</span>
           </button>
         ) : (
           <img src={chartSrc} alt={`Chart on ${timeframe}`} className="absolute inset-0 size-full object-cover" />
@@ -693,7 +675,7 @@ export default function ChartScanner({
                 className="plat-pressable flex h-12 w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
                 style={{ borderRadius: "var(--plat-radius-control)" }}
               >
-                {chartSrc ? `Add / replace screenshots (${attachedTimeframes.length}/3 timeframes)` : "Attach chart screenshots"}
+                {chartSrc ? "Add / replace screenshot" : "Attach chart screenshot"}
               </button>
               {attachedTimeframes.length > 0 && (
                 <p className="mt-2 text-[12px] text-white/45">
@@ -774,37 +756,12 @@ export default function ChartScanner({
                 is locked.
               </p>
             )}
-            {/* Timeframe = which screenshot slot is shown / analyzed. */}
-            <div className="mt-3 flex items-center justify-between">
-              <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">TIMEFRAME</p>
-              <div className="flex gap-1.5">
-                {SCANNER_TIMEFRAMES.map((tf) => {
-                  const hasChart = timeframeCharts[tf] !== null;
-                  return (
-                    <button
-                      key={tf}
-                      type="button"
-                      aria-label={`Use the ${tf} chart`}
-                      onClick={() => {
-                        setTimeframe(tf);
-                        setAnalysis(null);
-                        setAnalysisError("");
-                        resetResult();
-                      }}
-                      className="rounded-full px-3 py-1.5 text-[12px] font-bold transition-colors"
-                      style={
-                        timeframe === tf
-                          ? { background: accent, color: "#fff" }
-                          : { background: "#222", color: hasChart ? "rgba(255,255,255,0.85)" : "rgba(255,255,255,0.35)" }
-                      }
-                    >
-                      {hasChart && timeframe !== tf ? "•" : ""}
-                      {tf}
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
+            {/* Timeframe is AUTO-DETECTED from the uploaded screenshot's
+                filename (…15m… / …1h… / …4h…) — no manual picker. */}
+            <p className="mt-3 text-[11px] text-white/35">
+              Timeframe auto-detected from the screenshot — analyzing{" "}
+              <span className="font-bold text-white/70">{timeframe.toUpperCase()}</span>
+            </p>
           </div>
 
           {/* Trades + lot size */}
