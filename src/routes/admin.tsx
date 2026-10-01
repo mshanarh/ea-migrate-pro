@@ -235,78 +235,12 @@ function AdminConsole() {
     [account],
   );
 
-  /** APPROVAL = APP ACCESS — Approve/Reject move the email between the
-   * Pending/Approved/Rejected tabs AND Approve flips users.is_paid=true in
-   * the cloud database, because the sign-in gate on the user's own device
-   * reads that flag: without it an approved user was still bounced to Whop
-   * checkout and could never sign in. Reject/Restore keep the payment flag
-   * untouched (Paid/Unpaid stays a separate decision in the Payment section). */
-  const readSet = (storageKey: string): Set<string> => {
-    try {
-      const raw = window.localStorage.getItem(storageKey);
-      return new Set<string>(raw ? (JSON.parse(raw) as string[]) : []);
-    } catch {
-      return new Set<string>();
-    }
-  };
-  const APPROVED_KEY = "eamp.admin.approved.v1";
-  const REJECTED_KEY = "eamp.admin.rejected.v1";
-  const [approvedEmails, setApprovedEmails] = useState<Set<string>>(() => readSet(APPROVED_KEY));
-  const [rejectedEmails, setRejectedEmails] = useState<Set<string>>(() => readSet(REJECTED_KEY));
-  const [userTab, setUserTab] = useState<"pending" | "approved" | "rejected">("pending");
-
-  const persistSet = (storageKey: string, next: Set<string>) => {
-    try {
-      window.localStorage.setItem(storageKey, JSON.stringify(Array.from(next)));
-    } catch {
-      /* private mode — the list just resets on reload */
-    }
-  };
-
-  const approveRegistered = (user: UserRow) => {
-    const nextApproved = new Set(approvedEmails);
-    nextApproved.add(user.email);
-    setApprovedEmails(nextApproved);
-    persistSet(APPROVED_KEY, nextApproved);
-    if (rejectedEmails.has(user.email)) {
-      const nextRejected = new Set(rejectedEmails);
-      nextRejected.delete(user.email);
-      setRejectedEmails(nextRejected);
-      persistSet(REJECTED_KEY, nextRejected);
-    }
-    toast.success(`${user.email} approved in the portal`, { duration: 6000 });
-    // UNLOCK APP SIGN-IN on the user's own device — the login/route gates
-    // verify users.is_paid in the shared database, so the approval must land
-    // there, not only in this console's local tabs.
-    void setUserFlagAnon(user.email, { is_paid: true })
-      .then((result) => {
-        if (!result.ok)
-          toast.error(`Could not unlock app sign-in for ${user.email}: ${result.error ?? "database error"}`, { duration: 8000 });
-      })
-      .catch(() =>
-        toast.error(`Could not reach the database to unlock sign-in for ${user.email} — open the Payment status section and set them Paid.`, { duration: 9000 }),
-      );
-  };
-
-  const rejectRegistered = (user: UserRow) => {
-    const nextRejected = new Set(rejectedEmails);
-    nextRejected.add(user.email);
-    setRejectedEmails(nextRejected);
-    persistSet(REJECTED_KEY, nextRejected);
-    const nextApproved = new Set(approvedEmails);
-    nextApproved.delete(user.email);
-    setApprovedEmails(nextApproved);
-    persistSet(APPROVED_KEY, nextApproved);
-    toast.success(`${user.email} moved to Rejected`);
-  };
-
-  const restoreRegistered = (user: UserRow) => {
-    const nextRejected = new Set(rejectedEmails);
-    nextRejected.delete(user.email);
-    setRejectedEmails(nextRejected);
-    persistSet(REJECTED_KEY, nextRejected);
-    toast.success(`${user.email} restored to the list`);
-  };
+  // ── REGISTERED APP USERS — a plain roster, deliberately with NO second
+  // approval flow of its own. There is exactly ONE approval path on this
+  // console (the Mentor users flow below) plus the Paid/Unpaid controls in
+  // the Payment status section — and THAT cloud write (users.is_paid) is
+  // what actually lets a person sign in on their device. The list just
+  // mirrors what the database says for each email.
 
   // ── BROADCAST — the message typer ON the admin console: write once, email
   // every mentor (portal accounts) and registered user.
@@ -402,8 +336,8 @@ function AdminConsole() {
       ...PAYMENT_EXEMPT_EMAILS,
       ...store.payments.map((payment) => payment.email),
       ...mentors.map((mentor) => mentor.email),
-      // Registered app users get their Paid/Unpaid controls HERE (the
-      // Approve buttons are portal status and never touch payment).
+      // Registered app users get their Paid/Unpaid controls HERE — that
+      // Paid button (users.is_paid in the database) is what unlocks sign-in.
       ...registered.map((user) => user.email),
     ]),
   ).sort();
@@ -635,11 +569,9 @@ function AdminConsole() {
             // approval — it must move the moment an email is approved/rejected.
             {
               label: "Pending",
-              value:
-                pending.length +
-                registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)).length,
+              value: pending.length,
             },
-            { label: "Approved users", value: approved.length + approvedEmails.size },
+            { label: "Approved users", value: approved.length },
             { label: "Keys issued", value: totalLicenses },
             { label: "Paid emails", value: paidCount },
           ].map((stat) => (
@@ -685,11 +617,11 @@ function AdminConsole() {
             </div>
           </section>
 
-          {/* ---------------- registered emails — the OLD approval flow ----------------
-              Same position and same shape as the Mentor users list: tabs with
-              counts (Pending first + default), plain rows, Approve/Reject move
-              the email between tabs. Tap a row to set its KEY ALLOWANCE — the
-              NUMBER of keys that user may create on their own portal. */}
+          {/* ---------------- registered emails ----------------
+              A plain list of every app signup (searchable). NO second
+              approval flow lives here — approvals happen in the ONE Mentor
+              users flow below, and the Payment status section's Paid button
+              is what unlocks app sign-in (users.is_paid in the database). */}
           <section className="mt-8">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <h2 className="flex items-center gap-2 text-lg font-semibold">
@@ -716,53 +648,10 @@ function AdminConsole() {
                 No registered users yet.
               </p>
             )}
-            {/* Pending / Approved / Rejected — the OLD approval flow, same
-                shape as the mentor tabs above. Every signup starts Pending;
-                Approve/Reject just move it between the tabs and NEVER touch
-                the payment flag (that lives in the Payment status section at
-                the bottom). */}
-            <div className="mt-4 flex items-center gap-2">
-              {(
-                [
-                  ["pending", "Pending", registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)).length],
-                  ["approved", "Approved", approvedEmails.size],
-                  ["rejected", "Rejected", rejectedEmails.size],
-                ] as const
-              ).map(([key, label, count]) => (
-                <button
-                  key={key}
-                  type="button"
-                  onClick={() => setUserTab(key)}
-                  className={
-                    userTab === key
-                      ? "flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-primary/60 bg-primary/15 text-[11px] font-bold uppercase tracking-wide text-primary sm:text-xs"
-                      : "flex h-10 items-center justify-center gap-1.5 rounded-2xl border border-border/70 bg-card/60 text-[11px] font-bold uppercase tracking-wide text-muted-foreground transition-colors hover:text-foreground sm:text-xs"
-                  }
-                >
-                  {label}
-                  <span
-                    className={
-                      userTab === key
-                        ? "rounded-full bg-primary/20 px-2 py-0.5 text-[10px]"
-                        : "rounded-full bg-secondary px-2 py-0.5 text-[10px]"
-                    }
-                  >
-                    {count}
-                  </span>
-                </button>
-              ))}
-            </div>
             {registered.length > 0 && (
               <>
                 <ul className="mt-3 space-y-3">
                   {registered
-                    .filter((user) =>
-                      userTab === "pending"
-                        ? !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)
-                        : userTab === "approved"
-                          ? approvedEmails.has(user.email) && !rejectedEmails.has(user.email)
-                          : rejectedEmails.has(user.email),
-                    )
                     .filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
                     .map((user) => (
                       <li
@@ -787,64 +676,24 @@ function AdminConsole() {
                         </div>
                         <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
                           <div className="flex flex-wrap items-center gap-1.5">
-                            {rejectedEmails.has(user.email) ? (
-                              <span className="rounded-full bg-red-400/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-red-300">
-                                Rejected
-                              </span>
-                            ) : approvedEmails.has(user.email) ? (
-                              <span className="rounded-full bg-emerald-400/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-emerald-300">
-                                Approved
-                              </span>
-                            ) : (
-                              <span className="rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">
-                                Pending
-                              </span>
-                            )}
+                            {/* Read-only database status — the approve/unlock
+                                control is the Paid button in Payment status. */}
+                            <span
+                              className={
+                                user.is_paid
+                                  ? "rounded-full bg-emerald-400/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
+                                  : "rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
+                              }
+                            >
+                              {user.is_paid ? "Paid — can sign in" : "Unpaid"}
+                            </span>
                             {user.is_admin && (
                               <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-primary">
                                 Admin
                               </span>
                             )}
                           </div>
-                          <div className="flex shrink-0 gap-2">
-                            {rejectedEmails.has(user.email) ? (
-                              <button
-                                type="button"
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  restoreRegistered(user);
-                                }}
-                                className="h-9 rounded-xl bg-secondary px-4 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
-                              >
-                                Restore
-                              </button>
-                            ) : (
-                              <>
-                                {!approvedEmails.has(user.email) && (
-                                  <button
-                                    type="button"
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      approveRegistered(user);
-                                    }}
-                                    className="h-9 rounded-xl bg-primary px-4 text-[11px] font-bold uppercase text-primary-foreground hover:opacity-90"
-                                  >
-                                    Approve
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  onClick={(event) => {
-                                    event.stopPropagation();
-                                    rejectRegistered(user);
-                                  }}
-                                  className="h-9 rounded-xl bg-destructive/20 px-4 text-[11px] font-bold uppercase text-destructive hover:bg-destructive/30"
-                                >
-                                  Reject
-                                </button>
-                              </>
-                            )}
-                          </div>
+
                         </div>
                         {selectedUserEmail === user.email && (
                           <div
