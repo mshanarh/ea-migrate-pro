@@ -119,15 +119,17 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // MT5 order comments accept only a small character set — emoji AND
-      // special characters like "/" make order_send fail with 'Invalid
-      // "comment" argument'. The comment is JUST the bot's name, sanitized
-      // to the safe character set and capped at MT5's 31-char limit.
+      // MT5 caps comments at 31 characters. Always preserve the EA Migrate
+      // signature, then use the remaining room for the current EA name.
       const botName = (robot?.name ?? "")
         .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
         .replace(/\s+/g, " ")
         .trim();
-      const orderComment = botName.slice(0, 31).replace(/[\s.,_()-]+$/, "") || "EA Migrate";
+      const commentSuffix = " ~ EA Migrate";
+      const commentName = botName
+        .slice(0, 31 - commentSuffix.length)
+        .replace(/[\s.,_()-]+$/, "");
+      const orderComment = commentName ? `${commentName}${commentSuffix}` : "EA Migrate";
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
@@ -140,7 +142,7 @@ function AppScanner() {
       const planTp = Number(takeProfit) || 0;
       let stopLossValue = estimated ? 0 : planStop;
       let takeProfitValue = estimated ? 0 : planTp;
-      if (estimated && (planStop > 0 || planTp > 0)) {
+      if (planStop > 0 || planTp > 0) {
         try {
           const priceResponse = await fetch(`${BRIDGE_URL}/symbol/price`, {
             method: "POST",
@@ -157,7 +159,10 @@ function AppScanner() {
             const liveEntry = direction === "BUY" ? ask : bid;
             const riskPct = planStop > 0 ? Math.abs(planEntry - planStop) / planEntry : 0;
             const rewardPct = planTp > 0 ? Math.abs(planTp - planEntry) / planEntry : 0;
-            const minDistance = stopsLevelPoints * point;
+            // A broker can report a zero/very small stops level while still
+            // rejecting levels that fall inside the spread or move by the
+            // time order_send runs. Keep a small live-price safety buffer.
+            const minDistance = Math.max(stopsLevelPoints * point, Math.abs(ask - bid) * 2, point * 10);
             const round = (value: number) => Number(value.toFixed(digits));
             if (riskPct > 0) {
               const raw = direction === "BUY" ? liveEntry * (1 - riskPct) : liveEntry * (1 + riskPct);
