@@ -10,6 +10,7 @@ import {
   LogOut,
   Plus,
   Search,
+  Send,
   ShieldCheck,
   Trash2,
   Users,
@@ -244,52 +245,97 @@ function AdminConsole() {
     });
   };
 
-  // ── APPROVE ALL — every registered user approved with THE SAME license ──
-  // key: users.is_paid=true for each, one license_keys row per email (the
-  // activation lookup accepts a shared key), and the key emailed to everyone.
+  // ── APPROVE ALL (PORTAL ONLY) — approves every PENDING mentor in the
+  // shared store (mentor_approvals + the portal record). It deliberately
+  // does NOT touch users.is_paid — payment stays a per-user decision.
   const [approveAllArmed, setApproveAllArmed] = useState(false);
   const [approvingAll, setApprovingAll] = useState(false);
-  const approveAll = async () => {
+  const approveAllMentors = () => {
     if (approvingAll) return;
-    const targets = registered.filter((user) => !user.is_paid);
+    const targets = mentors.filter((mentor) => mentor.status === "pending");
     if (targets.length === 0) {
-      toast.info("Every registered user is already approved.");
+      toast.info("No pending mentors to approve.");
       setApproveAllArmed(false);
       return;
     }
     if (!approveAllArmed) {
       setApproveAllArmed(true);
-      toast.info(`Tap APPROVE ALL again to approve ${targets.length} users and email them the shared key`, { duration: 5000 });
+      toast.info(`Tap again to approve ${targets.length} pending mentor${targets.length === 1 ? "" : "s"}`, { duration: 5000 });
       window.setTimeout(() => setApproveAllArmed((current) => (current ? current : false)), 6000);
       return;
     }
     setApproveAllArmed(false);
     setApprovingAll(true);
-    const sharedKey = generateKey();
-    let approved = 0;
-    let emailed = 0;
-    const failures: string[] = [];
-    for (const user of targets) {
+    for (const mentor of targets) {
+      setStatus(mentor.id, "approved");
+      pushCloudUpdate(mentor.email, { status: "approved" });
+    }
+    setApprovingAll(false);
+    toast.success(`${targets.length} mentor${targets.length === 1 ? "" : "s"} approved in the portal.`);
+  };
+
+  // ── BROADCAST — the message typer ON the admin console: write once, email
+  // every mentor (portal accounts) and registered user.
+  const [broadcastMsg, setBroadcastMsg] = useState("");
+  const [broadcastArmed, setBroadcastArmed] = useState(false);
+  const [broadcasting, setBroadcasting] = useState(false);
+  const [broadcastProgress, setBroadcastProgress] = useState("");
+  const sendBroadcast = async () => {
+    if (broadcasting) return;
+    const text = broadcastMsg.trim();
+    if (!text) {
+      toast.error("Write a message first.");
+      return;
+    }
+    if (!broadcastArmed) {
+      setBroadcastArmed(true);
+      toast.info("Tap SEND again to email ALL mentors and users", { duration: 5000 });
+      window.setTimeout(() => setBroadcastArmed((current) => (current ? current : false)), 6000);
+      return;
+    }
+    setBroadcastArmed(false);
+    setBroadcasting(true);
+    const recipients = new Set<string>();
+    try {
+      const [portal, users] = await Promise.all([listCloudAccounts(), listUsersAnon()]);
+      for (const entry of portal.accounts ?? []) {
+        if (entry.email) recipients.add(String(entry.email).trim().toLowerCase());
+      }
+      for (const user of users.users ?? []) {
+        if (user.email) recipients.add(String(user.email).trim().toLowerCase());
+      }
+    } catch {
+      /* send to whoever we collected */
+    }
+    recipients.delete((account?.email ?? "").trim().toLowerCase());
+    const list = Array.from(recipients).filter((email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
+    if (list.length === 0) {
+      setBroadcasting(false);
+      toast.error("No recipients found — check the cloud connection.");
+      return;
+    }
+    let sent = 0;
+    const failed: string[] = [];
+    let index = 0;
+    for (const email of list) {
+      index += 1;
+      setBroadcastProgress(`Sending ${index}/${list.length} — ${email}`);
       try {
-        const paid = await setCloudUserPaid(user.email, true);
-        if (paid) approved += 1;
-        else failures.push(user.email);
-        // One license_keys row per email + the key email (resilient — a mail
-        // failure never blocks the approval itself).
-        const mail = await sendPortalEmail({
-          data: { type: "license_approved", email: user.email, licenseKey: sharedKey, eaName: "EA Migrate", expiry: "Lifetime" },
-        });
-        if (mail.success) emailed += 1;
+        const result = await sendPortalEmail({ data: { type: "broadcast", email, message: text } });
+        if (result.success) sent += 1;
+        else failed.push(email);
       } catch {
-        failures.push(user.email);
+        failed.push(email);
       }
     }
-    setRegistered((current) => current.map((user) => (user.is_paid ? user : { ...user, is_paid: true })));
-    setApprovingAll(false);
-    toast.success(
-      `APPROVE ALL done — shared key ${sharedKey}. Approved ${approved}/${targets.length}, emailed ${emailed}/${targets.length}.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
-      { duration: 9000 },
-    );
+    setBroadcasting(false);
+    setBroadcastProgress("");
+    if (failed.length === 0) {
+      toast.success(`Message sent to all ${sent} recipients.`);
+      setBroadcastMsg("");
+    } else {
+      toast.error(`Sent ${sent}/${list.length}. Failed: ${failed.slice(0, 3).join(", ")}${failed.length > 3 ? "…" : ""}`, { duration: 8000 });
+    }
   };
 
   if (!account) return null;
@@ -514,29 +560,46 @@ function AdminConsole() {
                   Every email that signed up in the app — newest first, refreshed live.
                 </p>
               </div>
-              <div className="flex flex-col items-stretch gap-2">
-                <div className="relative">
-                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <input
-                    value={userQuery}
-                    onChange={(event) => setUserQuery(event.target.value)}
-                    placeholder="Search email"
-                    className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
-                    aria-label="Search registered users"
-                  />
-                </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  value={userQuery}
+                  onChange={(event) => setUserQuery(event.target.value)}
+                  placeholder="Search email"
+                  className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
+                  aria-label="Search registered users"
+                />
+              </div>
+            </div>
+            {/* MESSAGE TYPER — write once, email every mentor + user. */}
+            <div className="mt-4 rounded-2xl border border-border/60 bg-card/50 p-4">
+              <label htmlFor="admin-broadcast" className="text-sm font-semibold">
+                Message to all mentors &amp; users
+              </label>
+              <textarea
+                id="admin-broadcast"
+                value={broadcastMsg}
+                onChange={(event) => setBroadcastMsg(event.target.value)}
+                rows={4}
+                placeholder="Type your message here…"
+                className="mt-3 w-full rounded-2xl border border-border/70 bg-card/60 p-4 text-sm leading-relaxed outline-none placeholder:text-muted-foreground/60 focus:border-primary/50"
+              />
+              <div className="mt-3 flex items-center justify-between gap-3">
+                <p className="min-w-0 flex-1 truncate text-xs text-muted-foreground">
+                  {broadcasting ? broadcastProgress : "Everyone gets it by email."}
+                </p>
                 <button
                   type="button"
-                  onClick={() => void approveAll()}
-                  disabled={approvingAll}
+                  onClick={() => void sendBroadcast()}
+                  disabled={broadcasting}
                   className={
-                    approveAllArmed
-                      ? "flex h-10 items-center justify-center gap-2 rounded-full bg-emerald-500 px-5 text-sm font-black text-white transition-transform active:scale-[0.98]"
-                      : "flex h-10 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-bold text-primary-foreground transition-transform active:scale-[0.98] disabled:opacity-60"
+                    broadcastArmed
+                      ? "flex h-11 shrink-0 items-center gap-2 rounded-full bg-emerald-500 px-6 text-sm font-black text-white transition-transform active:scale-[0.98]"
+                      : "flex h-11 shrink-0 items-center gap-2 rounded-full bg-primary px-6 text-sm font-bold text-primary-foreground transition-transform active:scale-[0.98] disabled:opacity-60"
                   }
                 >
-                  <CheckCircle2 className="size-4" />
-                  {approvingAll ? "Approving all…" : approveAllArmed ? "Tap again to confirm" : "Approve all"}
+                  <Send className="size-4" />
+                  {broadcasting ? "Sending…" : broadcastArmed ? "Tap again to send to ALL" : "Send"}
                 </button>
               </div>
             </div>
@@ -628,7 +691,7 @@ function AdminConsole() {
               <span className="text-xs text-muted-foreground">EA data stays private</span>
             </div>
 
-            <div className="mb-3 grid grid-cols-3 gap-2">
+            <div className="mb-3 flex items-center gap-2">
               {(
                 [
                   ["pending", "Pending", pending],
@@ -658,6 +721,21 @@ function AdminConsole() {
                   </span>
                 </button>
               ))}
+              {tab === "pending" && pending.length > 0 && (
+                <button
+                  type="button"
+                  onClick={approveAllMentors}
+                  disabled={approvingAll}
+                  className={
+                    approveAllArmed
+                      ? "ml-auto flex h-10 shrink-0 items-center gap-2 rounded-full bg-emerald-500 px-4 text-[11px] font-black uppercase text-white"
+                      : "ml-auto flex h-10 shrink-0 items-center gap-2 rounded-full bg-primary/15 px-4 text-[11px] font-bold uppercase text-primary"
+                  }
+                >
+                  <CheckCircle2 className="size-4" />
+                  {approvingAll ? "Approving…" : approveAllArmed ? "Confirm" : "Approve all"}
+                </button>
+              )}
             </div>
 
             <div className="space-y-3">
