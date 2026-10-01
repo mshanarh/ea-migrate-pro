@@ -175,6 +175,7 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
  */
 export type ExecuteMt5ForUserInput = {
   userId: string;
+  eaName?: string | undefined;
   symbol: string;
   action: "BUY" | "SELL";
   volume: number;
@@ -217,6 +218,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
       volume: data.volume,
       stop_loss: data.stop_loss,
       take_profit: data.take_profit,
+      eaName: data.eaName,
     });
     if (!firstAttempt.success && firstAttempt.transportDown) {
       return { ok: false, executed: 0, total, message: firstAttempt.error ?? "VPS bridge unreachable." };
@@ -234,6 +236,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
             volume: data.volume,
             stop_loss: data.stop_loss,
             take_profit: data.take_profit,
+            eaName: data.eaName,
           }).catch(() => ({ success: false as const, error: "Bridge request failed" })),
         ),
       );
@@ -269,7 +272,14 @@ async function executeVpsTradeInternal(input: {
   volume: number;
   stop_loss?: number | undefined;
   take_profit?: number | undefined;
+  eaName?: string | undefined;
 }): Promise<{ success: boolean; error?: string; transportDown?: boolean }> {
+  const safeEaName = (input.eaName ?? "")
+    .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  const suffix = " ~ EA Migrate";
+  const shortEaName = safeEaName.slice(0, 31 - suffix.length).replace(/[\s.,_()-]+$/, "");
   const result = await bridgeFetch("/trade/execute", {
     credentials: {
       login: Number(input.login),
@@ -281,7 +291,7 @@ async function executeVpsTradeInternal(input: {
     volume: input.volume,
     stop_loss: input.stop_loss || 0,
     take_profit: input.take_profit || 0,
-    comment: "EA Migrate Live",
+    comment: shortEaName ? `${shortEaName}${suffix}` : "EA Migrate",
   });
   if (result.transportError) {
     return { success: false, error: result.transportError, transportDown: true };
@@ -306,6 +316,7 @@ export const executeVpsTrade = createServerFn({ method: "POST" })
     volume: number;
     stop_loss?: number | undefined;
     take_profit?: number | undefined;
+    eaName?: string | undefined;
   }) => data)
   .handler(async ({ data }) => {
     const result = await executeVpsTradeInternal({
@@ -317,6 +328,7 @@ export const executeVpsTrade = createServerFn({ method: "POST" })
       volume: data.volume,
       stop_loss: data.stop_loss,
       take_profit: data.take_profit,
+      eaName: data.eaName,
     });
     return result.success ? { success: true } : { success: false, error: result.error };
   });
