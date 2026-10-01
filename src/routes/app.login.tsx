@@ -100,6 +100,22 @@ function AppAccess() {
     // unpaid goes to checkout, paid or admin comes in. The device bind
     // below needs the row to exist, so registration must come before it.
     const registration = await registerWithEmail(clean);
+    if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
+
+    // Bind THIS device in the cloud BEFORE any redirect — including the Whop
+    // checkout hop. The access gate treats a missing binding as a stale
+    // session (the global access reset), so a person who comes back AFTER
+    // paying must already be bound — otherwise the gate would sign them out
+    // in a loop. Bindings are written at sign-in and at key activation.
+    try {
+      const bound = await bindDeviceToEmail(clean, getDeviceId());
+      if (!bound.ok && bound.error) {
+        toast.error(bound.error);
+      }
+    } catch {
+      /* a failed bind must never block sign-in */
+    }
+
     if (registration.outcome === "checkout") {
       if (successReturn) {
         // The URL flag says they returned from checkout — prove it on the
@@ -110,21 +126,6 @@ function AppAccess() {
       setRedirecting(true);
       window.location.assign(WHOP_CHECKOUT_URL);
       return;
-    }
-    if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
-
-    // Bind THIS device in the cloud AFTER the row exists. The binding is
-    // what makes "delete the app, reinstall → account already used" work —
-    // the old code bound BEFORE registration, silently hit "no row" and
-    // the account was never actually bound. If the row is already bound to
-    // another device, the user is told to ask their mentor.
-    try {
-      const bound = await bindDeviceToEmail(clean, getDeviceId());
-      if (!bound.ok && bound.error) {
-        toast.error(bound.error);
-      }
-    } catch {
-      /* a failed bind must never block sign-in */
     }
   };
 

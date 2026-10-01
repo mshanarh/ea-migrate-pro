@@ -19,6 +19,7 @@
  * LOCAL record can never be validated by the cloud path.
  */
 import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 export type CloudAccess = "admin" | "paid" | "unpaid";
@@ -50,6 +51,31 @@ export async function resolveCloudAccess(email: string | null | undefined): Prom
   } catch (error) {
     console.warn("[payment-gate] cloud check failed:", error);
     return null;
+  }
+}
+
+/**
+ * DEVICE-BINDING LIVENESS — true when the cloud has a users row for this
+ * email whose device_id no longer matches THIS device. Bindings are only
+ * written at a fresh sign-in (and at key activation), so a cleared binding
+ * means the session predates the global access reset and must end. The
+ * check fails OPEN (network hiccup = no kick) so a flaky connection can
+ * never log someone out.
+ */
+async function deviceBindingRevoked(email: string): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { data: row, error } = await supabase
+      .from("users")
+      .select("device_id")
+      .eq("email", email.trim().toLowerCase())
+      .maybeSingle();
+    if (error) return false;
+    if (!row) return false; // no users row — the payment decision handles it
+    const boundDeviceId = (row as { device_id?: string | null } | null)?.device_id ?? null;
+    return boundDeviceId !== getDeviceId();
+  } catch {
+    return false;
   }
 }
 
@@ -109,7 +135,26 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // PLATFORM OWNERS pass EVERY gate instantly — before any database/Whop
   // call. A stale users row (is_admin/is_paid false) must never bounce the
   // owner to checkout (the "scanner says paid emails only" bug).
-  if (isOwnerEmail(email)) return { action: "pass" };
+  if (isOwnerEmail(email)) {
+    // …but the GLOBAL ACCESS RESET still applies to them: if the database
+    // does not bind THIS device to the email, the old session ends here.
+    // Sign back in on this device and the binding is re-created.
+    const ownerKick = await deviceBindingRevoked(email);
+    if (ownerKick) {
+      appSignOut();
+      return { action: "signin" };
+    }
+    return { action: "pass" };
+  }
+  // GLOBAL ACCESS RESET — everyone else: if the database no longer binds
+  // this device to the email (the reset cleared every binding), the stale
+  // session is dead. appSignOut clears it ONCE and the route sends the
+  // person to /app/login, where the cloud gate decides who gets back in:
+  // unpaid emails go to checkout, paid/admin emails re-bind on sign-in.
+  if (await deviceBindingRevoked(email)) {
+    appSignOut();
+    return { action: "signin" };
+  }
   let cloud: CloudAccess | null = null;
   try {
     cloud = await resolveCloudAccess(email);

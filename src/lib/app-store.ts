@@ -84,6 +84,31 @@ export type AppState = {
 const KEY = "eamp.app.v3";
 const LEGACY_KEYS = ["eamp.app.v1", "eamp.app.v2"];
 
+/**
+ * GLOBAL ACCESS RESET — the access epoch. Bump this number to sign EVERY
+ * device out of the app on its very next route change (admins included —
+ * they are not exempt). The number the device saw last is remembered in
+ * localStorage; when the code ships a higher one, the local session is
+ * wiped ONCE. Anyone may sign back in afterwards — but sign-in runs the
+ * cloud gate again, so only emails the database actually unlocks get in.
+ * All Supabase rows (users, license_keys) are PRESERVED by this reset.
+ */
+const ACCESS_EPOCH = 2;
+const EPOCH_KEY = "eamp.access-epoch.v1";
+
+/** True exactly once per device per epoch bump — consumed at load(). */
+function consumeAccessEpochKick(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const seen = Number(window.localStorage.getItem(EPOCH_KEY) ?? "1");
+    if (seen >= ACCESS_EPOCH) return false;
+    window.localStorage.setItem(EPOCH_KEY, String(ACCESS_EPOCH));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 const INTERFACE_STYLE_IDS = new Set([
   "crimson_navigator",
   "navigator_plus",
@@ -124,6 +149,10 @@ const LAYOUT_ALIASES: Record<string, string> = {
 function load() {
   if (loaded || typeof window === "undefined") return;
   loaded = true;
+  // The epoch kick runs BEFORE the saved state is read: a bumped epoch must
+  // not just clear the email but also drop the stale robot/binding records
+  // that belonged to the kicked session.
+  const epochKick = consumeAccessEpochKick();
   try {
     LEGACY_KEYS.forEach((legacy) => window.localStorage.removeItem(legacy));
     const raw = window.localStorage.getItem(KEY);
@@ -161,6 +190,12 @@ function load() {
     state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };
   } catch {
     /* ignore */
+  }
+  if (epochKick) {
+    // Sign everyone out locally — the cloud gate on the next route decides
+    // who gets back in (unpaid emails are sent to checkout, not the app).
+    state = { ...initial, settings: state.settings };
+    persist();
   }
 }
 

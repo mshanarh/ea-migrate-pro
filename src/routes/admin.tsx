@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Minus } from "lucide-react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   Bot,
@@ -10,7 +9,6 @@ import {
   LockOpen,
   LogOut,
   Plus,
-  Search,
   Send,
   ShieldCheck,
   Trash2,
@@ -47,7 +45,7 @@ import {
   portalListAccounts,
   portalSetPayment,
 } from "@/lib/portal-cloud";
-import { supabaseConfigured, type UserRow } from "@/lib/supabase";
+import { supabaseConfigured } from "@/lib/supabase";
 import { getReactivationEnabled, listUsersAnon, setUserFlagAnon, setReactivationEnabled } from "@/lib/supabase-users";
 import { portalCloudConfigured, portalDeleteLicenseKey, portalRemoveLicense } from "@/lib/portal-cloud";
 
@@ -115,16 +113,10 @@ function AdminConsole() {
   const store = useStore();
   const navigate = useNavigate();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [selectedUserEmail, setSelectedUserEmail] = useState<string | null>(null);
   // Tabbed mentor list: the console opens on Pending so new sign-ups waiting
   // for approval are the first thing the admin sees.
   const [tab, setTab] = useState<"pending" | "approved" | "rejected">("pending");
   const [limit, setLimit] = useState(0);
-  // Registered APP users (the Supabase users table) — every /app/login
-  // signup, distinct from the mentor portal accounts above.
-  const [registered, setRegistered] = useState<UserRow[]>([]);
-  const [registeredError, setRegisteredError] = useState<string | null>(null);
-  const [userQuery, setUserQuery] = useState("");
   const [cloud, setCloud] = useState<{ enabled: boolean; accounts: PublicAccount[] }>({
     enabled: false,
     accounts: [],
@@ -176,31 +168,10 @@ function AdminConsole() {
     }
   }, [account, cloud.enabled, cloud.accounts]);
 
-  // Registered users load INDEPENDENTLY of the mentor poll — a hiccup in one
-  // must never blank the other, and the last good snapshot always stays up.
-  const loadRegistered = useCallback(async () => {
-    try {
-      const usersResult = await listUsersAnon();
-      if (usersResult.users.length > 0 || registered.length > 0) {
-        if (usersResult.users.length > 0) {
-          setRegistered(usersResult.users);
-          setRegisteredError(null);
-        }
-        // Empty response while holding a good snapshot → transient glitch,
-        // keep showing what we have.
-      } else if (usersResult.error) {
-        setRegisteredError(usersResult.error);
-      }
-    } catch (error) {
-      setRegisteredError((current) => current ?? (error instanceof Error ? error.message : "Could not reach the database"));
-    }
-  }, [registered.length]);
-
   // Poll the shared cloud store every 3s: a registration from ANY device
   // appears here within seconds. Cloud-only records are merged into the local
   // store so admin actions work on them immediately.
   const pollCloud = useCallback(async () => {
-    void loadRegistered();
     try {
       const result = await listCloudAccounts();
       setCloud({ enabled: result.enabled, accounts: result.accounts });
@@ -208,7 +179,7 @@ function AdminConsole() {
     } catch {
       /* transient network error — keep the last snapshot */
     }
-  }, [loadRegistered]);
+  }, []);
 
   useEffect(() => {
     void pollCloud();
@@ -336,9 +307,6 @@ function AdminConsole() {
       ...PAYMENT_EXEMPT_EMAILS,
       ...store.payments.map((payment) => payment.email),
       ...mentors.map((mentor) => mentor.email),
-      // Registered app users get their Paid/Unpaid controls HERE — that
-      // Paid button (users.is_paid in the database) is what unlocks sign-in.
-      ...registered.map((user) => user.email),
     ]),
   ).sort();
   const paidCount = paymentEmails.filter(
@@ -387,64 +355,6 @@ function AdminConsole() {
     const after = storeRef.current.accounts.find((a) => a.id === selected.id);
     if (created && after) pushLicenses(selected.email, after.licenses);
     toast.success(`Key ${created?.key} created`);
-  };
-  // ── KEY ALLOWANCE (the OLD console way) — the admin sets the NUMBER of
-  // keys the user may create on their own portal dashboard. No key is
-  // generated here; the mentor/owner taps Create key on their dashboard
-  // until the allowance runs out. Same mechanism as the mentor detail
-  // panel's "Max keys allowed" input below.
-  const [userLimit, setUserLimit] = useState(0);
-  const [savingUserLimit, setSavingUserLimit] = useState(false);
-  // Remembered allowances — an approved signup without a portal account yet
-  // still keeps the number the admin set (this device), and the mentor
-  // account's cloud licenseLimit takes over the moment the user opens a portal.
-  const EMAIL_LIMITS_KEY = "eamp.admin.emailLimits.v1";
-  const [emailLimits, setEmailLimits] = useState<Record<string, number>>(() => {
-    try {
-      const raw = window.localStorage.getItem(EMAIL_LIMITS_KEY);
-      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
-    } catch {
-      return {};
-    }
-  });
-  const rememberEmailLimit = (email: string, limit: number) => {
-    const next = { ...emailLimits, [email.toLowerCase()]: limit };
-    setEmailLimits(next);
-    try {
-      window.localStorage.setItem(EMAIL_LIMITS_KEY, JSON.stringify(next));
-    } catch {
-      /* private mode — the number just lives for this session */
-    }
-  };
-  const selectedUser = useMemo(
-    () => registered.find((user) => user.email === selectedUserEmail) ?? null,
-    [registered, selectedUserEmail],
-  );
-  const selectRegistered = (email: string) => {
-    setSelectedUserEmail(email);
-    const account = mentors.find((mentor) => mentor.email.toLowerCase() === email.toLowerCase());
-    setUserLimit(account?.licenseLimit ?? emailLimits[email.toLowerCase()] ?? 0);
-  };
-  const saveUserLimit = () => {
-    const user = selectedUser;
-    if (!user) return;
-    setSavingUserLimit(true);
-    try {
-      // Mentor/portal account? The number is enforced there — their dashboard
-      // key creation stops at the allowance. Otherwise the number is
-      // remembered on this console for that email (and syncs the moment a
-      // portal account exists).
-      const account = mentors.find((mentor) => mentor.email.toLowerCase() === user.email.toLowerCase());
-      if (account) {
-        setLicenseLimit(account.id, userLimit);
-        pushCloudUpdate(account.email, { licenseLimit: userLimit });
-      }
-      rememberEmailLimit(user.email, userLimit);
-      toast.success(`Key allowance for ${user.email} set to ${userLimit}`);
-      setSelectedUserEmail(null);
-    } finally {
-      setSavingUserLimit(false);
-    }
   };
   const handleToggleLicense = (license: Account["licenses"][number]) => {
     if (!selected) return;
@@ -565,8 +475,7 @@ function AdminConsole() {
 
         <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {[
-            // PENDING on top = portal mentors + registered emails still awaiting
-            // approval — it must move the moment an email is approved/rejected.
+            // PENDING on top = portal mentors awaiting approval.
             {
               label: "Pending",
               value: pending.length,
@@ -615,142 +524,6 @@ function AdminConsole() {
                 </button>
               </div>
             </div>
-          </section>
-
-          {/* ---------------- registered emails ----------------
-              A plain list of every app signup (searchable). NO second
-              approval flow lives here — approvals happen in the ONE Mentor
-              users flow below, and the Payment status section's Paid button
-              is what unlocks app sign-in (users.is_paid in the database). */}
-          <section className="mt-8">
-            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <h2 className="flex items-center gap-2 text-lg font-semibold">
-                <Users className="size-4 text-primary" /> Registered emails
-              </h2>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  value={userQuery}
-                  onChange={(event) => setUserQuery(event.target.value)}
-                  placeholder="Search email"
-                  className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
-                  aria-label="Search registered emails"
-                />
-              </div>
-            </div>
-            {registeredError && (
-              <p className="mt-4 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
-                Could not load registered users: {registeredError}
-              </p>
-            )}
-            {!registeredError && registered.length === 0 && (
-              <p className="mt-4 rounded-2xl border border-border/60 bg-secondary/30 p-6 text-center text-sm text-muted-foreground">
-                No registered users yet.
-              </p>
-            )}
-            {registered.length > 0 && (
-              <>
-                <ul className="mt-3 space-y-3">
-                  {registered
-                    .filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
-                    .map((user) => (
-                      <li
-                        key={user.email}
-                        onClick={() => selectRegistered(user.email)}
-                        className={
-                          selectedUserEmail === user.email
-                            ? "cursor-pointer rounded-2xl border border-primary/60 bg-primary/5 p-4"
-                            : "cursor-pointer rounded-2xl border border-border/60 bg-secondary/30 p-4 transition-colors hover:border-primary/30"
-                        }
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="min-w-0 flex-1">
-                            <p className="truncate text-sm font-semibold sm:text-base">{user.email}</p>
-                            <p className="mt-1 truncate text-xs text-muted-foreground">
-                              {user.created_at && !Number.isNaN(new Date(user.created_at).getTime())
-                                ? `Registered ${new Date(user.created_at).toLocaleString()}`
-                                : "Registered"}
-                            </p>
-                          </div>
-                          <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-                        </div>
-                        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-                          <div className="flex flex-wrap items-center gap-1.5">
-                            {/* Read-only database status — the approve/unlock
-                                control is the Paid button in Payment status. */}
-                            <span
-                              className={
-                                user.is_paid
-                                  ? "rounded-full bg-emerald-400/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-emerald-300"
-                                  : "rounded-full bg-secondary px-2.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground"
-                              }
-                            >
-                              {user.is_paid ? "Paid — can sign in" : "Unpaid"}
-                            </span>
-                            {user.is_admin && (
-                              <span className="rounded-full bg-primary/15 px-2.5 py-0.5 text-[10px] font-bold uppercase text-primary">
-                                Admin
-                              </span>
-                            )}
-                          </div>
-
-                        </div>
-                        {selectedUserEmail === user.email && (
-                          <div
-                            className="mt-3 rounded-2xl bg-secondary/45 p-3"
-                            onClick={(event) => event.stopPropagation()}
-                          >
-                            <p className="text-sm font-semibold">Max keys allowed</p>
-                            <p className="mt-0.5 text-xs text-muted-foreground">
-                              How many keys this user may create on their own portal.
-                            </p>
-                            <div className="mt-2 flex items-center gap-2">
-                              <button
-                                type="button"
-                                onClick={() => setUserLimit((current) => Math.max(0, current - 1))}
-                                className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/60"
-                                aria-label="Decrease key allowance"
-                              >
-                                <Minus className="size-4" />
-                              </button>
-                              <input
-                                type="number"
-                                min={0}
-                                step={1}
-                                value={userLimit}
-                                onChange={(event) => setUserLimit(Math.max(0, Math.floor(Number(event.target.value)) || 0))}
-                                className="h-10 w-20 rounded-xl border border-border/70 bg-card/60 text-center text-sm font-bold"
-                                aria-label="Max keys allowed"
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setUserLimit((current) => current + 1)}
-                                className="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-card/60"
-                                aria-label="Increase key allowance"
-                              >
-                                <Plus className="size-4" />
-                              </button>
-                              <button
-                                type="button"
-                                onClick={saveUserLimit}
-                                disabled={savingUserLimit}
-                                className="h-10 rounded-xl bg-primary px-4 text-[11px] font-bold uppercase text-primary-foreground disabled:opacity-60"
-                              >
-                                Save
-                              </button>
-                            </div>
-                          </div>
-                        )}
-                      </li>
-                    ))}
-                </ul>
-                {userQuery.trim() &&
-                  registered.filter((user) => user.email.toLowerCase().includes(userQuery.trim().toLowerCase()))
-                    .length === 0 && (
-                    <p className="mt-3 text-center text-sm text-muted-foreground">No users match "{userQuery}".</p>
-                  )}
-              </>
-            )}
           </section>
 
         <div className="mt-8 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
