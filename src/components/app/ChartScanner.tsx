@@ -255,7 +255,16 @@ export default function ChartScanner({
           return;
         }
         ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.85));
+        // ANDROID WEBVIEW: canvas memory pressure makes toDataURL return
+        // "data:," (an EMPTY image) — resolved as success, the slot then held
+        // a dead URL and the picture never displayed. Reject so the caller's
+        // raw FileReader fallback takes over with a valid data URL.
+        const encoded = canvas.toDataURL("image/jpeg", 0.85);
+        if (!encoded || !encoded.startsWith("data:image/") || encoded.length < 1024) {
+          reject(new Error("encode"));
+          return;
+        }
+        resolve(encoded);
       };
       const fallbackObjectUrl = () => {
         const objectUrl = URL.createObjectURL(file);
@@ -328,7 +337,7 @@ export default function ChartScanner({
           const reader = new FileReader();
           reader.onload = () => {
             const raw = String(reader.result);
-            if (raw) adopt(raw);
+            if (raw.startsWith("data:")) adopt(raw);
             else errors.push(`${file.name || "That file"}: could not be read.`);
           };
           reader.onerror = () => errors.push(`${file.name}: could not be read.`);
@@ -905,6 +914,24 @@ export default function ChartScanner({
               ))}
             </div>
           </div>
+
+          {/* UPLOADED CHART — the screenshot the trader attached for this scan
+              stays visible with the plan instead of vanishing after the scan. */}
+          {chartSrc && (
+            <div
+              className={`relative overflow-hidden border-2 bg-[#151a20] ${cardRadius}`}
+              style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}
+            >
+              <img
+                src={chartSrc}
+                alt={`Chart attached for the ${timeframe} scan`}
+                className="max-h-72 w-full object-contain"
+              />
+              <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-white/80">
+                {timeframe} chart
+              </span>
+            </div>
+          )}
 
           {/* TRADE PLAN — real calculated levels */}
           <div className={`border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>

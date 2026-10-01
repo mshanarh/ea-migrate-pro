@@ -235,11 +235,12 @@ function AdminConsole() {
     [account],
   );
 
-  /** PORTAL STATUS ONLY — Approve/Reject just move the email between the
-   * Pending/Approved/Rejected tabs. They deliberately NEVER write
-   * users.is_paid: app access/payment is a separate decision (the app gate,
-   * license keys and Whop flow own that). Same shape as the old mentor
-   * Pending/Approved/Rejected flow. */
+  /** APPROVAL = APP ACCESS — Approve/Reject move the email between the
+   * Pending/Approved/Rejected tabs AND Approve flips users.is_paid=true in
+   * the cloud database, because the sign-in gate on the user's own device
+   * reads that flag: without it an approved user was still bounced to Whop
+   * checkout and could never sign in. Reject/Restore keep the payment flag
+   * untouched (Paid/Unpaid stays a separate decision in the Payment section). */
   const readSet = (storageKey: string): Set<string> => {
     try {
       const raw = window.localStorage.getItem(storageKey);
@@ -274,6 +275,17 @@ function AdminConsole() {
       persistSet(REJECTED_KEY, nextRejected);
     }
     toast.success(`${user.email} approved in the portal`, { duration: 6000 });
+    // UNLOCK APP SIGN-IN on the user's own device — the login/route gates
+    // verify users.is_paid in the shared database, so the approval must land
+    // there, not only in this console's local tabs.
+    void setUserFlagAnon(user.email, { is_paid: true })
+      .then((result) => {
+        if (!result.ok)
+          toast.error(`Could not unlock app sign-in for ${user.email}: ${result.error ?? "database error"}`, { duration: 8000 });
+      })
+      .catch(() =>
+        toast.error(`Could not reach the database to unlock sign-in for ${user.email} — open the Payment status section and set them Paid.`, { duration: 9000 }),
+      );
   };
 
   const rejectRegistered = (user: UserRow) => {
