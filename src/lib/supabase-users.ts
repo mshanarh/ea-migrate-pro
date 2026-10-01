@@ -168,11 +168,17 @@ export async function recordKeyActivationInCloud(
   }
   // 2. Mark the email paid IN THE DATABASE so every future gate check —
   //    this device, a reinstall, the Re-activate Client page — passes.
-  const { error: paidError } = await dbClient.from("users").update({ is_paid: true }).eq("email", address);
-  if (paidError) return { ok: false, error: paidError.message };
   // 3. Bind THIS device (only when the row is unbound — never steal).
+  // Steps 1–3 touch different columns, so the paid write and the read-before-
+  // bind run IN PARALLEL; the bind update itself only fires when the row was
+  // unbound. Sequential awaits used to stack three round trips on every unlock.
+  const paidPromise = dbClient.from("users").update({ is_paid: true }).eq("email", address);
   if (deviceId) {
-    const { data: bound } = await dbClient.from("users").select("device_id").eq("email", address).maybeSingle();
+    const [{ error: paidError }, { data: bound }] = await Promise.all([
+      paidPromise,
+      dbClient.from("users").select("device_id").eq("email", address).maybeSingle(),
+    ]);
+    if (paidError) return { ok: false, error: paidError.message };
     const boundDeviceId = (bound as { device_id?: string | null } | null)?.device_id ?? null;
     if (!boundDeviceId) {
       const { error: bindError } = await dbClient
@@ -181,6 +187,9 @@ export async function recordKeyActivationInCloud(
         .eq("email", address);
       if (bindError) console.warn("[key-activation] device bind failed:", bindError.message);
     }
+  } else {
+    const { error: paidError } = await paidPromise;
+    if (paidError) return { ok: false, error: paidError.message };
   }
   return { ok: true };
 }

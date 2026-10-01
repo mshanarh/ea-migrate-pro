@@ -236,31 +236,54 @@ export default function ChartScanner({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbols]);
 
-  /** Downscales an image file to a max-1600px data URL (JPEG, quality 0.85). */
+  /**
+   * Reads a file straight to a JPEG data URL (max-1600px, quality 0.85).
+   * ANDROID WEBVIEW: decode via createImageBitmap(blob) — the old
+   * URL.createObjectURL + <img> path fails on many WebViews for files picked
+   * from content:// (Gallery/Drive), so the picture never appeared.
+   */
   const compressImage = (file: File): Promise<string> =>
     new Promise((resolve, reject) => {
-      const objectUrl = URL.createObjectURL(file);
-      const img = new Image();
-      img.onload = () => {
-        const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(img.width, img.height));
+      const draw = (source: ImageBitmap | HTMLImageElement, width: number, height: number) => {
+        const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(width, height));
         const canvas = document.createElement("canvas");
-        canvas.width = Math.max(1, Math.round(img.width * scale));
-        canvas.height = Math.max(1, Math.max(1, Math.round(img.height * scale)));
+        canvas.width = Math.max(1, Math.round(width * scale));
+        canvas.height = Math.max(1, Math.round(height * scale));
         const ctx = canvas.getContext("2d");
         if (!ctx) {
-          URL.revokeObjectURL(objectUrl);
           reject(new Error("canvas"));
           return;
         }
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        URL.revokeObjectURL(objectUrl);
+        ctx.drawImage(source, 0, 0, canvas.width, canvas.height);
         resolve(canvas.toDataURL("image/jpeg", 0.85));
       };
-      img.onerror = () => {
-        URL.revokeObjectURL(objectUrl);
-        reject(new Error("decode"));
+      const fallbackObjectUrl = () => {
+        const objectUrl = URL.createObjectURL(file);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            draw(img, img.width, img.height);
+          } catch (error) {
+            reject(error instanceof Error ? error : new Error("canvas"));
+          } finally {
+            URL.revokeObjectURL(objectUrl);
+          }
+        };
+        img.onerror = () => {
+          URL.revokeObjectURL(objectUrl);
+          reject(new Error("decode"));
+        };
+        img.src = objectUrl;
       };
-      img.src = objectUrl;
+      if (typeof createImageBitmap === "function") {
+        createImageBitmap(file)
+          .then((bitmap) => {
+            draw(bitmap, bitmap.width, bitmap.height);
+          })
+          .catch(fallbackObjectUrl);
+      } else {
+        fallbackObjectUrl();
+      }
     });
 
   const pickCharts = (files: FileList | null) => {
@@ -289,24 +312,24 @@ export default function ChartScanner({
       }
       const slot = detectTimeframe(file);
       assigned += 1;
+      const adopt = (dataUrl: string) => {
+        setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
+        // The newest upload switches the view — the trader sees exactly
+        // what they just attached (this was silently skipped before when
+        // the WebView returned files the old path could not read).
+        setTimeframe(slot);
+        setAnalysis(null);
+        setAnalysisError("");
+      };
       compressImage(file)
-        .then((dataUrl) => {
-          setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
-          // The newest upload switches the view — the trader sees exactly
-          // what they just attached (this was silently skipped before when
-          // the WebView returned files the old path could not read).
-          setTimeframe(slot);
-          setAnalysis(null);
-          setAnalysisError("");
-        })
+        .then(adopt)
         .catch(() => {
           // Decoder failed (rare OEM quirk) — fall back to the raw read.
           const reader = new FileReader();
           reader.onload = () => {
-            setTimeframeCharts((prev) => ({ ...prev, [slot]: String(reader.result) }));
-            setTimeframe(slot);
-            setAnalysis(null);
-            setAnalysisError("");
+            const raw = String(reader.result);
+            if (raw) adopt(raw);
+            else errors.push(`${file.name || "That file"}: could not be read.`);
           };
           reader.onerror = () => errors.push(`${file.name}: could not be read.`);
           reader.readAsDataURL(file);

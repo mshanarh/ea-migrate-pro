@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { travelSizedVideo } from "@/lib/media-store";
+import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 /** Same checkout the app login redirects unpaid users to. */
 export const WHOP_CHECKOUT_URL =
@@ -304,20 +305,21 @@ async function findLicenseInCloud(
   email: string,
 ): Promise<{ error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } | null> {
   // (shape mirrors findSavedLicenseForEmail's success contract)
-  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
-  const anonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
-  if (!url || !anonKey) return null;
+  // SHARED client — building a fresh one per activation (dynamic import +
+  // createClient) added seconds to every unlock before the first query ran.
+  if (!supabaseConfigured || !supabase) return null;
+  const client = supabase;
   try {
-    const { createClient } = await import("@supabase/supabase-js");
-    const client = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     // Select ea_name/expiry WITH the core columns. On a legacy table missing
     // those columns PostgREST rejects the ENTIRE select with 42703 — which
     // used to make eaName permanently undefined so the app showed "Private
     // EA" even though the mentor had named their EA. Retry with core columns
     // only, then recover the EA details from the mentor's portal account.
     type LicenseKeyRow = { id: unknown; key: unknown; email: unknown; created_at?: unknown; ea_name?: unknown; expiry?: unknown };
+    // Kick the portal scan off IN PARALLEL with the license_keys read —
+    // both are independent queries, so the slower one no longer doubles
+    // the unlock time.
+    const fromPortalPromise = findLicenseInPortalAccounts(key, email);
     let rows: LicenseKeyRow[] = [];
     let error: { code?: string; message: string } | null = null;
     {
@@ -362,14 +364,10 @@ async function findLicenseInCloud(
     const extended = data as unknown as { ea_name?: unknown; expiry?: unknown };
     if (typeof extended.ea_name === "string" && extended.ea_name) eaName = extended.ea_name;
     if (typeof extended.expiry === "string" && extended.expiry) expiry = extended.expiry;
-    // The mentor's portal account is the AUTHORITATIVE copy of the EA — it
-    // holds the picture, video and symbols. The portal lookup used to run
-    // only when license_keys.ea_name was missing, so a key WITH a name
-    // activated with a name but NO picture (the robot showed the platform
-    // logo). Always consult it and merge what it finds; license_keys only
-    // fills the gaps.
-    const fromPortal = await findLicenseInPortalAccounts(key, email);
-    if (fromPortal?.error) return fromPortal;
+    // Both reads are done — collect the parallel portal scan. The mentor's
+    // portal account is the AUTHORITATIVE copy of the EA (picture, video,
+    // symbols); license_keys only fills the gaps.
+    const fromPortal = await fromPortalPromise;
     if (fromPortal?.license) {
       const mergedLicense: { eaName?: string; expiry?: string } = {};
       const mergedName = fromPortal.license.eaName || eaName;
@@ -428,14 +426,11 @@ async function findLicenseInPortalAccounts(
   key: string,
   email: string,
 ): Promise<{ error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } | null> {
-  const url = import.meta.env["VITE_SUPABASE_URL"] as string | undefined;
-  const anonKey = import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined;
-  if (!url || !anonKey) return null;
+  // SHARED client — a fresh createClient per unlock added a second-plus of
+  // dead time (module import + store boot) before the query even fired.
+  if (!supabaseConfigured || !supabase) return null;
+  const client = supabase;
   try {
-    const { createClient } = await import("@supabase/supabase-js");
-    const client = createClient(url, anonKey, {
-      auth: { persistSession: false, autoRefreshToken: false },
-    });
     const { data: rows, error } = await client.from("portal_accounts").select("email, data");
     if (error) {
       console.warn("[key-activation] portal_accounts scan failed:", error.message);
@@ -581,21 +576,18 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   // app gate never bounces a freshly-activated user to checkout.
   const activationEmail = state.email;
   if (activationEmail) markEmailPaid(activationEmail);
-  // CLOUD PROOF (awaited): claim the key on its license_keys row, set
-  // users.is_paid=true and bind THIS device in the DATABASE — all before
-  // the redirect to /app/home fires, because /app/home re-verifies against
-  // the cloud. Fire-and-forget used to lose that race: the local flag only
-  // lives in localStorage, so the gate still saw "unpaid" and bounced the
-  // freshly-activated user to Whop checkout (the "activated my key and got
-  // kicked out" bug).
+  // CLOUD PROOF: claim the key on its license_keys row, set users.is_paid=true
+  // and bind THIS device in the DATABASE. All three writes are independent —
+  // run them IN PARALLEL so activation doesn't queue them one by one. All
+  // fire before the redirect to /app/home because /app/home re-verifies
+  // against the cloud. Fire-and-forget used to lose that race: the local
+  // flag only lives in localStorage, so the gate still saw "unpaid" and
+  // bounced the freshly-activated user to Whop checkout (the "activated my
+  // key and got kicked out" bug).
   if (activationEmail) {
-    try {
-      const { recordKeyActivationInCloud } = await import("@/lib/supabase-users");
-      const proof = await recordKeyActivationInCloud(clean, activationEmail, getDeviceId());
-      if (!proof.ok && proof.error) console.warn("[key-activation] cloud proof failed:", proof.error);
-    } catch {
-      /* a failed cloud write must never block activation */
-    }
+    const { recordKeyActivationInCloud } = await import("@/lib/supabase-users");
+    const proof = await recordKeyActivationInCloud(clean, activationEmail, getDeviceId());
+    if (!proof.ok && proof.error) console.warn("[key-activation] cloud proof failed:", proof.error);
   }
   persist();
   return { robot };

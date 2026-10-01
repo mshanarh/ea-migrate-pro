@@ -165,31 +165,38 @@ function AppAccess() {
     }
   };
 
+  const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (!app.email) {
-      const clean = email.trim().toLowerCase();
-      // Register FIRST so the users row exists — the cloud proof write
-      // inside activateKey (is_paid + device bind) needs that row, and a
-      // fresh reinstall has none.
-      try { await registerWithEmail(clean); } catch { /* fail open */ }
-      const signInResult = appSignIn(clean);
-      if (signInResult.error) { toast.error(signInResult.error); return; }
+    if (unlocking) return;
+    setUnlocking(true);
+    try {
+      if (!app.email) {
+        const clean = email.trim().toLowerCase();
+        // Register FIRST so the users row exists — the cloud proof write
+        // inside activateKey (is_paid + device bind) needs that row, and a
+        // fresh reinstall has none.
+        try { await registerWithEmail(clean); } catch { /* fail open */ }
+        const signInResult = appSignIn(clean);
+        if (signInResult.error) { toast.error(signInResult.error); return; }
+      }
+      // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
+      const normalizedKey = key.trim().toUpperCase().replace(/\s+/g, "");
+      const result = await activateKey(normalizedKey);
+      if (result.error) { toast.error(result.error); return; }
+      toast.success((result.robot?.name || "Robot") + " activated on this device");
+      // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+      window.sessionStorage.setItem("eamp_pending_welcome", "1");
+      window.location.replace("/app/home");
+    } finally {
+      setUnlocking(false);
     }
-    // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
-    const normalizedKey = key.trim().toUpperCase().replace(/\s+/g, "");
-    const result = await activateKey(normalizedKey);
-    if (result.error) { toast.error(result.error); return; }
-    toast.success((result.robot?.name || "Robot") + " activated on this device");
-    // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
-    window.sessionStorage.setItem("eamp_pending_welcome", "1");
-    window.location.replace("/app/home");
   };
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -249,9 +256,9 @@ function LoginView({ email, setEmail, onSubmit, redirecting, onEnterKey }: { ema
   </div>;
 }
 
-function LicenseView({ email, setEmail, keyValue, setKey, onSubmit, admin, paid }: { email: string; setEmail: (value: string) => void; keyValue: string; setKey: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; admin: boolean; paid: boolean }) {
+function LicenseView({ email, setEmail, keyValue, setKey, onSubmit, admin, paid, unlocking }: { email: string; setEmail: (value: string) => void; keyValue: string; setKey: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; admin: boolean; paid: boolean; unlocking: boolean }) {
   return <div className="-translate-y-4">
     <div className="text-center"><div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-emerald-400/10 text-emerald-300"><CheckCircle2 className="size-9" /></div><h1 className="mt-7 text-3xl font-bold">Add your licence key</h1><p className="mt-3 text-sm leading-6 text-[#8a9298]">{admin ? "Admin access is active. No payment is required for this email." : paid ? "Payment received. Add the licence key sent to your email." : "Your payment return was received. Add the licence key sent to your email."}</p></div>
-    <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">{email ? <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">{email}</div> : <label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Payment email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]" placeholder="you@example.com" /></label>}<form onSubmit={onSubmit}><label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Licence key</span><input autoFocus required value={keyValue} onChange={(event) => setKey(event.target.value.toUpperCase())} placeholder="EMP-XXXXXXXXXXXX" className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]" /></label><button type="submit" className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)]">Unlock robot <ArrowRight className="size-4" /></button></form><p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]"><LockKeyhole className="size-3" /> One email, one activated device</p></section>
+    <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">{email ? <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">{email}</div> : <label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Payment email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]" placeholder="you@example.com" /></label>}<form onSubmit={onSubmit}><label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Licence key</span><input autoFocus required value={keyValue} onChange={(event) => setKey(event.target.value.toUpperCase())} placeholder="EMP-XXXXXXXXXXXX" className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]" /></label><button type="submit" disabled={unlocking} className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70">{unlocking ? "Unlocking…" : "Unlock robot"}<ArrowRight className="size-4" /></button></form><p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]"><LockKeyhole className="size-3" /> One email, one activated device</p></section>
   </div>;
 }

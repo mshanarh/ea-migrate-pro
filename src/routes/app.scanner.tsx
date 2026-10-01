@@ -119,17 +119,14 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // MT5 caps comments at 31 characters. Always preserve the EA Migrate
-      // signature, then use the remaining room for the current EA name.
+      // MT5 caps comments at 31 characters and some brokers refuse anything
+      // beyond plain letters/digits. FORCED signature: the current EA's name
+      // (letters+digits only, whatever the mentor named it) stamped with the
+      // exact "~Eamigrate" tag — always ≤31 chars, always broker-safe.
       const botName = (robot?.name ?? "")
-        .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
-      const commentSuffix = " ~ EA Migrate";
-      const commentName = botName
-        .slice(0, 31 - commentSuffix.length)
-        .replace(/[\s.,_()-]+$/, "");
-      const orderComment = commentName ? `${commentName}${commentSuffix}` : "EA Migrate";
+        .replace(/[^A-Za-z0-9]/g, "")
+        .slice(0, 21); // 31 − len("~Eamigrate")
+      const orderComment = `${botName || "EAMIGRATE"}~Eamigrate`;
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
@@ -184,6 +181,9 @@ function AppScanner() {
       const withStops = stopLossValue > 0 || takeProfitValue > 0;
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
+      // Switched to the bare safe stamp when a broker refuses the EA-name comment.
+      let activeComment = orderComment;
+      let commentRetried = false;
       const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
         const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
           method: "POST",
@@ -198,7 +198,7 @@ function AppScanner() {
             volume: Number(lot),
             stop_loss: stopLossValue,
             take_profit: takeProfitValue,
-            comment: orderComment,
+            comment: activeComment,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -305,6 +305,26 @@ function AppScanner() {
           // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
           // market without SL/TP — a filled market order beats a refused one.
           const raw = error instanceof Error ? error.message : "";
+          // Comment refused by the broker (unsafe characters in the EA name):
+          // FORCE the same trade through once with the bare safe stamp.
+          if (!commentRetried && /comment/i.test(raw)) {
+            commentRetried = true;
+            activeComment = "~Eamigrate";
+            try {
+              const payload = await executeWithSymbolFallback();
+              opened += 1;
+              if (index === 1) firstPayload = payload;
+              window.dispatchEvent(
+                new CustomEvent("eamp:execution-result", {
+                  detail: { ok: true, message: `TRADE ${opened} EXECUTED — EA MIGRATE ✓` },
+                }),
+              );
+              if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+              continue;
+            } catch {
+              /* comment-retry failed too — normal handling below */
+            }
+          }
           if (useStops && !stopRetried && /invalid stops|10016/i.test(raw)) {
             stopRetried = true;
             useStops = false;

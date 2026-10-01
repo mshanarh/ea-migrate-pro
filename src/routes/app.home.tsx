@@ -86,8 +86,9 @@ function HomeErrorFallback({ error, reset }: ErrorComponentProps) {
   );
 }
 
-function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; onSubmit: (key: string) => void }) {
+function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; onSubmit: (key: string) => void | Promise<void> }) {
   const [key, setKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   return (
     <Dialog
@@ -106,15 +107,21 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
         </DialogHeader>
         <form
           className="mt-2 space-y-4"
-          onSubmit={(event) => {
+          onSubmit={async (event) => {
             event.preventDefault();
+            if (submitting) return;
             const cleaned = key.trim().toUpperCase();
             if (!cleaned) {
               toast.error("Enter your HOST ROBOT KEY.");
               return;
             }
-            onSubmit(cleaned);
-            setKey("");
+            setSubmitting(true);
+            try {
+              await onSubmit(cleaned);
+              setKey("");
+            } finally {
+              setSubmitting(false);
+            }
           }}
         >
           <input
@@ -127,9 +134,10 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
           />
           <button
             type="submit"
-            className="plat-pressable h-14 w-full bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)]"
+            disabled={submitting}
+            className="plat-pressable h-14 w-full bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)] disabled:cursor-wait disabled:opacity-70"
           >
-            ACTIVATE ROBOT
+            {submitting ? "ACTIVATING…" : "ACTIVATE ROBOT"}
           </button>
         </form>
       </DialogContent>
