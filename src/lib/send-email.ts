@@ -219,7 +219,8 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
 
 export type SendEmailInput =
   | { type: "new_registration"; email: string; firstName?: string; displayName?: string }
-  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string; eaImage?: string };
+  | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string; eaImage?: string }
+  | { type: "broadcast"; email: string; message: string };
 
 export type SendEmailResult = { success: boolean; error?: string };
 
@@ -269,6 +270,28 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
     if (second.status === "fulfilled" && second.value.ok) return { success: true };
     const failure = (first.status === "rejected" ? String(first.reason) : first.value.error) ?? (second.status === "rejected" ? String(second.reason) : second.value.error) ?? "Brevo send failed.";
     return { success: false, error: failure };
+  }
+
+  // broadcast — a plain message from the admin to one recipient.
+  if (data.type === "broadcast") {
+    const message = data.message.trim();
+    if (!message) return { success: false, error: "The message is empty." };
+    // Escape HTML, then keep the admin's line breaks.
+    const safe = message
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .split(/\n/)
+      .map((line) => (line.trim() ? `<p style="margin:0 0 12px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${line}</p>` : "<br />"))
+      .join("\n");
+    const sent = await sendViaBrevo({
+      to: email,
+      toName: email,
+      subject: "A message from EA Migrate",
+      html: brandHtml("A message from EA Migrate", [safe], "Open EA Migrate", "#E7B53A"),
+      text: message,
+    });
+    return sent.ok ? { success: true } : { success: false, ...(sent.error ? { error: sent.error } : {}) };
   }
 
   // license_approved — save the key, then email it to the user.

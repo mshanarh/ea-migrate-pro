@@ -28,6 +28,7 @@ import { Route as AppScannerRouteImport } from './routes/app.scanner'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppTradingPairsRouteImport } from './routes/app.trading-pairs'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardBroadcastRouteImport } from './routes/dashboard.broadcast'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
 import { Route as DashboardPairsRouteImport } from './routes/dashboard.pairs'
@@ -134,6 +135,11 @@ const DashboardIndexRoute = DashboardIndexRouteImport.update({
   path: '/',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardBroadcastRoute = DashboardBroadcastRouteImport.update({
+  id: '/broadcast',
+  path: '/broadcast',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardEasRoute = DashboardEasRouteImport.update({
   id: '/eas',
   path: '/eas',
@@ -203,6 +209,7 @@ export interface FileRoutesByFullPath {
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
@@ -233,6 +240,7 @@ export interface FileRoutesByTo {
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
@@ -265,6 +273,7 @@ export interface FileRoutesById {
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
   '/dashboard/pairs': typeof DashboardPairsRoute
@@ -298,6 +307,7 @@ export interface FileRouteTypes {
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/pairs'
@@ -328,6 +338,7 @@ export interface FileRouteTypes {
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/pairs'
@@ -359,6 +370,7 @@ export interface FileRouteTypes {
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
     | '/dashboard/pairs'
@@ -530,6 +542,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardIndexRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/broadcast': {
+      id: '/dashboard/broadcast'
+      path: '/broadcast'
+      fullPath: '/dashboard/broadcast'
+      preLoaderRoute: typeof DashboardBroadcastRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/eas': {
       id: '/dashboard/eas'
       path: '/eas'
@@ -604,6 +623,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface DashboardRouteChildren {
+  DashboardBroadcastRoute: typeof DashboardBroadcastRoute
   DashboardEasRoute: typeof DashboardEasRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
   DashboardPairsRoute: typeof DashboardPairsRoute
@@ -617,6 +637,7 @@ interface DashboardRouteChildren {
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardBroadcastRoute: DashboardBroadcastRoute,
   DashboardEasRoute: DashboardEasRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
   DashboardPairsRoute: DashboardPairsRoute,

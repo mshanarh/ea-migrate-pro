@@ -318,24 +318,25 @@ async function findLicenseInCloud(
     // EA" even though the mentor had named their EA. Retry with core columns
     // only, then recover the EA details from the mentor's portal account.
     type LicenseKeyRow = { id: unknown; key: unknown; email: unknown; created_at?: unknown; ea_name?: unknown; expiry?: unknown };
-    let data: LicenseKeyRow | null = null;
+    let rows: LicenseKeyRow[] = [];
     let error: { code?: string; message: string } | null = null;
     {
+      // LIST, not maybeSingle: the admin's "Approve All" issues THE SAME key
+      // to many users — one row per email. A single-row read fails with
+      // PGRST116 ("multiple rows") and the shared key could never activate.
       const full = await client
         .from("license_keys")
         .select("id, key, email, created_at, ea_name, expiry")
-        .eq("key", key)
-        .maybeSingle();
+        .eq("key", key);
       if (full.error?.code === "42703") {
         const retry = await client
           .from("license_keys")
           .select("id, key, email, created_at")
-          .eq("key", key)
-          .maybeSingle();
-        data = (retry.data as unknown as LicenseKeyRow | null);
+          .eq("key", key);
+        rows = (retry.data as unknown as LicenseKeyRow[] | null) ?? [];
         error = retry.error;
       } else {
-        data = (full.data as unknown as LicenseKeyRow | null);
+        rows = (full.data as unknown as LicenseKeyRow[] | null) ?? [];
         error = full.error;
       }
     }
@@ -343,13 +344,17 @@ async function findLicenseInCloud(
       console.error("[key-activation] cloud lookup failed:", error.message);
       return null;
     }
-    if (!data) return null;
+    if (rows.length === 0) return null;
     // A key issued to a specific email belongs to THAT email (unset email =
-    // open key, activated by whoever enters it first).
-    const rowEmail = typeof data.email === "string" ? data.email : "";
-    if (rowEmail && rowEmail.trim().toLowerCase() !== email.trim().toLowerCase()) {
+    // open key, activated by whoever enters it first). Shared keys have one
+    // row per user — the activator's own row (or the open row) wins.
+    const lower = email.trim().toLowerCase();
+    const mine = rows.find((row) => typeof row.email === "string" && row.email.trim().toLowerCase() === lower);
+    const open = rows.find((row) => typeof row.email !== "string" || row.email.trim() === "");
+    if (!mine && !open) {
       return { error: "That license key belongs to a different email." };
     }
+    const data = (mine ?? open) as LicenseKeyRow;
     // Optional columns (ea_name/expiry) exist only in the updated schema —
     // read them defensively so a legacy row never breaks activation.
     let eaName: string | undefined;

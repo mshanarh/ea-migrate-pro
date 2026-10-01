@@ -17,6 +17,7 @@ import {
   Sun,
   Wallet,
 } from "lucide-react";
+import { Send } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
 import { signOut, useCurrentAccount } from "@/lib/auth-store";
 import { mirrorAccount } from "@/routes/dashboard.eas";
@@ -35,6 +36,7 @@ const sections: { label?: string; items: NavItem[] }[] = [
   {
     label: "Management",
     items: [
+      { to: "/dashboard/broadcast", label: "Broadcast", icon: Send },
       { to: "/dashboard/stats", label: "Key Stats", icon: BarChart3 },
       { to: "/dashboard/profile", label: "Profile", icon: CircleUserRound },
       { to: "/admin", label: "Admin Portal", icon: ShieldCheck, adminOnly: true },

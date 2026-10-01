@@ -39,6 +39,7 @@ import {
   type AdminPatch,
   type PublicAccount,
 } from "@/lib/account-sync.server";
+import { sendPortalEmail } from "@/lib/send-email";
 import {
   portalAdminUpdate,
   portalListAccounts,
@@ -231,16 +232,64 @@ function AdminConsole() {
     [account],
   );
 
-  /** Paid/Unpaid for a registered app user — writes users.is_paid in the cloud. */
+  /** Approve/Unpaid for a registered app user — writes users.is_paid in the cloud. */
   const markRegisteredPaid = (email: string, paid: boolean) => {
     void setCloudUserPaid(email, paid).then((ok) => {
       if (ok) {
         setRegistered((current) => current.map((user) => (user.email === email ? { ...user, is_paid: paid } : user)));
-        toast.success(`${email} marked ${paid ? "PAID" : "UNPAID"} in the cloud`);
+        toast.success(`${email} ${paid ? "APPROVED" : "set to unpaid"}`);
       } else {
         toast.error(`Cloud write failed for ${email} — try again.`);
       }
     });
+  };
+
+  // ── APPROVE ALL — every registered user approved with THE SAME license ──
+  // key: users.is_paid=true for each, one license_keys row per email (the
+  // activation lookup accepts a shared key), and the key emailed to everyone.
+  const [approveAllArmed, setApproveAllArmed] = useState(false);
+  const [approvingAll, setApprovingAll] = useState(false);
+  const approveAll = async () => {
+    if (approvingAll) return;
+    const targets = registered.filter((user) => !user.is_paid);
+    if (targets.length === 0) {
+      toast.info("Every registered user is already approved.");
+      setApproveAllArmed(false);
+      return;
+    }
+    if (!approveAllArmed) {
+      setApproveAllArmed(true);
+      toast.info(`Tap APPROVE ALL again to approve ${targets.length} users and email them the shared key`, { duration: 5000 });
+      window.setTimeout(() => setApproveAllArmed((current) => (current ? current : false)), 6000);
+      return;
+    }
+    setApproveAllArmed(false);
+    setApprovingAll(true);
+    const sharedKey = generateKey();
+    let approved = 0;
+    let emailed = 0;
+    const failures: string[] = [];
+    for (const user of targets) {
+      try {
+        const paid = await setCloudUserPaid(user.email, true);
+        if (paid) approved += 1;
+        else failures.push(user.email);
+        // One license_keys row per email + the key email (resilient — a mail
+        // failure never blocks the approval itself).
+        const mail = await sendPortalEmail({
+          data: { type: "license_approved", email: user.email, licenseKey: sharedKey, eaName: "EA Migrate", expiry: "Lifetime" },
+        });
+        if (mail.success) emailed += 1;
+      } catch {
+        failures.push(user.email);
+      }
+    }
+    setRegistered((current) => current.map((user) => (user.is_paid ? user : { ...user, is_paid: true })));
+    setApprovingAll(false);
+    toast.success(
+      `APPROVE ALL done — shared key ${sharedKey}. Approved ${approved}/${targets.length}, emailed ${emailed}/${targets.length}.${failures.length > 0 ? ` Failed: ${failures.slice(0, 3).join(", ")}${failures.length > 3 ? "…" : ""}` : ""}`,
+      { duration: 9000 },
+    );
   };
 
   if (!account) return null;
@@ -465,15 +514,30 @@ function AdminConsole() {
                   Every email that signed up in the app — newest first, refreshed live.
                 </p>
               </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                <input
-                  value={userQuery}
-                  onChange={(event) => setUserQuery(event.target.value)}
-                  placeholder="Search email"
-                  className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
-                  aria-label="Search registered users"
-                />
+              <div className="flex flex-col items-stretch gap-2">
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <input
+                    value={userQuery}
+                    onChange={(event) => setUserQuery(event.target.value)}
+                    placeholder="Search email"
+                    className="h-10 w-full max-w-56 rounded-xl border border-border/70 bg-card/60 pl-9 pr-3 text-sm"
+                    aria-label="Search registered users"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => void approveAll()}
+                  disabled={approvingAll}
+                  className={
+                    approveAllArmed
+                      ? "flex h-10 items-center justify-center gap-2 rounded-full bg-emerald-500 px-5 text-sm font-black text-white transition-transform active:scale-[0.98]"
+                      : "flex h-10 items-center justify-center gap-2 rounded-full bg-primary px-5 text-sm font-bold text-primary-foreground transition-transform active:scale-[0.98] disabled:opacity-60"
+                  }
+                >
+                  <CheckCircle2 className="size-4" />
+                  {approvingAll ? "Approving all…" : approveAllArmed ? "Tap again to confirm" : "Approve all"}
+                </button>
               </div>
             </div>
             {registeredError && (
@@ -528,10 +592,10 @@ function AdminConsole() {
                               className={
                                 user.is_paid
                                   ? "h-8 rounded-xl bg-emerald-400/20 px-3 text-[11px] font-bold uppercase text-emerald-300"
-                                  : "h-8 rounded-xl bg-secondary px-3 text-[11px] font-bold uppercase text-muted-foreground hover:text-foreground"
+                                  : "h-8 rounded-xl bg-primary px-3 text-[11px] font-bold uppercase text-primary-foreground hover:opacity-90"
                               }
                             >
-                              Paid
+                              Approve
                             </button>
                             <button
                               type="button"

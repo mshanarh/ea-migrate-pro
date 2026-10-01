@@ -316,7 +316,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 /* ---------------- SWITCH ---------------- */
 
 export function ThemeContent(props: ThemeContentProps) {
-  const { color } = useCustomization();
+  const { theme, color } = useCustomization();
   // The HOME double-press video — ONE universal backdrop for every interface
   // style. When stopped this renders nothing (the slots keep the picture);
   // when playing, the video runs edge-to-edge behind the theme's content.
@@ -327,6 +327,10 @@ export function ThemeContent(props: ThemeContentProps) {
         video={props.robot?.video}
         accent={accentColorValue(color)}
         showImageWhenInactive={false}
+        // Big-screen themes play the video INSIDE the card (RobotMedia hero);
+        // only the small-circle theme (BLUEPRINT EDGE) uses this backdrop to
+        // play the video, so it must never run in two places at once.
+        videoWhenActive={theme === "BLUEPRINT EDGE"}
       />
       <ThemeContentInner {...props} />
     </>
