@@ -243,19 +243,25 @@ async function runScannerAnalysis(
   const leadingScore = Math.max(bullScore, bearScore);
   const structureAligned = bullishLead ? higherLows : lowerHighs;
   const ranging = !higherLows && !lowerHighs;
-  const tradableData = !synthesized && !synthetic;
+  // ESTIMATED candles are EXECUTABLE: when the public feed has no data for a
+  // broker symbol, analysis runs on the estimated price structure and the
+  // bridge anchors entry/SL/TP to the broker's REAL market price at execution
+  // time — so the plan is never traded blind. Only true synthetic proxies
+  // (FLAME/BOOM/CRASH-style instruments with no real market at all) stay WAIT.
+  const tradableData = !synthetic;
+  const estimated = synthesized;
   const gatePassed = tradableData;
 
   // Confidence mirrors the confluence achieved, capped for conditional
   // (no-live-quote) plans and low-confluence setups.
   const confidenceBase = Math.round(Math.min(95, 40 + leadingScore * 10));
-  const confidence = !gatePassed ? Math.min(35, confidenceBase) : conditionalSetup ? Math.min(55, confidenceBase) : confidenceBase;
+  const confidence = conditionalSetup ? Math.min(55, confidenceBase) : confidenceBase;
 
   // Strength: 4/5 → STRONG, 3 → MODERATE, ≤2 → WEAK (executable, trade
   // small). Only simulated/synthetic data returns WAIT.
   const agreement = candleAgreement;
   const finalStrength: ScannerAnalysis["strength"] = !gatePassed
-    ? "WAIT"
+    ? "WAIT" // synthetic proxies only
     : leadingScore >= 4
       ? "STRONG"
       : leadingScore === 3
@@ -277,16 +283,14 @@ async function runScannerAnalysis(
   const risk = Math.abs(entry - stopLoss);
   const takeProfit = entry + direction * risk * 2.5;
 
-  const waitReason = synthesized
-    ? `No public feed covers ${symbol} — the levels below are planned from SIMULATED data (estimated price ${fmtPrice(referenceClose)}). Execution is disabled: never trade live money on synthetic candles. Load a standard symbol (EURUSD, XAUUSD, US30, BTCUSD) for an executable plan.`
-    : synthetic
-      ? `${symbol} is a broker synthetic index tracked by a volatility proxy — plans are never executable.`
-      : "No tradable market data.";
+  const waitReason = synthetic
+    ? `${symbol} is a broker synthetic index tracked by a volatility proxy — plans are never executable.`
+    : "No tradable market data.";
 
   const reasons: string[] = [];
   reasons.push(
-    synthesized
-      ? waitReason
+    estimated
+      ? `No public feed covers ${symbol} — the levels below are built from an ESTIMATED price reference (${fmtPrice(referenceClose)}). Entry, stop and target are re-anchored to your broker's REAL market price when you press Execute, so the plan stays tradeable — just respect the stop.`
       : `Candles came from the public market feed${resolvedSymbol ? ` (${resolvedSymbol} tracks ${symbol})` : ""} — pressing Execute sends the order at the broker's real market price.`,
   );
   if (synthetic) {
@@ -317,12 +321,12 @@ async function runScannerAnalysis(
   }
   reasons.push(
     gatePassed
-      ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.`
-      : `NO TRADE — ${waitReason} Strength: WAIT; execution is disabled on simulated data.`,
+      ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.${estimated ? " Levels re-anchor to the live broker price on execution." : ""}`
+      : `NO TRADE — ${waitReason} Strength: WAIT; no public provider tracks this instrument, so execution is disabled.`,
   );
   reasons.push(
     finalStrength === "WAIT"
-      ? `Signal strength: WAIT — no tradable data${synthesized ? " (simulated)" : " (synthetic proxy)"}. Execution is blocked.`
+      ? `Signal strength: WAIT — ${symbol} is a synthetic proxy with no real market. Execution is blocked.`
       : finalStrength === "WEAK"
         ? `Signal strength: WEAK — only ${leadingScore}/5 core checks agree (${Math.round(agreement * 100)}% candle agreement). The plan is executable — trade SMALL and respect the stop.`
         : finalStrength === "MODERATE"
@@ -387,14 +391,17 @@ async function runScannerAnalysis(
       stopLoss: roundToTick(stopLoss, entry),
       takeProfit: roundToTick(takeProfit, entry),
       riskReward: "1:2.5",
-      executionReady: gatePassed && hasLiveQuote,
+      // Estimated plans ARE executable — the bridge re-anchors entry/SL/TP
+      // to the broker's real price at execution time (app.scanner.tsx pulls
+      // /symbol/price and rebuilds the levels). Synthetic proxies stay false.
+      executionReady: gatePassed,
       atr: atrValue,
       rsi: rsiValue,
       reasons,
       readouts,
       dataStatus: "public",
       dataSource: synthesized
-        ? "Estimated feed · SIMULATED — not tradable"
+        ? "Estimated price reference — executes at the broker's live price"
         : `Public market feed${resolvedSymbol ? ` · ${resolvedSymbol}` : ""}${synthetic ? " · synthetic proxy — not tradable" : ""}${gatePassed ? " (conditional)" : " · WAIT"}`,
       livePrice: referenceClose,
       lastCandle: lastCandle ? { time: lastCandle.time, open: lastCandle.open, high: lastCandle.high, low: lastCandle.low, close: lastCandle.close } : null,

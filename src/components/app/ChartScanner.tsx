@@ -271,12 +271,20 @@ export default function ChartScanner({
     // Every selected file is routed to its OWN timeframe slot (detected from
     // the filename); undetectable files land on the current timeframe.
     Array.from(files).forEach((file) => {
-      if (!file.type.startsWith("image/")) {
-        errors.push(`${file.name}: only image files can be attached.`);
+      // ANDROID WEBVIEW: files picked from the system picker frequently arrive
+      // with an EMPTY file.type (content:// URIs carry no MIME) — the old
+      // check rejected them as "not an image" so nothing ever displayed.
+      // Accept empty types (sniff by extension) and only refuse REAL non-images.
+      const looksLikeImage =
+        file.type.startsWith("image/") ||
+        file.type === "" ||
+        /\.(png|jpe?g|gif|webp|bmp|heic|heif)$/i.test(file.name);
+      if (!looksLikeImage) {
+        errors.push(`${file.name || "That file"}: only image files can be attached.`);
         return;
       }
       if (file.size > MAX_CHART_BYTES) {
-        errors.push(`${file.name}: too large (max 12 MB).`);
+        errors.push(`${file.name || "That file"}: too large (max 12 MB).`);
         return;
       }
       const slot = detectTimeframe(file);
