@@ -120,13 +120,12 @@ function AppScanner() {
         server: app.mt.server,
       };
       // MT5 caps comments at 31 characters and some brokers refuse anything
-      // beyond plain letters/digits. FORCED signature: the current EA's name
-      // (letters+digits only, whatever the mentor named it) stamped with the
-      // exact "~Eamigrate" tag — always ≤31 chars, always broker-safe.
+      // beyond plain letters/digits. The comment is the CURRENT BOT'S NAME
+      // ONLY — letters+digits, nothing appended, always ≤31 chars.
       const botName = (robot?.name ?? "")
         .replace(/[^A-Za-z0-9]/g, "")
-        .slice(0, 21); // 31 − len("~Eamigrate")
-      const orderComment = `${botName || "EAMIGRATE"}~Eamigrate`;
+        .slice(0, 31);
+      const orderComment = botName || "Eamigrate";
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
@@ -306,10 +305,10 @@ function AppScanner() {
           // market without SL/TP — a filled market order beats a refused one.
           const raw = error instanceof Error ? error.message : "";
           // Comment refused by the broker (unsafe characters in the EA name):
-          // FORCE the same trade through once with the bare safe stamp.
+          // FORCE the same trade through once with the bare safe fallback name.
           if (!commentRetried && /comment/i.test(raw)) {
             commentRetried = true;
-            activeComment = "~Eamigrate";
+            activeComment = "Eamigrate";
             try {
               const payload = await executeWithSymbolFallback();
               opened += 1;

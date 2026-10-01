@@ -749,8 +749,8 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
         ? Number.parseFloat(data.takeProfit)
         : undefined;
     // MT5 caps the order comment at 31 characters. The comment carries the
-    // full EA name only (no brand suffix) — truncated to the cap when needed.
-    const comment = data.eaName.slice(0, 31).trimEnd();
+    // CURRENT EA NAME ONLY (letters+digits, no suffix) — truncated to the cap.
+    const comment = data.eaName.replace(/[^A-Za-z0-9]/g, "").slice(0, 31) || "Eamigrate";
     const body: Record<string, unknown> = {
       actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
