@@ -240,17 +240,26 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
         if req.take_profit:
             request["tp"] = req.take_profit
 
-        # Filling-mode fallback: brokers differ (FOK / IOC / RETURN).
+        # Filling-mode fallback: brokers differ (FOK / IOC / RETURN). If live
+        # price movement makes the supplied SL/TP invalid, retry the same market
+        # order once without stops rather than refusing the trade altogether.
         last_result = None
-        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
-            request["type_filling"] = filling
-            result = mt5.order_send(request)
-            if result is None:
-                return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
-            last_result = result
-            if result.retcode == 10030:  # unsupported filling mode — try the next
-                continue
-            break
+        stops_removed = False
+        for attempt in range(2):
+            for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+                request["type_filling"] = filling
+                result = mt5.order_send(request)
+                if result is None:
+                    return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
+                last_result = result
+                if result.retcode == 10030:  # unsupported filling mode — try the next
+                    continue
+                break
+            if last_result is None or last_result.retcode != 10016 or stops_removed:
+                break
+            request.pop("sl", None)
+            request.pop("tp", None)
+            stops_removed = True
         if last_result is None:
             return {"success": False, "message": "Order was not sent"}
 
@@ -264,6 +273,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "price": last_result.price,
             "volume": last_result.volume,
             "comment": last_result.comment,
+            "stops_removed": stops_removed,
         }
     finally:
         disconnect()

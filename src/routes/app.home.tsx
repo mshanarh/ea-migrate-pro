@@ -252,6 +252,7 @@ function AppHome() {
     void executeMt5ForUser({
       data: {
         userId: app.email,
+        eaName: robot.name,
         symbol,
         action: "BUY",
         volume: Number(firstPair?.lotSize ?? 0.01),
