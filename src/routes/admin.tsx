@@ -449,6 +449,27 @@ function AdminConsole() {
   // panel's "Max keys allowed" input below.
   const [userLimit, setUserLimit] = useState(0);
   const [savingUserLimit, setSavingUserLimit] = useState(false);
+  // Remembered allowances — an approved signup without a portal account yet
+  // still keeps the number the admin set (this device), and the mentor
+  // account's cloud licenseLimit takes over the moment the user opens a portal.
+  const EMAIL_LIMITS_KEY = "eamp.admin.emailLimits.v1";
+  const [emailLimits, setEmailLimits] = useState<Record<string, number>>(() => {
+    try {
+      const raw = window.localStorage.getItem(EMAIL_LIMITS_KEY);
+      return raw ? (JSON.parse(raw) as Record<string, number>) : {};
+    } catch {
+      return {};
+    }
+  });
+  const rememberEmailLimit = (email: string, limit: number) => {
+    const next = { ...emailLimits, [email.toLowerCase()]: limit };
+    setEmailLimits(next);
+    try {
+      window.localStorage.setItem(EMAIL_LIMITS_KEY, JSON.stringify(next));
+    } catch {
+      /* private mode — the number just lives for this session */
+    }
+  };
   const selectedUser = useMemo(
     () => registered.find((user) => user.email === selectedUserEmail) ?? null,
     [registered, selectedUserEmail],
@@ -456,21 +477,25 @@ function AdminConsole() {
   const selectRegistered = (email: string) => {
     setSelectedUserEmail(email);
     const account = mentors.find((mentor) => mentor.email.toLowerCase() === email.toLowerCase());
-    setUserLimit(account?.licenseLimit ?? 0);
+    setUserLimit(account?.licenseLimit ?? emailLimits[email.toLowerCase()] ?? 0);
   };
   const saveUserLimit = () => {
     const user = selectedUser;
     if (!user) return;
-    const account = mentors.find((mentor) => mentor.email.toLowerCase() === user.email.toLowerCase());
-    if (!account) {
-      toast.error("This user has no portal account yet — approve them first, then set their key allowance.");
-      return;
-    }
     setSavingUserLimit(true);
     try {
-      setLicenseLimit(account.id, userLimit);
-      pushCloudUpdate(account.email, { licenseLimit: userLimit });
-      toast.success(`Key allowance set to ${userLimit}`);
+      // Mentor/portal account? The number is enforced there — their dashboard
+      // key creation stops at the allowance. Otherwise the number is
+      // remembered on this console for that email (and syncs the moment a
+      // portal account exists).
+      const account = mentors.find((mentor) => mentor.email.toLowerCase() === user.email.toLowerCase());
+      if (account) {
+        setLicenseLimit(account.id, userLimit);
+        pushCloudUpdate(account.email, { licenseLimit: userLimit });
+      }
+      rememberEmailLimit(user.email, userLimit);
+      toast.success(`Key allowance for ${user.email} set to ${userLimit}`);
+      setSelectedUserEmail(null);
     } finally {
       setSavingUserLimit(false);
     }
@@ -592,13 +617,19 @@ function AdminConsole() {
           </div>
         )}
 
-        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-5">
+        <div className="mt-6 grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
           {[
-            { label: "Pending portals", value: pending.length },
-            { label: "Approved users", value: approved.length },
+            // PENDING on top = portal mentors + registered emails still awaiting
+            // approval — it must move the moment an email is approved/rejected.
+            {
+              label: "Pending",
+              value:
+                pending.length +
+                registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)).length,
+            },
+            { label: "Approved users", value: approved.length + approvedEmails.size },
             { label: "Keys issued", value: totalLicenses },
             { label: "Paid emails", value: paidCount },
-            { label: "Pending emails", value: registered.filter((user) => !approvedEmails.has(user.email) && !rejectedEmails.has(user.email)).length },
           ].map((stat) => (
             <div key={stat.label} className="panel p-4 glow-ring sm:p-5">
               <p className="text-xs text-muted-foreground sm:text-sm">{stat.label}</p>
