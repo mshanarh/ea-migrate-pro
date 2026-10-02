@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getDeviceId, useAppState } from "@/lib/app-store";
 import { getApprovalForEmail } from "@/lib/admin-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
-import { requireVerifiedAccess, verifyPaymentReturn } from "@/lib/payment-gate";
+import { verifyPaymentReturn } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
@@ -22,11 +22,6 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
-  // The license key IS the payment — this path lets the user skip checkout
-  // entirely and go straight to entering the key their mentor issued.
-  // The CLICK is gated in enterKeyMode: paid → key screen, unpaid → Whop.
-  const [keyMode, setKeyMode] = useState(false);
-  const [keyGateChecking, setKeyGateChecking] = useState(false);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -111,8 +106,8 @@ function AppAccess() {
   // email used to jump straight to the key screen WITHOUT pressing Proceed,
   // which skipped the cloud device-binding check — the exact reason admins
   // were never asked to reactivate after delete + reinstall. A typed email
-  // always goes through continueWithEmail / enterKeyMode, which run the
-  // binding check for EVERY email — admins included.
+  // always goes through continueWithEmail, which runs the binding check for
+  // EVERY email — admins included.
   const sessionPaymentStatus = app.email ? paymentStatusForEmail(app.email) : "unpaid";
   // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
@@ -120,10 +115,10 @@ function AppAccess() {
   // always demanded another key, with no way past it. The home screen has an
   // "Add robot" dialog for anyone who genuinely needs another one.
   //
-  // keyMode / successReturn still force the view: those are deliberate
-  // requests for the licence-entry screen, not a returning session.
+  // A return from checkout still forces the view: that is a deliberate
+  // request for the licence-entry screen, not a returning session.
   const returningWithRobot = Boolean(app.email) && app.robots.length > 0;
-  const showLicenseView = !returningWithRobot && (keyMode || successReturn || sessionPaymentStatus !== "unpaid");
+  const showLicenseView = !returningWithRobot && (successReturn || sessionPaymentStatus !== "unpaid");
 
   useEffect(() => {
     if (!app.email || successReturn) return;
@@ -211,40 +206,6 @@ function AppAccess() {
   const dismissBlocked = () => setBlockedEmail(null);
   const dismissHeld = () => setHeldEmail(null);
 
-  /** "I already have a license key" — PAID emails get the key screen;
-   *  UNPAID emails are redirected to Whop checkout. The cloud decides
-   *  (users.is_paid / admin / a key already bound to the email) — never
-   *  localStorage. A device-bound email shows the blocked card first. */
-  const enterKeyMode = async () => {
-    const clean = email.trim().toLowerCase();
-    if (!clean) { toast.error("Enter your email first — the key is checked against it."); return; }
-    setKeyGateChecking(true);
-    try {
-      // Device binding first: an email already used on another device is
-      // blocked no matter what they were about to do (admins included).
-      try {
-        const binding = await checkDeviceBinding(clean, getDeviceId());
-        if (binding.boundToOtherDevice) {
-          setBlockedEmail(clean);
-          return;
-        }
-      } catch {
-        /* unreachable cloud — fall through to the payment check */
-      }
-      const access = await requireVerifiedAccess(clean);
-      if (access.action === "pay") {
-        setRedirecting(true);
-        window.location.assign(WHOP_CHECKOUT_URL);
-        return;
-      }
-      const signInResult = appSignIn(clean);
-      if (signInResult.error) { toast.error(signInResult.error); return; }
-      setKeyMode(true);
-    } finally {
-      setKeyGateChecking(false);
-    }
-  };
-
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -277,7 +238,7 @@ function AppAccess() {
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -382,7 +343,7 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
   </div>;
 }
 
-function LoginView({ email, setEmail, onSubmit, redirecting, onEnterKey }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean; onEnterKey: () => void }) {
+function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
@@ -396,9 +357,6 @@ function LoginView({ email, setEmail, onSubmit, redirecting, onEnterKey }: { ema
       </label>
       <button type="submit" disabled={redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : "Proceed"}<ArrowRight className="size-6" /></button>
     </form>
-    <button type="button" onClick={onEnterKey} className="mx-auto mt-6 flex items-center gap-2 text-sm font-bold text-[#55c7ff] underline-offset-4 hover:underline">
-      <LockKeyhole className="size-4" /> I already have a license key
-    </button>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
   </div>;
 }
