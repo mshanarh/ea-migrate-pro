@@ -18,6 +18,7 @@ import android.webkit.ValueCallback;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.ConsoleMessage;
 
@@ -67,6 +68,33 @@ public class MainActivity extends Activity {
         enterPictureInPictureMode(params);
     }
 
+    /** The origin this app owns. Everything else is somebody else's website. */
+    private static final String APP_ORIGIN = "https://eamigratepro.vercel.app";
+
+    /**
+     * true when the URL left our own site and was handed to the system
+     * browser; false when the WebView should load it itself.
+     *
+     * Covers the Whop checkout hop, mailto: links and any other outbound tap.
+     * Returning false for our own origin is what keeps the SPA working —
+     * client-side routing fires through here too.
+     */
+    private boolean openExternally(String url) {
+        if (url == null) return false;
+        if (url.startsWith(APP_ORIGIN) || url.startsWith("about:") || url.startsWith("data:")) {
+            return false;
+        }
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
+        } catch (Exception error) {
+            // No browser installed, or the chooser refused. Load it in the
+            // WebView rather than dead-ending the customer on a blank screen.
+            web.loadUrl(url);
+            return true;
+        }
+        return true;
+    }
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -90,7 +118,25 @@ public class MainActivity extends Activity {
         }
         web.setBackgroundColor(Color.parseColor("#07090b"));
         web.addJavascriptInterface(new Bridge(), "EAMigrate");
-        web.setWebViewClient(new WebViewClient());
+        // EXTERNAL LINKS LEAVE THE APP. The payment redirect is a plain
+        // location.replace() to whop.com, and a WebView that tries to render
+        // a payment page of its own accord is how "it redirects and then
+        // nothing happens" happened on Android: the checkout never opened
+        // anywhere the customer could see or pay from. Anything outside our
+        // own origin is handed to the system browser instead, which is also
+        // what the user expects when they tap a payment link.
+        web.setWebViewClient(new WebViewClient() {
+            @Override
+            public boolean shouldOverrideUrlLoading(WebView view, String url) {
+                return openExternally(url);
+            }
+
+            @Override
+            @SuppressWarnings("deprecation")
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                return openExternally(request.getUrl() != null ? request.getUrl().toString() : null);
+            }
+        });
         web.setWebChromeClient(new WebChromeClient() {
             @Override
             public boolean onConsoleMessage(ConsoleMessage message) {

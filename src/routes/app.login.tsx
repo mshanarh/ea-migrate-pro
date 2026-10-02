@@ -231,10 +231,46 @@ function AppAccess() {
     const budgetStartedAt = Date.now();
     const left = () => Math.max(2_000, 20_000 - (Date.now() - budgetStartedAt));
     try {
-      // CLOUD DEVICE BINDING FIRST: if this email is already bound to another
-      // device, do NOT sign in — show the blocked card ("account already used,
-      // please tell your mentor to reactivate"). Applies to admins and
-      // clients alike — there is no self-service unlock.
+      // PAYMENT IS DECIDED FIRST, BEFORE ANYTHING ELSE.
+      //
+      // The device-binding check used to run here, at the top, which meant an
+      // email that had never been marked paid and was bound to some other
+      // phone got told "Account already used — ask your mentor" instead of
+      // being sent to checkout. That is the wrong screen at the wrong moment:
+      // somebody who has not bought anything yet has no business being told
+      // their account is in use. Unpaid goes to Whop, full stop — the binding
+      // is only examined once the database says this account is entitled to
+      // the app at all.
+      //
+      // FAIL CLOSED. A cloud call that does not answer in time must never be
+      // read as "this account is fine" — an earlier "allow" fallback here was
+      // a payment hole. An undecided account goes to checkout, which is
+      // recoverable; walking into the app without paying is not.
+      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "checkout", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
+      if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
+
+      if (registration.outcome === "checkout") {
+        if (successReturn) {
+          // The URL flag says they returned from checkout — prove it on the
+          // server before granting anything. Unverifiable → straight to Whop.
+          const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
+          if (verified) return;
+        }
+        // A WebView (iOS WKWebView especially) drops a programmatic navigation
+        // that happens AFTER an await — by then the browser no longer counts it
+        // as a user gesture, so location.replace silently does nothing and the
+        // user is left staring at a disabled button. We show a real, tappable
+        // link as the reliable path, and keep the automatic hop (see the
+        // effect above) as the convenience route.
+        setRedirecting(true);
+        setCheckoutUrl(WHOP_CHECKOUT_URL);
+        return;
+      }
+
+      // ENTITLED — admin, or marked paid / holding a licence key. Only NOW do
+      // the device rules apply: if this email is bound to another phone, do
+      // NOT sign in — show the blocked card ("account already used, please
+      // tell your mentor to reactivate"). There is no self-service unlock.
       try {
         const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), { boundToOtherDevice: false });
         if (binding.boundToOtherDevice) {
@@ -249,7 +285,12 @@ function AppAccess() {
       const result = appSignIn(clean);
       if (result.error) {
         console.log("[app-login] Login error:", result.error);
-        toast.error(result.error);
+        // The device's own record also knows about bindings, so a repeat
+        // offender is shown the same blocked card the cloud produced rather
+        // than a bare toast — one clear way to say "this email is on another
+        // phone", never a dead end.
+        if (/already used|another device/i.test(result.error)) setBlockedEmail(clean);
+        else toast.error(result.error);
         setBusy(false);
         setRedirecting(false);
         return;
@@ -257,27 +298,12 @@ function AppAccess() {
       console.log("[app-login] Login success");
       // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
       window.sessionStorage.setItem("eamp_pending_welcome", "1");
-      if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
-
-      // Supabase registration FIRST: upsert the user (so the row EXISTS),
-      // create the session row, then decide the gate from the DATABASE —
-      // unpaid goes to checkout, paid or admin comes in. The device bind
-      // below needs the row to exist, so registration must come before it.
-      //
-      // FAIL CLOSED. A cloud call that does not answer in time must never be
-      // read as "this account is fine" — the earlier "allow" fallback here
-      // was a payment hole: a slow or failing upsert walked an unpaid user
-      // straight into the app. An undecided account goes to checkout, which
-      // is recoverable (the card has a way back); walking into the app
-      // without paying is not.
-      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "checkout", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
-      // Bind THIS device in the cloud BEFORE any redirect — including the Whop
-      // checkout hop. The access gate treats a missing binding as a stale
-      // session (the global access reset), so a person who comes back AFTER
-      // paying must already be bound — otherwise the gate would sign them out
-      // in a loop. Bindings are written at sign-in and at key activation.
+      // Bind THIS device in the cloud before letting them in. The access gate
+      // treats a missing binding as a stale session (the global access reset),
+      // so an entitled person must be bound on THIS device or the very next
+      // route change would sign them straight back out again.
       try {
         const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), left(), { ok: false, error: "Device binding timed out" });
         if (!bound.ok && bound.error) {
@@ -285,24 +311,6 @@ function AppAccess() {
         }
       } catch {
         /* a failed bind must never block sign-in */
-      }
-
-      if (registration.outcome === "checkout") {
-        if (successReturn) {
-          // The URL flag says they returned from checkout — prove it on the
-          // server before granting anything. Unverifiable → straight to Whop.
-          const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
-          if (verified) return;
-        }
-        // A WebView (iOS WKWebView especially) drops a programmatic navigation
-        // that happens AFTER an await — by then the browser no longer counts it
-        // as a user gesture, so location.assign silently does nothing and the
-        // user is left staring at a disabled button. We show a real, tappable
-        // link as the reliable path, and keep the automatic hop (see the
-        // effect above) as the convenience route.
-        setRedirecting(true);
-        setCheckoutUrl(WHOP_CHECKOUT_URL);
-        return;
       }
 
       // allow / admin — hand them over to the app. This is NOT a forced

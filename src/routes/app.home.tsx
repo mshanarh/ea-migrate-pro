@@ -237,41 +237,73 @@ function AppHome() {
 
   /**
    * THE LAST LINE OF DEFENCE — nothing renders here until the cloud says this
-   * account may use the app.
+   * account may use the app, and it keeps asking.
    *
    * beforeLoad already runs requireVerifiedAccess, but it is a single guard on
    * a single navigation: a redirect that cannot be resolved, a back/forward
    * restore, or any future caller reaching this component another way all skip
    * it. That is how an unpaid account reached the dashboard and could add a
    * robot key. This re-checks on mount and keeps the screen blank until the
-   * answer is "pass", so an unverified session cannot paint a single frame of
-   * the app. requireVerifiedAccess never throws and fails CLOSED — an
-   * unreachable database means "pay", not "in".
+   * answer is "pass".
+   *
+   * AND IT KEEPS CHECKING, because a one-shot mount check protects nobody who
+   * already had the app open. An Android WebView or a phone home-screen app
+   * that was backgrounded all day came straight back into the dashboard with a
+   * session that had since been revoked. `visibilitychange`, `focus` and
+   * `pageshow` all fire the moment the app is brought back to the front, on
+   * both platforms, and anything short of "pass" is thrown out on the spot.
+   * requireVerifiedAccess never throws and fails CLOSED — an unreachable
+   * database means "pay", not "in".
    */
   const [access, setAccess] = useState<"checking" | "ok">("checking");
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    let running = false;
+    const verify = async () => {
+      if (cancelled || running) return;
+      running = true;
       let result: { action: "pass" | "signin" | "pay" };
       try {
         result = await requireVerifiedAccess(app.email);
       } catch {
         result = { action: "pay" };
       }
+      running = false;
       if (cancelled) return;
       if (result.action === "pass") {
         setAccess("ok");
         return;
       }
+      // A moment of grace before throwing somebody out, so a flaky mobile
+      // connection cannot bounce a paying customer mid-session.
       if (result.action === "pay") {
         leaveForCheckout();
         window.location.replace("/app/login?pay=1");
         return;
       }
       window.location.replace("/app/login");
-    })();
+    };
+    void verify();
+    const onWake = () => {
+      if (document.visibilityState !== "visible") return;
+      void verify();
+    };
+    // Throttled: returning to the tab repeatedly must not become a request
+    // storm against the database.
+    let lastCheck = Date.now();
+    const throttled = () => {
+      if (Date.now() - lastCheck < 20_000) return;
+      lastCheck = Date.now();
+      onWake();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", throttled);
+    window.addEventListener("pageshow", throttled);
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", throttled);
+      window.removeEventListener("pageshow", throttled);
     };
   }, [app.email]);
 

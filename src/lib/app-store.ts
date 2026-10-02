@@ -114,7 +114,7 @@ const LEGACY_KEYS = ["eamp.app.v1", "eamp.app.v2"];
  * cloud gate again, so only emails the database actually unlocks get in.
  * All Supabase rows (users, license_keys) are PRESERVED by this reset.
  */
-const ACCESS_EPOCH = 2;
+const ACCESS_EPOCH = 3;
 const EPOCH_KEY = "eamp.access-epoch.v1";
 
 /** True exactly once per device per epoch bump — consumed at load(). */
