@@ -36,6 +36,7 @@ import {
   type AdminMessage,
   type AdminSnapshot,
   type AdminUser,
+  type AdminWriteResult,
   type ApprovalStatus,
 } from "@/lib/admin-store";
 import { OWNER_EMAILS, signOut, useCurrentAccount } from "@/lib/auth-store";
@@ -224,6 +225,13 @@ function AdminConsole() {
   // User sheet state
   const [limitDraft, setLimitDraft] = useState(0);
   const [limitSaved, setLimitSaved] = useState(false);
+  // The reason the last write was refused, shown inside the sheet. Empty means
+  // "no problem" — the Save button must never claim success without one.
+  const [limitError, setLimitError] = useState<string | null>(null);
+  // Set when the DATABASE refused the caller (not the value): the console
+  // session is not an admin session, so every write would fail. That deserves
+  // a persistent banner, not a toast that scrolls away.
+  const [writeIssue, setWriteIssue] = useState<string | null>(null);
 
   // Message sender
   const [message, setMessage] = useState("");
@@ -310,6 +318,7 @@ function AdminConsole() {
   useEffect(() => {
     setLimitDraft(openUser?.licenseLimit ?? 0);
     setLimitSaved(false);
+    setLimitError(null);
   }, [openUser?.email, openUser?.licenseLimit]);
 
   // ── Access, in two layers. The DATABASE is the real one: it refuses admin
@@ -359,16 +368,35 @@ function AdminConsole() {
     );
   }
 
-  const withUser = async (email: string, work: () => Promise<{ ok: boolean; error?: string }>, label: string) => {
+  /**
+   * ONE write, ONE honest answer. The database functions return true only
+   * after the row is committed, so the console reports success — and only
+   * success — when that happened. A refused write returns the result to the
+   * caller, so the Save button can fall back to "Save limit" with the real
+   * reason instead of sitting there claiming SAVED.
+   */
+  const withUser = async (
+    work: () => Promise<AdminWriteResult>,
+    labels: { success: string; failure: string },
+  ): Promise<AdminWriteResult> => {
     setBusy(true);
-    const result = await work();
+    let result: AdminWriteResult;
+    try {
+      result = await work();
+    } catch (error) {
+      result = { ok: false, error: error instanceof Error ? error.message : "network error" };
+    }
     setBusy(false);
     if (result.ok) {
-      toast.success(label);
+      setWriteIssue(null);
+      toast.success(labels.success);
       await refresh(true);
-    } else {
-      toast.error(`${label.replace(/…$/, "")} failed: ${result.error ?? "database error"}`);
+      return result;
     }
+    const detail = result.error ?? "database error";
+    toast.error(`${labels.failure} failed: ${detail}`);
+    if (result.needsSignIn) setWriteIssue(detail);
+    return result;
   };
 
   /**
@@ -378,22 +406,21 @@ function AdminConsole() {
    * reported so the admin can resend from the Messages tab.
    */
   const approve = (user: AdminUser) =>
-    void withUser(
-      user.email,
-      () => setUserApproval(user.email, "approved"),
-      `${user.email} approved — they can sign in now`,
-    ).then(async () => {
-      await notifyDecision(user, "approved");
+    void withUser(() => setUserApproval(user.email, "approved"), {
+      success: `${user.email} approved — they can sign in now`,
+      failure: `Approve ${user.email}`,
+    }).then((result) => {
+      // Only tell the user they are in when the database actually wrote it.
+      if (result.ok) void notifyDecision(user, "approved");
     });
 
   /** REJECT — same shape, with the decline copy. */
   const reject = (user: AdminUser) =>
-    void withUser(
-      user.email,
-      () => setUserApproval(user.email, "rejected"),
-      `${user.email} rejected — portal access revoked`,
-    ).then(async () => {
-      await notifyDecision(user, "rejected");
+    void withUser(() => setUserApproval(user.email, "rejected"), {
+      success: `${user.email} rejected — portal access revoked`,
+      failure: `Reject ${user.email}`,
+    }).then((result) => {
+      if (result.ok) void notifyDecision(user, "rejected");
     });
 
   /** Confirmation email for the person whose account was just reviewed. */
@@ -416,27 +443,27 @@ function AdminConsole() {
   };
 
   const saveLimit = (user: AdminUser) =>
-    void withUser(
-      user.email,
-      () => setUserLicenseLimit(user.email, limitDraft),
-      `Maximum keys for ${user.email} set to ${limitDraft}`,
-    ).then(() => setLimitSaved(true));
+    void withUser(() => setUserLicenseLimit(user.email, limitDraft), {
+      success: `Maximum keys for ${user.email} set to ${limitDraft}`,
+      failure: `Save the maximum for ${user.email}`,
+    }).then((result) => {
+      setLimitSaved(result.ok);
+      setLimitError(result.ok ? null : result.error ?? "The database did not confirm the save.");
+    });
 
   const togglePaid = (user: AdminUser) =>
-    void withUser(
-      user.email,
-      () => setUserPaid(user.email, !user.isPaid),
-      user.isPaid ? `${user.email} marked unpaid` : `${user.email} marked paid`,
-    );
+    void withUser(() => setUserPaid(user.email, !user.isPaid), {
+      success: user.isPaid ? `${user.email} marked unpaid` : `${user.email} marked paid`,
+      failure: `Payment flag for ${user.email}`,
+    });
 
   const toggleReactivation = (user: AdminUser) =>
-    void withUser(
-      user.email,
-      () => setUserReactivation(user.email, !user.reactivationEnabled),
-      user.reactivationEnabled
+    void withUser(() => setUserReactivation(user.email, !user.reactivationEnabled), {
+      success: user.reactivationEnabled
         ? `Device reactivation locked for ${user.email}`
         : `Device reactivation unlocked for ${user.email}`,
-    );
+      failure: `Reactivation toggle for ${user.email}`,
+    });
 
   /**
    * Send to every registered user. Recipients come from the database rows
@@ -534,6 +561,25 @@ function AdminConsole() {
           <p className="border-t border-amber-400/25 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-200">
             The database is not connected — this console can only show what it can read.
           </p>
+        ) : null}
+        {/* A refused CALLER is a different problem from a refused value: no
+            approve, limit or message will save until the console is signed in
+            with an admin account. Say so until a write succeeds. */}
+        {writeIssue ? (
+          <div className="flex items-start gap-2 border-t border-red-400/30 bg-red-500/10 px-4 py-2.5 text-[11px] text-red-200">
+            <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">{writeIssue}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setWriteIssue(null);
+                void adminSignOut().then(() => setSession(null));
+              }}
+              className="shrink-0 rounded-lg border border-red-300/40 px-2 py-1 font-black uppercase"
+            >
+              Sign in again
+            </button>
+          </div>
         ) : null}
       </header>
 
@@ -660,8 +706,13 @@ function AdminConsole() {
           user={openUser}
           busy={busy}
           limitDraft={limitDraft}
-          setLimitDraft={setLimitDraft}
           limitSaved={limitSaved}
+          limitError={limitError}
+          setLimitDraft={(value) => {
+            setLimitDraft(value);
+            setLimitSaved(false);
+            setLimitError(null);
+          }}
           onClose={() => setOpenEmail(null)}
           onApprove={() => approve(openUser)}
           onReject={() => reject(openUser)}
@@ -803,6 +854,7 @@ function UserSheet({
   limitDraft,
   setLimitDraft,
   limitSaved,
+  limitError,
   onClose,
   onApprove,
   onReject,
@@ -815,6 +867,7 @@ function UserSheet({
   limitDraft: number;
   setLimitDraft: (value: number) => void;
   limitSaved: boolean;
+  limitError: string | null;
   onClose: () => void;
   onApprove: () => void;
   onReject: () => void;
@@ -924,6 +977,19 @@ function UserSheet({
                 {limitSaved ? "Saved" : "Save limit"}
               </button>
             </div>
+            {/* Nothing is claimed unless the database confirmed it. A failed
+                save keeps the button live and shows why, so a stuck "SAVED"
+                can never hide a number that was never written. */}
+            {limitError ? (
+              <p className="mt-2 flex items-start gap-1.5 text-[11px] text-red-300">
+                <AlertTriangle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
+                Not saved — {limitError}
+              </p>
+            ) : limitSaved && limitDraft === user.licenseLimit ? (
+              <p className="mt-2 text-[11px] text-emerald-300">
+                Saved in the database — the maximum is now {user.licenseLimit}.
+              </p>
+            ) : null}
           </div>
 
           {/* Secondary toggles */}
