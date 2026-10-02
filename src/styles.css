@@ -543,7 +543,7 @@ html.platform-ios .plat-uppercase-label {
 /* Horizontal safe-area insets (landscape notch) are handled by the existing
    px-* gutters on every screen; vertical insets use the utilities above. A
    .plat-screen class is deliberately NOT defined: any unlayered padding or
-   display rule here would fight the px-*/flex utilities in the cascade. */
+   display rule here would fight the px and flex utilities in the cascade. */
 
 /* ── Platform dialogs & sheets (components/ui/dialog.tsx) ─────────────── */
 /* Android: centered Material card, 28px radius, fade + rise. */
