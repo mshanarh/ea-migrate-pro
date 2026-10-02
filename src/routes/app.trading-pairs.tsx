@@ -8,6 +8,12 @@ import { getAppState, leaveForCheckout, requireAppAccess, setRobotPairs, useAppS
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  executeAutoTrade,
+  readMtCredentials,
+  resolveTradeDirection,
+  safeTradeCount,
+} from "@/lib/auto-trade";
 
 export const Route = createFileRoute("/app/trading-pairs")({
   ssr: false,
@@ -83,6 +89,16 @@ function TradingPairsScreen() {
     setTypeOpen(false);
   };
 
+  /**
+   * CONFIGURE — save the symbol's settings to the robot's Selected Quotes and
+   * then actually place the trade, rather than only filing the settings away.
+   *
+   * The settings are saved FIRST and unconditionally, so the symbol is part of
+   * the robot even if the broker later refuses the order. Execution then runs
+   * in the background against the user's own saved MT5 account; without a
+   * configured account the save still stands and no error is raised, because
+   * configuring a symbol is not the same thing as trading it.
+   */
   const saveConfig = () => {
     if (!robot || !configSymbol) return;
     const exists = mineSymbols.has(symbolKey(configSymbol));
@@ -102,7 +118,48 @@ function TradingPairsScreen() {
     // After configuring, jump back to Allowed Quotes — that is the list the
     // user picks the next symbol from.
     setTab("allowed");
+    const symbol = configSymbol;
     setConfigSymbol(null);
+
+    // Live execution: needs BOTH the saved MT5 account and the password the
+    // MetaTrader page stored on this device. Missing either → settings-only.
+    const credentials = readMtCredentials(app.mt);
+    if (!credentials) {
+      toast.message("Saved. Add your MT5 details to trade this symbol automatically.", {
+        description: "MetaTrader page → save your account.",
+      });
+      return;
+    }
+
+    void (async () => {
+      try {
+        const resolution = await resolveTradeDirection(symbol, draftDirection);
+        toast.message(
+          `${symbol} — ${resolution.direction} (${resolution.source === "analysis" ? "market read" : resolution.source === "selection" ? "your selection" : "default"})`,
+          { description: resolution.reason },
+        );
+        const result = await executeAutoTrade({
+          credentials,
+          symbol,
+          direction: resolution.direction,
+          lot: Number(entry.lotSize) || 0.01,
+          trades: safeTradeCount(entry.maxTrades),
+          ...(robot.name ? { botName: robot.name } : {}),
+          ...(robot.image ? { robotImage: robot.image } : {}),
+        });
+        if (result.ok) {
+          toast.success(`${result.symbol} ${result.direction} opened on MT5`, {
+            description: result.message,
+          });
+        } else {
+          toast.error(`${result.symbol} did not open`, { description: result.message });
+        }
+      } catch (error) {
+        toast.error(`${symbol} could not be prepared`, {
+          description: error instanceof Error ? error.message : "Unexpected error.",
+        });
+      }
+    })();
   };
 
   const removeSymbol = () => {

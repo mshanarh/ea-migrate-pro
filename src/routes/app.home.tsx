@@ -12,12 +12,12 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, appSignOut, getAppState, leaveForCheckout, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, leaveForCheckout, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
-import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
+import { executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount } from "@/lib/auto-trade";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -330,6 +330,78 @@ function AppHome() {
     setModalOpen(false);
   };
 
+  /**
+   * AUTO-TRADE the robot's configured Selected Quotes on the user's own MT5
+   * account through the VPS bridge.
+   *
+   * Each pair is executed one after another — never in parallel, because
+   * brokers rate-limit bursts — and every step is announced on the
+   * `eamp:execution-result` bus so the floating bot popup narrates the run.
+   * A pair configured as BOTH is resolved against the market before trading;
+   * a specific BUY/SELL is honoured as the user's own instruction.
+   *
+   * The robot is already RUNNING by the time this is called: START is a
+   * toggle, and the user must not wait on a broker round-trip to see their bot
+   * come alive. Failures are reported per symbol and never leave the run half
+   * finished without an explanation.
+   */
+  const runConfiguredPairs = async (target: Robot) => {
+    const pairs = target.pairs ?? [];
+    if (pairs.length === 0) return;
+    const credentials = readMtCredentials(app.mt);
+    if (!credentials) {
+      toast.message(`${target.name} is running`, {
+        description: "Add your MT5 details to trade its quotes automatically — MetaTrader page.",
+      });
+      return;
+    }
+
+    let opened = 0;
+    let refused = 0;
+    for (const pair of pairs) {
+      const symbol = pair.symbol.trim();
+      if (!symbol) continue;
+      try {
+        const resolution = await resolveTradeDirection(symbol, pair.direction);
+        const result = await executeAutoTrade({
+          credentials,
+          symbol,
+          direction: resolution.direction,
+          lot: Number(pair.lotSize) || 0.01,
+          trades: safeTradeCount(pair.maxTrades),
+          botName: target.name,
+          ...(target.image ? { robotImage: target.image } : {}),
+        });
+        if (result.ok) opened += 1;
+        else refused += 1;
+      } catch (error) {
+        refused += 1;
+        console.warn(`[start] ${symbol} failed:`, error);
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: {
+              ok: false,
+              message: `${symbol.toUpperCase()} FAILED — ${
+                error instanceof Error ? error.message.toUpperCase() : "UNKNOWN ERROR"
+              }`,
+            },
+          }),
+        );
+      }
+    }
+
+    if (opened > 0) {
+      toast.success(
+        `${target.name} opened ${opened} ${opened === 1 ? "trade" : "trades"} on MT5`,
+        refused > 0 ? { description: `${refused} symbol(s) were refused — see the bot log.` } : undefined,
+      );
+    } else if (refused > 0) {
+      toast.error(`${target.name} could not open any trades`, {
+        description: "Check your MT5 details and the bot log for the broker's reason.",
+      });
+    }
+  };
+
   // START toggles the robot and always confirms with the draggable bot popup.
   const handleStart = () => {
     if (!robot) return;
@@ -345,25 +417,12 @@ function AppHome() {
     toast.success(`${robot.name} started`);
     speakBot(`${robot.name} started. Time to make money.`);
     // Live execution fires in the background on the user's own saved MT5
-    // account through the VPS bridge; it never blocks START. Without a saved
-    // account or a signed-in portal session it is a no-op.
-    if (!app.mt || !app.email) return;
-    const firstPair = robot.pairs?.[0];
-    const symbol = firstPair?.symbol ?? robot.symbols[0] ?? "XAUUSD";
-    void executeMt5ForUser({
-      data: {
-        userId: app.email,
-        eaName: robot.name,
-        symbol,
-        action: "BUY",
-        volume: Number(firstPair?.lotSize ?? 0.01),
-        tradeCount: 1,
-      },
-    })
-      .then((result) => {
-        if (!result.ok) console.warn("[start] live execution skipped:", result.message);
-      })
-      .catch(() => {});
+    // account through the VPS bridge; it never blocks START.
+    // Fire-and-forget: START is a toggle and must not wait on the broker.
+    // runConfiguredPairs handles and reports its own per-symbol failures.
+    void runConfiguredPairs(robot).catch((error: unknown) => {
+      console.warn("[start] auto-trade run failed:", error);
+    });
   };
 
   // ── QUOTES — the QUOTES button opens the redesigned quotes page (Selected
