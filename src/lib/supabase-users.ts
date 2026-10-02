@@ -122,20 +122,25 @@ export async function registerWithEmail(
   // scanner. The hardcoded owner list decides first, everywhere.
   if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
   if (user.is_admin) return { outcome: "admin", user };
-  // APPROVAL GATE — the admin console owns the decision. A rejected account
-  // is shut out for good; a pending one waits for review and must NOT reach
-  // checkout either (they have not been asked to pay yet). An APPROVED
-  // account goes straight in: pressing Approve in the console is the owner's
-  // decision that this person may use the app, so they must never be bounced
-  // to checkout afterwards just because no payment is recorded yet.
+  // APPROVAL GATE — the admin console owns the decision, and it is checked
+  // BEFORE payment on purpose:
+  //   approved  → straight in. Pressing Approve is the owner's decision that
+  //               this person may use the app, so they are never then bounced
+  //               to checkout for want of a recorded payment.
+  //   rejected  → shut out, and stays shut out.
+  //   pending   → this is the state a BRAND-NEW signup is in, because
+  //               registerWithEmail writes the pending row itself moments
+  //               earlier. Holding it here meant the checkout branch below was
+  //               unreachable: pressing Proceed on the app's first screen
+  //               showed "waiting for approval" and never sent anyone to Whop.
+  //               An unreviewed, unpaid account now falls through to checkout
+  //               like any other unpaid visitor, and Approve remains the way
+  //               to grant access without payment.
   // The read fails open (ok:false) so a database hiccup can never lock a
   // paying customer out.
   const approval = await getApprovalForEmail(address);
   if (approval.ok && approval.status === "rejected") return { outcome: "rejected", user };
   if (approval.ok && approval.status === "approved") return { outcome: "allow", user };
-  if (approval.ok && approval.status === "pending" && !user.is_paid && !(await emailHasLicenseKey(address))) {
-    return { outcome: "pending", user };
-  }
   if (user.is_paid) return { outcome: "allow", user };
   // A license key bound to this email IS payment — a client who already
   // received their key must reach the key-entry screen, never Whop.

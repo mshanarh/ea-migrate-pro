@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -52,10 +52,36 @@ function Licenses() {
   const [formError, setFormError] = useState("");
   // Two-tap delete confirmation (Android WebView has no window.confirm).
   const [armedDelete, setArmedDelete] = useState<string | null>(null);
+  // The admin console writes the key allowance to the database
+  // (app_settings "limit:<email>"). This page used to read the allowance from
+  // the account's LOCAL licenseLimit, which the console never updates — so a
+  // mentor who had been granted 500 keys still saw "no allowance set" and the
+  // Generate button stayed disabled. The database value wins; the local one is
+  // only a fallback for the brief moment before the first read lands.
+  const [cloudLimit, setCloudLimit] = useState<number | null>(null);
+  useEffect(() => {
+    if (!account) return;
+    let cancelled = false;
+    const read = async () => {
+      try {
+        const { getLicenseCapForEmail } = await import("@/lib/admin-store");
+        const cap = await getLicenseCapForEmail(account.email);
+        if (!cancelled) setCloudLimit(cap);
+      } catch {
+        /* keep the local fallback on a read failure — never lock anyone out */
+      }
+    };
+    void read();
+    const timer = setInterval(() => void read(), 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [account?.email]);
   if (!account) return null;
 
   const used = account.licenses.length;
-  const allowed = account.licenseLimit;
+  const allowed = cloudLimit ?? account.licenseLimit;
   const remaining = Math.max(allowed - used, 0);
   const selectedEa = account.eas.find((ea) => ea.id === eaId);
   const resetForm = () => {
@@ -417,8 +443,8 @@ function Licenses() {
         </Button>
       </div>
       {account.eas.length === 0 && <p className="mt-3 text-sm text-muted-foreground">Create an EA profile before generating a key.</p>}
-      {remaining === 0 && allowed > 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all keys allowed for this account.</p>}
-      {allowed === 0 && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet.</p>}
+      {remaining === 0 && allowed > 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all {allowed} key{allowed === 1 ? "" : "s"} allowed for this account.</p>}
+      {allowed === 0 && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet. Once they set one it appears here automatically.</p>}
 
       {/* Re-activate Client lives on its own page: /dashboard/reactivate */}
       {account.licenses.length === 0 ? (
