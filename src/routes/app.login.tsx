@@ -16,6 +16,32 @@ export const Route = createFileRoute("/app/login")({
 
 const WHOP_CHECKOUT_URL = (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
 
+/**
+ * A HARD DEADLINE around every cloud call on the way in.
+ *
+ * A sign-in is a chain of five or six sequential Supabase round trips, and a
+ * stalled mobile connection leaves `fetch` pending indefinitely — the button
+ * said "Redirecting to Whop…" forever and nothing ever happened. Nothing on
+ * this path is allowed to freeze the door: if a call has not answered in
+ * time, the screen moves on with a safe fallback and the route guard on
+ * /app/home (which is cloud-authoritative anyway) has the final say.
+ */
+function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), ms);
+    work.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
+}
+
 function AppAccess() {
   const app = useAppState();
   const [email, setEmail] = useState(app.email ?? "");
@@ -180,14 +206,19 @@ function AppAccess() {
     // Freeze the auto-redirect BEFORE the first await (see `busy`). Every
     // exit below that is not "go to checkout" puts it back.
     setBusy(true);
-    setRedirecting(true);
+    // ONE shared budget for the whole decision. Each call below may only
+    // spend what is left of it, so however badly the network behaves the
+    // door still opens inside ~20s instead of showing "Redirecting to
+    // Whop…" forever.
+    const budgetStartedAt = Date.now();
+    const left = () => Math.max(2_000, 20_000 - (Date.now() - budgetStartedAt));
     try {
       // CLOUD DEVICE BINDING FIRST: if this email is already bound to another
       // device, do NOT sign in — show the blocked card ("account already used,
       // please tell your mentor to reactivate"). Applies to admins and
       // clients alike — there is no self-service unlock.
       try {
-        const binding = await checkDeviceBinding(clean, getDeviceId());
+        const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), { boundToOtherDevice: false });
         if (binding.boundToOtherDevice) {
           setBlockedEmail(clean);
           setBusy(false);
@@ -214,7 +245,12 @@ function AppAccess() {
       // create the session row, then decide the gate from the DATABASE —
       // unpaid goes to checkout, paid or admin comes in. The device bind
       // below needs the row to exist, so registration must come before it.
-      const registration = await registerWithEmail(clean);
+      //
+      // A cloud call that does not answer in 15s must NOT strand the user.
+      // "allow" is the safe fallback: /app/home re-checks the database and
+      // routes to checkout on its own, so nobody is shown a payment page
+      // they do not need and nobody is locked out of one they do.
+      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "allow", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
       // PENDING / REJECTED — the account exists but the admin has not cleared
@@ -234,7 +270,7 @@ function AppAccess() {
       // paying must already be bound — otherwise the gate would sign them out
       // in a loop. Bindings are written at sign-in and at key activation.
       try {
-        const bound = await bindDeviceToEmail(clean, getDeviceId());
+        const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), left(), { ok: false, error: "Device binding timed out" });
         if (!bound.ok && bound.error) {
           toast.error(bound.error);
         }
@@ -246,23 +282,26 @@ function AppAccess() {
         if (successReturn) {
           // The URL flag says they returned from checkout — prove it on the
           // server before granting anything. Unverifiable → straight to Whop.
-          const verified = await verifyPaymentReturn(clean);
+          const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
           if (verified) return;
         }
         // A WebView (iOS WKWebView especially) drops a programmatic navigation
         // that happens AFTER an await — by then the browser no longer counts it
         // as a user gesture, so location.assign silently does nothing and the
-        // user is left staring at a button that says "Redirecting to Whop…".
-        // We show a real, tappable link as the reliable path, and keep the
-        // automatic hop (see the effect above) as the convenience route.
+        // user is left staring at a disabled button. We show a real, tappable
+        // link as the reliable path, and keep the automatic hop (see the
+        // effect above) as the convenience route.
+        setRedirecting(true);
         setCheckoutUrl(WHOP_CHECKOUT_URL);
         return;
       }
 
-      // allow / admin — nothing left to decide; let the auto-redirect effect
-      // walk them into the app once this settles.
+      // allow / admin — hand them to the app. Its guard re-reads the database,
+      // so an approved account that never recorded a payment still gets in,
+      // and one that must pay is routed to the checkout card from there.
       setBusy(false);
       setRedirecting(false);
+      window.location.assign("/app/home");
     } catch (error) {
       // A thrown network/registration error must never leave the button
       // stuck on "Redirecting to Whop…" forever.
@@ -276,6 +315,22 @@ function AppAccess() {
   /** Dismiss the blocked card and try a different email. */
   const dismissBlocked = () => setBlockedEmail(null);
   const dismissHeld = () => setHeldEmail(null);
+  /**
+   * Back out of the checkout card. Reached two ways: the user tapping the
+   * escape link (a payment page they did not need — an approved account on a
+   * flaky connection, say) and the ?pay=1 deep link that /app/home sends
+   * here. The URL is rewritten too, or a refresh would bounce them straight
+   * back to checkout.
+   */
+  const dismissCheckout = () => {
+    setCheckoutUrl(null);
+    setPayPrompt(false);
+    setRedirecting(false);
+    setBusy(false);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/app/login");
+    }
+  };
 
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
@@ -307,10 +362,10 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {(checkoutUrl || payPrompt) ? <CheckoutRedirect url={checkoutUrl ?? WHOP_CHECKOUT_URL} email={activeEmail} /> :
+      {(checkoutUrl || payPrompt) ? <CheckoutRedirect url={checkoutUrl ?? WHOP_CHECKOUT_URL} email={activeEmail} onCancel={dismissCheckout} /> :
       heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -415,7 +470,7 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
   </div>;
 }
 
-function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; redirecting: boolean }) {
+function LoginView({ email, setEmail, onSubmit, checking, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
@@ -427,7 +482,7 @@ function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; 
         <Mail className="size-6 shrink-0 text-[#aab2b7]" />
         <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />
       </label>
-      <button type="submit" disabled={redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : "Proceed"}<ArrowRight className="size-6" /></button>
+      <button type="submit" disabled={checking || redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Proceed"}<ArrowRight className="size-6" /></button>
     </form>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
   </div>;
@@ -463,9 +518,17 @@ function useIsStandalone(): boolean {
  *    works is copying the link and opening it in the real browser, so that is
  *    what this screen offers when it detects it is running standalone.
  */
-function CheckoutRedirect({ url, email }: { url: string; email: string }) {
+function CheckoutRedirect({ url, email, onCancel }: { url: string; email: string; onCancel: () => void }) {
   const standalone = useIsStandalone();
   const [copied, setCopied] = useState(false);
+  // If the automatic hop has not left the page after a couple of seconds,
+  // it was dropped by the container (an iOS home-screen app, an embedded
+  // WebView). Say so plainly instead of leaving a dead screen.
+  const [hopFailed, setHopFailed] = useState(false);
+  useEffect(() => {
+    const timer = setTimeout(() => setHopFailed(true), 2500);
+    return () => clearTimeout(timer);
+  }, []);
 
   const copy = async () => {
     try {
@@ -486,6 +549,11 @@ function CheckoutRedirect({ url, email }: { url: string; email: string }) {
       This account needs an active subscription to use EA Migrate.
       {email ? ` Pay for ${email}.` : ""}
     </p>
+    {!standalone && hopFailed ? (
+      <p role="status" className="mt-4 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left text-sm font-semibold leading-6 text-amber-100">
+        The automatic redirect did not open. Tap Continue to payment below to open Whop checkout.
+      </p>
+    ) : null}
 
     {standalone ? (
       <>
@@ -537,6 +605,16 @@ function CheckoutRedirect({ url, email }: { url: string; email: string }) {
     <p className="mt-6 text-xs leading-5 text-[#59646b]">
       Already subscribed? Use the exact email you paid with.
     </p>
+    {/* ESCAPE HATCH — an approved account on a slow connection can reach
+        this card without owing anything, and being stuck on a payment page
+        with no way out is the worst possible outcome. */}
+    <button
+      type="button"
+      onClick={onCancel}
+      className="mt-4 h-12 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
+    >
+      Back — use a different email
+    </button>
   </div>;
 }
 
