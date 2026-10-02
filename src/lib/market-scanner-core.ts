@@ -136,7 +136,9 @@ async function runScannerAnalysis(
 
   // The latest feed close is the reference; the bridge executes at the
   // broker's real market price when the user presses Execute.
-  const hasLiveQuote = false;
+  // (The old engine carried a stuck `hasLiveQuote = false` here and used it
+  // to cap EVERY symbol's confidence at 55%. It is gone — `estimated` now
+  // carries the same meaning, honestly.)
   const close = referenceClose;
   const bid = close;
   const ask = close;
@@ -153,16 +155,24 @@ async function runScannerAnalysis(
       ? swings(candles)
       : { high: close + atrValue * 2, low: close - atrValue * 2 };
 
-  const trendUp = ema21 > ema50;
-  const priceAboveEma = close > ema21;
-
-  // ── Confluence engine — 5 core checks, tuned for ACTIONABLE plans ──
-  // The full 21>50>200 stack requirement parked the scanner on WAIT most of
-  // the time. Trend is now simply EMA21 vs EMA50, with price holding the
-  // trend side. RSI: bullish above 48 (veto only above 75 — overbought),
-  // bearish below 52 (veto only below 25 — oversold). 3+ of 5 checks agree
-  // → actionable MODERATE, 4+ → STRONG. WAIT is reserved for a genuinely
-  // flat market (0–1 checks) and for simulated/synthetic data.
+  // ── Confluence engine — four INDEPENDENT axes, plus RSI as a nudge ──
+  //
+  // The previous engine voted with five yes/no checks, four of which were
+  // exact opposites of each other: trend (EMA21>EMA50), position
+  // (close>EMA21), momentum (MACD>0) and conviction (last 10 candles up)
+  // all measure the SAME underlying drift. So a market that leaned even
+  // slightly one way scored 4–1 and was labelled STRONG, while WEAK was
+  // mathematically near-unreachable. The label carried almost no
+  // information about the setup.
+  //
+  // Each axis below is signed (−1…+1) and scaled by HOW strongly it agrees,
+  // and the axes are chosen to measure genuinely different things:
+  //   TREND         — moving-average separation, measured in ATR
+  //   STRUCTURE     — swing progression (price action, not averages)
+  //   MOMENTUM      — MACD histogram, normalised and expansion-aware
+  //   PARTICIPATION — how much recent travel was directional, not noise
+  // RSI is deliberately NOT a vote: it is the noisiest input here, so it
+  // only nudges the total and can veto a stretched extreme.
   const ema200 = closes.length >= 60 ? ema(closes, Math.min(200, closes.length)) : ema50;
   const emaStackedUp = ema21 > ema50 && ema50 > ema200;
   const emaStackedDown = ema21 < ema50 && ema50 < ema200;
@@ -193,80 +203,100 @@ async function runScannerAnalysis(
   const bullishCandles = recentCandles.filter((candle) => candle.close >= candle.open).length;
   const bearishCandles = recentCandles.length - bullishCandles;
   const candleDirectionUp = bullishCandles > bearishCandles;
-  const candleAgreement = recentCandles.length > 0 ? (candleDirectionUp ? bullishCandles : bearishCandles) / recentCandles.length : 0;
-
-  // RSI: momentum on the trend side with generous bands. Bullish above 48
-  // (only vetoed above 75 — overbought), bearish below 52 (vetoed below 25).
+  const agreement = recentCandles.length > 0
+    ? (candleDirectionUp ? bullishCandles : bearishCandles) / recentCandles.length
+    : 0;
+  const trendUp = ema21 > ema50;
+  const priceAboveEma = close > ema21;
   const rsiBullBand = rsiValue > 48 && rsiValue < 75;
   const rsiBearBand = rsiValue < 52 && rsiValue > 25;
 
-  // The 5 CORE checks. 3+ agreeing = tradeable momentum in one direction.
-  const bullChecks = {
-    /** Trend direction: EMA21 above EMA50. */
-    trend: trendUp,
-    /** Price holding the trend side of the fast EMA. */
-    position: priceAboveEma,
-    /** MACD histogram positive — momentum confirms. */
-    momentum: histogram > 0,
-    /** RSI on the bullish side (not overbought). */
-    rsi: rsiBullBand,
-    /** Recent candles travelling up (majority of last 10). */
-    conviction: candleDirectionUp,
-  };
-  const bearChecks = {
-    trend: !trendUp,
-    position: !priceAboveEma,
-    momentum: histogram < 0,
-    rsi: rsiBearBand,
-    conviction: !candleDirectionUp,
-  };
-  const bullScore = Object.values(bullChecks).filter(Boolean).length;
-  const bearScore = Object.values(bearChecks).filter(Boolean).length;
+  // ── 1. TREND — EMA separation in ATR units, so a 2-pip gap and a
+  //       200-pip gap are not scored the same. Capped at 1.5 ATR.
+  const trendAxis = clamp((ema21 - ema50) / Math.max(atrValue * 1.5, 1e-9), -1, 1);
 
-  // Direction: the stronger confluence side wins; a tie is broken by the
-  // RSI side (above 50 = bullish). The DIRECTION is only meaningful when
-  // the strict gate below passes.
-  const tieBreakRsi = rsiValue !== 50 ? rsiValue > 50 : (lastCandle?.close ?? close) >= (lastCandle?.open ?? close);
-  const bullishLead = bullScore > bearScore || (bullScore === bearScore && tieBreakRsi);
-  const signal: ScannerAnalysis["signal"] = bullishLead ? "BUY" : "SELL";
+  // ── 2. STRUCTURE — swing progression. Independent of the averages:
+  //       price can be making higher lows while EMAs are still tangled.
+  const structureAxis = higherLows ? 1 : lowerHighs ? -1 : 0;
+
+  // ── 3. MOMENTUM — MACD histogram normalised by its own scale, damped
+  //       when the histogram is contracting (a move losing its legs).
+  const macdUnit = Math.max(atrValue * Math.max(close, 1e-9), 1e-12);
+  const macdNorm = clamp((histogram / macdUnit) * 12, -1, 1);
+  const histogramSeries = macdHistogramSeries(closes);
+  const recentHistogram = histogramSeries.slice(-3);
+  const priorHistogram = histogramSeries.slice(-8, -3);
+  const recentMean = mean(recentHistogram);
+  const priorMean = mean(priorHistogram);
+  const expanding = Math.abs(recentMean) >= Math.abs(priorMean);
+  const momentumAxis = macdNorm * (expanding ? 1 : 0.55);
+
+  // ── 4. PARTICIPATION — directional travel ÷ total path over the recent
+  //       window. This is the axis that separates "trending" from
+  //       "drifting sideways"; EMAs alone cannot tell them apart.
+  const participationAxis = clamp(signedEfficiency(candles, 14) * 1.6, -1, 1);
+
+  const weighted =
+    trendAxis * 0.3 + structureAxis * 0.25 + momentumAxis * 0.25 + participationAxis * 0.2;
+  const rsiAxis = clamp((rsiValue - 50) / 25, -1, 1);
+  // RSI nudges rather than votes — it confirms, it does not decide.
+  const net = clamp(weighted * 0.85 + rsiAxis * 0.15, -1, 1);
+
+  const signal: ScannerAnalysis["signal"] = net >= 0 ? "BUY" : "SELL";
   const bias: ScannerAnalysis["bias"] =
-    bullScore === bearScore ? "NEUTRAL" : bullishLead ? "BULLISH" : "BEARISH";
+    Math.abs(net) < 0.12 ? "NEUTRAL" : net > 0 ? "BULLISH" : "BEARISH";
 
-  const conditionalSetup = !hasLiveQuote;
+  // ── MARKET QUALITY — where NO plan should be trusted ───────────────
+  // Kaufman efficiency ratio: net travel ÷ total path. Near 1 the market
+  // goes in a line; near 0 it grinds sideways and every stop gets taken
+  // out by noise. This was the missing input: the old engine had no way to
+  // tell a trend from a chop, so it produced plans in both.
+  const efficiency = clamp(kaufmanEfficiency(candles, 20), 0, 1);
+  const atrPercent = atrValue / Math.max(close, 1e-9);
+  const extension = Math.abs(close - ema21) / Math.max(atrValue, 1e-9);
+  const rsiVeto = rsiValue >= 78 || rsiValue <= 22;
 
-  // ── The EXECUTABLE GATE — the trader decides, the scanner informs ──
-  // Every REAL-feed setup produces an executable plan (BUY/SELL with entry,
-  // structural stop and 1:2.5 target). Confluence only sets the STRENGTH
-  // label, never blocks: 4+/5 → STRONG, 3 → MODERATE, ≤2 → WEAK (trade
-  // small). WAIT is reserved for simulated/synthetic data — the levels
-  // would describe a different instrument than the one being traded.
-  const leadingScore = Math.max(bullScore, bearScore);
-  const structureAligned = bullishLead ? higherLows : lowerHighs;
-  const ranging = !higherLows && !lowerHighs;
-  // ESTIMATED candles are EXECUTABLE: when the public feed has no data for a
-  // broker symbol, analysis runs on the estimated price structure and the
-  // bridge anchors entry/SL/TP to the broker's REAL market price at execution
-  // time — so the plan is never traded blind. Only true synthetic proxies
-  // (FLAME/BOOM/CRASH-style instruments with no real market at all) stay WAIT.
+  const deadMarket = atrPercent < 0.0008; // < 0.08% per candle — spread eats it
+  const chop = efficiency < 0.18; // sideways: stops are noise
+  const directional = Math.abs(net) >= 0.18;
+
+  // ESTIMATED candles stay executable: the bridge re-anchors entry/SL/TP
+  // to the broker's REAL price at execution time, so the plan is never
+  // traded blind. Only true synthetic proxies (no real market at all) and
+  // genuinely untradeable conditions (dead or choppy markets) block.
   const tradableData = !synthetic;
   const estimated = synthesized;
-  const gatePassed = tradableData;
+  const gatePassed = tradableData && !deadMarket && !chop && directional;
+  const conditionalSetup = !tradableData || estimated;
 
-  // Confidence mirrors the confluence achieved, capped for conditional
-  // (no-live-quote) plans and low-confluence setups.
-  const confidenceBase = Math.round(Math.min(95, 40 + leadingScore * 10));
-  const confidence = conditionalSetup ? Math.min(55, confidenceBase) : confidenceBase;
+  // How many of the four independent axes actually back this direction.
+  const axes = [trendAxis, structureAxis, momentumAxis, participationAxis];
+  const agreeing = axes.filter(
+    (value) => Math.sign(value) === Math.sign(net) && Math.abs(value) >= 0.2,
+  ).length;
 
-  // Strength: 4/5 → STRONG, 3 → MODERATE, ≤2 → WEAK (executable, trade
-  // small). Only simulated/synthetic data returns WAIT.
-  const agreement = candleAgreement;
+  // Conviction reflects the QUALITY of agreement, so a strong trend with
+  // no structure behind it can never print a high number. The scale is
+  // set so a textbook trend (net 1, 4 axes, 0.5 efficiency) lands in the
+  // low 90s and an ordinary setup in the 40s — the top of the range has
+  // to stay rare or it means nothing.
+  const conviction = Math.round(
+    Math.min(96, Math.abs(net) * 55 + agreeing * 6 + efficiency * 30),
+  );
+  // The old engine hard-capped every symbol at 55% (a hasLiveQuote flag
+  // was stuck false), which made confidence identical on every
+  // instrument. An estimated reference now costs a modest penalty
+  // instead of erasing the scale.
+  const confidence = estimated ? Math.round(conviction * 0.9) : conviction;
+
   const finalStrength: ScannerAnalysis["strength"] = !gatePassed
-    ? "WAIT" // synthetic proxies only
-    : leadingScore >= 4
+    ? "WAIT"
+    : agreeing >= 3 && efficiency >= 0.3 && !rsiVeto && extension <= 2.6 && conviction >= 55
       ? "STRONG"
-      : leadingScore === 3
+      : agreeing >= 2 && conviction >= 38
         ? "MODERATE"
         : "WEAK";
+
   const entry = signal === "BUY" ? ask : bid;
 
   // ── Structure-aware SL/TP (smart-money style) ─────────────────────
@@ -285,7 +315,13 @@ async function runScannerAnalysis(
 
   const waitReason = synthetic
     ? `${symbol} is a broker synthetic index tracked by a volatility proxy — plans are never executable.`
-    : "No tradable market data.";
+    : deadMarket
+      ? `${symbol} is barely moving (ATR ${(atrPercent * 100).toFixed(3)}% per candle) — the spread costs more than the move.`
+      : chop
+        ? `${symbol} is moving sideways (efficiency ${(efficiency * 100).toFixed(0)}%): there is no trend to ride and stops get taken out by noise.`
+        : directional
+          ? "No tradable market data."
+          : `${symbol} has no clear direction right now (net score ${net.toFixed(2)}) — the evidence does not agree, so there is no edge to take.`;
 
   const reasons: string[] = [];
   reasons.push(
@@ -305,8 +341,12 @@ async function runScannerAnalysis(
     reasons.push(
       `RSI(14) at ${rsiValue.toFixed(1)} — ${rsiValue >= 75 ? "overbought (no fresh longs)" : rsiValue <= 25 ? "oversold (no fresh shorts)" : rsiBullBand ? "bullish side" : rsiBearBand ? "bearish side" : "neutral zone"}.`,
     );
+    // The four axes, spelled out — the trader can see WHY the call was made.
     reasons.push(
-      `MACD momentum is ${histogram > 0 ? "positive" : "negative"}; market structure shows ${higherLows ? "higher lows" : lowerHighs ? "lower highs" : "no clean swing progression (ranging)"}. Confluence ${bullScore}–${bearScore} of 5 (bull–bear).`,
+      `Independent evidence: trend ${signed(trendAxis)}, structure ${signed(structureAxis)}, momentum ${signed(momentumAxis)}, participation ${signed(participationAxis)} → net ${signed(net)}. ${agreeing} of 4 axes back the ${signal} side.`,
+    );
+    reasons.push(
+      `Market quality: efficiency ${(efficiency * 100).toFixed(0)}% (${efficiency >= 0.3 ? "trending" : efficiency >= 0.18 ? "mild trend" : "sideways"}), ATR ${(atrPercent * 100).toFixed(3)}% per candle, price ${extension.toFixed(1)}× ATR from the EMA21${extension > 2.6 ? " — already extended, late entry" : ""}.`,
     );
     reasons.push(
       `Price ${close > ema21 ? "holding above" : "trading below"} the EMA21 dynamic level; the last 10 candles are ${Math.round(bullishCandles / Math.max(1, recentCandles.length) * 100)}% bullish / ${Math.round(bearishCandles / Math.max(1, recentCandles.length) * 100)}% bearish.`,
@@ -322,16 +362,16 @@ async function runScannerAnalysis(
   reasons.push(
     gatePassed
       ? `Plan: ${signal} at entry ${fmtPrice(entry)}, structural stop ${fmtPrice(stopLoss)} (swing ± 1.8× ATR), target ${fmtPrice(takeProfit)} at 1:2.5 risk-reward — the stop already covers the spread.${estimated ? " Levels re-anchor to the live broker price on execution." : ""}`
-      : `NO TRADE — ${waitReason} Strength: WAIT; no public provider tracks this instrument, so execution is disabled.`,
+      : `NO TRADE — ${waitReason} Strength: WAIT; execution is disabled.`,
   );
   reasons.push(
     finalStrength === "WAIT"
-      ? `Signal strength: WAIT — ${symbol} is a synthetic proxy with no real market. Execution is blocked.`
+      ? `Signal strength: WAIT — ${waitReason}`
       : finalStrength === "WEAK"
-        ? `Signal strength: WEAK — only ${leadingScore}/5 core checks agree (${Math.round(agreement * 100)}% candle agreement). The plan is executable — trade SMALL and respect the stop.`
+        ? `Signal strength: WEAK — net ${signed(net)} with only ${agreeing}/4 independent axes agreeing and ${(efficiency * 100).toFixed(0)}% efficiency. Executable, but trade SMALL and respect the stop.`
         : finalStrength === "MODERATE"
-          ? `Signal strength: MODERATE — ${leadingScore}/5 core checks agree with ${Math.round(agreement * 100)}% candle agreement. Executable with standard risk.`
-          : `Signal strength: STRONG — ${leadingScore}/5 core checks agree and ${Math.round(agreement * 100)}% of the last 10 candles travel with the call. High-conviction execution.`,
+          ? `Signal strength: MODERATE — net ${signed(net)}, ${agreeing}/4 independent axes agreeing, ${(efficiency * 100).toFixed(0)}% efficiency. Executable with standard risk.`
+          : `Signal strength: STRONG — net ${signed(net)}, ${agreeing}/4 independent axes agreeing on a ${(efficiency * 100).toFixed(0)}%-efficient trend${rsiVeto ? "" : ", no momentum extreme"}. High-conviction execution.`,
   );
 
   const fmt = (value: number) =>
@@ -346,7 +386,7 @@ async function runScannerAnalysis(
       label: "Momentum (RSI 14)",
       value:
         closes.length >= 15
-          ? `${rsiValue.toFixed(1)} ${rsiBullBand ? "· Bullish side" : rsiBearBand ? "· Bearish side" : "· Neutral"}`
+          ? `${rsiValue.toFixed(1)} ${rsiVeto ? "· Extreme" : rsiBullBand ? "· Bullish side" : rsiBearBand ? "· Bearish side" : "· Neutral"}`
           : "n/a",
       bullish: closes.length >= 15 ? (rsiBullBand ? true : rsiBearBand ? false : null) : null,
     },
@@ -367,9 +407,14 @@ async function runScannerAnalysis(
       bullish: null,
     },
     {
-      label: "Confluence",
-      value: `${leadingScore}/5 · ${gatePassed ? "actionable" : "flat market"}`,
+      label: "Confluence (independent axes)",
+      value: `${agreeing}/4 agree · net ${signed(net)}`,
       bullish: gatePassed ? (signal === "BUY" ? true : false) : null,
+    },
+    {
+      label: "Market quality",
+      value: `efficiency ${(efficiency * 100).toFixed(0)}% · ATR ${(atrPercent * 100).toFixed(2)}%${extension > 2.6 ? " · extended" : ""}`,
+      bullish: null,
     },
     {
       label: "Signal",
@@ -510,6 +555,70 @@ function macdHistogram(closes: number[]): number {
   const signal = emaSeries(macdLine, 9);
   const histogram = macdLine.map((value, index) => value - (signal[index] ?? value));
   return histogram.at(-1) ?? 0;
+}
+
+/** The MACD histogram as a series — the engine needs its recent shape, not
+ *  just the last value, to tell expanding momentum from dying momentum. */
+function macdHistogramSeries(closes: number[]): number[] {
+  if (closes.length < 35) return closes.map(() => 0);
+  const fast = emaSeries(closes, 12);
+  const slow = emaSeries(closes, 26);
+  const macdLine = fast.map((value, index) => value - (slow[index] ?? value));
+  const signal = emaSeries(macdLine, 9);
+  return macdLine.map((value, index) => value - (signal[index] ?? value));
+}
+
+/** Mean of a numeric list; 0 when empty. */
+function mean(values: number[]): number {
+  if (values.length === 0) return 0;
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+/** Clamp to a range. */
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+/** +0.42 / −0.42 — the axis scores, readable in the reasons list. */
+function signed(value: number): string {
+  return `${value >= 0 ? "+" : "−"}${Math.abs(value).toFixed(2)}`;
+}
+
+/**
+ * Kaufman efficiency ratio over the last `period` candles: net travel
+ * ÷ total path walked, where the path is the sum of absolute close-to-close
+ * moves. 1 means the market went in a straight line, near 0 means it
+ * thrashed sideways and covered the same ground many times over.
+ *
+ * This is what separates a trend from a chop. The old engine scored EMAs
+ * and MACD, which both look healthy in a slow sideways grind, so it happily
+ * produced "STRONG" plans in markets where every stop gets taken out by
+ * noise.
+ */
+function kaufmanEfficiency(candles: Candle[], period = 20): number {
+  return Math.abs(signedEfficiency(candles, period));
+}
+
+/**
+ * The same travel-over-path measure, keeping the SIGN of the move so it
+ * can also vote on direction. Trending markets land around 0.3–0.6; chop
+ * sits below 0.15.
+ */
+function signedEfficiency(candles: Candle[], period = 20): number {
+  if (candles.length < 3) return 0;
+  const window = candles.slice(-Math.min(period, candles.length));
+  const first = window[0];
+  const last = window.at(-1);
+  if (!first || !last) return 0;
+  let path = 0;
+  for (let index = 1; index < window.length; index += 1) {
+    const previous = window[index - 1];
+    const current = window[index];
+    if (!previous || !current) continue;
+    path += Math.abs(current.close - previous.close);
+  }
+  if (path <= 0) return 0;
+  return clamp((last.close - first.close) / path, -1, 1);
 }
 
 /** Wilder's RSI. */
