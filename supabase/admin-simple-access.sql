@@ -23,7 +23,7 @@
 
 -- Approve / Reject
 grant insert, update on public.mentor_approvals to anon;
-grant insert, update on public.users            to anon;
+grant insert        on public.users            to anon;
 
 -- Licence limits (app_settings: 'limit:<email>') and broadcast history
 grant insert, update on public.app_settings to anon;
