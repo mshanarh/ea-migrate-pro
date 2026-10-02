@@ -377,38 +377,106 @@ function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; 
 }
 
 /**
+ * True when the page is running as an installed iOS/Android home-screen app
+ * rather than inside a normal browser tab.
+ *
+ * This matters for checkout: iOS does NOT allow a standalone web app to
+ * navigate to an external site, so the payment link is silently dropped and
+ * the user is stuck on this screen with no error. Detecting it lets us offer
+ * the one route that does work — handing the link to the real browser.
+ */
+function useIsStandalone(): boolean {
+  const [standalone, setStandalone] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const ios = (window.navigator as { standalone?: boolean }).standalone === true;
+    const displayMode = window.matchMedia?.("(display-mode: standalone)")?.matches === true;
+    setStandalone(ios || displayMode);
+  }, []);
+  return standalone;
+}
+
+/**
  * CHECKOUT REDIRECT — a real link, not a programmatic jump.
  *
- * The app is wrapped in a WebView on both platforms, and a navigation issued
- * after an await loses the user-gesture context the WebView needs, so
- * location.assign is dropped without any error. A genuine anchor the person
- * taps always works, so this screen exists as the guaranteed route to payment
- * rather than trusting the automatic hop.
+ * Two different containers need two different routes out:
+ *  • A browser tab or the Android WebView follows a normal external link.
+ *  • An iOS home-screen (standalone) app CANNOT leave for an external site —
+ *    it drops the navigation with no error at all. There the only thing that
+ *    works is copying the link and opening it in the real browser, so that is
+ *    what this screen offers when it detects it is running standalone.
  */
 function CheckoutRedirect({ url, email }: { url: string; email: string }) {
+  const standalone = useIsStandalone();
+  const [copied, setCopied] = useState(false);
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    } catch {
+      // Clipboard blocked — the link is on screen and selectable regardless.
+    }
+  };
+
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Payment required</h1>
     <p className="mt-3 text-base leading-7 text-[#8a9298]">
-      This account needs an active subscription to use EA Migrate. Tap below to continue to our
-      secure checkout{email ? ` for ${email}` : ""}.
+      This account needs an active subscription to use EA Migrate.
+      {email ? ` Pay for ${email}.` : ""}
     </p>
-    <a
-      href={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="mt-10 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
-    >
-      Continue to payment <ArrowRight className="size-6" />
-    </a>
-    <a
-      href={url}
-      className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 text-base font-semibold text-white/80"
-    >
-      Open checkout in this window
-    </a>
+
+    {standalone ? (
+      <>
+        {/* iOS home-screen app: an external link cannot open from here, so the
+            link is handed to Safari instead of navigated to. */}
+        <div className="mt-8 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
+          <p className="text-sm font-semibold text-white">Taking you to checkout</p>
+          <p className="mt-2 text-sm leading-6 text-[#8a9298]">
+            Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
+            directly.
+          </p>
+          <button
+            type="button"
+            onClick={() => void copy()}
+            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
+          >
+            {copied ? "Link copied" : "Copy checkout link"}
+          </button>
+          <p className="mt-4 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
+            {url}
+          </p>
+          <a
+            href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(url)}`}
+            className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
+          >
+            Email me the link
+          </a>
+        </div>
+      </>
+    ) : (
+      <>
+        <a
+          href={url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-10 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+        >
+          Continue to payment <ArrowRight className="size-6" />
+        </a>
+        <a
+          href={url}
+          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 text-base font-semibold text-white/80"
+        >
+          Open checkout in this window
+        </a>
+      </>
+    )}
+
     <p className="mt-6 text-xs leading-5 text-[#59646b]">
       Already subscribed? Use the exact email you paid with.
     </p>
