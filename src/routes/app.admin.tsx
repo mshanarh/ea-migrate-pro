@@ -131,6 +131,21 @@ function AppAdmin() {
     };
   }, [app.email, refresh]);
 
+  /**
+ * Patch one row on screen after a confirmed write.
+ *
+ * Both toggles used to end with `await refresh()`, so the button came back the
+ * instant the database committed but the row kept showing the OLD flag until
+ * the whole list came back — which reads as a slow button. The value is known,
+ * so paint it directly; the refresh below is only for external changes.
+ */
+  const patchUser = useCallback((email: string, patch: Partial<UserRow>) => {
+    const target = email.trim().toLowerCase();
+    setUsers((current) =>
+      current.map((user) => (user.email.trim().toLowerCase() === target ? { ...user, ...patch } : user)),
+    );
+  }, []);
+
   const setPaid = async (user: UserRow, value: boolean) => {
     setBusyEmail(user.email);
     const result = await withAnonFallback(
@@ -143,7 +158,7 @@ function AppAdmin() {
       return;
     }
     toast.success(value ? `${user.email} approved` : `${user.email} set to unpaid`);
-    await refresh();
+    patchUser(user.email, { is_paid: value });
   };
 
   const setAdmin = async (user: UserRow, value: boolean) => {
@@ -158,7 +173,7 @@ function AppAdmin() {
       return;
     }
     toast.success(value ? `${user.email} is now an admin` : `Admin removed from ${user.email}`);
-    await refresh();
+    patchUser(user.email, { is_admin: value });
   };
 
   if (access !== "ok") {

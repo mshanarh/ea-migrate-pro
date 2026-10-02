@@ -331,15 +331,50 @@ function AdminConsole() {
   }
 
   /**
+   * Apply a successful write to the row on screen straight away.
+   *
+   * Every button used to end with a FULL `refresh()` — seven parallel reads
+   * across users, mentor_approvals, license_keys, app_settings, paid_emails,
+   * app_messages and portal_accounts, most of them unbounded table scans. On
+   * a console holding real signup volume that is seconds of round trips, and
+   * the row sat on its OLD value for the whole of them: the write had already
+   * committed but the list looked frozen, which reads as "the button is slow"
+   * and invites the admin to press it a second time.
+   *
+   * The console already knows precisely what it just wrote, so it patches that
+   * one row and gets out of the way. Genuinely external changes (a signup from
+   * another device) still arrive through the ten-second poll and the
+   * visibility refresh below, which is where a whole-table reload belongs.
+   */
+  const patchUser = useCallback((email: string, patch: Partial<AdminUser>) => {
+    const target = email.trim().toLowerCase();
+    setSnapshot((current) => {
+      if (!current) return current;
+      return {
+        ...current,
+        users: current.users.map((user) =>
+          user.email.trim().toLowerCase() === target ? { ...user, ...patch } : user,
+        ),
+      };
+    });
+  }, []);
+
+  /**
    * ONE write, ONE honest answer. The database functions return true only
    * after the row is committed, so the console reports success — and only
    * success — when that happened. A refused write returns the result to the
    * caller, so the Save button can fall back to "Save limit" with the real
    * reason instead of sitting there claiming SAVED.
+   *
+   * `patch` is what the row should become on success. It is applied locally
+   * instead of re-reading the database, so the button reacts on the same tick
+   * as the toast.
    */
   const withUser = async (
+    email: string,
     work: () => Promise<AdminWriteResult>,
     labels: { success: string; failure: string },
+    patch?: Partial<AdminUser>,
   ): Promise<AdminWriteResult> => {
     setBusy(true);
     let result: AdminWriteResult;
@@ -352,7 +387,7 @@ function AdminConsole() {
     if (result.ok) {
       setWriteIssue(null);
       toast.success(labels.success);
-      await refresh(true);
+      if (patch) patchUser(email, patch);
       return result;
     }
     const detail = result.error ?? "database error";
@@ -373,20 +408,30 @@ function AdminConsole() {
    * approve somebody and then wonder why they still hit Whop checkout.
    */
   const approve = (user: AdminUser) =>
-    void withUser(() => setUserApproval(user.email, "approved"), {
-      success: `${user.email} approved — portal open. Mark them PAID to let them into the app.`,
-      failure: `Approve ${user.email}`,
-    }).then((result) => {
+    void withUser(
+      user.email,
+      () => setUserApproval(user.email, "approved"),
+      {
+        success: `${user.email} approved — portal open. Mark them PAID to let them into the app.`,
+        failure: `Approve ${user.email}`,
+      },
+      { status: "approved" },
+    ).then((result) => {
       // Only tell the user they are in when the database actually wrote it.
       if (result.ok) void notifyDecision(user, "approved");
     });
 
   /** REJECT — same shape, with the decline copy. */
   const reject = (user: AdminUser) =>
-    void withUser(() => setUserApproval(user.email, "rejected"), {
-      success: `${user.email} rejected — portal access revoked`,
-      failure: `Reject ${user.email}`,
-    }).then((result) => {
+    void withUser(
+      user.email,
+      () => setUserApproval(user.email, "rejected"),
+      {
+        success: `${user.email} rejected — portal access revoked`,
+        failure: `Reject ${user.email}`,
+      },
+      { status: "rejected" },
+    ).then((result) => {
       if (result.ok) void notifyDecision(user, "rejected");
     });
 
@@ -410,27 +455,48 @@ function AdminConsole() {
   };
 
   const saveLimit = (user: AdminUser) =>
-    void withUser(() => setUserLicenseLimit(user.email, limitDraft), {
-      success: `Maximum keys for ${user.email} set to ${limitDraft}`,
-      failure: `Save the maximum for ${user.email}`,
-    }).then((result) => {
+    void withUser(
+      user.email,
+      () => setUserLicenseLimit(user.email, limitDraft),
+      {
+        success: `Maximum keys for ${user.email} set to ${limitDraft}`,
+        failure: `Save the maximum for ${user.email}`,
+      },
+      // Mirror the store's own clamp so the row shows exactly what was
+      // stored — an out-of-range draft must not leave a value on screen the
+      // database never accepted.
+      { licenseLimit: Math.max(0, Math.min(9999, Math.floor(Number(limitDraft) || 0))) },
+    ).then((result) => {
       setLimitSaved(result.ok);
       setLimitError(result.ok ? null : result.error ?? "The database did not confirm the save.");
     });
 
   const togglePaid = (user: AdminUser) =>
-    void withUser(() => setUserPaid(user.email, !user.isPaid), {
-      success: user.isPaid ? `${user.email} marked unpaid` : `${user.email} marked paid`,
-      failure: `Payment flag for ${user.email}`,
-    });
+    void withUser(
+      user.email,
+      () => setUserPaid(user.email, !user.isPaid),
+      {
+        success: user.isPaid ? `${user.email} marked unpaid` : `${user.email} marked paid`,
+        failure: `Payment flag for ${user.email}`,
+      },
+      {
+        isPaid: !user.isPaid,
+        paidAt: user.isPaid ? null : new Date().toISOString(),
+      },
+    );
 
   const toggleReactivation = (user: AdminUser) =>
-    void withUser(() => setUserReactivation(user.email, !user.reactivationEnabled), {
-      success: user.reactivationEnabled
-        ? `Device reactivation locked for ${user.email}`
-        : `Device reactivation unlocked for ${user.email}`,
-      failure: `Reactivation toggle for ${user.email}`,
-    });
+    void withUser(
+      user.email,
+      () => setUserReactivation(user.email, !user.reactivationEnabled),
+      {
+        success: user.reactivationEnabled
+          ? `Device reactivation locked for ${user.email}`
+          : `Device reactivation unlocked for ${user.email}`,
+        failure: `Reactivation toggle for ${user.email}`,
+      },
+      { reactivationEnabled: !user.reactivationEnabled },
+    );
 
   /**
    * Send to every registered user. Recipients come from the database rows
