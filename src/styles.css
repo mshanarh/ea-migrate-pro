@@ -546,14 +546,20 @@ html.platform-ios .plat-uppercase-label {
    display rule here would fight the px-*/flex utilities in the cascade. */
 
 /* ── Platform dialogs & sheets (components/ui/dialog.tsx) ─────────────── */
-/* Android: centered Material card, 28px radius, fade + rise. */
+/* Android: centered Material card, 28px radius, fade + rise.
+   The card is centred with `left-[50%] top-[50%] -translate-x-1/2
+   -translate-y-1/2`, which Tailwind v4 emits as the `translate` PROPERTY.
+   These animations therefore touch `transform` only and must never repeat
+   the -50% shift: that centred the card a second time and pushed it one
+   full width off the left edge — and `both` fill-mode kept the doubled
+   shift in place after the animation finished. */
 .plat-dialog-android {
   border-radius: 28px;
   animation: platAndroidDialogIn 240ms cubic-bezier(0.2, 0, 0, 1) both;
 }
 @keyframes platAndroidDialogIn {
-  from { opacity: 0; transform: translate(-50%, -46%) scale(0.94); }
-  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
 }
 /* iOS: bottom sheet on the home-indicator edge, grabber, slide-up. */
 .plat-dialog-ios {
@@ -562,8 +568,8 @@ html.platform-ios .plat-uppercase-label {
   animation: platIosSheetIn 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
 }
 @keyframes platIosSheetIn {
-  from { opacity: 0.4; transform: translate(-50%, 12%); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  from { opacity: 0.4; transform: translateY(12%); }
+  to { opacity: 1; transform: translateY(0); }
 }
 .plat-sheet-grabber { display: none; }
 html.platform-ios .plat-sheet-grabber {
