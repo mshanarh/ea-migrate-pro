@@ -1,14 +1,19 @@
 /**
- * Transactional email — browser → Brevo direct.
+ * Transactional email — browser → Supabase Edge Function → Brevo.
  *
- * The production app deploys as a STATIC Vite site on Vercel, so TanStack
- * server functions (the old send-email.server.ts path) 404 there and every
- * email silently failed. Brevo's v3 API allows CORS from the app's origin
- * (verified), so the browser sends the request itself.
+ * The key used to be read from VITE_BREVO_API_KEY, which Vite inlines into the
+ * public JavaScript bundle: anyone who opened the site could read it and send
+ * mail as the platform. The app now asks a server-side function
+ * (supabase/functions/send-email) to send, and the Brevo key lives in a Supabase
+ * secret where no browser can reach it.
  *
- * Secrets: the Brevo key is read at send time from VITE_BREVO_API_KEY
- * (standard Vite build-time name) with BREVO_API_KEY as a fallback. Add it
- * in Vercel settings (or Settings → Environment) and redeploy.
+ * The function sends only the platform's own templates and only to addresses
+ * that already exist in the database, so it cannot be used to mail strangers.
+ *
+ * SECURITY NOTE: this deployment has no server-side auth, so "the caller is a
+ * signed-in mentor" cannot be proven. Anything that could call the function
+ * directly could trigger these same four emails. Removing that last gap means
+ * moving authentication server-side, which is a bigger job than hiding a key.
  *
  *   type: "new_registration"
  *     → emails the admin to approve the new user (pending row is saved by
@@ -22,70 +27,55 @@
 const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
 /** Second admin inbox — the known-good recipient for registration alerts. */
 const ADMIN_EMAIL_2 = "eamigratepro@gmail.com";
-const DEFAULT_SENDER = "eamigratepro@gmail.com";
-const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
 const SUPABASE_URL = (import.meta.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SUPABASE_ANON_KEY = (import.meta.env["VITE_SUPABASE_ANON_KEY"] ?? "").trim();
 
-/** Raw Brevo v3 send from the browser — logs the FULL response every time. */
+/**
+ * Ask the edge function to send one of the platform's emails.
+ *
+ * Only the TEMPLATE and the RECIPIENT cross this boundary — the subject, HTML
+ * and sender are built inside the function, so a caller cannot use it to send
+ * arbitrary mail. That is also why the old browser-direct Brevo call is gone:
+ * it required shipping the API key to the browser.
+ */
 async function sendViaBrevo(options: {
+  kind: "new_registration" | "approval_decision" | "license_approved" | "broadcast";
   to: string;
-  toName: string;
-  subject: string;
-  html: string;
-  text: string;
+  params?: Record<string, unknown>;
 }): Promise<{ ok: boolean; error?: string }> {
-  // SERVER FIRST: when the host runs server functions (Vercel full-stack),
-  // the mail goes out with the RUNTIME BREVO_API_KEY — the key never ships
-  // in the public JS bundle and stays valid across rebuilds.
-  try {
-    const { sendPortalEmail: sendViaServer } = await import("@/lib/send-email.server");
-    const viaServer = await sendViaServer({
-      data: { type: "generic", email: options.to, subject: options.subject, html: options.html, text: options.text },
-    });
-    if (viaServer.success) return { ok: true };
-    console.warn("[send-email] server send failed:", viaServer.error, "— trying browser-direct Brevo");
-  } catch {
-    /* static host — server functions 404; the browser path decides below */
-  }
-  const apiKey = (
-    import.meta.env["VITE_BREVO_API_KEY"] ||
-    import.meta.env["BREVO_API_KEY"] ||
-    ""
-  ).trim();
-  if (apiKey.length === 0) {
-    console.error("[send-email] VITE_BREVO_API_KEY is missing — email skipped for", options.to);
-    return {
-      ok: false,
-      error: "VITE_BREVO_API_KEY is missing. Add it in Vercel settings and redeploy.",
-    };
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
+    return { ok: false, error: "Supabase is not configured, so email cannot be sent." };
   }
   try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+    const response = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
       method: "POST",
       headers: {
-        "api-key": apiKey,
+        apikey: SUPABASE_ANON_KEY,
+        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
         "content-type": "application/json",
-        "accept": "application/json",
       },
-      body: JSON.stringify({
-        sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
-        to: [{ email: options.to, name: options.toName }],
-        subject: options.subject,
-        htmlContent: options.html,
-        textContent: options.text,
-      }),
-      signal: AbortSignal.timeout(12_000),
+      body: JSON.stringify({ kind: options.kind, to: options.to, params: options.params ?? {} }),
+      signal: AbortSignal.timeout(15_000),
     });
     const body = await response.text().catch(() => "");
-    console.log(`[send-email] Brevo response for ${options.to}: HTTP ${response.status}`, body.slice(0, 300));
     if (!response.ok) {
-      return { ok: false, error: `Brevo error (${response.status}): ${body.slice(0, 300)}` };
+      let message = `The email service replied ${response.status}.`;
+      try {
+        const parsed = JSON.parse(body) as { error?: string };
+        if (parsed.error) message = parsed.error;
+      } catch {
+        if (response.status === 404) {
+          message =
+            "The send-email function is not deployed yet. Run: supabase functions deploy send-email --no-verify-jwt";
+        }
+      }
+      console.error(`[send-email] send failed for ${options.to}:`, response.status, body.slice(0, 200));
+      return { ok: false, error: message };
     }
     return { ok: true };
   } catch {
-    return { ok: false, error: "Brevo could not be reached — try again." };
+    return { ok: false, error: "The email service could not be reached — try again." };
   }
 }
 
@@ -189,34 +179,6 @@ async function saveLicenseKey(input: {
   }
 }
 
-/** Brand HTML shell matching every other EA Migrate email. */
-function brandHtml(heading: string, paragraphs: string[], buttonText: string, buttonColor: string): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-  <body style="margin:0;padding:0;background:#0A0A0C;">
-    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
-      <tr><td align="center">
-        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
-          <tr><td style="padding:32px 32px 0 32px;">
-            <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
-            <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">${heading}</h1>
-          </td></tr>
-          <tr><td style="padding:20px 32px 0 32px;">
-            ${paragraphs
-              .map((p) => `<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${p}</p>`)
-              .join("\n            ")}
-          </td></tr>
-          <tr><td align="center" style="padding:28px 32px 32px 32px;">
-            <a href="${PORTAL_URL}" style="display:inline-block;background:${buttonColor};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">${buttonText}</a>
-            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />EA Migrate Team</p>
-          </td></tr>
-        </table>
-      </td></tr>
-    </table>
-  </body>
-</html>`;
-}
-
 export type SendEmailInput =
   | { type: "new_registration"; email: string; firstName?: string; displayName?: string }
   | { type: "approval_decision"; email: string; decision: "approved" | "rejected"; licenseLimit?: number }
@@ -275,26 +237,16 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
       console.warn("[send-email] pending-approval save failed for", email, "— sending the notification email anyway:", saveError);
     }
     const name = (data.displayName ?? data.firstName ?? "").trim();
-    const html = brandHtml(
-      "New user registered",
-      [
-        `New user registered: <strong style="color:#FFFFFF;">${email}</strong>${name ? ` (${name})` : ""}`,
-        "Approve them in the admin console so they can start issuing license keys.",
-      ],
-      "Open Admin Console",
-      "#E7B53A",
-    );
-    const text = `New user registered: ${email}${name ? ` (${name})` : ""} - Approve in admin.\n\nAdmin console: ${PORTAL_URL}`;
     // BOTH admin inboxes — a single recipient that silently filters or
-    // clusters these alerts made "new registrations never arrive". Brevo
+    // clusters these alerts made "new registrations never arrive". The function
     // sends one message per recipient; any address that receives it is enough.
     const [first, second] = await Promise.allSettled([
-      sendViaBrevo({ to: ADMIN_EMAIL, toName: "EA Migrate Admin", subject: "New user registered - EA Migrate", html, text }),
-      sendViaBrevo({ to: ADMIN_EMAIL_2, toName: "EA Migrate Admin", subject: "New user registered - EA Migrate", html, text }),
+      sendViaBrevo({ kind: "new_registration", to: ADMIN_EMAIL, params: name ? { name } : {} }),
+      sendViaBrevo({ kind: "new_registration", to: ADMIN_EMAIL_2, params: name ? { name } : {} }),
     ]);
     if (first.status === "fulfilled" && first.value.ok) return { success: true };
     if (second.status === "fulfilled" && second.value.ok) return { success: true };
-    const failure = (first.status === "rejected" ? String(first.reason) : first.value.error) ?? (second.status === "rejected" ? String(second.reason) : second.value.error) ?? "Brevo send failed.";
+    const failure = (first.status === "rejected" ? String(first.reason) : first.value.error) ?? (second.status === "rejected" ? String(second.reason) : second.value.error) ?? "The email service could not send the alert.";
     return { success: false, error: failure };
   }
 
@@ -304,33 +256,10 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
   // exact key allowance that was granted, because that is the number they
   // will hit when they create their first license key.
   if (data.type === "approval_decision") {
-    const approved = data.decision === "approved";
-    const limit = Number(data.licenseLimit ?? 0);
-    const heading = approved ? "Your account is approved" : "Your account was not approved";
-    const paragraphs = approved
-      ? [
-          `Good news — your EA Migrate account <strong style="color:#FFFFFF;">${email}</strong> has been approved.`,
-          "You can now sign in to your portal and start setting up your Expert Advisors and license keys.",
-          Number.isFinite(limit)
-            ? `Your license key allowance is <strong style="color:#FFFFFF;">${limit}</strong> key${limit === 1 ? "" : "s"}. You can create up to that many keys from your portal.`
-            : "You can now create license keys from your portal.",
-          'Sign in with the same email you registered with. If you are signing in on a new phone, ask your mentor to release your old device first.',
-        ]
-      : [
-          `We are sorry — the account <strong style="color:#FFFFFF;">${email}</strong> was not approved at this time.`,
-          "This means the portal is not available on this email right now.",
-          "If you think this is a mistake, reply to this email and our team will take another look.",
-        ];
     const sent = await sendViaBrevo({
+      kind: "approval_decision",
       to: email,
-      toName: email,
-      subject: approved ? "Your EA Migrate account is approved" : "EA Migrate account update",
-      html: brandHtml(heading, paragraphs, approved ? "Sign in to your portal" : "Contact EA Migrate", approved ? "#E7B53A" : "#8A8A96"),
-      text: approved
-        ? `Your EA Migrate account (${email}) has been approved.\n\nYou can now sign in and create license keys.${
-            Number.isFinite(limit) ? `\n\nYour license key allowance: ${limit}.` : ""
-          }\n\nSign in: ${PORTAL_URL}`
-        : `Your EA Migrate account (${email}) was not approved.\n\nIf you think this is a mistake, reply to this email.\n\n${PORTAL_URL}`,
+      params: { decision: data.decision, licenseLimit: Number(data.licenseLimit ?? 0) },
     });
     return sent.ok ? { success: true } : { success: false, ...(sent.error ? { error: sent.error } : {}) };
   }
@@ -339,21 +268,7 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
   if (data.type === "broadcast") {
     const message = data.message.trim();
     if (!message) return { success: false, error: "The message is empty." };
-    // Escape HTML, then keep the admin's line breaks.
-    const safe = message
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .split(/\n/)
-      .map((line) => (line.trim() ? `<p style="margin:0 0 12px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${line}</p>` : "<br />"))
-      .join("\n");
-    const sent = await sendViaBrevo({
-      to: email,
-      toName: email,
-      subject: "A message from EA Migrate",
-      html: brandHtml("A message from EA Migrate", [safe], "Open EA Migrate", "#E7B53A"),
-      text: message,
-    });
+    const sent = await sendViaBrevo({ kind: "broadcast", to: email, params: { message } });
     return sent.ok ? { success: true } : { success: false, ...(sent.error ? { error: sent.error } : {}) };
   }
 
@@ -382,21 +297,9 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
   }
 
   const send = await sendViaBrevo({
+    kind: "license_approved",
     to: email,
-    toName: email,
-    subject: "Approved - Your EA License",
-    html: brandHtml(
-      "Approved - Your EA License",
-      [
-        "Congratulations — your EA Migrate license has been approved! 🎉",
-        `Your license key for <strong style="color:#FFFFFF;">${eaName}</strong> (expiry: ${expiry}):`,
-        `<span style="display:block;margin:8px 0;padding:14px 16px;border:1px solid #E7B53A;border-radius:12px;background:#1A1608;color:#E7B53A;font-family:monospace;font-size:18px;font-weight:bold;letter-spacing:0.12em;">${licenseKey}</span>`,
-        "Keep this email safe — you will need the key whenever you reinstall the EA.",
-      ],
-      "Activate Your License",
-      "#E7B53A",
-    ),
-    text: `Approved - Your EA License\n\nEA: ${eaName}\nExpiry: ${expiry}\nLicense key: ${licenseKey}\n\nActivate it in the EA Migrate Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
+    params: { licenseKey, eaName },
   });
-  return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+  return send.ok ? { success: true } : { success: false, error: send.error ?? "The email service could not send the key." };
 };

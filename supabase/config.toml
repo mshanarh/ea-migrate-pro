@@ -1,0 +1,8 @@
+project_id = "ea-migrate-pro"
+
+[functions.send-email]
+# The app signs no Supabase Auth session — accounts live in localStorage and
+# the cloud tables — so there is no JWT for the gateway to verify. The function
+# therefore does its own checks (fixed templates, known recipients only,
+# rate limits). See supabase/functions/send-email/index.ts.
+verify_jwt = false
