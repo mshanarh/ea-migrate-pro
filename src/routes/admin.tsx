@@ -21,6 +21,8 @@ import { toast } from "sonner";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
   adminAuthConfigured,
+  adminCreateAccount,
+  adminSendReset,
   adminSignIn,
   adminSignOut,
   getAdminSession,
@@ -741,13 +743,53 @@ function AdminSignIn({
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Two jobs on one screen: returning admins sign in, first-time admins
+  // create the console account here instead of in the Supabase dashboard.
+  const [mode, setMode] = useState<"signin" | "create" | "reset">("signin");
+
+  const switchMode = (next: "signin" | "create" | "reset") => {
+    setMode(next);
+    setError(null);
+    setNotice(null);
+  };
 
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (busy) return;
     setBusy(true);
     setError(null);
+    setNotice(null);
+
+    if (mode === "reset") {
+      const sent = await adminSendReset(email);
+      setBusy(false);
+      if (sent.error) {
+        setError(sent.error);
+        return;
+      }
+      setMode("signin");
+      setNotice("If that address has a console account, a reset link is on its way. Open it on this device.");
+      return;
+    }
+
+    if (mode === "create") {
+      const created = await adminCreateAccount(email, password);
+      setBusy(false);
+      if (created.error) {
+        setError(created.error);
+        return;
+      }
+      if (created.session) {
+        onSignedIn(created.session);
+        return;
+      }
+      setMode("signin");
+      setNotice("Account created. Confirm the address from the email we sent, then sign in.");
+      return;
+    }
+
     const result = await adminSignIn(email, password);
     setBusy(false);
     if (result.error) {
@@ -767,8 +809,31 @@ function AdminSignIn({
         </div>
         <h1 className="mt-6 text-center text-2xl font-black">Admin Console</h1>
         <p className="mt-2 text-center text-sm leading-6 text-muted-foreground">
-          Sign in with your administrator account to manage users, approvals and messages.
+          {mode === "signin"
+            ? "Sign in with your administrator account to manage users, approvals and messages."
+            : mode === "create"
+              ? "Create the console account for your admin email. Only an address already on the admin list can be registered."
+              : "We will email you a link to set a new console password."}
         </p>
+        <div className="mt-5 flex rounded-2xl border border-white/10 bg-white/5 p-1 text-[11px] font-black uppercase">
+          {(
+            [
+              ["signin", "Sign in"],
+              ["create", "Create account"],
+              ["reset", "Reset"],
+            ] as const
+          ).map(([key, label]) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => switchMode(key)}
+              aria-pressed={mode === key}
+              className={`flex-1 rounded-xl px-3 py-2.5 ${mode === key ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <form onSubmit={submit} className="mt-7 space-y-3">
           <div>
             <label htmlFor="admin-email" className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
@@ -784,7 +849,7 @@ function AdminSignIn({
               className="mt-1.5 h-12 w-full rounded-2xl border border-white/10 bg-white/5 px-4 text-sm outline-none focus:border-primary/60"
             />
           </div>
-          <div>
+          <div className={mode === "reset" ? "hidden" : ""}>
             <label htmlFor="admin-password" className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
               Password
             </label>
@@ -803,6 +868,11 @@ function AdminSignIn({
               {error}
             </p>
           ) : null}
+          {notice ? (
+            <p role="status" className="rounded-2xl border border-emerald-400/40 bg-emerald-500/15 p-3 text-xs text-emerald-100">
+              {notice}
+            </p>
+          ) : null}
           {!configured ? (
             <p className="rounded-2xl border border-amber-300/40 bg-amber-400/10 p-3 text-xs text-amber-100">
               The database connection is missing, so the console cannot be unlocked on this device.
@@ -814,12 +884,12 @@ function AdminSignIn({
             className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-xs font-black uppercase text-primary-foreground disabled:opacity-60"
           >
             {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <ShieldCheck className="size-4" aria-hidden="true" />}
-            Sign in
+            {mode === "signin" ? "Sign in" : mode === "create" ? "Create account" : "Email me a link"}
           </button>
         </form>
         <p className="mt-6 text-center text-[11px] leading-5 text-muted-foreground">
-          First time here? Create this account under Supabase → Authentication → Users, then add the same
-          address to the admin_emails table.
+          No console account yet? Add your address to the admin_emails table, then use{" "}
+          <span className="font-bold text-foreground">Create account</span> above.
         </p>
         <Link to="/" className="mt-4 block text-center text-xs font-semibold text-primary">
           Back to the website
