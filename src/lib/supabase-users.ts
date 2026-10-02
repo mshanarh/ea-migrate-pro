@@ -10,10 +10,11 @@
  * partially-migrated schema (e.g. a missing column) must never lock a
  * customer out either — failures here fail open to the legacy local gate.
  */
+import { getApprovalForEmail } from "./admin-store";
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
-export type RegistrationOutcome = "allow" | "checkout" | "admin";
+export type RegistrationOutcome = "allow" | "checkout" | "admin" | "pending" | "rejected";
 
 function clean(email: string) {
   return email.trim().toLowerCase();
@@ -59,7 +60,17 @@ export async function registerWithEmail(
     return { outcome: "allow", user: null, error: upsertError.message };
   }
 
-  // 2. Session row — best-effort. Some deployments lack the license_key
+  // 2. APPROVAL ROW — every new signup lands in the admin console's Pending
+  //    list. The row is created ONCE (ignoreDuplicates) so signing in never
+  //    resets a decision an admin already made. Best-effort: a failure here
+  //    must not block sign-up, it only means the account shows up for review
+  //    a moment later.
+  const { error: approvalError } = await dbClient
+    .from("mentor_approvals")
+    .upsert({ email: address, status: "pending" }, { onConflict: "email", ignoreDuplicates: true });
+  if (approvalError) console.warn("[supabase] approval row failed:", approvalError.message);
+
+  // 3. Session row — best-effort. Some deployments lack the license_key
   //    column; retry without it so the session still records.
   const { error: sessionError } = await dbClient.from("user_sessions").insert({
     email: address,
@@ -94,6 +105,17 @@ export async function registerWithEmail(
   // scanner. The hardcoded owner list decides first, everywhere.
   if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
   if (user.is_admin) return { outcome: "admin", user };
+  // APPROVAL GATE — the admin console owns the decision. A rejected account
+  // is shut out for good; a pending one waits for review and must NOT reach
+  // checkout either (they have not been asked to pay yet). Approved accounts
+  // fall through to the payment rules below, so paying still works.
+  // The read fails open (ok:false) so a database hiccup can never lock a
+  // paying customer out.
+  const approval = await getApprovalForEmail(address);
+  if (approval.ok && approval.status === "rejected") return { outcome: "rejected", user };
+  if (approval.ok && approval.status === "pending" && !user.is_paid && !(await emailHasLicenseKey(address))) {
+    return { outcome: "pending", user };
+  }
   if (user.is_paid) return { outcome: "allow", user };
   // A license key bound to this email IS payment — a client who already
   // received their key must reach the key-entry screen, never Whop.

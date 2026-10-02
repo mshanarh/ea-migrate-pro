@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
+import { activateKey, appSignIn, appSignOut, getDeviceId, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { requireVerifiedAccess, verifyPaymentReturn } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
@@ -32,6 +32,10 @@ function AppAccess() {
   // NO self-reactivation: delete + reinstall must NOT unlock the account.
   // Applies to EVERYONE — clients and admins alike.
   const [blockedEmail, setBlockedEmail] = useState<string | null>(null);
+  // APPROVAL STATE — a signup that has not been reviewed yet ("pending")
+  // and a rejected one are both held at the door. The admin console's
+  // Approve button is the only way out of pending.
+  const [heldEmail, setHeldEmail] = useState<{ email: string; status: "pending" | "rejected" } | null>(null);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -102,6 +106,15 @@ function AppAccess() {
     const registration = await registerWithEmail(clean);
     if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
+    // PENDING / REJECTED — the account exists but the admin has not cleared
+    // it. Sign out again (the local session was armed a moment ago) and
+    // show the matching card instead of the app.
+    if (registration.outcome === "pending" || registration.outcome === "rejected") {
+      appSignOut();
+      setHeldEmail({ email: clean, status: registration.outcome });
+      return;
+    }
+
     // Bind THIS device in the cloud BEFORE any redirect — including the Whop
     // checkout hop. The access gate treats a missing binding as a stale
     // session (the global access reset), so a person who comes back AFTER
@@ -131,6 +144,7 @@ function AppAccess() {
 
   /** Dismiss the blocked card and try a different email. */
   const dismissBlocked = () => setBlockedEmail(null);
+  const dismissHeld = () => setHeldEmail(null);
 
   /** "I already have a license key" — PAID emails get the key screen;
    *  UNPAID emails are redirected to Whop checkout. The cloud decides
@@ -196,9 +210,69 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
+      {heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} onCancel={dismissHeld} /> :
+      blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} unlocking={unlocking} />}
     </main>
+  </div>;
+}
+
+/**
+ * PENDING / REJECTED card. The account exists in the database but the admin
+ * console has not cleared it yet: pending means "waiting for review", and
+ * only the admin can move it on; rejected means the request was declined.
+ * Both keep the person out of the app — the copy says exactly what to do,
+ * and there is no self-service override.
+ */
+function ApprovalHeldView({
+  email,
+  status,
+  onCancel,
+}: {
+  email: string;
+  status: "pending" | "rejected";
+  onCancel: () => void;
+}) {
+  const rejected = status === "rejected";
+  return <div className="-translate-y-8 text-center">
+    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+    </div>
+    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">
+      {rejected ? "Account rejected" : "Waiting for approval"}
+    </h1>
+    <div
+      role="alert"
+      className={
+        rejected
+          ? "mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left"
+          : "mt-5 flex items-start gap-3 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left"
+      }
+    >
+      <span
+        className={
+          rejected
+            ? "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950"
+            : "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-300 text-[11px] font-black text-amber-950"
+        }
+        aria-hidden="true"
+      >
+        {rejected ? "!" : "…"}
+      </span>
+      <p className={rejected ? "text-sm font-semibold leading-6 text-red-200" : "text-sm font-semibold leading-6 text-amber-100"}>
+        {rejected
+          ? "This registration was rejected. Contact support if you believe this is a mistake."
+          : "Your account was created and is waiting for an administrator to approve it. You will be able to sign in as soon as it is approved."}
+      </p>
+    </div>
+    <p className="mt-3 break-all text-base leading-7 text-[#8a9298]">{email}</p>
+    <button
+      type="button"
+      onClick={onCancel}
+      className="mt-8 h-14 w-full rounded-2xl border border-white/15 bg-white/5 text-base font-semibold text-white/80"
+    >
+      Use a different email
+    </button>
   </div>;
 }
 

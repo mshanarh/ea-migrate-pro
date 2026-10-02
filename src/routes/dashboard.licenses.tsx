@@ -77,6 +77,27 @@ function Licenses() {
       setFormError("Choose an Expert Advisor.");
       return;
     }
+    // ADMIN LICENSE CAP — the dashboard sets a maximum number of keys per
+    // user; this is where a USER creates one. The cap and the current usage
+    // are read live from the database, so the limit the admin set is the
+    // limit that actually applies. A cap of 0 means no keys at all.
+    try {
+      const { getLicenseCapForEmail, countKeysForEmail } = await import("@/lib/admin-store");
+      const cap = await getLicenseCapForEmail(account.email);
+      if (cap !== null) {
+        const used = await countKeysForEmail(account.email);
+        if (used >= cap) {
+          setFormError(
+            cap === 0
+              ? "Your administrator has not allowed you any license keys yet."
+              : `You have used all ${cap} of your license keys. Ask your administrator to raise your limit.`,
+          );
+          return;
+        }
+      }
+    } catch {
+      /* never block key creation on a limit lookup failure */
+    }
     const key = generateKey();
     const recipient = clientEmail.trim() || account.email;
     const result2 = addLicense(account.id, expiry, key, {

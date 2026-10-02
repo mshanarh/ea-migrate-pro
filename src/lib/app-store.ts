@@ -573,6 +573,30 @@ async function findSavedLicenseForEmail(key: string, email: string) {
 
 export async function activateKey(key: string): Promise<{ error?: string; robot?: Robot }> {
   load();
+  // ADMIN LICENSE CAP — the dashboard's "maximum license keys" per user is
+  // enforced HERE, at the one place a key turns into an active robot. The
+  // count and the cap both come from the database, so a user cannot outrun
+  // their allowance by reinstalling or switching devices. No cap set yet
+  // (null) leaves the account's own limit rule in charge.
+  try {
+    const { getLicenseCapForEmail, countKeysForEmail } = await import("@/lib/admin-store");
+    if (state.email) {
+      const cap = await getLicenseCapForEmail(state.email);
+      if (cap !== null) {
+        const used = await countKeysForEmail(state.email);
+        if (used >= cap) {
+          return {
+            error:
+              cap === 0
+                ? "You have no license keys available yet. Ask your admin to raise your key limit."
+                : `You have used all ${cap} of your license keys. Ask your admin to raise your key limit.`,
+          };
+        }
+      }
+    }
+  } catch {
+    /* never block activation on a limit lookup failure */
+  }
   // Tolerant normalisation: trim, uppercase and strip any spaces the user pasted.
   const clean = key.trim().toUpperCase().replace(/\s+/g, "");
   console.log("[key-activation] Checking key:", clean);

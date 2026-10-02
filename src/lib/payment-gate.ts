@@ -18,11 +18,12 @@
  * falls back to the legacy local store (dev must keep working) — but a forged
  * LOCAL record can never be validated by the cloud path.
  */
+import { getApprovalForEmail } from "@/lib/admin-store";
 import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
-export type CloudAccess = "admin" | "paid" | "unpaid";
+export type CloudAccess = "admin" | "paid" | "unpaid" | "pending" | "rejected";
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
 
 type Resolution = { status: CloudAccess; at: number };
@@ -54,6 +55,24 @@ export async function resolveCloudAccess(email: string | null | undefined): Prom
   }
 }
 
+/** Is any license key bound to this email? Exact match, then case-insensitive. */
+async function emailHasLicenseKeyCloud(clean: string): Promise<boolean> {
+  const { data: license } = await supabase!
+    .from("license_keys")
+    .select("key")
+    .eq("email", clean)
+    .limit(1)
+    .maybeSingle();
+  if (license) return true;
+  const { data: licenseLoose } = await supabase!
+    .from("license_keys")
+    .select("key")
+    .ilike("email", clean)
+    .limit(1)
+    .maybeSingle();
+  return !!licenseLoose;
+}
+
 /**
  * DEVICE-BINDING LIVENESS — true when the cloud has a users row for this
  * email whose device_id no longer matches THIS device. Bindings are only
@@ -80,6 +99,25 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
 }
 
 async function computeFromDatabase(clean: string): Promise<CloudAccess> {
+  // 0. APPROVAL STATE — the admin console's decision outranks payment. A
+  //    rejected account is shut out, and an unreviewed one waits; neither
+  //    reaches the app, no matter what the payment flags say. The read
+  //    fails open (ok:false) so a database hiccup never locks anyone out.
+  const approval = await getApprovalForEmail(clean);
+  if (approval.ok && approval.status === "rejected") return "rejected";
+  if (approval.ok && approval.status === "pending") {
+    // A pending account that already PAID is not held at the door — they
+    // bought access and must reach the app (and the approval will catch up).
+    const { data: paidRow } = await supabase!
+      .from("users")
+      .select("is_paid")
+      .eq("email", clean)
+      .maybeSingle();
+    if (paidRow?.is_paid) return "paid";
+    if (await emailHasLicenseKeyCloud(clean)) return "paid";
+    return "pending";
+  }
+
   // 1. users row — explicit paid/admin flags (admin console approval).
   const { data: user, error: userError } = await supabase!
     .from("users")
@@ -92,20 +130,7 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
 
   // 2. license_keys row bound to this email — the mentor-issued key is proof
   //    of payment. Exact match first, then case-insensitive fallback.
-  const { data: license } = await supabase!
-    .from("license_keys")
-    .select("key")
-    .eq("email", clean)
-    .limit(1)
-    .maybeSingle();
-  if (license) return "paid";
-  const { data: licenseLoose } = await supabase!
-    .from("license_keys")
-    .select("key")
-    .ilike("email", clean)
-    .limit(1)
-    .maybeSingle();
-  if (licenseLoose) return "paid";
+  if (await emailHasLicenseKeyCloud(clean)) return "paid";
 
   // 3. Whop — the checkout source of truth, verified SERVER-side with the
   //    WHOP_API_KEY (never from the browser). Also back-fills users.is_paid
@@ -168,6 +193,14 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // the cloud decision. This is a downstream mirror, never the source.
     markEmailPaid(email);
     return { action: "pass" };
+  }
+  // PENDING / REJECTED — the account exists but the admin has not cleared
+  // it. End the session and go back to the login screen, which shows the
+  // matching "waiting for approval" / "rejected" card. A pending account
+  // must NOT be pushed to checkout — nobody asked them to pay yet.
+  if (cloud === "pending" || cloud === "rejected") {
+    appSignOut();
+    return { action: "signin" };
   }
   if (cloud === "unpaid") return { action: "pay" };
   // Cloud undecided (unconfigured) — legacy local behaviour.
