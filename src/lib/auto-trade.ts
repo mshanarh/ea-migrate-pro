@@ -35,6 +35,10 @@ const MAX_ORDERS_PER_SYMBOL = 20;
 const DEFAULT_RISK_PCT = 0.005;
 /** 1:2.5 reward-to-risk, matching the scanner's stated plan. */
 const REWARD_RATIO = 2.5;
+/** Hard cap on the market read. Past this we trade the fallback, not stall. */
+const ANALYSIS_TIMEOUT_MS = 3500;
+/** Hard cap on the bridge's live-quote lookup. */
+const QUOTE_TIMEOUT_MS = 4000;
 
 export type PairDirection = "BOTH" | "BUY" | "SELL";
 export type ResolvedDirection = "BUY" | "SELL";
@@ -116,8 +120,25 @@ export async function resolveTradeDirection(
   }
 
   let analysis: Awaited<ReturnType<typeof analyzeMarket>> | null = null;
+  let timedOut = false;
   try {
-    analysis = await analyzeMarket({ symbol, timeframe });
+    // The public chart feeds behind analyzeMarket are the slowest link in the
+    // whole run, and most of them simply never answer for an exotic or
+    // weekend-quiet symbol — an unbounded await there is exactly why pressing
+    // Configure looked like it had done nothing. Cap the wait and fall back.
+    analysis = await Promise.race([
+      analyzeMarket({ symbol, timeframe }),
+      new Promise<null>((resolve) => {
+        const timer = setTimeout(() => {
+          timedOut = true;
+          resolve(null);
+        }, ANALYSIS_TIMEOUT_MS);
+        // Never hold the process open for the timer.
+        if (typeof (timer as { unref?: () => void }).unref === "function") {
+          (timer as unknown as { unref: () => void }).unref();
+        }
+      }),
+    ]);
   } catch {
     analysis = null;
   }
@@ -137,9 +158,11 @@ export async function resolveTradeDirection(
   return {
     direction: "BUY",
     source: "default",
-    reason: analysis && !analysis.ok
-      ? `No market data for ${symbol} — traded BUY by default`
-      : `Weak or unreadable ${timeframe} data for ${symbol} — traded BUY by default`,
+    reason: timedOut
+      ? `Market data for ${symbol} did not respond in ${ANALYSIS_TIMEOUT_MS / 1000}s — traded BUY by default`
+      : analysis && !analysis.ok
+        ? `No market data for ${symbol} — traded BUY by default`
+        : `Weak or unreadable ${timeframe} data for ${symbol} — traded BUY by default`,
   };
 }
 
@@ -152,30 +175,53 @@ type LiveQuote = {
   minDistance: number;
 };
 
+/** Why a live quote could not be used — the two cases read very differently. */
+type QuoteFailure = "unavailable" | "unreachable";
+
+type QuoteResult = { quote: LiveQuote } | { failure: QuoteFailure; detail?: string };
+
 async function fetchLiveQuote(
   credentials: { login: number | string; password: string; server: string },
   symbol: string,
-): Promise<LiveQuote | null> {
+): Promise<QuoteResult> {
+  // The bridge opens a fresh MetaTrader session per call. On a closed market
+  // or an unknown symbol that session can sit there far longer than anyone
+  // should wait, so the request is capped rather than awaited forever.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
   try {
     const response = await fetch(`${BRIDGE_URL}/symbol/price`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
       body: JSON.stringify({ credentials, symbol }),
+      signal: controller.signal,
     });
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     const bid = typeof payload["bid"] === "number" ? payload["bid"] : 0;
     const ask = typeof payload["ask"] === "number" ? payload["ask"] : 0;
     const digits = typeof payload["digits"] === "number" ? payload["digits"] : null;
-    if (payload["success"] !== true || bid <= 0 || ask <= 0 || digits === null) return null;
+    if (payload["success"] !== true || bid <= 0 || ask <= 0 || digits === null) {
+      const detail =
+        (typeof payload["message"] === "string" && payload["message"]) ||
+        (typeof payload["detail"] === "string" && payload["detail"]) ||
+        undefined;
+      return detail ? { failure: "unavailable", detail } : { failure: "unavailable" };
+    }
     const point =
       typeof payload["point"] === "number" && payload["point"] > 0 ? payload["point"] : 10 ** -digits;
     const stopsLevelPoints = typeof payload["stops_level"] === "number" ? payload["stops_level"] : 0;
     // A broker can report stops_level 0 and still refuse levels inside the
     // spread, so keep a real buffer on top of the reported minimum.
     const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
-    return { bid, ask, digits, point, minDistance };
-  } catch {
-    return null; // no live quote (older bridge) — order without stops
+    return { quote: { bid, ask, digits, point, minDistance } };
+  } catch (error) {
+    // An abort here is our own 4s cap firing, not the broker refusing.
+    const aborted = error instanceof Error && error.name === "AbortError";
+    return aborted
+      ? { failure: "unreachable", detail: `The bridge did not answer within ${QUOTE_TIMEOUT_MS / 1000}s` }
+      : { failure: "unreachable" };
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -219,7 +265,21 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   const total = safeTradeCount(options.trades);
 
   const fail = (message: string): AutoTradeResult => {
+    onProgress?.("Connection closed.");
     announce(false, `${message.toUpperCase()} — CONNECTION CLOSED`);
+    // EVERY exit records the outcome and closes the run on the bus. Without
+    // this the popup sat on its last progress line — usually "CONNECTING…" —
+    // because the path that bailed out never said anything.
+    recordTrade({
+      symbol,
+      direction,
+      lot: String(lot),
+      trades: total,
+      filled: `0/${total}`,
+      ok: false,
+      ...(strength ? { strength } : {}),
+      detail: message,
+    });
     return { ok: false, symbol, direction, opened: 0, total, message };
   };
 
@@ -231,10 +291,22 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   announce(false, "CONNECTING...");
 
   // Live quote first — every level below is anchored to it.
-  const quote = await fetchLiveQuote(credentials, symbol);
+  const quoteResult = await fetchLiveQuote(credentials, symbol);
   onProgress?.("Reading live price...");
 
-  const entry = quote ? (direction === "BUY" ? quote.ask : quote.bid) : 0;
+  // No live quote means there is no safe way to place a stop: the market is
+  // shut, or this broker does not list the symbol. This used to fall through
+  // to a bare market order with NO protection at all, which is the worst
+  // outcome a live-money button can produce. Refuse, and say exactly why.
+  if ("failure" in quoteResult) {
+    const detail = quoteResult.detail ? ` (${quoteResult.detail})` : "";
+    return quoteResult.failure === "unavailable"
+      ? fail(`Cannot execute ${symbol}: Market is closed or symbol is inactive on your broker${detail}`)
+      : fail(`Cannot execute ${symbol}: Could not reach your trading bridge${detail}`);
+  }
+
+  const quote = quoteResult.quote;
+  const entry = direction === "BUY" ? quote.ask : quote.bid;
   const liveEntry = entry > 0 ? entry : (planEntry ?? 0);
 
   // Percentages survive a price-scale mismatch (a synthetic proxy's price is
@@ -248,7 +320,7 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
 
   let stopLoss = 0;
   let takeProfit = 0;
-  if (quote && liveEntry > 0) {
+  if (liveEntry > 0) {
     const { digits, minDistance } = quote;
     const round = (value: number) => Number(value.toFixed(digits));
     const rawStop = direction === "BUY" ? liveEntry * (1 - riskPct) : liveEntry * (1 + riskPct);
@@ -432,16 +504,6 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
             : error instanceof Error
               ? error.message
               : "Execution failed.";
-        recordTrade({
-          symbol,
-          direction,
-          lot: String(lot),
-          trades: total,
-          filled: `0/${total}`,
-          ok: false,
-          ...(strength ? { strength } : {}),
-          detail: lastError,
-        });
         return fail(lastError);
       }
       announce(false, `TRADE ${index} REFUSED — ${raw.toUpperCase()}`);
@@ -451,18 +513,7 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   onProgress?.("Disconnecting...");
 
   if (opened === 0 || !firstPayload) {
-    const message = lastError ?? "No trades were executed.";
-    recordTrade({
-      symbol,
-      direction,
-      lot: String(lot),
-      trades: total,
-      filled: `0/${total}`,
-      ok: false,
-      ...(strength ? { strength } : {}),
-      detail: message,
-    });
-    return fail(message);
+    return fail(lastError ?? "No trades were executed.");
   }
 
   const failed = total - opened;

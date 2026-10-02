@@ -40,6 +40,16 @@ function symbolKey(symbol: string) {
   return symbol.trim().toUpperCase();
 }
 
+/**
+ * Mirror of the engine's own `announce` — the floating bot popup, the top
+ * toast and the Android bubble all render whatever lands on this bus, so a
+ * failure that is only shown in a sonner toast still leaves the popup stuck on
+ * its last progress line.
+ */
+function announceExecution(ok: boolean, message: string) {
+  window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok, message } }));
+}
+
 type PairDirection = "BOTH" | "BUY" | "SELL";
 
 const DIRECTION_LABELS: Record<PairDirection, string> = {
@@ -138,6 +148,21 @@ function TradingPairsScreen() {
       return;
     }
 
+    // Instant feedback, BEFORE the first await. The market read and the bridge
+    // round trip can take seconds on a symbol whose public feed is slow, and
+    // pressing Configure with no response at all is what made this look
+    // broken. The popup opens now and narrates from here.
+    window.triggerExecutionToast?.(robot.name, robot.image, {
+      symbol,
+      lot_size: draftLot,
+      max_trades: safeTradeCount(draftTrades),
+      direction: draftDirection,
+    });
+    announceExecution(false, "ANALYZING MARKET...");
+
+    // `settled` guards the popup against being abandoned mid-run: every exit
+    // below ends with a terminal line, and this catches the one that does not.
+    let settled = false;
     void (async () => {
       try {
         const resolution = await resolveTradeDirection(symbol, draftDirection);
@@ -154,17 +179,28 @@ function TradingPairsScreen() {
           ...(robot.name ? { botName: robot.name } : {}),
           ...(robot.image ? { robotImage: robot.image } : {}),
         });
+        // executeAutoTrade always closes its own run on the bus.
+        settled = true;
         if (result.ok) {
           toast.success(`${result.symbol} ${result.direction} opened on MT5`, {
             description: result.message,
           });
         } else {
           toast.error(`${result.symbol} did not open`, { description: result.message });
+          announceExecution(false, result.message.toUpperCase());
         }
       } catch (error) {
-        toast.error(`${symbol} could not be prepared`, {
-          description: error instanceof Error ? error.message : "Unexpected error.",
-        });
+        // Anything thrown before or between the engine's own guards.
+        settled = true;
+        const message = error instanceof Error ? error.message : "Unexpected error.";
+        toast.error(`${symbol} could not be executed`, { description: message });
+        announceExecution(false, message.toUpperCase());
+      } finally {
+        if (!settled) {
+          const message = `Execution of ${symbol} ended without a result — check your connection.`;
+          toast.error(`${symbol} could not be executed`, { description: message });
+          announceExecution(false, message.toUpperCase());
+        }
       }
     })();
   };
