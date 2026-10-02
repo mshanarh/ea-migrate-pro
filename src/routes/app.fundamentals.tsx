@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
+import { getAppState, requireAppAccess, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
 
@@ -20,7 +20,7 @@ export const Route = createFileRoute("/app/fundamentals")({
       // database does not confirm → Whop checkout.
       const access = await requireVerifiedAccess(getAppState().email);
       if (access.action === "signin") throw redirect({ href: "/app/login" });
-      if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+      if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
     } catch (error) {
       // A gated redirect is normal control flow; anything else must never
       // take the whole page down — the calendar renders for everyone.

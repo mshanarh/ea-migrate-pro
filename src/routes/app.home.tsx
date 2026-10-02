@@ -42,6 +42,16 @@ export const Route = createFileRoute("/app/home")({
   component: AppHome,
 });
 
+/** Shown while the cloud decides whether this account may use the app. */
+function AccessSplash() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 pt-safe pb-safe-base text-white">
+      <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+      <p className="text-sm font-semibold text-white/60">Checking your access…</p>
+    </div>
+  );
+}
+
 /**
  * Dashboard-only recovery screen — a crash here never falls back to the
  * generic site error page. Offers a retry AND a clean logout: a corrupted
@@ -221,6 +231,43 @@ function AppHome() {
     void syncRobotsFromPortal();
     void syncRobotsFromCloudPortal();
   }, []);
+
+  /**
+   * THE LAST LINE OF DEFENCE — nothing renders here until the cloud says this
+   * account may use the app.
+   *
+   * beforeLoad already runs requireVerifiedAccess, but it is a single guard on
+   * a single navigation: a redirect that cannot be resolved, a back/forward
+   * restore, or any future caller reaching this component another way all skip
+   * it. That is how an unpaid account reached the dashboard and could add a
+   * robot key. This re-checks on mount and keeps the screen blank until the
+   * answer is "pass", so an unverified session cannot paint a single frame of
+   * the app. requireVerifiedAccess never throws and fails CLOSED — an
+   * unreachable database means "pay", not "in".
+   */
+  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let result: { action: "pass" | "signin" | "pay" };
+      try {
+        result = await requireVerifiedAccess(app.email);
+      } catch {
+        result = { action: "pay" };
+      }
+      if (cancelled) return;
+      if (result.action === "pass") {
+        setAccess("ok");
+        return;
+      }
+      window.location.replace(result.action === "pay" ? "/app/login?pay=1" : "/app/login");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email]);
+
+  if (access !== "ok") return <AccessSplash />;
 
   // Swipe left anywhere on the screen opens the customization drawer.
   const onTouchStart = (event: React.TouchEvent) => {

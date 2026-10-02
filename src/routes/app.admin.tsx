@@ -57,6 +57,30 @@ function AppAdmin() {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  // Same last line of defence as the dashboard: the user list is the most
+  // sensitive screen in the app and nothing on it may paint before the cloud
+  // confirms this session is allowed through.
+  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let result: { action: "pass" | "signin" | "pay" };
+      try {
+        result = await requireVerifiedAccess(app.email);
+      } catch {
+        result = { action: "pay" };
+      }
+      if (cancelled) return;
+      if (result.action === "pass") {
+        setAccess("ok");
+        return;
+      }
+      window.location.replace(result.action === "pay" ? "/app/login?pay=1" : "/app/login");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -128,6 +152,15 @@ function AppAdmin() {
     toast.success(value ? `${user.email} is now an admin` : `Admin removed from ${user.email}`);
     await refresh();
   };
+
+  if (access !== "ok") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 pt-safe pb-safe-base text-white">
+        <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+        <p className="text-sm font-semibold text-white/60">Checking your access…</p>
+      </div>
+    );
+  }
 
   if (!supabaseConfigured) {
     return (

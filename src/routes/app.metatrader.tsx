@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { WHOP_CHECKOUT_URL, connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
+import { connectMt, disconnectMt, getAppState, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
@@ -21,7 +21,7 @@ export const Route = createFileRoute("/app/metatrader")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
   },
   head: () => ({
     meta: [

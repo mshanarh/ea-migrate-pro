@@ -9,7 +9,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { usePlatform } from "@/lib/platform";
-import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess } from "@/lib/app-store";
+import { getAppState, requireAppAccess } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
@@ -32,7 +32,7 @@ export const Route = createFileRoute("/app/settings")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
   },
   head: () => ({
     meta: [

@@ -120,11 +120,20 @@ function AppAccess() {
     };
   }, [heldEmail]);
 
+  // ?pay=1 is re-read after EVERY render on purpose. /app/home sends unpaid
+  // users here with a client-side navigation, and TanStack keeps the same
+  // route component mounted across it — an effect keyed on app.email never
+  // re-ran, the flag stayed false, and the checkout card never appeared.
+  // Same value in, same value out: React bails out, so this costs nothing.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setPayPrompt(params.get("pay") === "1");
+  });
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const success = typeof window !== "undefined" && params.get("success") === "true";
     setSuccessReturn(success);
-    setPayPrompt(params.get("pay") === "1");
     // SECURITY: ?success=true alone must NEVER unlock the app — typing that
     // URL used to call markEmailPaid() locally, which is exactly how a
     // non-payer got in. The flag only shows the key entry view; unlock
@@ -246,11 +255,13 @@ function AppAccess() {
       // unpaid goes to checkout, paid or admin comes in. The device bind
       // below needs the row to exist, so registration must come before it.
       //
-      // A cloud call that does not answer in 15s must NOT strand the user.
-      // "allow" is the safe fallback: /app/home re-checks the database and
-      // routes to checkout on its own, so nobody is shown a payment page
-      // they do not need and nobody is locked out of one they do.
-      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "allow", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
+      // FAIL CLOSED. A cloud call that does not answer in time must never be
+      // read as "this account is fine" — the earlier "allow" fallback here
+      // was a payment hole: a slow or failing upsert walked an unpaid user
+      // straight into the app. An undecided account goes to checkout, which
+      // is recoverable (the card has a way back); walking into the app
+      // without paying is not.
+      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "checkout", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
       // PENDING / REJECTED — the account exists but the admin has not cleared
@@ -296,12 +307,13 @@ function AppAccess() {
         return;
       }
 
-      // allow / admin — hand them to the app. Its guard re-reads the database,
-      // so an approved account that never recorded a payment still gets in,
-      // and one that must pay is routed to the checkout card from there.
+      // allow / admin — hand them over to the app. This is NOT a forced
+      // navigation: the auto-redirect effect above only walks a session into
+      // /app/home when the LOCAL store says it is paid or admin, and
+      // /app/home re-checks the cloud before a single pixel renders. Forcing
+      // the jump here is what let an undecided account land in the app.
       setBusy(false);
       setRedirecting(false);
-      window.location.assign("/app/home");
     } catch (error) {
       // A thrown network/registration error must never leave the button
       // stuck on "Redirecting to Whop…" forever.

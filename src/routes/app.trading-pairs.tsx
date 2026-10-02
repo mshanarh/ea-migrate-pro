@@ -4,7 +4,7 @@ import { ArrowLeft, ArrowRight, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { WHOP_CHECKOUT_URL, getAppState, requireAppAccess, setRobotPairs, useAppState } from "@/lib/app-store";
+import { getAppState, requireAppAccess, setRobotPairs, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -16,7 +16,7 @@ export const Route = createFileRoute("/app/trading-pairs")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
   },
   head: () => ({
     meta: [
