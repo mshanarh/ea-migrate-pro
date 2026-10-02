@@ -4,7 +4,7 @@ import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
-import { verifyPaymentReturn, resolveCloudAccess } from "@/lib/payment-gate";
+import { verifyPaymentReturn, invalidateAccessCache, resolveCloudAccess } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
@@ -130,8 +130,7 @@ function AppAccess() {
   // not be reached). Everything below — the license screen, the auto-hop to
   // Whop, the hop into the app — reads this one value, so the first screen
   // can never disagree with the route guard that follows it.
-  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;
-  // A signed-in session that ALREADY has a robot goes to the app. The key
+  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;  // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
   // including people whose robot was already activated — so opening the app
   // always demanded another key, with no way past it. The home screen has an
@@ -141,24 +140,28 @@ function AppAccess() {
   // request for the licence-entry screen, not a returning session.
   const returningWithRobot = Boolean(app.email) && app.robots.length > 0;
   const showLicenseView = !returningWithRobot && (successReturn || effectiveStatus !== "unpaid");
-  // OPENING THE APP WITH AN UNPAID SESSION MUST GO TO WHOP. This is the rule
-  // the whole screen exists for, and it used to be missing: the auto-redirect
-  // below deliberately stopped for unpaid sessions (to avoid ping-ponging
-  // with /app/home), which left them sitting on the login form instead. The
-  // checkout card is not a dead end — it hops to Whop on its own — so there
-  // is no reason to keep anyone here.
-  const mustPay = Boolean(app.email) && effectiveStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
+  // OPENING THE APP WITH AN UNPAID SESSION MUST GO TO WHOP — but ONLY on the
+  // DATABASE's word. The local store is a hint that this device has not seen a
+  // payment, and treating a hint as a verdict is what sent a customer who had
+  // just been marked paid straight back to checkout: for the instant between
+  // signing in and the database answering, this screen believed the hint,
+  // decided "unpaid", and fired three hard redirects at Whop. Nothing here may
+  // act on anything but `cloudStatus === "unpaid"`.
+  const mustPay = Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
 
   /**
    * Ask the database who this session is, and send an unpaid one straight to
-   * Whop without waiting to be asked. Bounded, because a stalled request must
-   * not freeze the door.
+   * Whop without waiting to be asked. ALWAYS FRESH — this is the answer that
+   * decides whether the customer sees their app or a payment page, so a
+   * remembered "unpaid" from before the owner pressed Mark paid would be
+   * exactly the wrong thing to trust.
    */
   useEffect(() => {
     if (!app.email || successReturn || checkoutUrl) return;
     let cancelled = false;
+    setCloudStatus(null);
     void (async () => {
-      const status = await withDeadline(resolveCloudAccess(app.email), 15_000, null);
+      const status = await withDeadline(resolveCloudAccess(app.email, { fresh: true }), 15_000, null);
       if (cancelled) return;
       setCloudStatus(status);
       if (status === "unpaid") {
@@ -303,15 +306,24 @@ function AppAccess() {
       // Bind THIS device in the cloud before letting them in. The access gate
       // treats a missing binding as a stale session (the global access reset),
       // so an entitled person must be bound on THIS device or the very next
-      // route change would sign them straight back out again.
+      // route change would sign them straight back out again. A bind failure
+      // is never worth an error toast here — it says nothing the customer can
+      // act on, and a red banner over a working sign-in reads as a failure.
       try {
         const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), left(), { ok: false, error: "Device binding timed out" });
-        if (!bound.ok && bound.error) {
-          toast.error(bound.error);
-        }
+        if (!bound.ok && bound.error) console.warn("[app-login] device bind:", bound.error);
       } catch {
         /* a failed bind must never block sign-in */
       }
+
+      // ENTITLED — the database just said so, so drop any remembered refusal
+      // before the route guards ask. Without this a cached "unpaid" from
+      // before the owner pressed Mark paid could send them back to Whop on
+      // the very next navigation.
+      invalidateAccessCache(clean);
+      // Mirror the verdict locally so the in-app UI agrees with the database
+      // immediately rather than waiting for the next render's cloud read.
+      markEmailPaid(clean);
 
       // allow / admin — hand them over to the app. This is NOT a forced
       // navigation: the auto-redirect effect above only walks a session into

@@ -34,21 +34,49 @@ export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
 type Resolution = { status: CloudAccess; at: number };
 
 const CACHE_TTL_MS = 60_000;
+/**
+ * AN UNPAID ANSWER IS CACHED FOR FAR LESS TIME.
+ *
+ * The cache exists so navigation feels instant, and a confirmed "paid" never
+ * goes stale in a way that hurts anybody. "unpaid" is the opposite: the owner
+ * marks somebody paid in the console and that person's very next app launch
+ * must not be handed yesterday's answer. Caching a refusal for a full minute
+ * is exactly how a customer who has been paid for ends up back at checkout.
+ */
+const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
 
 export function isOwnerEmail(email: string): boolean {
   return OWNER_EMAILS.includes(email.trim().toLowerCase());
 }
 
-/** Raw cloud decision — null means "cannot decide" (unconfigured / unreachable). */
-export async function resolveCloudAccess(email: string | null | undefined): Promise<CloudAccess | null> {
+/** Drop any remembered answer for this email — used the moment a payment lands. */
+export function invalidateAccessCache(email: string | null | undefined): void {
+  const clean = (email ?? "").trim().toLowerCase();
+  if (clean) cache.delete(clean);
+}
+
+/**
+ * Raw cloud decision — null means "cannot decide" (unconfigured / unreachable).
+ *
+ * `fresh: true` skips the cache entirely. Use it anywhere the answer decides
+ * something the user is about to be shown — signing in, verifying a checkout
+ * return — rather than on a background re-check.
+ */
+export async function resolveCloudAccess(
+  email: string | null | undefined,
+  options?: { fresh?: boolean },
+): Promise<CloudAccess | null> {
   const clean = (email ?? "").trim().toLowerCase();
   if (!clean) return "unpaid";
   if (isOwnerEmail(clean)) return "admin";
   if (!supabase) return null; // unconfigured — caller decides the fallback
 
   const cached = cache.get(clean);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.status;
+  if (!options?.fresh && cached) {
+    const ttl = cached.status === "unpaid" ? UNPAID_CACHE_TTL_MS : CACHE_TTL_MS;
+    if (Date.now() - cached.at < ttl) return cached.status;
+  }
 
   try {
     const status = await computeFromDatabase(clean);
@@ -204,7 +232,10 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
 export async function verifyPaymentReturn(email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();
   try {
-    const cloud = await resolveCloudAccess(clean);
+    // ALWAYS FRESH — this is the moment somebody has just handed over money
+    // and is waiting on the answer. A cached "unpaid" here sends a paying
+    // customer straight back to the checkout page they just completed.
+    const cloud = await resolveCloudAccess(clean, { fresh: true });
     if (cloud === "admin" || cloud === "paid") {
       markEmailPaid(clean);
       return true;
