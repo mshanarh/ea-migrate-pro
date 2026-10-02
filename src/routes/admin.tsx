@@ -240,8 +240,18 @@ function AdminConsole() {
     void refresh();
     // The console is the admin's cockpit — keep it live so a decision made
     // on another device (or a new signup) shows up without a manual reload.
-    const timer = setInterval(() => void refresh(true), 20_000);
-    return () => clearInterval(timer);
+    // Ten seconds, and it re-reads when the tab is focused again, so someone
+    // who left this open while a signup came in does not have to hunt for the
+    // refresh button.
+    const tick = () => {
+      if (document.visibilityState === "visible") void refresh(true);
+    };
+    const timer = setInterval(tick, 10_000);
+    window.addEventListener("focus", tick);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", tick);
+    };
   }, [refresh]);
 
   const users = snapshot?.users ?? [];

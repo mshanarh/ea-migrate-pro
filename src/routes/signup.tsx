@@ -75,24 +75,31 @@ function SignUp() {
             // Wait for the cross-device write before leaving the page. The old
             // fire-and-forget call could be interrupted by the redirect in production.
             if (res.account) {
-              const synced = await syncRegister({ data: { account: res.account } });
-              if (synced.enabled && !synced.ok) {
-                console.error("[signup] Shared registration sync failed");
+              // The shared sync is a TanStack server function, and this
+              // deployment does not serve those routes — the request answers
+              // 405 and the client THROWS. That throw used to jump straight to
+              // the catch below, so the direct database write never ran and the
+              // registration existed nowhere but this browser's localStorage:
+              // no console entry, no email, nothing to approve. Isolated here
+              // so a dead server route can never swallow the signup again.
+              try {
+                const synced = await syncRegister({ data: { account: res.account } });
+                if (synced.enabled && !synced.ok) {
+                  console.error("[signup] Shared registration sync failed");
+                }
+              } catch (syncRouteError) {
+                console.warn("[signup] shared sync unavailable, writing directly:", syncRouteError);
               }
-              // STATIC-HOST FALLBACK: server functions 404 on the production
-              // build, so the account row never reached the cloud store and
-              // the admin console never showed the new user (only the email
-              // alert's approvals row landed). Mirror the registration to
-              // portal_accounts DIRECTLY from the browser with the anon key.
-              if (!synced.enabled && portalCloudConfigured()) {
+
+              // The write that actually matters: portal_accounts + the pending
+              // approval row, straight from the browser with the anon key. Run
+              // it whenever the cloud is configured, not only when the server
+              // function reported itself disabled.
+              if (portalCloudConfigured()) {
                 const direct = await portalRegisterAccount(res.account);
                 if (!direct.ok) {
                   console.error("[signup] Direct cloud registration failed:", direct.error);
                 }
-              } else if (synced.enabled && !synced.ok && portalCloudConfigured()) {
-                // Server reachable but the write failed — try the direct path too.
-                const direct = await portalRegisterAccount(res.account);
-                if (!direct.ok) console.error("[signup] Direct cloud registration also failed:", direct.error);
               }
               // Admin alert — "New user registered: <email> - Approve in
               // admin". Also saves the pending approval row. Awaited (bounded)
