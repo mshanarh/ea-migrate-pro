@@ -3,6 +3,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getDeviceId, useAppState } from "@/lib/app-store";
+import { getApprovalForEmail } from "@/lib/admin-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { requireVerifiedAccess, verifyPaymentReturn } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
@@ -36,6 +37,54 @@ function AppAccess() {
   // and a rejected one are both held at the door. The admin console's
   // Approve button is the only way out of pending.
   const [heldEmail, setHeldEmail] = useState<{ email: string; status: "pending" | "rejected" } | null>(null);
+  // "Checking…" on the held card while we re-read the approval.
+  const [heldChecking, setHeldChecking] = useState(false);
+
+  /**
+   * Someone held at "waiting for approval" had no way back in: the card only
+   * offered "use a different email", so once the admin approved them they still
+   * could not get in without restarting the app. This re-reads the approval on
+   * a timer and signs them straight through the moment it flips.
+   */
+  useEffect(() => {
+    if (!heldEmail) return;
+    let cancelled = false;
+    const recheck = async () => {
+      setHeldChecking(true);
+      try {
+        const approval = await getApprovalForEmail(heldEmail.email);
+        if (cancelled) return;
+        if (approval.ok && approval.status === "approved") {
+          // Approved: bind this device and sign in for real, then continue
+          // into the app. The home guard treats an unbound session as stale
+          // and would bounce them straight back to this screen, so the bind
+          // has to happen before the redirect.
+          try {
+            const bound = await bindDeviceToEmail(heldEmail.email, getDeviceId());
+            if (!bound.ok && bound.error) toast.error(bound.error);
+          } catch {
+            /* a failed bind must never block the redirect */
+          }
+          appSignIn(heldEmail.email);
+          window.location.replace("/app/home");
+          return;
+        }
+        if (approval.ok && approval.status === "rejected") {
+          setHeldEmail((current) => (current ? { ...current, status: "rejected" } : current));
+        }
+      } catch {
+        /* transient — retried on the next tick */
+      } finally {
+        if (!cancelled) setHeldChecking(false);
+      }
+    };
+    void recheck();
+    const timer = setInterval(() => void recheck(), 6000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [heldEmail]);
 
   useEffect(() => {
     const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
@@ -65,7 +114,16 @@ function AppAccess() {
   // always goes through continueWithEmail / enterKeyMode, which run the
   // binding check for EVERY email — admins included.
   const sessionPaymentStatus = app.email ? paymentStatusForEmail(app.email) : "unpaid";
-  const showLicenseView = keyMode || successReturn || sessionPaymentStatus !== "unpaid";
+  // A signed-in session that ALREADY has a robot goes to the app. The key
+  // screen used to appear for every paid/approved session on every launch —
+  // including people whose robot was already activated — so opening the app
+  // always demanded another key, with no way past it. The home screen has an
+  // "Add robot" dialog for anyone who genuinely needs another one.
+  //
+  // keyMode / successReturn still force the view: those are deliberate
+  // requests for the licence-entry screen, not a returning session.
+  const returningWithRobot = Boolean(app.email) && app.robots.length > 0;
+  const showLicenseView = !returningWithRobot && (keyMode || successReturn || sessionPaymentStatus !== "unpaid");
 
   useEffect(() => {
     if (!app.email || successReturn) return;
@@ -74,9 +132,6 @@ function AppAccess() {
     // licence key is activated — so a freshly approved mentor signed in
     // successfully and then sat on this screen forever, which looks exactly
     // like a failed sign-in. The home screen has its own "Add robot" state.
-    //
-    // PAID / ADMIN sessions deliberately stay: they need the licence-entry
-    // view shown below to activate a key.
     if (showLicenseView) return;
     window.location.replace("/app/home");
   }, [app.email, successReturn, showLicenseView]);
@@ -220,7 +275,7 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} onCancel={dismissHeld} /> :
+      {heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting || keyGateChecking} onEnterKey={() => void enterKeyMode()} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn || keyMode} unlocking={unlocking} />}
     </main>
@@ -237,10 +292,12 @@ function AppAccess() {
 function ApprovalHeldView({
   email,
   status,
+  checking,
   onCancel,
 }: {
   email: string;
   status: "pending" | "rejected";
+  checking: boolean;
   onCancel: () => void;
 }) {
   const rejected = status === "rejected";
@@ -276,6 +333,11 @@ function ApprovalHeldView({
       </p>
     </div>
     <p className="mt-3 break-all text-base leading-7 text-[#8a9298]">{email}</p>
+    {!rejected ? (
+      <p aria-live="polite" className="mt-6 text-sm text-[#8a9298]">
+        {checking ? "Checking for approval…" : "This screen updates on its own once you are approved."}
+      </p>
+    ) : null}
     <button
       type="button"
       onClick={onCancel}
