@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import type { Session } from "@supabase/supabase-js";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import {
   AlertTriangle,
@@ -18,6 +19,13 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { BrandLogo } from "@/components/BrandLogo";
+import {
+  adminAuthConfigured,
+  adminSignIn,
+  adminSignOut,
+  getAdminSession,
+  subscribeToAdminSession,
+} from "@/lib/admin-auth";
 import {
   loadAdminSnapshot,
   recordBroadcast,
@@ -198,6 +206,12 @@ function LoadingBlock({ label }: { label: string }) {
 function AdminConsole() {
   const account = useCurrentAccount();
   const navigate = useNavigate();
+  // CONSOLE IDENTITY — the database only accepts admin writes from a caller
+  // with a real Supabase session (it checks the signed-in email against
+  // admin_emails). This is that session: signed in once, remembered on the
+  // device, and separate from the portal account above.
+  const [session, setSession] = useState<Session | null>(null);
+  const [sessionChecked, setSessionChecked] = useState(false);
 
   const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -227,12 +241,29 @@ function AdminConsole() {
   }, []);
 
   useEffect(() => {
+    let active = true;
+    void getAdminSession().then((current) => {
+      if (!active) return;
+      setSession(current);
+      setSessionChecked(true);
+    });
+    const unsubscribe = subscribeToAdminSession((next) => setSession(next));
+    return () => {
+      active = false;
+      unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    // Nothing loads until the console identity is known — an unsigned
+    // console must not sit on a half-populated dashboard.
+    if (!session) return;
     void refresh();
     // The console is the admin's cockpit — keep it live so a decision made
     // on another device (or a new signup) shows up without a manual reload.
     const timer = setInterval(() => void refresh(true), 20_000);
     return () => clearInterval(timer);
-  }, [refresh]);
+  }, [refresh, session]);
 
   const users = snapshot?.users ?? [];
   const messages = snapshot?.messages ?? [];
@@ -281,9 +312,28 @@ function AdminConsole() {
     setLimitSaved(false);
   }, [openUser?.email, openUser?.licenseLimit]);
 
-  // ── Access: the console renders ONLY for an authenticated admin. The
-  //    route itself is protected too — a normal user who types /admin gets
-  //    the same guard, and the database refuses admin writes regardless.
+  // ── Access, in two layers. The DATABASE is the real one: it refuses admin
+  //    writes unless the caller holds a session whose email is in
+  //    admin_emails. This screen is the matching front door — a normal user
+  //    who types /admin never reaches the console, and even if they did, the
+  //    database would reject every write they attempted.
+  if (!sessionChecked) {
+    return (
+      <Gate title="Admin console" hint="Checking your access…">
+        <div className="flex h-12 items-center justify-center rounded-2xl bg-white/5 text-sm text-muted-foreground">
+          <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+        </div>
+      </Gate>
+    );
+  }
+  if (!session) {
+    return (
+      <AdminSignIn
+        configured={adminAuthConfigured}
+        onSignedIn={(next) => setSession(next)}
+      />
+    );
+  }
   if (!account) {
     return (
       <Gate title="Sign in required" hint="Open the admin console from an administrator account.">
@@ -422,7 +472,7 @@ function AdminConsole() {
     }
     // History is a real database record: message, timestamp, recipient
     // count and who sent it.
-    await recordBroadcast(body, sent, account.email);
+    await recordBroadcast(body, sent, session.user.email ?? account.email);
     setSending(false);
     setConfirming(false);
     setSendProgress("");
@@ -450,7 +500,9 @@ function AdminConsole() {
             <p className="truncate text-sm font-black uppercase tracking-[0.16em] sm:text-base">
               EA <span className="text-primary">Migrate</span> Admin
             </p>
-            <p className="truncate text-[11px] text-muted-foreground">{account.email}</p>
+            <p className="truncate text-[11px] text-muted-foreground">
+              {session.user.email ?? account.email}
+            </p>
           </div>
           <button
             type="button"
@@ -463,6 +515,7 @@ function AdminConsole() {
           <button
             type="button"
             onClick={() => {
+              void adminSignOut();
               signOut();
               navigate({ to: "/signin" });
             }}
@@ -617,6 +670,110 @@ function AdminConsole() {
           onToggleReactivation={() => toggleReactivation(openUser)}
         />
       ) : null}
+    </div>
+  );
+}
+
+/* ── Console sign-in ─────────────────────────────────────────────────────
+ * The admin console is the only place signed in with Supabase Auth. That
+ * session is what the database checks before it will accept an approval, a
+ * licence limit or a message — a normal user cannot obtain one for an admin
+ * address, so every admin write is attributable to a real person. */
+
+function AdminSignIn({
+  configured,
+  onSignedIn,
+}: {
+  configured: boolean;
+  onSignedIn: (session: Session) => void;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    const result = await adminSignIn(email, password);
+    setBusy(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    const session = await getAdminSession();
+    if (session) onSignedIn(session);
+    else setError("Signed in, but the session could not be read. Please try again.");
+  };
+
+  return (
+    <div className="flex min-h-dvh items-center justify-center bg-[#07090B] px-6 pb-safe text-white">
+      <div className="w-full max-w-sm">
+        <div className="mx-auto flex size-16 items-center justify-center overflow-hidden rounded-2xl bg-primary/15">
+          <BrandLogo className="size-full object-contain" />
+        </div>
+        <h1 className="mt-6 text-center text-2xl font-black">Admin Console</h1>
+        <p className="mt-2 text-center text-sm leading-6 text-muted-foreground">
+          Sign in with your administrator account to manage users, approvals and messages.
+        </p>
+        <form onSubmit={submit} className="mt-7 space-y-3">
+          <div>
+            <label htmlFor="admin-email" className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              Admin email
+            </label>
+            <input
+              id="admin-email"
+              type="email"
+              autoComplete="username"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="mt-1.5 h-12 w-full rounded-2xl border border-white/10 bg-white/5 px-4 text-sm outline-none focus:border-primary/60"
+            />
+          </div>
+          <div>
+            <label htmlFor="admin-password" className="text-xs font-bold uppercase tracking-wide text-muted-foreground">
+              Password
+            </label>
+            <input
+              id="admin-password"
+              type="password"
+              autoComplete="current-password"
+              required
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              className="mt-1.5 h-12 w-full rounded-2xl border border-white/10 bg-white/5 px-4 text-sm outline-none focus:border-primary/60"
+            />
+          </div>
+          {error ? (
+            <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-500/15 p-3 text-xs text-red-200">
+              {error}
+            </p>
+          ) : null}
+          {!configured ? (
+            <p className="rounded-2xl border border-amber-300/40 bg-amber-400/10 p-3 text-xs text-amber-100">
+              The database connection is missing, so the console cannot be unlocked on this device.
+            </p>
+          ) : null}
+          <button
+            type="submit"
+            disabled={busy || !configured}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-xs font-black uppercase text-primary-foreground disabled:opacity-60"
+          >
+            {busy ? <Loader2 className="size-4 animate-spin" aria-hidden="true" /> : <ShieldCheck className="size-4" aria-hidden="true" />}
+            Sign in
+          </button>
+        </form>
+        <p className="mt-6 text-center text-[11px] leading-5 text-muted-foreground">
+          First time here? Create this account under Supabase → Authentication → Users, then add the same
+          address to the admin_emails table.
+        </p>
+        <Link to="/" className="mt-4 block text-center text-xs font-semibold text-primary">
+          Back to the website
+        </Link>
+      </div>
     </div>
   );
 }

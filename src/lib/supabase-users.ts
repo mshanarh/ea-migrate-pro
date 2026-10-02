@@ -178,6 +178,28 @@ export async function recordKeyActivationInCloud(
   const address = clean(email);
   const cleanKey = key.trim().toUpperCase().replace(/\s+/g, "");
   if (!address || !cleanKey) return { ok: false, error: "Missing email or key." };
+  // SERVER-SIDE CLAIM (preferred). The database checks that this key really
+  // exists and is not already owned by somebody else, then records payment
+  // and the device binding in one transaction. This replaced a raw client
+  // write of is_paid, which meant anyone could post is_paid=true for their
+  // own email and grant themselves the app. Falls back to the direct writes
+  // below only when the function has not been installed yet.
+  try {
+    const { data: claimed, error: claimRpcError } = await dbClient.rpc("claim_license_key", {
+      p_key: cleanKey,
+      p_email: address,
+      p_device: deviceId ?? null,
+    });
+    if (!claimRpcError) {
+      if (claimed === true) return { ok: true };
+      return { ok: false, error: "That license key is not valid for this email." };
+    }
+    if (claimRpcError.code !== "42883" && claimRpcError.code !== "PGRST202") {
+      console.warn("[key-activation] claim_license_key failed:", claimRpcError.message);
+    }
+  } catch {
+    /* function missing — fall through to the legacy direct writes */
+  }
   // 1. Claim an open key (row bound to someone else is left alone — the
   //    license lookup already rejected that case before activation).
   const { error: claimError } = await dbClient

@@ -144,16 +144,18 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     return { users: [], messages: [], ok: false, error: "Database not connected" };
   }
   const db = supabase;
-  const [usersResult, approvalsResult, keysResult, settingsResult, paidResult] = await Promise.all([
-    db
-      .from("users")
-      .select("email, created_at, is_paid, is_admin, device_id, reactivation_enabled")
-      .order("created_at", { ascending: false }),
-    db.from("mentor_approvals").select("email, status"),
-    db.from("license_keys").select("email"),
-    db.from("app_settings").select("key, value, updated_at").or(`key.like.${LIMIT_PREFIX}*,key.like.${MESSAGE_PREFIX}*`),
-    db.from("paid_emails").select("email, paid_at"),
-  ]);
+  const [usersResult, approvalsResult, keysResult, settingsResult, paidResult, messagesResult] =
+    await Promise.all([
+      db
+        .from("users")
+        .select("email, created_at, is_paid, is_admin, device_id, reactivation_enabled")
+        .order("created_at", { ascending: false }),
+      db.from("mentor_approvals").select("email, status"),
+      db.from("license_keys").select("email"),
+      db.from("app_settings").select("key, value, updated_at").like("key", `${LIMIT_PREFIX}%`),
+      db.from("paid_emails").select("email, paid_at"),
+      db.from("app_messages").select("id, body, sent_at, recipients, sender").order("sent_at", { ascending: false }),
+    ]);
 
   // Every table is independent — a hiccup in one must not blank the rest.
   const error =
@@ -187,9 +189,37 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     if (email && row.paid_at) paidAt.set(email, row.paid_at);
   }
 
-  const { limits, messages } = parseSettings(
+  const { limits } = parseSettings(
     (settingsResult.data ?? []) as Array<{ key: string; value: unknown; updated_at?: string }>,
   );
+
+  // Broadcast history comes from the app_messages table written by the
+  // admin-checked function. Any older rows written before the migration
+  // live in app_settings and are merged in, so nothing is ever lost.
+  const messages: AdminMessage[] = [];
+  for (const row of (messagesResult.data ?? []) as Array<{
+    id?: string;
+    body?: string;
+    sent_at?: string | null;
+    recipients?: number | null;
+    sender?: string | null;
+  }>) {
+    const body = text(row.body);
+    if (!body) continue;
+    messages.push({
+      id: text(row.id),
+      body,
+      sentAt: timestamp(row.sent_at, new Date().toISOString()),
+      recipients: Number(row.recipients ?? 0) || 0,
+      sender: text(row.sender, "admin"),
+    });
+  }
+  const legacy = parseSettings(
+    (settingsResult.data ?? []) as Array<{ key: string; value: unknown; updated_at?: string }>,
+  ).messages;
+  const knownIds = new Set(messages.map((item) => item.id));
+  messages.push(...legacy.filter((item) => !knownIds.has(item.id)));
+  messages.sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1));
 
   const users: AdminUser[] = (
     (usersResult.data ?? []) as Array<{
@@ -221,7 +251,12 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
   return error ? { users, messages, ok: true, error } : { users, messages, ok: true };
 }
 
-/** APPROVE / REJECT — the one place the approval state machine is written. */
+/**
+ * APPROVE / REJECT. Goes through the database function
+ * `admin_set_approval`, which verifies the signed-in admin against the
+ * admin_emails table before writing. A direct table write is no longer
+ * possible — that is the point of the migration.
+ */
 export async function setUserApproval(
   email: string,
   status: ApprovalStatus,
@@ -229,18 +264,9 @@ export async function setUserApproval(
   if (!supabase) return { ok: false, error: "Database not configured" };
   const clean = email.trim().toLowerCase();
   if (!clean) return { ok: false, error: "Missing email" };
-  // The users row must exist (a signup created it) so the app can see the
-  // account even before it is approved.
-  const { error: upsertError } = await supabase
-    .from("users")
-    .upsert({ email: clean }, { onConflict: "email", ignoreDuplicates: true });
-  if (upsertError) return { ok: false, error: upsertError.message };
-
-  const { error } = await supabase
-    .from("mentor_approvals")
-    .upsert({ email: clean, status }, { onConflict: "email" });
-  if (error) return { ok: false, error: error.message };
-  return { ok: true };
+  const { data, error } = await supabase.rpc("admin_set_approval", { p_email: clean, p_status: status });
+  if (error) return { ok: false, error: describeAdminError(error.message) };
+  return data === true ? { ok: true } : { ok: false, error: "The database refused that change." };
 }
 
 /** Maximum license keys this user may create/use. 0 = blocked until set. */
@@ -252,12 +278,12 @@ export async function setUserLicenseLimit(
   const clean = email.trim().toLowerCase();
   if (!clean) return { ok: false, error: "Missing email" };
   const safe = Math.max(0, Math.floor(Number(limit) || 0));
-  const { error } = await supabase.from("app_settings").upsert(
-    { key: `${LIMIT_PREFIX}${clean}`, value: { limit: safe }, updated_at: new Date().toISOString() },
-    { onConflict: "key" },
-  );
-  if (error) return { ok: false, error: error.message };
-  return { ok: true };
+  const { data, error } = await supabase.rpc("admin_set_license_limit", {
+    p_email: clean,
+    p_limit: safe,
+  });
+  if (error) return { ok: false, error: describeAdminError(error.message) };
+  return data === true ? { ok: true } : { ok: false, error: "The database refused that change." };
 }
 
 /** Payment status is the users.is_paid flag — the app's sign-in gate reads it. */
@@ -268,16 +294,22 @@ export async function setUserPaid(
   if (!supabase) return { ok: false, error: "Database not configured" };
   const clean = email.trim().toLowerCase();
   if (!clean) return { ok: false, error: "Missing email" };
-  const { error } = await supabase.from("users").update({ is_paid: paid }).eq("email", clean);
-  if (error) return { ok: false, error: error.message };
-  if (paid) {
-    // paid_emails carries the payment DATE for the Paid Users section.
-    await supabase.from("paid_emails").upsert(
-      { email: clean, paid_at: new Date().toISOString() },
-      { onConflict: "email" },
-    );
+  const { data, error } = await supabase.rpc("admin_set_paid", { p_email: clean, p_paid: paid });
+  if (error) return { ok: false, error: describeAdminError(error.message) };
+  return data === true ? { ok: true } : { ok: false, error: "The database refused that change." };
+}
+
+/**
+ * Turn a database refusal into something the admin can act on. The common
+ * one by far is a missing console sign-in: the functions check the caller's
+ * signed-in email, so an unsigned console is refused even though it is on
+ * the right device.
+ */
+function describeAdminError(message: string): string {
+  if (/admin only/i.test(message)) {
+    return "The database refused this: sign in to the console with your admin account.";
   }
-  return { ok: true };
+  return message;
 }
 
 /** Per-mentor permission to release a client's device. */
@@ -309,16 +341,17 @@ export async function recordBroadcast(
   if (!text2) return { ok: false, error: "Message is empty" };
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const sentAt = new Date().toISOString();
-  const { error } = await supabase.from("app_settings").upsert(
-    {
-      key: `${MESSAGE_PREFIX}${sentAt}:${id}`,
-      value: { id, body: text2, sentAt, recipients, sender: sender.trim() || "admin" },
-      updated_at: sentAt,
-    },
-    { onConflict: "key" },
-  );
-  if (error) return { ok: false, error: error.message };
-  return { ok: true, id };
+  // app_messages is the history table; only the admin-checked function may
+  // write to it, which is what keeps the record trustworthy.
+  const { data, error } = await supabase.rpc("admin_record_message", {
+    p_id: id,
+    p_body: text2,
+    p_sent_at: sentAt,
+    p_recipients: recipients,
+    p_sender: sender.trim() || "admin",
+  });
+  if (error) return { ok: false, error: describeAdminError(error.message) };
+  return data === true ? { ok: true, id } : { ok: false, error: "The database refused that message." };
 }
 
 /* ── What the SIGN-IN side reads ───────────────────────────────────────── */
