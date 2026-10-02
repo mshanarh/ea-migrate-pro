@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { WHOP_CHECKOUT_URL, activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
@@ -22,11 +22,15 @@ import { executeMt5ForUser } from "@/lib/mt5-bridge.server";
 export const Route = createFileRoute("/app/home")({
   ssr: false,
   beforeLoad: async () => {
-    // Cloud-verified gates: no email → /app/login; a local-only "paid"
-    // record that the database does not confirm → Whop checkout.
+    // Cloud-verified gates: no email → /app/login; an unpaid one → checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: WHOP_CHECKOUT_URL });
+    // An EXTERNAL url is not a valid router location — `redirect({href:
+    // "https://whop.com/…"})` was resolved as an app path and went nowhere,
+    // which is part of why an unpaid user ended up back on the login screen
+    // with nothing happening. Hand the decision to the login page instead:
+    // it owns the checkout card and performs the hop to Whop itself.
+    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
   },
   head: () => ({
     meta: [

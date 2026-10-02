@@ -25,6 +25,16 @@ function AppAccess() {
   // Non-null once we know this email must pay: renders the tappable
   // checkout link that WebViews actually honour.
   const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  // A sign-in attempt is IN FLIGHT. Set synchronously by the Proceed tap,
+  // before the first await, and cleared on every exit except checkout.
+  // Without it the auto-redirect effect below fired on the render right
+  // after appSignIn() and hard-navigated to /app/home, destroying this
+  // async flow before it could ever reach checkout — which is exactly the
+  // "I pressed Proceed and it bounced me back to Login" bug.
+  const [busy, setBusy] = useState(false);
+  // ?pay=1 — /app/home's guard decided this email must pay and handed the
+  // decision here, because an external URL is NOT a valid router location.
+  const [payPrompt, setPayPrompt] = useState(false);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -85,8 +95,10 @@ function AppAccess() {
   }, [heldEmail]);
 
   useEffect(() => {
-    const success = typeof window !== "undefined" && new URLSearchParams(window.location.search).get("success") === "true";
+    const params = new URLSearchParams(window.location.search);
+    const success = typeof window !== "undefined" && params.get("success") === "true";
     setSuccessReturn(success);
+    setPayPrompt(params.get("pay") === "1");
     // SECURITY: ?success=true alone must NEVER unlock the app — typing that
     // URL used to call markEmailPaid() locally, which is exactly how a
     // non-payer got in. The flag only shows the key entry view; unlock
@@ -125,94 +137,139 @@ function AppAccess() {
 
   useEffect(() => {
     if (!app.email || successReturn) return;
+    // Never yank the page away while a sign-in attempt is still deciding the
+    // outcome, or while a checkout / approval / blocked card is on screen.
+    if (busy || checkoutUrl || payPrompt || heldEmail || blockedEmail) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
     // licence key is activated — so a freshly approved mentor signed in
     // successfully and then sat on this screen forever, which looks exactly
     // like a failed sign-in. The home screen has its own "Add robot" state.
     if (showLicenseView) return;
+    // An UNPAID session must not round-trip through /app/home: that guard
+    // decides "pay" and sends the person back here, so the two would
+    // ping-pong with nothing ever happening. The checkout screen owns them.
+    if (sessionPaymentStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView]);
+  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, heldEmail, blockedEmail, sessionPaymentStatus]);
+
+  /**
+   * THE HOP TO WHOP. A plain browser tab follows location.assign; an iOS
+   * home-screen app silently refuses to leave for an external site, and the
+   * tappable link on the checkout card below is what works there. A second,
+   * slightly delayed attempt covers the case where the first one landed
+   * while this document was still settling.
+   */
+  useEffect(() => {
+    if (!checkoutUrl) return;
+    const timer = setTimeout(() => {
+      try {
+        window.location.assign(checkoutUrl);
+      } catch {
+        /* the visible link is the fallback */
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [checkoutUrl]);
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (busy) return;
     const clean = email.trim().toLowerCase();
     console.log("[app-login] Trying login:", clean);
-    // CLOUD DEVICE BINDING FIRST: if this email is already bound to another
-    // device, do NOT sign in — show the blocked card ("account already used,
-    // please tell your mentor to reactivate"). Applies to admins and
-    // clients alike — there is no self-service unlock.
+    // Freeze the auto-redirect BEFORE the first await (see `busy`). Every
+    // exit below that is not "go to checkout" puts it back.
+    setBusy(true);
+    setRedirecting(true);
     try {
-      const binding = await checkDeviceBinding(clean, getDeviceId());
-      if (binding.boundToOtherDevice) {
-        setBlockedEmail(clean);
+      // CLOUD DEVICE BINDING FIRST: if this email is already bound to another
+      // device, do NOT sign in — show the blocked card ("account already used,
+      // please tell your mentor to reactivate"). Applies to admins and
+      // clients alike — there is no self-service unlock.
+      try {
+        const binding = await checkDeviceBinding(clean, getDeviceId());
+        if (binding.boundToOtherDevice) {
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+      } catch {
+        /* unreachable cloud — fall through to the normal sign-in path */
+      }
+      const result = appSignIn(clean);
+      if (result.error) {
+        console.log("[app-login] Login error:", result.error);
+        toast.error(result.error);
+        setBusy(false);
+        setRedirecting(false);
         return;
       }
-    } catch {
-      /* unreachable cloud — fall through to the normal sign-in path */
-    }
-    const result = appSignIn(clean);
-    if (result.error) {
-      console.log("[app-login] Login error:", result.error);
-      toast.error(result.error);
-      return;
-    }
-    console.log("[app-login] Login success");
-    // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
-    window.sessionStorage.setItem("eamp_pending_welcome", "1");
-    if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
+      console.log("[app-login] Login success");
+      // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+      window.sessionStorage.setItem("eamp_pending_welcome", "1");
+      if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
 
-    // Supabase registration FIRST: upsert the user (so the row EXISTS),
-    // create the session row, then decide the gate from the DATABASE —
-    // unpaid goes to checkout, paid or admin comes in. The device bind
-    // below needs the row to exist, so registration must come before it.
-    const registration = await registerWithEmail(clean);
-    if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
+      // Supabase registration FIRST: upsert the user (so the row EXISTS),
+      // create the session row, then decide the gate from the DATABASE —
+      // unpaid goes to checkout, paid or admin comes in. The device bind
+      // below needs the row to exist, so registration must come before it.
+      const registration = await registerWithEmail(clean);
+      if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
-    // PENDING / REJECTED — the account exists but the admin has not cleared
-    // it. Sign out again (the local session was armed a moment ago) and
-    // show the matching card instead of the app.
-    if (registration.outcome === "pending" || registration.outcome === "rejected") {
-      appSignOut();
-      setHeldEmail({ email: clean, status: registration.outcome });
-      return;
-    }
-
-    // Bind THIS device in the cloud BEFORE any redirect — including the Whop
-    // checkout hop. The access gate treats a missing binding as a stale
-    // session (the global access reset), so a person who comes back AFTER
-    // paying must already be bound — otherwise the gate would sign them out
-    // in a loop. Bindings are written at sign-in and at key activation.
-    try {
-      const bound = await bindDeviceToEmail(clean, getDeviceId());
-      if (!bound.ok && bound.error) {
-        toast.error(bound.error);
+      // PENDING / REJECTED — the account exists but the admin has not cleared
+      // it. Sign out again (the local session was armed a moment ago) and
+      // show the matching card instead of the app.
+      if (registration.outcome === "pending" || registration.outcome === "rejected") {
+        appSignOut();
+        setHeldEmail({ email: clean, status: registration.outcome });
+        setBusy(false);
+        setRedirecting(false);
+        return;
       }
-    } catch {
-      /* a failed bind must never block sign-in */
-    }
 
-    if (registration.outcome === "checkout") {
-      if (successReturn) {
-        // The URL flag says they returned from checkout — prove it on the
-        // server before granting anything. Unverifiable → straight to Whop.
-        const verified = await verifyPaymentReturn(clean);
-        if (verified) return;
-      }
-      setRedirecting(true);
-      // A WebView (iOS WKWebView especially) drops a programmatic navigation
-      // that happens AFTER an await — by then the browser no longer counts it
-      // as a user gesture, so location.assign silently does nothing and the
-      // user is left staring at a button that says "Redirecting to Whop…".
-      // We show a real, tappable link as the reliable path, and keep the
-      // automatic hop as a convenience for normal browsers.
-      setCheckoutUrl(WHOP_CHECKOUT_URL);
+      // Bind THIS device in the cloud BEFORE any redirect — including the Whop
+      // checkout hop. The access gate treats a missing binding as a stale
+      // session (the global access reset), so a person who comes back AFTER
+      // paying must already be bound — otherwise the gate would sign them out
+      // in a loop. Bindings are written at sign-in and at key activation.
       try {
-        window.location.assign(WHOP_CHECKOUT_URL);
+        const bound = await bindDeviceToEmail(clean, getDeviceId());
+        if (!bound.ok && bound.error) {
+          toast.error(bound.error);
+        }
       } catch {
-        /* the visible link below is the fallback */
+        /* a failed bind must never block sign-in */
       }
-      return;
+
+      if (registration.outcome === "checkout") {
+        if (successReturn) {
+          // The URL flag says they returned from checkout — prove it on the
+          // server before granting anything. Unverifiable → straight to Whop.
+          const verified = await verifyPaymentReturn(clean);
+          if (verified) return;
+        }
+        // A WebView (iOS WKWebView especially) drops a programmatic navigation
+        // that happens AFTER an await — by then the browser no longer counts it
+        // as a user gesture, so location.assign silently does nothing and the
+        // user is left staring at a button that says "Redirecting to Whop…".
+        // We show a real, tappable link as the reliable path, and keep the
+        // automatic hop (see the effect above) as the convenience route.
+        setCheckoutUrl(WHOP_CHECKOUT_URL);
+        return;
+      }
+
+      // allow / admin — nothing left to decide; let the auto-redirect effect
+      // walk them into the app once this settles.
+      setBusy(false);
+      setRedirecting(false);
+    } catch (error) {
+      // A thrown network/registration error must never leave the button
+      // stuck on "Redirecting to Whop…" forever.
+      console.warn("[app-login] sign-in failed:", error);
+      setBusy(false);
+      setRedirecting(false);
+      toast.error("Could not sign you in. Check your connection and try again.");
     }
   };
 
@@ -250,7 +307,7 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {checkoutUrl ? <CheckoutRedirect url={checkoutUrl} email={activeEmail} /> :
+      {(checkoutUrl || payPrompt) ? <CheckoutRedirect url={checkoutUrl ?? WHOP_CHECKOUT_URL} email={activeEmail} /> :
       heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}

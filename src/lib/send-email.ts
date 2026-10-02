@@ -159,7 +159,15 @@ function renderMessage(
   };
 }
 
-/** Browser-direct Brevo send — only used while the edge function is absent. */
+/**
+ * Browser-direct Brevo send — only used while the edge function is absent.
+ *
+ * Mobile networks and embedded WebViews are slow: the old 12s ceiling aborted
+ * the request before Brevo ever answered and the failure surfaced as the
+ * useless "could not be reached". The timeout is now generous, the attempt is
+ * retried once, and the real HTTP status / provider message is reported so a
+ * failure is diagnosable instead of a dead end.
+ */
 async function sendDirectFromBrowser(message: Message): Promise<{ ok: boolean; error?: string }> {
   const apiKey = (import.meta.env["VITE_BREVO_API_KEY"] ?? "").trim();
   if (!apiKey) {
@@ -168,27 +176,52 @@ async function sendDirectFromBrowser(message: Message): Promise<{ ok: boolean; e
       error: "No email service is available: deploy the send-email function, or set VITE_BREVO_API_KEY.",
     };
   }
-  try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
-        to: [{ email: message.to, name: message.to }],
-        subject: message.subject,
-        htmlContent: message.html,
-        textContent: message.text,
-      }),
-      signal: AbortSignal.timeout(12_000),
-    });
-    if (!response.ok) {
+  const payload = JSON.stringify({
+    sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
+    to: [{ email: message.to, name: message.to }],
+    subject: message.subject,
+    htmlContent: message.html,
+    textContent: message.text,
+  });
+  let lastError = "The email service could not be reached — try again.";
+  // Two attempts: a single dropped mobile connection should not cost the
+  // client their licence-key email.
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+        method: "POST",
+        headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
+        body: payload,
+        signal: AbortSignal.timeout(30_000),
+      });
+      if (response.ok) return { ok: true };
       const body = await response.text().catch(() => "");
-      return { ok: false, error: `Email provider error (${response.status}).` };
+      // Brevo answers with {"code":"…","message":"…"} — surface the message,
+      // it is the difference between "sender not verified" and "bad key".
+      let detail = body.slice(0, 200);
+      try {
+        const parsed = JSON.parse(body) as { message?: unknown; code?: unknown };
+        if (typeof parsed.message === "string") {
+          detail = parsed.message.slice(0, 200);
+        }
+      } catch {
+        /* keep the raw body */
+      }
+      console.error(`[send-email] Brevo refused the send (${response.status}):`, detail);
+      lastError = `The email service rejected the message (${response.status})${detail ? `: ${detail}` : "."}`;
+      // 4xx is a permanent refusal — retrying changes nothing.
+      if (response.status < 500) return { ok: false, error: lastError };
+    } catch (error) {
+      // A timeout, an offline device or a blocked cross-origin request all
+      // land here; the reason is logged because the user only ever sees this.
+      lastError =
+        error instanceof DOMException && error.name === "TimeoutError"
+          ? "The email service timed out — try again."
+          : "The email service could not be reached — try again.";
+      console.warn(`[send-email] Brevo attempt ${attempt} failed:`, error);
     }
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "Brevo could not be reached — try again." };
   }
+  return { ok: false, error: lastError };
 }
 
 /**
@@ -215,7 +248,7 @@ async function sendViaBrevo(options: {
           "content-type": "application/json",
         },
         body: JSON.stringify({ kind: options.kind, to: options.to, params }),
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.timeout(20_000),
       });
       if (response.ok) return { ok: true };
       const body = await response.text().catch(() => "");
