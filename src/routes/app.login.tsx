@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getDeviceId, useAppState } from "@/lib/app-store";
 import { getApprovalForEmail } from "@/lib/admin-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
-import { verifyPaymentReturn } from "@/lib/payment-gate";
+import { verifyPaymentReturn, resolveCloudAccess } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
@@ -73,6 +73,21 @@ function AppAccess() {
   const [heldEmail, setHeldEmail] = useState<{ email: string; status: "pending" | "rejected" } | null>(null);
   // "Checking…" on the held card while we re-read the approval.
   const [heldChecking, setHeldChecking] = useState(false);
+  /**
+   * THE DATABASE'S ANSWER for this session, read on arrival.
+   *
+   * The local store only knows what THIS device has seen, so opening the app
+   * with a signed-in but never-verified session looked identical to opening
+   * it as a paying customer — the person landed on a login form and had to
+   * work it out themselves. resolveCloudAccess is the same function the route
+   * guards use, so the first screen agrees with the gate by construction.
+   * `null` means the database could not be reached; the local store is the
+   * fallback hint until it answers.
+   */
+  const [cloudStatus, setCloudStatus] = useState<"admin" | "paid" | "approved" | "unpaid" | "pending" | "rejected" | null>(null);
+  // The user pressed "Back" on the checkout card. Until the decision changes
+  // we stop forcing it back up, or the card would be impossible to leave.
+  const [checkoutDismissed, setCheckoutDismissed] = useState(false);
 
   /**
    * Someone held at "waiting for approval" had no way back in: the card only
@@ -159,6 +174,12 @@ function AppAccess() {
   // always goes through continueWithEmail, which runs the binding check for
   // EVERY email — admins included.
   const sessionPaymentStatus = app.email ? paymentStatusForEmail(app.email) : "unpaid";
+  // THE TRUTH about this session. The database outranks the device, and the
+  // device is only consulted while the database is still thinking (or could
+  // not be reached). Everything below — the license screen, the auto-hop to
+  // Whop, the hop into the app — reads this one value, so the first screen
+  // can never disagree with the route guard that follows it.
+  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;
   // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
   // including people whose robot was already activated — so opening the app
@@ -168,13 +189,43 @@ function AppAccess() {
   // A return from checkout still forces the view: that is a deliberate
   // request for the licence-entry screen, not a returning session.
   const returningWithRobot = Boolean(app.email) && app.robots.length > 0;
-  const showLicenseView = !returningWithRobot && (successReturn || sessionPaymentStatus !== "unpaid");
+  const showLicenseView = !returningWithRobot && (successReturn || effectiveStatus !== "unpaid");
+  // OPENING THE APP WITH AN UNPAID SESSION MUST GO TO WHOP. This is the rule
+  // the whole screen exists for, and it used to be missing: the auto-redirect
+  // below deliberately stopped for unpaid sessions (to avoid ping-ponging
+  // with /app/home), which left them sitting on the login form instead. The
+  // checkout card is not a dead end — it hops to Whop on its own — so there
+  // is no reason to keep anyone here.
+  const mustPay = Boolean(app.email) && effectiveStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
+
+  /**
+   * Ask the database who this session is, and send an unpaid one straight to
+   * Whop without waiting to be asked. Bounded, because a stalled request must
+   * not freeze the door.
+   */
+  useEffect(() => {
+    if (!app.email || successReturn || checkoutUrl) return;
+    let cancelled = false;
+    void (async () => {
+      const status = await withDeadline(resolveCloudAccess(app.email), 15_000, null);
+      if (cancelled) return;
+      setCloudStatus(status);
+      if (status === "unpaid") {
+        setCheckoutDismissed(false);
+        setRedirecting(true);
+        setCheckoutUrl(WHOP_CHECKOUT_URL);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email, successReturn, checkoutUrl]);
 
   useEffect(() => {
     if (!app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
-    if (busy || checkoutUrl || payPrompt || heldEmail || blockedEmail) return;
+    if (busy || checkoutUrl || payPrompt || mustPay || heldEmail || blockedEmail) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
     // licence key is activated — so a freshly approved mentor signed in
@@ -184,28 +235,34 @@ function AppAccess() {
     // An UNPAID session must not round-trip through /app/home: that guard
     // decides "pay" and sends the person back here, so the two would
     // ping-pong with nothing ever happening. The checkout screen owns them.
-    if (sessionPaymentStatus === "unpaid") return;
+    if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, heldEmail, blockedEmail, sessionPaymentStatus]);
+  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, mustPay, heldEmail, blockedEmail, effectiveStatus]);
 
   /**
-   * THE HOP TO WHOP. A plain browser tab follows location.assign; an iOS
-   * home-screen app silently refuses to leave for an external site, and the
-   * tappable link on the checkout card below is what works there. A second,
-   * slightly delayed attempt covers the case where the first one landed
-   * while this document was still settling.
+   * THE HOP TO WHOP — three attempts, because the first one is the one that
+   * gets swallowed. A plain browser tab or the Android WebView follows
+   * `location.replace` immediately; an iOS home-screen app silently refuses
+   * to leave for an external site, and the tappable link on the checkout
+   * card below is what works there. Covered here are all three ways the app
+   * decides someone must pay: the Proceed tap, the ?pay=1 deep link from a
+   * route guard, and simply OPENING the app on an unpaid session.
    */
+  const checkoutTarget = checkoutUrl ?? (payPrompt || mustPay ? WHOP_CHECKOUT_URL : null);
   useEffect(() => {
-    if (!checkoutUrl) return;
-    const timer = setTimeout(() => {
-      try {
-        window.location.assign(checkoutUrl);
-      } catch {
-        /* the visible link is the fallback */
-      }
-    }, 600);
-    return () => clearTimeout(timer);
-  }, [checkoutUrl]);
+    if (!checkoutTarget) return;
+    const delays = [0, 600, 1800];
+    const timers = delays.map((delay) =>
+      setTimeout(() => {
+        try {
+          window.location.replace(checkoutTarget);
+        } catch {
+          /* the visible link is the fallback */
+        }
+      }, delay),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [checkoutTarget]);
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -215,6 +272,7 @@ function AppAccess() {
     // Freeze the auto-redirect BEFORE the first await (see `busy`). Every
     // exit below that is not "go to checkout" puts it back.
     setBusy(true);
+    setCheckoutDismissed(false);
     // ONE shared budget for the whole decision. Each call below may only
     // spend what is left of it, so however badly the network behaves the
     // door still opens inside ~20s instead of showing "Redirecting to
@@ -337,6 +395,7 @@ function AppAccess() {
   const dismissCheckout = () => {
     setCheckoutUrl(null);
     setPayPrompt(false);
+    setCheckoutDismissed(true);
     setRedirecting(false);
     setBusy(false);
     if (typeof window !== "undefined") {
@@ -374,10 +433,10 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {(checkoutUrl || payPrompt) ? <CheckoutRedirect url={checkoutUrl ?? WHOP_CHECKOUT_URL} email={activeEmail} onCancel={dismissCheckout} /> :
+      {checkoutTarget ? <CheckoutRedirect url={checkoutTarget} email={activeEmail} onCancel={dismissCheckout} /> :
       heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }

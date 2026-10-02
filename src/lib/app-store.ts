@@ -8,6 +8,27 @@ export const WHOP_CHECKOUT_URL =
   (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
 
 /**
+ * LEAVE FOR CHECKOUT — a plain document navigation, deliberately NOT a
+ * router redirect.
+ *
+ * `throw redirect({ href: "https://whop.com/…" })` was the original bug and
+ * it failed silently for weeks: TanStack resolves `href` as an APP path, so
+ * an external URL never resolved and an unpaid user simply stayed where they
+ * were. Every "you must pay" decision in the app now goes through here, and
+ * `location.replace` is honoured by every container that allows leaving at
+ * all — browser tab, Android WebView, PWA.
+ */
+export function leaveForCheckout(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.location.replace(WHOP_CHECKOUT_URL);
+  } catch {
+    // A container that refuses to leave (an iOS home-screen app) keeps the
+    // caller on a checkout card that hands the link over by hand instead.
+  }
+}
+
+/**
  * Route-guard outcome from the app access rules (same gates the /app login
  * view enforces): an unsigned-in visitor goes to the app login, an unpaid
  * email goes to checkout, and paid/admin emails pass through.

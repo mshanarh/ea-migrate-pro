@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, appSignOut, getAppState, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, leaveForCheckout, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
@@ -30,7 +30,10 @@ export const Route = createFileRoute("/app/home")({
     // which is part of why an unpaid user ended up back on the login screen
     // with nothing happening. Hand the decision to the login page instead:
     // it owns the checkout card and performs the hop to Whop itself.
-    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
+    if (access.action === "pay") {
+      leaveForCheckout();
+      throw redirect({ href: "/app/login?pay=1" });
+    }
   },
   head: () => ({
     meta: [
@@ -260,7 +263,12 @@ function AppHome() {
         setAccess("ok");
         return;
       }
-      window.location.replace(result.action === "pay" ? "/app/login?pay=1" : "/app/login");
+      if (result.action === "pay") {
+        leaveForCheckout();
+        window.location.replace("/app/login?pay=1");
+        return;
+      }
+      window.location.replace("/app/login");
     })();
     return () => {
       cancelled = true;

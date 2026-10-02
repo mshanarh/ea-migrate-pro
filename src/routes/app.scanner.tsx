@@ -9,7 +9,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { getAppState, requireAppAccess } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, requireAppAccess } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
@@ -23,7 +23,10 @@ export const Route = createFileRoute("/app/scanner")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
+    if (access.action === "pay") {
+      leaveForCheckout();
+      throw redirect({ href: "/app/login?pay=1" });
+    }
   },
   head: () => ({
     meta: [

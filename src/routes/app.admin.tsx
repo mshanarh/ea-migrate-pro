@@ -3,7 +3,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
-import { getAppState, useAppState } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
@@ -34,7 +34,10 @@ export const Route = createFileRoute("/app/admin")({
     // done by the login page itself.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "pay") throw redirect({ href: "/app/login?pay=1" });
+    if (access.action === "pay") {
+      leaveForCheckout();
+      throw redirect({ href: "/app/login?pay=1" });
+    }
   },
   head: () => ({
     meta: [
@@ -75,7 +78,12 @@ function AppAdmin() {
         setAccess("ok");
         return;
       }
-      window.location.replace(result.action === "pay" ? "/app/login?pay=1" : "/app/login");
+      if (result.action === "pay") {
+        leaveForCheckout();
+        window.location.replace("/app/login?pay=1");
+        return;
+      }
+      window.location.replace("/app/login");
     })();
     return () => {
       cancelled = true;
