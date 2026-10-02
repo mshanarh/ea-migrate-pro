@@ -107,12 +107,15 @@ export async function registerWithEmail(
   if (user.is_admin) return { outcome: "admin", user };
   // APPROVAL GATE — the admin console owns the decision. A rejected account
   // is shut out for good; a pending one waits for review and must NOT reach
-  // checkout either (they have not been asked to pay yet). Approved accounts
-  // fall through to the payment rules below, so paying still works.
+  // checkout either (they have not been asked to pay yet). An APPROVED
+  // account goes straight in: pressing Approve in the console is the owner's
+  // decision that this person may use the app, so they must never be bounced
+  // to checkout afterwards just because no payment is recorded yet.
   // The read fails open (ok:false) so a database hiccup can never lock a
   // paying customer out.
   const approval = await getApprovalForEmail(address);
   if (approval.ok && approval.status === "rejected") return { outcome: "rejected", user };
+  if (approval.ok && approval.status === "approved") return { outcome: "allow", user };
   if (approval.ok && approval.status === "pending" && !user.is_paid && !(await emailHasLicenseKey(address))) {
     return { outcome: "pending", user };
   }

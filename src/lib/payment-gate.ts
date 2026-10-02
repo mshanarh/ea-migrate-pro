@@ -23,12 +23,14 @@ import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-s
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
-export type CloudAccess = "admin" | "paid" | "unpaid" | "pending" | "rejected";
+export type CloudAccess = "admin" | "paid" | "approved" | "unpaid" | "pending" | "rejected";
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
 
 type Resolution = { status: CloudAccess; at: number };
 
 const CACHE_TTL_MS = 60_000;
+/** Pending/rejected change the moment the owner presses Approve or Reject. */
+const PENDING_CACHE_TTL_MS = 4_000;
 const cache = new Map<string, Resolution>();
 
 export function isOwnerEmail(email: string): boolean {
@@ -43,7 +45,13 @@ export async function resolveCloudAccess(email: string | null | undefined): Prom
   if (!supabase) return null; // unconfigured — caller decides the fallback
 
   const cached = cache.get(clean);
-  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.status;
+  // "pending" is the state an APPROVE changes. Caching it for a full minute
+  // meant the owner could approve someone and watch them still be told to
+  // wait, so those two states are re-checked almost immediately.
+  const ttl = cached && (cached.status === "pending" || cached.status === "rejected")
+    ? PENDING_CACHE_TTL_MS
+    : CACHE_TTL_MS;
+  if (cached && Date.now() - cached.at < ttl) return cached.status;
 
   try {
     const status = await computeFromDatabase(clean);
@@ -105,6 +113,11 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   //    fails open (ok:false) so a database hiccup never locks anyone out.
   const approval = await getApprovalForEmail(clean);
   if (approval.ok && approval.status === "rejected") return "rejected";
+  // APPROVED IS IN. Pressing Approve in the console is the owner's decision
+  // that this person may use the app. Without this they were still bounced to
+  // checkout afterwards, because approval and payment were separate flags and
+  // an approved mentor usually has neither a paid flag nor a licence key.
+  if (approval.ok && approval.status === "approved") return "approved";
   if (approval.ok && approval.status === "pending") {
     // A pending account that already PAID is not held at the door — they
     // bought access and must reach the app (and the approval will catch up).
@@ -187,6 +200,12 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // NEVER let a gate error crash a route (that was the "Dashboard didn't
     // load" screen on Android) — degrade to the legacy local gate.
     cloud = null;
+  }
+  if (cloud === "approved") {
+    // Access granted by the admin. Deliberately does NOT mark the account
+    // paid locally — they are in, but no payment has been recorded, and the
+    // console still shows them as unpaid until it says otherwise.
+    return { action: "pass" };
   }
   if (cloud === "admin" || cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
