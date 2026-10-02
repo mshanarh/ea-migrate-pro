@@ -24,6 +24,7 @@ import {
   adminCreateAccount,
   adminSendReset,
   adminSignIn,
+  adminSignInWithPortal,
   adminSignOut,
   getAdminSession,
   subscribeToAdminSession,
@@ -234,6 +235,9 @@ function AdminConsole() {
   // session is not an admin session, so every write would fail. That deserves
   // a persistent banner, not a toast that scrolls away.
   const [writeIssue, setWriteIssue] = useState<string | null>(null);
+  // Why the silent portal sign-in did not happen, shown on the sign-in screen
+  // so a second password is never demanded without an explanation.
+  const [portalNote, setPortalNote] = useState<string | null>(null);
 
   // Message sender
   const [message, setMessage] = useState("");
@@ -252,17 +256,55 @@ function AdminConsole() {
 
   useEffect(() => {
     let active = true;
-    void getAdminSession().then((current) => {
+    void (async () => {
+      const current = await getAdminSession();
       if (!active) return;
-      setSession(current);
-      setSessionChecked(true);
-    });
+      if (current) {
+        setSession(current);
+        setSessionChecked(true);
+        return;
+      }
+      // ALREADY AN ADMIN? No second password. The portal sign-in the owner
+      // just came from carries the password they typed a moment ago, and the
+      // database needs a Supabase session before it will accept a write — so
+      // use that credential to open one silently. This is what makes "Admin
+      // Portal" go STRAIGHT into the console, the way it always did.
+      // Anything that goes wrong (no portal account, a console password set
+      // separately, email confirmation on) falls through to the sign-in
+      // screen below, which is unchanged.
+      const portal = account;
+      const isAdmin = portal?.role === "admin" || (portal ? isAdminEmail(portal.email) : false);
+      if (portal && isAdmin && portal.password) {
+        const result = await adminSignInWithPortal(portal.email, portal.password);
+        if (!active) return;
+        if (result.session) {
+          setSession(result.session);
+          setSessionChecked(true);
+          return;
+        }
+        if (result.error === "console-password-differs") {
+          setPortalNote(
+            "This console has its own password, set the first time it was used. Sign in below — or reset it if you have forgotten it.",
+          );
+        } else if (result.needsConfirmation) {
+          // Supabase has "Confirm email" switched on, so a brand-new console
+          // account cannot sign in until the link is opened. Say exactly that
+          // rather than showing a bare "not recognised".
+          setPortalNote(
+            "Your console account was created, but this project asks you to confirm an email address first. Open the confirmation link, then sign in below.",
+          );
+        }
+      }
+      if (active) setSessionChecked(true);
+    })();
     const unsubscribe = subscribeToAdminSession((next) => setSession(next));
     return () => {
       active = false;
       unsubscribe();
     };
-  }, []);
+    // The portal account can hydrate a tick after the route mounts, so it is
+    // part of the identity this effect depends on.
+  }, [account?.email, account?.role]);
 
   useEffect(() => {
     // Nothing loads until the console identity is known — an unsigned
@@ -341,6 +383,7 @@ function AdminConsole() {
     return (
       <AdminSignIn
         configured={adminAuthConfigured}
+        note={portalNote}
         onSignedIn={(next) => setSession(next)}
       />
     );
@@ -735,9 +778,11 @@ function AdminConsole() {
 
 function AdminSignIn({
   configured,
+  note,
   onSignedIn,
 }: {
   configured: boolean;
+  note: string | null;
   onSignedIn: (session: Session) => void;
 }) {
   const [email, setEmail] = useState("");
@@ -808,6 +853,11 @@ function AdminSignIn({
           <BrandLogo className="size-full object-contain" />
         </div>
         <h1 className="mt-6 text-center text-2xl font-black">Admin Console</h1>
+        {note ? (
+          <p className="mt-3 rounded-2xl border border-amber-300/40 bg-amber-400/10 p-3 text-center text-[11px] leading-5 text-amber-100">
+            {note}
+          </p>
+        ) : null}
         <p className="mt-2 text-center text-sm leading-6 text-muted-foreground">
           {mode === "signin"
             ? "Sign in with your administrator account to manage users, approvals and messages."

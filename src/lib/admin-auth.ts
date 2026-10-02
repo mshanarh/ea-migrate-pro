@@ -116,6 +116,59 @@ export async function isAdminAddress(email: string): Promise<boolean> {
  * created, so only a real admin can make one, and a random visitor cannot
  * fill the auth table with junk.
  */
+/**
+ * OPEN THE CONSOLE FROM AN EXISTING PORTAL SIGN-IN — no second password.
+ *
+ * The admin is already signed in to the portal, and the portal account
+ * carries the very password they typed a moment ago. The database needs a
+ * Supabase session before it will accept an approval, and the old flow made
+ * the owner stop and type that same password a second time on a separate
+ * screen. This uses the credential already in hand instead: sign in, and if
+ * no console account exists yet, create one with the SAME password.
+ *
+ * Nothing is weakened by this. The database still re-checks the resulting
+ * session's email against admin_emails on every single write — a real
+ * password is still required, it is simply not typed twice.
+ */
+export async function adminSignInWithPortal(
+  email: string,
+  password: string,
+): Promise<{ error?: string; session?: Session | null; needsConfirmation?: boolean }> {
+  if (!authClient) return { error: "Supabase is not connected." };
+  const cleanEmail = email.trim().toLowerCase();
+  if (!cleanEmail || !password) return { error: "missing-credentials" };
+
+  const { data, error } = await authClient.auth.signInWithPassword({
+    email: cleanEmail,
+    password,
+  });
+  if (!error && data.session) {
+    cachedSession = data.session;
+    cacheLoaded = true;
+    return { session: data.session };
+  }
+
+  // Sign-in fails identically for "no such account" and "wrong password",
+  // so the only way to tell them apart is to try creating the account.
+  const { data: created, error: signUpError } = await authClient.auth.signUp({
+    email: cleanEmail,
+    password,
+  });
+  if (created?.session) {
+    cachedSession = created.session;
+    cacheLoaded = true;
+    return { session: created.session };
+  }
+  if (signUpError && /already (been )?registered|already exists/i.test(signUpError.message)) {
+    // The console account exists but the portal password is not its password
+    // (they set a different one when they first used the Create tab).
+    return { error: "console-password-differs" };
+  }
+  // Email confirmation is on: the account now exists but there is no session
+  // until the link is clicked. The console falls back to its sign-in screen.
+  return { error: signUpError?.message ?? "needs-confirmation", needsConfirmation: true };
+}
+
 export async function adminCreateAccount(
   email: string,
   password: string,
