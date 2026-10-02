@@ -56,10 +56,6 @@ function AppAccess() {
     }
   }, [app.email]);
 
-  useEffect(() => {
-    if (app.email && app.robots.length > 0 && !successReturn) window.location.replace("/app/home");
-  }, [app.email, app.robots.length, successReturn]);
-
   const activeEmail = app.email || email.trim().toLowerCase();
   // Only a SIGNED-IN session (app.email) may open the license view directly.
   // The TYPED email must never pre-switch the view: an owner typing their
@@ -70,6 +66,20 @@ function AppAccess() {
   // binding check for EVERY email — admins included.
   const sessionPaymentStatus = app.email ? paymentStatusForEmail(app.email) : "unpaid";
   const showLicenseView = keyMode || successReturn || sessionPaymentStatus !== "unpaid";
+
+  useEffect(() => {
+    if (!app.email || successReturn) return;
+    // A signed-in mentor goes to the app EVEN with no robots yet. This used
+    // to require `app.robots.length > 0`, and robots only appear after a
+    // licence key is activated — so a freshly approved mentor signed in
+    // successfully and then sat on this screen forever, which looks exactly
+    // like a failed sign-in. The home screen has its own "Add robot" state.
+    //
+    // PAID / ADMIN sessions deliberately stay: they need the licence-entry
+    // view shown below to activate a key.
+    if (showLicenseView) return;
+    window.location.replace("/app/home");
+  }, [app.email, successReturn, showLicenseView]);
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
