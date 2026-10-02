@@ -22,6 +22,9 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
+  // Non-null once we know this email must pay: renders the tappable
+  // checkout link that WebViews actually honour.
+  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -197,7 +200,18 @@ function AppAccess() {
         if (verified) return;
       }
       setRedirecting(true);
-      window.location.assign(WHOP_CHECKOUT_URL);
+      // A WebView (iOS WKWebView especially) drops a programmatic navigation
+      // that happens AFTER an await — by then the browser no longer counts it
+      // as a user gesture, so location.assign silently does nothing and the
+      // user is left staring at a button that says "Redirecting to Whop…".
+      // We show a real, tappable link as the reliable path, and keep the
+      // automatic hop as a convenience for normal browsers.
+      setCheckoutUrl(WHOP_CHECKOUT_URL);
+      try {
+        window.location.assign(WHOP_CHECKOUT_URL);
+      } catch {
+        /* the visible link below is the fallback */
+      }
       return;
     }
   };
@@ -236,7 +250,8 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
+      {checkoutUrl ? <CheckoutRedirect url={checkoutUrl} email={activeEmail} /> :
+      heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={sessionPaymentStatus === "admin"} paid={sessionPaymentStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
@@ -358,6 +373,45 @@ function LoginView({ email, setEmail, onSubmit, redirecting }: { email: string; 
       <button type="submit" disabled={redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : "Proceed"}<ArrowRight className="size-6" /></button>
     </form>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
+  </div>;
+}
+
+/**
+ * CHECKOUT REDIRECT — a real link, not a programmatic jump.
+ *
+ * The app is wrapped in a WebView on both platforms, and a navigation issued
+ * after an await loses the user-gesture context the WebView needs, so
+ * location.assign is dropped without any error. A genuine anchor the person
+ * taps always works, so this screen exists as the guaranteed route to payment
+ * rather than trusting the automatic hop.
+ */
+function CheckoutRedirect({ url, email }: { url: string; email: string }) {
+  return <div className="-translate-y-8 text-center">
+    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+    </div>
+    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Payment required</h1>
+    <p className="mt-3 text-base leading-7 text-[#8a9298]">
+      This account needs an active subscription to use EA Migrate. Tap below to continue to our
+      secure checkout{email ? ` for ${email}` : ""}.
+    </p>
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-10 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+    >
+      Continue to payment <ArrowRight className="size-6" />
+    </a>
+    <a
+      href={url}
+      className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 text-base font-semibold text-white/80"
+    >
+      Open checkout in this window
+    </a>
+    <p className="mt-6 text-xs leading-5 text-[#59646b]">
+      Already subscribed? Use the exact email you paid with.
+    </p>
   </div>;
 }
 
