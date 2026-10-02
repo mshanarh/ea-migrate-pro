@@ -1,5 +1,5 @@
 /**
- * Cloud-authoritative payment gate.
+ * Cloud-authoritative payment gate — THE APP OPENS FOR PAID ACCOUNTS, ONLY.
  *
  * The old gate trusted localStorage ("payments" array) and the /app?success=true
  * URL parameter — both are trivially forged (devtools edit, typing the URL), which
@@ -7,10 +7,16 @@
  * from SUPABASE (and Whop, server-side) only:
  *
  *   admin  → the users row is is_admin, or the email is a platform owner
- *   paid   → the users row is is_paid, OR a license_keys row is bound to the
- *            email (the license key IS the payment — mentor-issued), OR Whop
- *            reports an active membership for the email
- *   unpaid → everything else
+ *   paid   → the users row is is_paid (the owner marked them paid in the
+ *            console), OR a license_keys row is bound to the email (the key
+ *            only exists because they paid), OR Whop reports an active
+ *            membership for the email
+ *   unpaid → everything else, and every unpaid email is sent to checkout
+ *
+ * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE. Approving somebody in the
+ * mentor portal is a portal decision; it has never had anything to do with the
+ * app, and reading it here is what let unpaied people walk into the dashboard.
+ * `mentor_approvals` is not consulted anywhere in this module.
  *
  * A tiny in-memory cache (60s) keeps navigation snappy; it never survives a page
  * reload and only caches DATABASE results, so editing localStorage cannot
@@ -18,19 +24,16 @@
  * falls back to the legacy local store (dev must keep working) — but a forged
  * LOCAL record can never be validated by the cloud path.
  */
-import { getApprovalForEmail } from "@/lib/admin-store";
 import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
-export type CloudAccess = "admin" | "paid" | "approved" | "unpaid" | "pending" | "rejected";
+export type CloudAccess = "admin" | "paid" | "unpaid";
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
 
 type Resolution = { status: CloudAccess; at: number };
 
 const CACHE_TTL_MS = 60_000;
-/** Pending/rejected change the moment the owner presses Approve or Reject. */
-const PENDING_CACHE_TTL_MS = 4_000;
 const cache = new Map<string, Resolution>();
 
 export function isOwnerEmail(email: string): boolean {
@@ -45,13 +48,7 @@ export async function resolveCloudAccess(email: string | null | undefined): Prom
   if (!supabase) return null; // unconfigured — caller decides the fallback
 
   const cached = cache.get(clean);
-  // "pending" is the state an APPROVE changes. Caching it for a full minute
-  // meant the owner could approve someone and watch them still be told to
-  // wait, so those two states are re-checked almost immediately.
-  const ttl = cached && (cached.status === "pending" || cached.status === "rejected")
-    ? PENDING_CACHE_TTL_MS
-    : CACHE_TTL_MS;
-  if (cached && Date.now() - cached.at < ttl) return cached.status;
+  if (cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.status;
 
   try {
     const status = await computeFromDatabase(clean);
@@ -107,31 +104,15 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
 }
 
 async function computeFromDatabase(clean: string): Promise<CloudAccess> {
-  // 0. APPROVAL STATE — the admin console's decision outranks payment. A
-  //    rejected account is shut out, and an unreviewed one waits; neither
-  //    reaches the app, no matter what the payment flags say. The read
-  //    fails open (ok:false) so a database hiccup never locks anyone out.
-  const approval = await getApprovalForEmail(clean);
-  if (approval.ok && approval.status === "rejected") return "rejected";
-  // APPROVED IS IN. Pressing Approve in the console is the owner's decision
-  // that this person may use the app. Without this they were still bounced to
-  // checkout afterwards, because approval and payment were separate flags and
-  // an approved mentor usually has neither a paid flag nor a licence key.
-  if (approval.ok && approval.status === "approved") return "approved";
-  if (approval.ok && approval.status === "pending") {
-    // A pending account that already PAID is not held at the door — they
-    // bought access and must reach the app (and the approval will catch up).
-    const { data: paidRow } = await supabase!
-      .from("users")
-      .select("is_paid")
-      .eq("email", clean)
-      .maybeSingle();
-    if (paidRow?.is_paid) return "paid";
-    if (await emailHasLicenseKeyCloud(clean)) return "paid";
-    return "pending";
-  }
-
-  // 1. users row — explicit paid/admin flags (admin console approval).
+  // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE.
+  //
+  // Mentor approval is a PORTAL decision and has nothing to do with the app.
+  // `mentor_approvals` used to be read first here, and an approved mentor was
+  // let straight into the app without ever being marked paid — which is
+  // exactly the confusion this gate exists to remove. It is no longer read at
+  // all: approving somebody in the mentor portal says nothing about whether
+  // they may use the app, and marking somebody paid is the only thing that
+  // does. An unpaid email is sent to checkout, on every platform.
   const { data: user, error: userError } = await supabase!
     .from("users")
     .select("is_paid, is_admin")
@@ -141,17 +122,17 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   if (user?.is_admin) return "admin";
   if (user?.is_paid) return "paid";
 
-  // 2. license_keys row bound to this email — the mentor-issued key is proof
-  //    of payment. Exact match first, then case-insensitive fallback.
+  // A license_keys row bound to this email is payment in practice — the key
+  // only exists because somebody paid for it. Exact match first, then a
+  // case-insensitive fallback.
   if (await emailHasLicenseKeyCloud(clean)) return "paid";
 
-  // 3. Whop — the checkout source of truth, verified SERVER-side with the
-  //    WHOP_API_KEY (never from the browser). Also back-fills users.is_paid
-  //    so later checks are database-only. DYNAMIC import: supabase.server
-  //    reads process.env at module init and registers TanStack server
-  //    functions — statically importing it into the client graph crashed
-  //    the Android WebView bundle ("Dashboard didn't load"). Any failure
-  //    here just means "no Whop confirmation" — the database still decides.
+  // Whop — the checkout source of truth, verified SERVER-side with the
+  // WHOP_API_KEY (never from the browser). DYNAMIC import: supabase.server
+  // reads process.env at module init and registers TanStack server
+  // functions — statically importing it into the client graph crashed the
+  // Android WebView bundle ("Dashboard didn't load"). Any failure here just
+  // means "no Whop confirmation"; the database still decides.
   try {
     const { whopVerifyMembership } = await import("@/lib/supabase.server");
     const whop = await whopVerifyMembership({ data: { email: clean } });
@@ -201,26 +182,15 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // load" screen on Android) — degrade to the legacy local gate.
     cloud = null;
   }
-  if (cloud === "approved") {
-    // Access granted by the admin. Deliberately does NOT mark the account
-    // paid locally — they are in, but no payment has been recorded, and the
-    // console still shows them as unpaid until it says otherwise.
-    return { action: "pass" };
-  }
   if (cloud === "admin" || cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.
     markEmailPaid(email);
     return { action: "pass" };
   }
-  // PENDING / REJECTED — the account exists but the admin has not cleared
-  // it. End the session and go back to the login screen, which shows the
-  // matching "waiting for approval" / "rejected" card. A pending account
-  // must NOT be pushed to checkout — nobody asked them to pay yet.
-  if (cloud === "pending" || cloud === "rejected") {
-    appSignOut();
-    return { action: "signin" };
-  }
+  // Anything that is not paid goes to checkout — on Android, iOS and the web.
+  // There is no approval branch: an approved mentor who was never marked paid
+  // is sent to Whop like everybody else, which is the entire point.
   if (cloud === "unpaid") return { action: "pay" };
   // Cloud undecided (unconfigured) — legacy local behaviour.
   return paymentStatusForEmail(email) === "unpaid" ? { action: "pay" } : { action: "pass" };
@@ -228,8 +198,8 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
 
 /**
  * Verify a Whop checkout return (?success=true). Returns true ONLY when the
- * server-side Whop check (or the database, if an approval already landed)
- * confirms payment. Never trusts the URL parameter itself.
+ * database or the server-side Whop check confirms payment. Never trusts the
+ * URL parameter itself, and never consults mentor approval.
  */
 export async function verifyPaymentReturn(email: string): Promise<boolean> {
   const clean = email.trim().toLowerCase();

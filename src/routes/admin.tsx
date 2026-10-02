@@ -366,10 +366,15 @@ function AdminConsole() {
    * confirmation that their portal is open; a failed send never undoes the
    * approval itself (the database is the source of truth), it is only
    * reported so the admin can resend from the Messages tab.
+   *
+   * APPROVAL OPENS THE MENTOR PORTAL. IT DOES NOT OPEN THE APP. The app is
+   * gated on payment alone, so the confirmation says so explicitly — the
+   * old "they can sign in now" is exactly the wording that made people
+   * approve somebody and then wonder why they still hit Whop checkout.
    */
   const approve = (user: AdminUser) =>
     void withUser(() => setUserApproval(user.email, "approved"), {
-      success: `${user.email} approved — they can sign in now`,
+      success: `${user.email} approved — portal open. Mark them PAID to let them into the app.`,
       failure: `Approve ${user.email}`,
     }).then((result) => {
       // Only tell the user they are in when the database actually wrote it.

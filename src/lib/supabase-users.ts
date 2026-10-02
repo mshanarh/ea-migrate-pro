@@ -5,16 +5,21 @@
  *   3. Return the access outcome — "checkout" for unpaid, "allow" for
  *      paid, "admin" for admins.
  *
+ * This is the APP's sign-in path, and it has exactly one question to answer:
+ * has this email been marked as paid? It deliberately does NOT touch
+ * `mentor_approvals` and does NOT alert the admin — mentor approval belongs
+ * to the mentor portal signup (src/routes/signup.tsx) and has no bearing on
+ * whether somebody may use the app.
+ *
  * While Supabase env vars are missing the module degrades gracefully and
  * the legacy local payment store decides, so the app never blocks. A
  * partially-migrated schema (e.g. a missing column) must never lock a
  * customer out either — failures here fail open to the legacy local gate.
  */
-import { getApprovalForEmail } from "./admin-store";
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
-export type RegistrationOutcome = "allow" | "checkout" | "admin" | "pending" | "rejected";
+export type RegistrationOutcome = "allow" | "checkout" | "admin";
 
 function clean(email: string) {
   return email.trim().toLowerCase();
@@ -60,32 +65,14 @@ export async function registerWithEmail(
     return { outcome: "allow", user: null, error: upsertError.message };
   }
 
-  // 2. APPROVAL ROW — every new signup lands in the admin console's Pending
-  //    list. The row is created ONCE (ignoreDuplicates) so signing in never
-  //    resets a decision an admin already made. Best-effort: a failure here
-  //    must not block sign-up, it only means the account shows up for review
-  //    a moment later.
-  const { error: approvalError } = await dbClient
-    .from("mentor_approvals")
-    .upsert({ email: address, status: "pending" }, { onConflict: "email", ignoreDuplicates: true });
-  if (approvalError) console.warn("[supabase] approval row failed:", approvalError.message);
-
-  // 2b. TELL THE ADMIN — a registration made in the APP (not the website form)
-  //     used to write these two rows silently, so no alert email ever went out
-  //     and the admin had no idea a new person was waiting. Fire-and-forget:
-  //     it runs after the rows are saved and can never delay the sign-in.
-  //     `inserted` is non-null only when this call actually created the row,
-  //     so returning users are not alerted about on every sign-in.
-  if (inserted) {
-    void (async () => {
-      try {
-        const { notifyAdminOfRegistration } = await import("@/lib/send-email");
-        await notifyAdminOfRegistration({ email: address });
-      } catch (error) {
-        console.warn("[supabase] registration alert skipped:", error);
-      }
-    })();
-  }
+  // 2. NO APPROVAL ROW, NO ADMIN ALERT FROM THE APP.
+  //    Typing an email into the app is a PAYMENT ATTEMPT, not a request to be
+  //    reviewed. It used to write a `mentor_approvals` pending row and email
+  //    the admin on every single sign-in, so the console filled up with people
+  //    who only ever wanted to buy something, and approving one of them was
+  //    mistaken for a decision about the app. The mentor-portal signup form
+  //    (src/routes/signup.tsx) still creates the pending row and still alerts
+  //    the admin — that is the path where approval actually means something.
 
   // 3. Session row — best-effort. Some deployments lack the license_key
   //    column; retry without it so the session still records.
@@ -122,28 +109,14 @@ export async function registerWithEmail(
   // scanner. The hardcoded owner list decides first, everywhere.
   if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
   if (user.is_admin) return { outcome: "admin", user };
-  // APPROVAL GATE — the admin console owns the decision, and it is checked
-  // BEFORE payment on purpose:
-  //   approved  → straight in. Pressing Approve is the owner's decision that
-  //               this person may use the app, so they are never then bounced
-  //               to checkout for want of a recorded payment.
-  //   rejected  → shut out, and stays shut out.
-  //   pending   → this is the state a BRAND-NEW signup is in, because
-  //               registerWithEmail writes the pending row itself moments
-  //               earlier. Holding it here meant the checkout branch below was
-  //               unreachable: pressing Proceed on the app's first screen
-  //               showed "waiting for approval" and never sent anyone to Whop.
-  //               An unreviewed, unpaid account now falls through to checkout
-  //               like any other unpaid visitor, and Approve remains the way
-  //               to grant access without payment.
-  // The read fails open (ok:false) so a database hiccup can never lock a
-  // paying customer out.
-  const approval = await getApprovalForEmail(address);
-  if (approval.ok && approval.status === "rejected") return { outcome: "rejected", user };
-  if (approval.ok && approval.status === "approved") return { outcome: "allow", user };
+  // PAYMENT IS THE ONLY THING THAT OPENS THE APP.
+  //   is_paid          → the owner marked this email as paid in the console.
+  //   a licence key    → the key only exists because they paid for it.
+  //   neither          → checkout, on Android, iOS and the web alike.
+  // Mentor approval is deliberately NOT consulted: approving somebody in the
+  // mentor portal says nothing about the app, and treating it as permission
+  // is what let unpaied people in.
   if (user.is_paid) return { outcome: "allow", user };
-  // A license key bound to this email IS payment — a client who already
-  // received their key must reach the key-entry screen, never Whop.
   if (await emailHasLicenseKey(address)) return { outcome: "allow", user };
   return { outcome: "checkout", user };
 }

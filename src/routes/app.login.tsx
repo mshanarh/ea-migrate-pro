@@ -2,8 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, appSignOut, getDeviceId, useAppState } from "@/lib/app-store";
-import { getApprovalForEmail } from "@/lib/admin-store";
+import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { verifyPaymentReturn, resolveCloudAccess } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
@@ -67,12 +66,10 @@ function AppAccess() {
   // NO self-reactivation: delete + reinstall must NOT unlock the account.
   // Applies to EVERYONE — clients and admins alike.
   const [blockedEmail, setBlockedEmail] = useState<string | null>(null);
-  // APPROVAL STATE — a signup that has not been reviewed yet ("pending")
-  // and a rejected one are both held at the door. The admin console's
-  // Approve button is the only way out of pending.
-  const [heldEmail, setHeldEmail] = useState<{ email: string; status: "pending" | "rejected" } | null>(null);
-  // "Checking…" on the held card while we re-read the approval.
-  const [heldChecking, setHeldChecking] = useState(false);
+  // NOTE: there is deliberately no "waiting for approval" card here any more.
+  // Mentor approval is a PORTAL decision; typing an email into the app is a
+  // payment attempt, so the only two outcomes are "you are paid, welcome" and
+  // Whop. The portal signup (src/routes/signup.tsx) still asks for approval.
   /**
    * THE DATABASE'S ANSWER for this session, read on arrival.
    *
@@ -88,52 +85,6 @@ function AppAccess() {
   // The user pressed "Back" on the checkout card. Until the decision changes
   // we stop forcing it back up, or the card would be impossible to leave.
   const [checkoutDismissed, setCheckoutDismissed] = useState(false);
-
-  /**
-   * Someone held at "waiting for approval" had no way back in: the card only
-   * offered "use a different email", so once the admin approved them they still
-   * could not get in without restarting the app. This re-reads the approval on
-   * a timer and signs them straight through the moment it flips.
-   */
-  useEffect(() => {
-    if (!heldEmail) return;
-    let cancelled = false;
-    const recheck = async () => {
-      setHeldChecking(true);
-      try {
-        const approval = await getApprovalForEmail(heldEmail.email);
-        if (cancelled) return;
-        if (approval.ok && approval.status === "approved") {
-          // Approved: bind this device and sign in for real, then continue
-          // into the app. The home guard treats an unbound session as stale
-          // and would bounce them straight back to this screen, so the bind
-          // has to happen before the redirect.
-          try {
-            const bound = await bindDeviceToEmail(heldEmail.email, getDeviceId());
-            if (!bound.ok && bound.error) toast.error(bound.error);
-          } catch {
-            /* a failed bind must never block the redirect */
-          }
-          appSignIn(heldEmail.email);
-          window.location.replace("/app/home");
-          return;
-        }
-        if (approval.ok && approval.status === "rejected") {
-          setHeldEmail((current) => (current ? { ...current, status: "rejected" } : current));
-        }
-      } catch {
-        /* transient — retried on the next tick */
-      } finally {
-        if (!cancelled) setHeldChecking(false);
-      }
-    };
-    void recheck();
-    const timer = setInterval(() => void recheck(), 6000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [heldEmail]);
 
   // ?pay=1 is re-read after EVERY render on purpose. /app/home sends unpaid
   // users here with a client-side navigation, and TanStack keeps the same
@@ -225,7 +176,7 @@ function AppAccess() {
     if (!app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
-    if (busy || checkoutUrl || payPrompt || mustPay || heldEmail || blockedEmail) return;
+    if (busy || checkoutUrl || payPrompt || mustPay || blockedEmail) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
     // licence key is activated — so a freshly approved mentor signed in
@@ -237,7 +188,7 @@ function AppAccess() {
     // ping-pong with nothing ever happening. The checkout screen owns them.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, mustPay, heldEmail, blockedEmail, effectiveStatus]);
+  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, mustPay, blockedEmail, effectiveStatus]);
 
   /**
    * THE HOP TO WHOP — three attempts, because the first one is the one that
@@ -322,17 +273,6 @@ function AppAccess() {
       const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "checkout", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
 
-      // PENDING / REJECTED — the account exists but the admin has not cleared
-      // it. Sign out again (the local session was armed a moment ago) and
-      // show the matching card instead of the app.
-      if (registration.outcome === "pending" || registration.outcome === "rejected") {
-        appSignOut();
-        setHeldEmail({ email: clean, status: registration.outcome });
-        setBusy(false);
-        setRedirecting(false);
-        return;
-      }
-
       // Bind THIS device in the cloud BEFORE any redirect — including the Whop
       // checkout hop. The access gate treats a missing binding as a stale
       // session (the global access reset), so a person who comes back AFTER
@@ -384,7 +324,6 @@ function AppAccess() {
 
   /** Dismiss the blocked card and try a different email. */
   const dismissBlocked = () => setBlockedEmail(null);
-  const dismissHeld = () => setHeldEmail(null);
   /**
    * Back out of the checkout card. Reached two ways: the user tapping the
    * escape link (a payment page they did not need — an approved account on a
@@ -434,76 +373,9 @@ function AppAccess() {
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {checkoutTarget ? <CheckoutRedirect url={checkoutTarget} email={activeEmail} onCancel={dismissCheckout} /> :
-      heldEmail ? <ApprovalHeldView email={heldEmail.email} status={heldEmail.status} checking={heldChecking} onCancel={dismissHeld} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
-  </div>;
-}
-
-/**
- * PENDING / REJECTED card. The account exists in the database but the admin
- * console has not cleared it yet: pending means "waiting for review", and
- * only the admin can move it on; rejected means the request was declined.
- * Both keep the person out of the app — the copy says exactly what to do,
- * and there is no self-service override.
- */
-function ApprovalHeldView({
-  email,
-  status,
-  checking,
-  onCancel,
-}: {
-  email: string;
-  status: "pending" | "rejected";
-  checking: boolean;
-  onCancel: () => void;
-}) {
-  const rejected = status === "rejected";
-  return <div className="-translate-y-8 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
-    </div>
-    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">
-      {rejected ? "Account rejected" : "Waiting for approval"}
-    </h1>
-    <div
-      role="alert"
-      className={
-        rejected
-          ? "mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left"
-          : "mt-5 flex items-start gap-3 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left"
-      }
-    >
-      <span
-        className={
-          rejected
-            ? "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950"
-            : "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-300 text-[11px] font-black text-amber-950"
-        }
-        aria-hidden="true"
-      >
-        {rejected ? "!" : "…"}
-      </span>
-      <p className={rejected ? "text-sm font-semibold leading-6 text-red-200" : "text-sm font-semibold leading-6 text-amber-100"}>
-        {rejected
-          ? "This registration was rejected. Contact support if you believe this is a mistake."
-          : "Your account was created and is waiting for an administrator to approve it. You will be able to sign in as soon as it is approved."}
-      </p>
-    </div>
-    <p className="mt-3 break-all text-base leading-7 text-[#8a9298]">{email}</p>
-    {!rejected ? (
-      <p aria-live="polite" className="mt-6 text-sm text-[#8a9298]">
-        {checking ? "Checking for approval…" : "This screen updates on its own once you are approved."}
-      </p>
-    ) : null}
-    <button
-      type="button"
-      onClick={onCancel}
-      className="mt-8 h-14 w-full rounded-2xl border border-white/15 bg-white/5 text-base font-semibold text-white/80"
-    >
-      Use a different email
-    </button>
   </div>;
 }
 
