@@ -20,9 +20,9 @@
  *                      real database record with date, recipients and sender.
  *
  * The browser talks to these tables with the anon key (the same path the
- * rest of the app already uses). RLS is what stops a normal user forging an
- * approval — see supabase/admin-dashboard-rls.sql, which is the migration
- * that makes that guarantee real at the database level.
+ * rest of the app already uses) and writes to them directly — see
+ * supabase/admin-simple-access.sql. The console itself only opens for a
+ * signed-in admin, which is the portal account's own role.
  */
 
 import { supabase, supabaseConfigured } from "@/lib/supabase";
@@ -71,11 +71,12 @@ const LIMIT_PREFIX = "limit:";
 const MESSAGE_PREFIX = "msg:";
 
 /**
- * Every admin write answers with the same shape, plus `needsSignIn` when the
- * database refused the CALLER rather than the value. That flag is what lets
- * the console say "sign in again" instead of dumping a raw SQL error.
+ * Every admin write answers with the same shape, plus `needsAttention` when
+ * the failure is the DATABASE refusing the write itself (the grant SQL has
+ * not been run) rather than the value being wrong. That flag is what keeps
+ * the console from dumping a raw SQL error at the admin.
  */
-export type AdminWriteResult = { ok: boolean; error?: string; needsSignIn?: boolean };
+export type AdminWriteResult = { ok: boolean; error?: string; needsAttention?: boolean };
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
@@ -259,16 +260,31 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
 }
 
 /**
- * APPROVE / REJECT. Goes through the database function
- * `admin_set_approval`, which verifies the signed-in admin against the
- * admin_emails table before writing. A direct table write is no longer
- * possible — that is the point of the migration.
+ * APPROVE / REJECT — a plain write to mentor_approvals.
+ *
+ * This used to go through a database function that demanded a Supabase
+ * sign-in, which meant the owner pressed "Admin Portal" and was then
+ * asked to sign in all over again. The console writes directly now (see
+ * supabase/admin-simple-access.sql).
  */
 export async function setUserApproval(
   email: string,
   status: ApprovalStatus,
 ): Promise<AdminWriteResult> {
-  return callAdminFunction("admin_set_approval", { p_email: normalizeEmail(email), p_status: status });
+  if (!supabase) return { ok: false, error: "Database not configured" };
+  const clean = normalizeEmail(email);
+  if (!clean) return { ok: false, error: "Missing email" };
+  // The row has to exist before it can be approved, and the account may
+  // not have opened the app yet.
+  const { error: userError } = await supabase
+    .from("users")
+    .upsert({ email: clean }, { onConflict: "email", ignoreDuplicates: true });
+  if (userError) return { ok: false, error: userError.message };
+  const { error } = await supabase
+    .from("mentor_approvals")
+    .upsert({ email: clean, status }, { onConflict: "email" });
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /** Maximum license keys this user may create/use. 0 = blocked until set. */
@@ -276,73 +292,63 @@ export async function setUserLicenseLimit(
   email: string,
   limit: number,
 ): Promise<AdminWriteResult> {
+  if (!supabase) return { ok: false, error: "Database not configured" };
+  const clean = normalizeEmail(email);
+  if (!clean) return { ok: false, error: "Missing email" };
   const safe = Math.max(0, Math.min(9999, Math.floor(Number(limit) || 0)));
-  return callAdminFunction("admin_set_license_limit", { p_email: normalizeEmail(email), p_limit: safe });
+  const { error } = await supabase
+    .from("app_settings")
+    .upsert(
+      { key: `${LIMIT_PREFIX}${clean}`, value: { limit: safe }, updated_at: new Date().toISOString() },
+      { onConflict: "key" },
+    );
+  if (error) return { ok: false, error: error.message };
+  return { ok: true };
 }
 
 /** Payment status is the users.is_paid flag — the app's sign-in gate reads it. */
 export async function setUserPaid(email: string, paid: boolean): Promise<AdminWriteResult> {
-  return callAdminFunction("admin_set_paid", { p_email: normalizeEmail(email), p_paid: paid });
+  if (!supabase) return { ok: false, error: "Database not configured" };
+  const clean = normalizeEmail(email);
+  if (!clean) return { ok: false, error: "Missing email" };
+  const { error } = await supabase
+    .from("users")
+    .update({ is_paid: paid })
+    .eq("email", clean);
+  // Zero rows is not a failure — the account may not exist yet, and the
+  // upsert below creates it.
+  if (error && error.code !== "PGRST116") return { ok: false, error: error.message };
+  const { error: paidError } = await supabase
+    .from("paid_emails")
+    .upsert(
+      paid
+        ? { email: clean, paid_at: new Date().toISOString() }
+        : { email: clean, paid_at: null },
+      { onConflict: "email" },
+    );
+  if (paidError) return { ok: false, error: paidError.message };
+  return { ok: true };
 }
 
 /**
- * Turn a database refusal into something the admin can act on. The common
- * one by far is a missing console sign-in: the functions check the caller's
- * signed-in email, so an unsigned console is refused even though it is on
- * the right device.
+ * Turn a database refusal into something the admin can act on. The one
+ * that still matters is a missing grant: the console writes directly, so
+ * if the SQL that gives the browser its writes back has not been run,
+ * every button fails with a raw permission error.
  */
-function describeAdminError(message: string): { error: string; needsSignIn: boolean } {
+function describeAdminError(message: string): { error: string; needsAttention: boolean } {
   const raw = message || "The database returned no error.";
-  if (/admin only/i.test(raw)) {
-    return {
-      error: "The database refused this: sign in to the console with your admin account.",
-      needsSignIn: true,
-    };
-  }
-  if (/could not find the function|function .*(does not exist|not found)/i.test(raw)) {
-    return {
-      error: "That database function is not installed yet. Run supabase/admin-dashboard-rls.sql in the Supabase SQL editor.",
-      needsSignIn: false,
-    };
-  }
   if (/permission denied|row-level security|42501/i.test(raw)) {
     return {
-      error: "The database refused the write. Sign in to the console with your admin account, then try again.",
-      needsSignIn: true,
+      error: "The database refused this write. Run supabase/admin-simple-access.sql in the Supabase SQL editor.",
+      needsAttention: true,
     };
   }
-  if (/jwt|token|not authenticated|401/i.test(raw)) {
-    return { error: "Your console session expired. Sign in again and retry.", needsSignIn: true };
-  }
-  return { error: raw, needsSignIn: false };
+  return { error: raw, needsAttention: false };
 }
 
 function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
-}
-
-/**
- * One write, one truth. The database functions return true ONLY after the row
- * is committed, so anything other than `true` is a failed write and the
- * console must say so — that is what stops a button reading "Saved" while the
- * number on screen never changes.
- */
-async function callAdminFunction(
-  name: string,
-  args: Record<string, string | number | boolean>,
-): Promise<AdminWriteResult> {
-  if (!supabase) return { ok: false, error: "Database not configured" };
-  const email = typeof args["p_email"] === "string" ? args["p_email"] : "";
-  if (!email) return { ok: false, error: "Missing email" };
-  const { data, error } = await supabase.rpc(name, args);
-  if (error) {
-    const described = describeAdminError(error.message);
-    return { ok: false, error: described.error, needsSignIn: described.needsSignIn };
-  }
-  if (data !== true) {
-    return { ok: false, error: "The database did not confirm the save. Nothing was changed." };
-  }
-  return { ok: true };
 }
 
 /** Per-mentor permission to release a client's device. */
@@ -353,22 +359,12 @@ export async function setUserReactivation(
   const clean = normalizeEmail(email);
   if (!supabase) return { ok: false, error: "Database not configured" };
   if (!clean) return { ok: false, error: "Missing email" };
-  // Same admin-checked function as the other console writes: a direct write
-  // to `users` is refused by RLS, which is why this toggle used to fail.
-  const viaFunction = await callAdminFunction("admin_set_reactivation", {
-    p_email: clean,
-    p_enabled: enabled,
-  });
-  if (viaFunction.ok) return viaFunction;
-  if (viaFunction.needsSignIn) return viaFunction;
-  // The function may not be installed yet — fall back to the direct write so
-  // the toggle still works on a database that has not run part 3.
   const { error } = await supabase
     .from("users")
     .upsert({ email: clean, reactivation_enabled: enabled }, { onConflict: "email" });
   if (error) {
     const described = describeAdminError(error.message);
-    return { ok: false, error: described.error, needsSignIn: described.needsSignIn };
+    return { ok: false, error: described.error, needsAttention: described.needsAttention };
   }
   return { ok: true };
 }
@@ -381,22 +377,24 @@ export async function recordBroadcast(
   body: string,
   recipients: number,
   sender: string,
-): Promise<{ ok: boolean; id?: string; error?: string }> {
+): Promise<AdminWriteResult & { id?: string }> {
   if (!supabase) return { ok: false, error: "Database not configured" };
   const text2 = body.trim();
   if (!text2) return { ok: false, error: "Message is empty" };
   const id = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`;
   const sentAt = new Date().toISOString();
-  // app_messages is the history table; only the admin-checked function may
-  // write to it, which is what keeps the record trustworthy.
-  const result = await callAdminFunction("admin_record_message", {
-    p_id: id,
-    p_body: text2,
-    p_sent_at: sentAt,
-    p_recipients: recipients,
-    p_sender: sender.trim() || "admin",
+  // app_messages is the history table; the console writes to it directly.
+  const { error } = await supabase.from("app_messages").insert({
+    id,
+    body: text2,
+    sent_at: sentAt,
+    recipients,
+    sender: sender.trim() || "admin",
   });
-  if (!result.ok) return result;
+  if (error) {
+    const described = describeAdminError(error.message);
+    return { ok: false, error: described.error, needsAttention: described.needsAttention };
+  }
   return { ok: true, id };
 }
 
