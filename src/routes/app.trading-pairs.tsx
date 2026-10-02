@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
-import { ArrowLeft, ArrowRight, Check, ChevronDown, Plus } from "lucide-react";
+import { ArrowLeft, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
@@ -79,7 +79,14 @@ function TradingPairsScreen() {
   // Selected Quotes = the robot's active selection (settings per symbol).
   const mine = useMemo(() => (robot?.pairs ?? []).map((pair) => ({ ...pair })), [robot]);
   const mineSymbols = useMemo(() => new Set(mine.map((pair) => symbolKey(pair.symbol))), [mine]);
-  const allowed = eaSymbols.filter((symbol) => !mineSymbols.has(symbol));
+  // The two tabs hold DISJOINT halves of the EA's symbol universe, so a symbol
+  // always lives in exactly one of them and visibly crosses between them:
+  //   Selected Quotes — attached to this EA but not yet configured
+  //   Allowed Quotes  — configured, and therefore traded by the robot
+  // Pressing Configure moves a symbol across into Allowed; Remove sends it
+  // back to Selected.
+  const pending = eaSymbols.filter((symbol) => !mineSymbols.has(symbolKey(symbol)));
+  const allowed = mine;
 
   const openConfig = (symbol: string, existing?: { lotSize: string; maxTrades: string; direction?: PairDirection }) => {
     setConfigSymbol(symbol);
@@ -164,12 +171,16 @@ function TradingPairsScreen() {
 
   const removeSymbol = () => {
     if (!robot || !configSymbol) return;
+    const symbol = configSymbol;
     setRobotPairs(
       robot.id,
-      mine.filter((pair) => symbolKey(pair.symbol) !== symbolKey(configSymbol)),
+      mine.filter((pair) => symbolKey(pair.symbol) !== symbolKey(symbol)),
     );
-    toast.success(`Removed: ${configSymbol}`);
+    toast.success(`Removed: ${symbol}`);
     setConfigSymbol(null);
+    // Removing sends the symbol back to Selected Quotes, so show that list —
+    // otherwise the row just disappears and the move is invisible.
+    setTab("selected");
   };
 
   const tabButton = (key: "selected" | "allowed", label: string) => (
@@ -241,47 +252,16 @@ function TradingPairsScreen() {
             </div>
           ) : tab === "selected" ? (
             <div className="mt-5 flex flex-col gap-4">
-              {mine.length === 0 ? (
-                <p className="mt-14 px-6 text-center text-base text-white/45">
-                  No saved symbols yet. Save a symbol from Allowed Quotes.
-                </p>
-              ) : (
-                mine.map((pair) => (
-                  <button
-                    key={pair.symbol}
-                    type="button"
-                    onClick={() => openConfig(pair.symbol, pair)}
-                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
-                    style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
-                  >
-                    <span
-                      className="flex size-12 shrink-0 items-center justify-center rounded-full text-white"
-                      style={{ backgroundColor: accent }}
-                    >
-                      <ArrowRight className="size-5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block truncate text-xl font-black">{pair.symbol}</span>
-                      <span className="mt-0.5 block text-sm text-white/50">
-                        {pair.lotSize} lots • {typeLabel(pair.direction)} • {tradesLabel(pair.maxTrades)} trades
-                      </span>
-                    </span>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : (
-            <div className="mt-5 flex flex-col gap-4">
               {eaSymbols.length === 0 ? (
                 <p className="mt-14 px-6 text-center text-base text-white/45">
                   No symbols on this EA yet — your mentor adds them on the portal.
                 </p>
-              ) : allowed.length === 0 ? (
+              ) : pending.length === 0 ? (
                 <p className="mt-14 px-6 text-center text-base text-white/45">
-                  Every symbol on this EA is already selected.
+                  Every symbol on this EA is already in Allowed Quotes.
                 </p>
               ) : (
-                allowed.map((symbol) => (
+                pending.map((symbol) => (
                   <button
                     key={symbol}
                     type="button"
@@ -298,6 +278,39 @@ function TradingPairsScreen() {
                     <span className="min-w-0">
                       <span className="block truncate text-xl font-black">{symbol}</span>
                       <span className="mt-0.5 block text-sm text-white/50">Tap to configure</span>
+                    </span>
+                  </button>
+                ))
+              )}
+            </div>
+          ) : (
+            <div className="mt-5 flex flex-col gap-4">
+              {allowed.length === 0 ? (
+                <p className="mt-14 px-6 text-center text-base text-white/45">
+                  Nothing configured yet. Configure a symbol from Selected Quotes.
+                </p>
+              ) : (
+                allowed.map((pair) => (
+                  <button
+                    key={pair.symbol}
+                    type="button"
+                    // Reopening prefills the saved settings so editing a symbol
+                    // cannot silently reset its lots or trade count.
+                    onClick={() => openConfig(pair.symbol, pair)}
+                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
+                    style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
+                  >
+                    <span
+                      className="flex size-12 shrink-0 items-center justify-center rounded-full text-white"
+                      style={{ backgroundColor: "#22C55E" }}
+                    >
+                      <Check className="size-5" />
+                    </span>
+                    <span className="min-w-0">
+                      <span className="block truncate text-xl font-black">{pair.symbol}</span>
+                      <span className="mt-0.5 block text-sm text-white/50">
+                        {pair.lotSize} lots • {typeLabel(pair.direction)} • {tradesLabel(pair.maxTrades)} trades
+                      </span>
                     </span>
                   </button>
                 ))
@@ -398,7 +411,7 @@ function TradingPairsScreen() {
                 onClick={removeSymbol}
                 className="flex h-11 w-full items-center justify-center rounded-2xl border border-red-400/30 text-sm font-bold text-red-300 transition-colors hover:bg-red-400/10"
               >
-                Remove from Selected Quotes
+                Remove from Allowed Quotes
               </button>
             )}
           </div>
