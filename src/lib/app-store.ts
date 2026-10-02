@@ -753,9 +753,66 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
   try {
     const { createClient } = await import("@supabase/supabase-js");
     const client = createClient(url, anonKey, { auth: { persistSession: false, autoRefreshToken: false } });
-    const { data: rows, error } = await client.from("portal_accounts").select("email, data");
-    if (error || !rows) return 0;
     const email = state.email.trim().toLowerCase();
+    if (!email) return 0;
+
+    // STEP 1 — THE PICTURE, and only the picture.
+    // A mentor's EA stores its picture AND its demo video in one JSON column,
+    // and the video is an inline base64 MP4 — 6.4 MB for one EA. Reading the
+    // account to get a 74 KB picture meant downloading 27 MB on every home
+    // visit, which is what killed the sync on a phone and left the card
+    // showing the platform logo. ea_media_for_email() answers the same
+    // question in a few kilobytes; the video never leaves the database.
+    let picturesApplied = 0;
+    try {
+      const { data: media, error: mediaError } = await client.rpc("ea_media_for_email", { p_email: email });
+      if (mediaError) throw new Error(mediaError.message);
+      const entries = Array.isArray(media) ? (media as Array<{ id?: string; name?: string; image?: string }>) : [];
+      if (entries.length > 0) {
+        const byId = new Map<string, string>();
+        const byName = new Map<string, string>();
+        for (const entry of entries) {
+          if (typeof entry.image !== "string" || !entry.image) continue;
+          if (entry.id) byId.set(entry.id, entry.image);
+          if (entry.name) byName.set(entry.name.trim().toLowerCase(), entry.image);
+        }
+        const robots = state.robots.map((robot) => {
+          // The EA id is the exact link; the name is the fallback for robots
+          // activated before the id started travelling with the license.
+          const image = (robot.eaId ? byId.get(robot.eaId) : undefined)
+            ?? byName.get((robot.name ?? "").trim().toLowerCase());
+          if (!image || image === robot.image) return robot;
+          picturesApplied += 1;
+          return { ...robot, image };
+        });
+        if (picturesApplied > 0) {
+          state = { ...state, robots };
+          persist();
+        }
+      }
+    } catch (error) {
+      // The function is new (supabase/ea-media.sql). Until it is installed
+      // the picture still has to come from the full read below, so this is
+      // a fallback, not a failure.
+      console.warn("[app-store] ea_media_for_email unavailable, falling back", error);
+    }
+
+    // STEP 2 — everything else (symbols, video) from the mentor accounts.
+    // Narrowed to the accounts that mention this user: reading the whole
+    // table is the 27 MB download this replaces.
+    const { data: targeted, error: targetedError } = await client
+      .from("portal_accounts")
+      .select("email, data")
+      .or(`data.ilike.*${email}*`);
+    let rows = targeted;
+    if (targetedError || !rows) {
+      // The filter is an optimisation, never a requirement: if the server
+      // cannot run it, fall back to the full read rather than lose the sync.
+      console.warn("[app-store] targeted cloud sync failed, reading all accounts", targetedError?.message);
+      const fallback = await client.from("portal_accounts").select("email, data");
+      if (fallback.error || !fallback.data) return picturesApplied;
+      rows = fallback.data;
+    }
     // Stash each distinct cloud video once per sync (IndexedDB behind a tiny
     // ref) — the same EA media would otherwise be re-processed per license.
     const videoCache = new Map<string, Promise<string | undefined>>();
@@ -834,8 +891,12 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       state = { ...state, robots };
       persist();
     }
-    return updated;
-  } catch {
+    return updated + picturesApplied;
+  } catch (error) {
+    // Silent failure is what made this look like "the picture is missing"
+    // rather than "the sync died". Say so in the console (adb logcat on the
+    // Android wrapper forwards it).
+    console.warn("[app-store] cloud robot sync failed", error);
     return 0;
   }
 }
