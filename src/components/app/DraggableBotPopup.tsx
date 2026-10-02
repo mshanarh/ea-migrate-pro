@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
 import { speakBot } from "@/lib/bot-voice";
-import { callNative, hasNativeBridge, queryNative } from "@/lib/native-bridge";
+import { callNative, hasNativeBridge, queryNative, toNativeImage } from "@/lib/native-bridge";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -205,6 +205,7 @@ export default function DraggableBotPopup() {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
     if (running) {
       // "Display over other apps" denied → the native bubble can NEVER float
       // over MetaTrader. Ask once per session: one tap opens the Android
@@ -227,12 +228,22 @@ export default function DraggableBotPopup() {
         // keeps the existing bubble if it is already up, so this is cheap
         // and guarantees the bubble follows the user across pages. The EA
         // NAME rides along so the native expansion shows the real robot.
-        callNative("showBubble", eaImage, eaName);
+        // The picture is normalised first: the native decoder cannot resolve
+        // a site-relative "/logo.png" or a blob: URL, and silently drew the
+        // app icon instead of the bot.
+        void toNativeImage(eaImage).then((source) => {
+          if (!cancelled) callNative("showBubble", source, eaName);
+        });
       }
     } else {
       callNative("hideBubble");
     }
-  }, [running, eaImage]);
+    // A picture conversion still in flight when the bot stops must not raise
+    // a bubble behind the user's back.
+    return () => {
+      cancelled = true;
+    };
+  }, [running, eaImage, eaName]);
 
   // Stream the newest log line into the native bubble.
   useEffect(() => {

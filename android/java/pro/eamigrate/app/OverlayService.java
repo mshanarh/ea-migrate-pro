@@ -61,6 +61,11 @@ import java.util.List;
 public class OverlayService extends Service {
     private static OverlayService instance;
 
+    /** Where a site-relative image path (the app's own "/logo.png") lives. */
+    private static final String SITE_ORIGIN = "https://eamigratepro.vercel.app";
+    /** Pixels: the bubble is 56dp and the card header 170dp — bigger is waste. */
+    private static final int MAX_DIMENSION = 512;
+
     private WindowManager wm;
     private View bubble;
     private String lastLine = "";
@@ -555,43 +560,38 @@ public class OverlayService extends Service {
      * stores images that way) are decoded directly; http(s) URLs stream.
      */
     private void loadBitmapInto(final ImageView target) {
-        new Thread(new Runnable() {
-            @Override
-            public void run() {
-                Bitmap rounded = null;
-                try {
-                    rounded = decodeImage(imageUrl);
-                } catch (Exception ignored) {
-                    // network hiccup / bad data — the app icon below still shows
-                }
-                final Bitmap result = rounded;
-                new Handler(Looper.getMainLooper()).post(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (result != null) {
-                            target.setImageBitmap(result);
-                        } else {
-                            target.setImageResource(R.drawable.ic_launcher);
-                        }
-                    }
-                });
-            }
-        }).start();
+        loadInto(target, false);
     }
 
     private void loadBitmap(final ImageView target) {
+        loadInto(target, true);
+    }
+
+    /**
+     * Decode off the main thread and ALWAYS hand the view something: the
+     * bot's picture, or the app icon.
+     *
+     * The old version caught Exception only. A large picture ran the worker
+     * out of memory, and OutOfMemoryError is an Error — it sailed past the
+     * catch, killed the thread before anything was posted, and left a
+     * permanently EMPTY circle: the bot image simply never appeared. Every
+     * failure now ends in the fallback.
+     */
+    private void loadInto(final ImageView target, final boolean round) {
+        final String source = imageUrl;
         new Thread(new Runnable() {
             @Override
             public void run() {
-                Bitmap rounded = null;
+                Bitmap ready = null;
                 try {
-                    Bitmap raw = decodeImage(imageUrl);
+                    Bitmap raw = decodeImage(source);
                     if (raw != null) {
-                        rounded = circular(raw);
+                        ready = round ? circular(raw) : raw;
                     }
-                } catch (Exception ignored) {
+                } catch (Throwable t) {
+                    android.util.Log.e("EAMIGRATE", "bubble image failed: " + t);
                 }
-                final Bitmap result = rounded;
+                final Bitmap result = ready;
                 new Handler(Looper.getMainLooper()).post(new Runnable() {
                     @Override
                     public void run() {
@@ -607,35 +607,83 @@ public class OverlayService extends Service {
     }
 
     /**
-     * Decode the EA image from EITHER form the web app sends:
-     *   • "data:image/png;base64,AAAA…" → decode the base64 payload directly
-     *     (this is how portal-uploaded EA pictures travel — before v1.8 only
-     *     http(s) URLs were handled, so the bubble always fell back to the
-     *     platform logo),
-     *   • "https://…" → streamed over the network.
+     * Decode the EA image from any form the web app can send:
+     *   • "data:image/png;base64,AAAA…" → the base64 payload is decoded here,
+     *   • "https://…" → streamed over the network,
+     *   • "/logo.png" → a SITE-RELATIVE path. The browser resolves it against
+     *     the origin, this class could not, and the app's own default bot
+     *     picture is exactly that — so the bubble quietly showed the app icon
+     *     instead of the robot. Resolved against the platform host.
+     *
+     * Bitmap dimensions are sampled down to at most MAX_DIMENSION: a
+     * full-resolution decode of a modern phone photo is tens of megabytes.
+     *
+     * Returns null instead of throwing for anything unreadable — including
+     * OutOfMemoryError — so the caller always reaches its fallback.
      */
     private static Bitmap decodeImage(String src) {
         if (src == null || src.isEmpty()) return null;
         try {
-            if (src.startsWith("data:image")) {
-                int comma = src.indexOf(',');
-                String payload = comma >= 0 ? src.substring(comma + 1) : src;
-                byte[] bytes = Base64.decode(payload, Base64.DEFAULT);
-                return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
-            }
-            if (src.startsWith("http")) {
-                HttpURLConnection connection = (HttpURLConnection) new URL(src).openConnection();
+            String source = resolveSource(src);
+            if (source == null) return null;
+            byte[] bytes;
+            if (source.startsWith("data:image")) {
+                int comma = source.indexOf(',');
+                String payload = comma >= 0 ? source.substring(comma + 1) : source;
+                bytes = Base64.decode(payload, Base64.DEFAULT);
+            } else {
+                HttpURLConnection connection = (HttpURLConnection) new URL(source).openConnection();
                 connection.setConnectTimeout(8000);
                 connection.setReadTimeout(8000);
+                connection.setInstanceFollowRedirects(true);
                 InputStream in = connection.getInputStream();
-                Bitmap raw = BitmapFactory.decodeStream(in);
+                bytes = readAll(in);
                 in.close();
-                return raw;
             }
-        } catch (Exception e) {
-            android.util.Log.e("EAMIGRATE", "image decode failed: " + e.getMessage());
+            return decodeSampled(bytes);
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "image decode failed: " + t);
+            return null;
         }
+    }
+
+    /** Turn a web reference into something this class can fetch, or null. */
+    private static String resolveSource(String src) {
+        String value = src.trim();
+        if (value.startsWith("data:image")) return value;
+        if (value.startsWith("http://") || value.startsWith("https://")) return value;
+        // A blob: URL lives inside the WebView's own storage and cannot be
+        // opened from here — the web app converts those to a data URL first.
+        if (value.startsWith("blob:")) return null;
+        if (value.startsWith("/")) return SITE_ORIGIN + value;
         return null;
+    }
+
+    private static byte[] readAll(InputStream in) throws java.io.IOException {
+        java.io.ByteArrayOutputStream out = new java.io.ByteArrayOutputStream();
+        byte[] chunk = new byte[8192];
+        int read;
+        while ((read = in.read(chunk)) != -1) {
+            out.write(chunk, 0, read);
+        }
+        return out.toByteArray();
+    }
+
+    /** Decode, downsampled so a huge picture never exhausts the heap. */
+    private static Bitmap decodeSampled(byte[] bytes) {
+        BitmapFactory.Options bounds = new BitmapFactory.Options();
+        bounds.inJustDecodeBounds = true;
+        BitmapFactory.decodeByteArray(bytes, 0, bytes.length, bounds);
+
+        int sample = 1;
+        int largest = Math.max(bounds.outWidth, bounds.outHeight);
+        while (largest > 0 && largest / sample > MAX_DIMENSION) {
+            sample *= 2;
+        }
+
+        BitmapFactory.Options options = new BitmapFactory.Options();
+        options.inSampleSize = sample;
+        return BitmapFactory.decodeByteArray(bytes, 0, bytes.length, options);
     }
 
     private static Bitmap circular(Bitmap src) {

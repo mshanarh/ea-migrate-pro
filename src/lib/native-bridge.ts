@@ -70,6 +70,67 @@ export function callNative<K extends keyof NativeBridge>(
 }
 
 /**
+ * Turn a web image reference into something the NATIVE bubble can actually
+ * decode.
+ *
+ * The Java side reads two forms: a base64 data URL and an http(s) URL. The
+ * app's own default bot picture is "/logo.png" — a site-RELATIVE path, which
+ * the browser resolves against the origin but Java cannot, so the bubble fell
+ * back to the app icon instead of the robot's face. That is now an absolute
+ * URL.
+ *
+ * A blob: URL is worse: it only exists inside the WebView's own storage and
+ * is unreachable from Java, so it is drawn onto a canvas here and handed over
+ * as a data URL instead.
+ */
+export async function toNativeImage(src: string): Promise<string> {
+  const value = (src ?? "").trim();
+  if (!value) return value;
+  if (value.startsWith("data:image") || value.startsWith("http://") || value.startsWith("https://")) {
+    return value;
+  }
+  if (value.startsWith("blob:")) {
+    try {
+      const response = await fetch(value);
+      const blob = await response.blob();
+      return await new Promise<string>((resolve) => {
+        const img = new Image();
+        const done = (result: string) => resolve(result);
+        img.onload = () => {
+          try {
+            // 320px is plenty for a chat-head avatar and keeps the payload
+            // well inside the size Android will accept across the bridge.
+            const size = Math.min(320, Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round((img.width / Math.max(img.width, img.height)) * size));
+            canvas.height = Math.max(1, Math.round((img.height / Math.max(img.width, img.height)) * size));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              done(value);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const encoded = canvas.toDataURL("image/jpeg", 0.85);
+            done(encoded.startsWith("data:image/") ? encoded : value);
+          } catch {
+            done(value);
+          }
+        };
+        img.onerror = () => done(value);
+        img.src = value;
+      });
+    } catch {
+      return value;
+    }
+  }
+  try {
+    return new URL(value, window.location.href).href;
+  } catch {
+    return value;
+  }
+}
+
+/**
  * Query a bridge method that returns a value (canPip, canOverlay).
  * Returns null when the bridge is missing/stale so callers can distinguish
  * "no answer" from a real `false`.
