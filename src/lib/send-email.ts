@@ -219,6 +219,7 @@ function brandHtml(heading: string, paragraphs: string[], buttonText: string, bu
 
 export type SendEmailInput =
   | { type: "new_registration"; email: string; firstName?: string; displayName?: string }
+  | { type: "approval_decision"; email: string; decision: "approved" | "rejected"; licenseLimit?: number }
   | { type: "license_approved"; email: string; licenseKey: string; eaName?: string; expiry?: string; eaImage?: string }
   | { type: "broadcast"; email: string; message: string };
 
@@ -270,6 +271,43 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
     if (second.status === "fulfilled" && second.value.ok) return { success: true };
     const failure = (first.status === "rejected" ? String(first.reason) : first.value.error) ?? (second.status === "rejected" ? String(second.reason) : second.value.error) ?? "Brevo send failed.";
     return { success: false, error: failure };
+  }
+
+  // approval_decision — the admin console's APPROVE / REJECT decision.
+  // The person who pressed the button gets told, so nobody is left guessing
+  // why their account still cannot sign in. The approved copy states the
+  // exact key allowance that was granted, because that is the number they
+  // will hit when they create their first license key.
+  if (data.type === "approval_decision") {
+    const approved = data.decision === "approved";
+    const limit = Number(data.licenseLimit ?? 0);
+    const heading = approved ? "Your account is approved" : "Your account was not approved";
+    const paragraphs = approved
+      ? [
+          `Good news — your EA Migrate account <strong style="color:#FFFFFF;">${email}</strong> has been approved.`,
+          "You can now sign in to your portal and start setting up your Expert Advisors and license keys.",
+          Number.isFinite(limit)
+            ? `Your license key allowance is <strong style="color:#FFFFFF;">${limit}</strong> key${limit === 1 ? "" : "s"}. You can create up to that many keys from your portal.`
+            : "You can now create license keys from your portal.",
+          'Sign in with the same email you registered with. If you are signing in on a new phone, ask your mentor to release your old device first.',
+        ]
+      : [
+          `We are sorry — the account <strong style="color:#FFFFFF;">${email}</strong> was not approved at this time.`,
+          "This means the portal is not available on this email right now.",
+          "If you think this is a mistake, reply to this email and our team will take another look.",
+        ];
+    const sent = await sendViaBrevo({
+      to: email,
+      toName: email,
+      subject: approved ? "Your EA Migrate account is approved" : "EA Migrate account update",
+      html: brandHtml(heading, paragraphs, approved ? "Sign in to your portal" : "Contact EA Migrate", approved ? "#E7B53A" : "#8A8A96"),
+      text: approved
+        ? `Your EA Migrate account (${email}) has been approved.\n\nYou can now sign in and create license keys.${
+            Number.isFinite(limit) ? `\n\nYour license key allowance: ${limit}.` : ""
+          }\n\nSign in: ${PORTAL_URL}`
+        : `Your EA Migrate account (${email}) was not approved.\n\nIf you think this is a mistake, reply to this email.\n\n${PORTAL_URL}`,
+    });
+    return sent.ok ? { success: true } : { success: false, ...(sent.error ? { error: sent.error } : {}) };
   }
 
   // broadcast — a plain message from the admin to one recipient.

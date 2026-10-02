@@ -321,19 +321,49 @@ function AdminConsole() {
     }
   };
 
+  /**
+   * APPROVE — write the decision, then tell the user. The email is the
+   * confirmation that their portal is open; a failed send never undoes the
+   * approval itself (the database is the source of truth), it is only
+   * reported so the admin can resend from the Messages tab.
+   */
   const approve = (user: AdminUser) =>
     void withUser(
       user.email,
       () => setUserApproval(user.email, "approved"),
       `${user.email} approved — they can sign in now`,
-    );
+    ).then(async () => {
+      await notifyDecision(user, "approved");
+    });
 
+  /** REJECT — same shape, with the decline copy. */
   const reject = (user: AdminUser) =>
     void withUser(
       user.email,
       () => setUserApproval(user.email, "rejected"),
       `${user.email} rejected — portal access revoked`,
-    );
+    ).then(async () => {
+      await notifyDecision(user, "rejected");
+    });
+
+  /** Confirmation email for the person whose account was just reviewed. */
+  const notifyDecision = async (user: AdminUser, decision: "approved" | "rejected") => {
+    try {
+      const result = await sendPortalEmail({
+        data: {
+          type: "approval_decision",
+          email: user.email,
+          decision,
+          ...(decision === "approved" ? { licenseLimit: user.licenseLimit } : {}),
+        },
+      });
+      if (!result.success) {
+        toast.error(`Approved, but the confirmation email did not send: ${result.error ?? "unknown error"}`);
+      }
+    } catch {
+      toast.error("Approved, but the confirmation email could not be sent.");
+    }
+  };
 
   const saveLimit = (user: AdminUser) =>
     void withUser(
