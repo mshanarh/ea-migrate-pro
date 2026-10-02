@@ -226,6 +226,31 @@ export type SendEmailInput =
 export type SendEmailResult = { success: boolean; error?: string };
 
 /**
+ * Tell the admin a new account exists. Both signup paths call this: the website
+ * form and the in-app sign-in (registerWithEmail). The app path used to write
+ * the pending row silently, so a registration made on the phone produced no
+ * notification at all and never reached the admin's inbox.
+ *
+ * Never throws — a failed alert must not block the person who just registered.
+ */
+export async function notifyAdminOfRegistration(input: {
+  email: string;
+  displayName?: string;
+}): Promise<void> {
+  try {
+    await sendPortalEmail({
+      data: {
+        type: "new_registration",
+        email: input.email,
+        ...(input.displayName ? { displayName: input.displayName } : {}),
+      },
+    });
+  } catch (error) {
+    console.error("[send-email] new-registration alert failed for", input.email, error);
+  }
+}
+
+/**
  * Same call contract as the old server function (including the `{ data }`
  * wrapper) so every call site keeps working unchanged — the send just runs
  * in the browser against Brevo's public API.

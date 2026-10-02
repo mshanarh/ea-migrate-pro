@@ -152,17 +152,22 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     return { users: [], messages: [], ok: false, error: "Database not connected" };
   }
   const db = supabase;
-  const [usersResult, approvalsResult, keysResult, settingsResult, paidResult, messagesResult] =
+  const [usersResult, approvalsResult, keysResult, settingsResult, paidResult, messagesResult, accountsResult] =
     await Promise.all([
       db
         .from("users")
         .select("email, created_at, is_paid, is_admin, device_id, reactivation_enabled")
         .order("created_at", { ascending: false }),
-      db.from("mentor_approvals").select("email, status"),
+      db.from("mentor_approvals").select("email, status, created_at"),
       db.from("license_keys").select("email"),
       db.from("app_settings").select("key, value, updated_at").like("key", `${LIMIT_PREFIX}%`),
       db.from("paid_emails").select("email, paid_at"),
       db.from("app_messages").select("id, body, sent_at, recipients, sender").order("sent_at", { ascending: false }),
+      // The website signup form writes its account HERE, not into `users`
+      // (that write is the app's sign-in path). Without this read a mentor who
+      // registered on the portal had no `users` row, so they never appeared in
+      // this console at all — the registration looked like it never happened.
+      db.from("portal_accounts").select("email, data, updated_at"),
     ]);
 
   // Every table is independent — a hiccup in one must not blank the rest.
@@ -174,13 +179,41 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     paidResult.error?.message;
 
   const approvals = new Map<string, ApprovalStatus>();
-  for (const row of (approvalsResult.data ?? []) as Array<{ email?: string; status?: string }>) {
+  const approvalDates = new Map<string, string>();
+  for (const row of (approvalsResult.data ?? []) as Array<{
+    email?: string;
+    status?: string;
+    created_at?: string | null;
+  }>) {
     const email = text(row.email).toLowerCase();
     const status = text(row.status).toLowerCase();
     if (!email) continue;
+    if (row.created_at) approvalDates.set(email, row.created_at);
     if (status === "approved" || status === "rejected" || status === "pending") {
       approvals.set(email, status);
     }
+  }
+
+  // Portal signups: email → the signup moment, taken from the stored account
+  // (createdAt) so the console's date column is real rather than epoch-zero.
+  const portalSignups = new Map<string, string>();
+  for (const row of (accountsResult?.data ?? []) as Array<{
+    email?: string;
+    data?: string | null;
+    updated_at?: string | null;
+  }>) {
+    const email = text(row.email).toLowerCase();
+    if (!email) continue;
+    let created = text(row.updated_at);
+    if (row.data) {
+      try {
+        const parsed = JSON.parse(row.data) as { createdAt?: unknown; email?: unknown };
+        if (typeof parsed.createdAt === "string" && parsed.createdAt) created = parsed.createdAt;
+      } catch {
+        /* corrupted row — the updated_at timestamp still orders it */
+      }
+    }
+    portalSignups.set(email, created);
   }
 
   // Real key usage: how many license_keys rows are bound to each email.
@@ -229,22 +262,22 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
   messages.push(...legacy.filter((item) => !knownIds.has(item.id)));
   messages.sort((a, b) => (a.sentAt < b.sentAt ? 1 : -1));
 
-  const users: AdminUser[] = (
-    (usersResult.data ?? []) as Array<{
-      email: string;
-      created_at?: string | null;
-      is_paid?: boolean;
-      is_admin?: boolean;
-      device_id?: string | null;
-      reactivation_enabled?: boolean;
-    }>
-  ).map((row) => {
+  const byEmail = new Map<string, AdminUser>();
+  for (const row of (usersResult.data ?? []) as Array<{
+    email: string;
+    created_at?: string | null;
+    is_paid?: boolean;
+    is_admin?: boolean;
+    device_id?: string | null;
+    reactivation_enabled?: boolean;
+  }>) {
     const email = text(row.email).toLowerCase();
+    if (!email) continue;
     // No approval row = the account was never reviewed → it is PENDING.
     const status: ApprovalStatus = approvals.get(email) ?? "pending";
-    return {
+    byEmail.set(email, {
       email,
-      createdAt: timestamp(row.created_at, epochFallback()),
+      createdAt: timestamp(row.created_at, portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback()),
       status,
       isPaid: bool(row.is_paid),
       isAdmin: bool(row.is_admin),
@@ -253,8 +286,30 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
       paidAt: paidAt.get(email) ?? null,
       deviceBound: typeof row.device_id === "string" && row.device_id.length > 0,
       reactivationEnabled: bool(row.reactivation_enabled),
-    };
-  });
+    });
+  }
+
+  // EVERY SIGNUP MUST APPEAR. An account that registered on the website has no
+  // `users` row, and a signup whose users write failed has no account row but
+  // always has an approval row. Union all three sources so "I registered and
+  // my email never showed up" cannot happen again.
+  for (const email of new Set([...approvals.keys(), ...portalSignups.keys()])) {
+    if (byEmail.has(email)) continue;
+    byEmail.set(email, {
+      email,
+      createdAt: portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback(),
+      status: approvals.get(email) ?? "pending",
+      isPaid: paidAt.has(email),
+      isAdmin: false,
+      licenseLimit: limits.get(email) ?? 0,
+      keysUsed: usage.get(email) ?? 0,
+      paidAt: paidAt.get(email) ?? null,
+      deviceBound: false,
+      reactivationEnabled: false,
+    });
+  }
+
+  const users = Array.from(byEmail.values()).sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1));
 
   return error ? { users, messages, ok: true, error } : { users, messages, ok: true };
 }

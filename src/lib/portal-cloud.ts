@@ -67,6 +67,38 @@ async function listApprovals(): Promise<Map<string, PortalStatus>> {
 }
 
 /** List every cloud account with the approval status merged over it. */
+/**
+ * ONE account, read straight from the database with the anon key.
+ *
+ * The dashboard's approval poll used to call syncGetAccount, a TanStack server
+ * function. On the deployed build that route answers with the SPA shell, so the
+ * poll never received an account and an approved mentor stayed on "Portal
+ * pending approval" forever. This reads the same two rows the console writes.
+ */
+export async function portalGetAccount(email: string): Promise<{ enabled: boolean; account: PublicAccount | null }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, account: null };
+  const address = email.trim().toLowerCase();
+  if (!address) return { enabled: true, account: null };
+  try {
+    const [rowRes, approvals] = await Promise.all([
+      dbClient.from("portal_accounts").select("email, data").eq("email", address).maybeSingle(),
+      listApprovals(),
+    ]);
+    if (rowRes.error) {
+      console.error("[portal-cloud] account read failed:", rowRes.error.message);
+      return { enabled: true, account: null };
+    }
+    const raw = (rowRes.data as { data?: string | null } | null)?.data;
+    if (!raw) return { enabled: true, account: null };
+    const parsed = JSON.parse(raw) as Account;
+    const approval = approvals.get(address);
+    return { enabled: true, account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }) };
+  } catch {
+    return { enabled: true, account: null };
+  }
+}
+
 export async function portalListAccounts(): Promise<SyncListResult> {
   const dbClient = await db();
   if (!dbClient) return { enabled: false, accounts: [], payments: [] };

@@ -95,19 +95,21 @@ function SignUp() {
                 if (!direct.ok) console.error("[signup] Direct cloud registration also failed:", direct.error);
               }
               // Admin alert — "New user registered: <email> - Approve in
-              // admin". Also saves the pending approval row. Fire-and-forget:
-              // a slow/unavailable email must never delay the redirect into
-              // the mentor's own dashboard.
-              void sendPortalEmail({
-                data: {
-                  type: "new_registration",
-                  email: res.account.email,
-                  firstName: res.account.firstName,
-                  displayName: res.account.displayName,
-                },
-              }).catch((emailError) =>
-                console.error("[signup] registration email failed:", emailError),
-              );
+              // admin". Also saves the pending approval row. Awaited (bounded)
+              // before the redirect so the request cannot be torn down by the
+              // navigation — fire-and-forget here was why registrations went
+              // unannounced.
+              await Promise.race([
+                sendPortalEmail({
+                  data: {
+                    type: "new_registration",
+                    email: res.account.email,
+                    firstName: res.account.firstName,
+                    displayName: res.account.displayName,
+                  },
+                }).catch((emailError) => console.error("[signup] registration email failed:", emailError)),
+                new Promise((resolve) => setTimeout(resolve, 8000)),
+              ]);
             }
             navigate({ to: "/dashboard" });
           } catch (syncError) {

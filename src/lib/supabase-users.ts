@@ -70,6 +70,23 @@ export async function registerWithEmail(
     .upsert({ email: address, status: "pending" }, { onConflict: "email", ignoreDuplicates: true });
   if (approvalError) console.warn("[supabase] approval row failed:", approvalError.message);
 
+  // 2b. TELL THE ADMIN — a registration made in the APP (not the website form)
+  //     used to write these two rows silently, so no alert email ever went out
+  //     and the admin had no idea a new person was waiting. Fire-and-forget:
+  //     it runs after the rows are saved and can never delay the sign-in.
+  //     `inserted` is non-null only when this call actually created the row,
+  //     so returning users are not alerted about on every sign-in.
+  if (inserted) {
+    void (async () => {
+      try {
+        const { notifyAdminOfRegistration } = await import("@/lib/send-email");
+        await notifyAdminOfRegistration({ email: address });
+      } catch (error) {
+        console.warn("[supabase] registration alert skipped:", error);
+      }
+    })();
+  }
+
   // 3. Session row — best-effort. Some deployments lack the license_key
   //    column; retry without it so the session still records.
   const { error: sessionError } = await dbClient.from("user_sessions").insert({

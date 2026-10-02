@@ -3,7 +3,7 @@ import { createFileRoute, Outlet, useNavigate } from "@tanstack/react-router";
 import { Clock, ShieldCheck, MessageCircle } from "lucide-react";
 import { PortalLayout } from "@/components/PortalLayout";
 import { OWNER_EMAILS, updateProfile, useCurrentAccount } from "@/lib/auth-store";
-import { syncGetAccount } from "@/lib/account-sync.server";
+import { portalCloudConfigured, portalGetAccount } from "@/lib/portal-cloud";
 
 export const Route = createFileRoute("/dashboard")({
   ssr: false,
@@ -49,7 +49,13 @@ function DashboardLayout() {
       const current = accountRef.current;
       if (!current) return;
       try {
-        const result = await syncGetAccount({ data: { email: current.email } });
+        // Read the approval straight from the database. The old call went
+        // through syncGetAccount, a TanStack server function whose route is not
+        // served by the deployed build — it answered with the SPA shell, so the
+        // poll silently did nothing and a mentor stayed "pending" after the
+        // admin had already approved them.
+        if (!portalCloudConfigured()) return;
+        const result = await portalGetAccount(current.email);
         if (cancelled || !result.enabled || !result.account) return;
         const cloud = result.account;
         // The owner can only be upgraded by the poll, never downgraded — a
@@ -67,7 +73,7 @@ function DashboardLayout() {
       }
     };
     void pull();
-    const timer = setInterval(() => void pull(), 4000);
+    const timer = setInterval(() => void pull(), 5000);
     return () => {
       cancelled = true;
       clearInterval(timer);
