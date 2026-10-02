@@ -177,26 +177,27 @@ async function runScannerAnalysis(
   const emaStackedUp = ema21 > ema50 && ema50 > ema200;
   const emaStackedDown = ema21 < ema50 && ema50 < ema200;
   const histogram = macdHistogram(closes);
+  // Recent swing structure: checks recent highs and lows over the last 20
+  // candles. The old version split the ENTIRE series in half, so on a long
+  // feed "later" was still mostly ancient history — a market that had been
+  // grinding lower for hours still read its first-60-candles high as current
+  // and scored +1 on structure. That is what pinned BTCUSDm to BUY through a
+  // trending selloff. Two windows inside the recent tail track the structure
+  // the trader can actually see.
+  const recentWindow = candles.slice(-20);
+  const mid = Math.floor(recentWindow.length / 2);
+  const earlyWindow = recentWindow.slice(0, mid);
+  const lateWindow = recentWindow.slice(mid);
+
   const higherLows =
-    candles.length >= 30 &&
-    (() => {
-      const half = Math.floor(candles.length / 2);
-      const earlier = candles.slice(0, half);
-      const later = candles.slice(half);
-      const earlierLow = earlier.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
-      const laterLow = later.reduce((min, candle) => Math.min(min, candle.low), Number.POSITIVE_INFINITY);
-      return laterLow > earlierLow;
-    })();
+    earlyWindow.length > 0 &&
+    lateWindow.length > 0 &&
+    Math.min(...lateWindow.map((candle) => candle.low)) > Math.min(...earlyWindow.map((candle) => candle.low));
+
   const lowerHighs =
-    candles.length >= 30 &&
-    (() => {
-      const half = Math.floor(candles.length / 2);
-      const earlier = candles.slice(0, half);
-      const later = candles.slice(half);
-      const earlierHigh = earlier.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
-      const laterHigh = later.reduce((max, candle) => Math.max(max, candle.high), Number.NEGATIVE_INFINITY);
-      return laterHigh < earlierHigh;
-    })();
+    earlyWindow.length > 0 &&
+    lateWindow.length > 0 &&
+    Math.max(...lateWindow.map((candle) => candle.high)) < Math.max(...earlyWindow.map((candle) => candle.high));
 
   // Recent candle direction: majority of the last 10 candles on one side.
   const recentCandles = candles.slice(-10);
@@ -242,7 +243,21 @@ async function runScannerAnalysis(
   // RSI nudges rather than votes — it confirms, it does not decide.
   const net = clamp(weighted * 0.85 + rsiAxis * 0.15, -1, 1);
 
-  const signal: ScannerAnalysis["signal"] = net >= 0 ? "BUY" : "SELL";
+  // The four axes are all measured over the same trend, so a market that is
+  // unambiguously making lower lows can still net out positive on stale
+  // average separation. Price under BOTH the fast and the slow EMA is the
+  // one reading that overrides the vote: nothing is a buy while the market
+  // is trading beneath its own trend on both timeframes.
+  const priceBelowBothEmas = close < ema21 && close < ema50;
+  const priceAboveBothEmas = close > ema21 && close > ema50;
+
+  // If price is completely below both EMAs with bearish momentum, do not force BUY
+  let signal: ScannerAnalysis["signal"] = net >= 0 ? "BUY" : "SELL";
+  if (signal === "BUY" && priceBelowBothEmas && (candleDirectionUp === false || histogram < 0)) {
+    signal = "SELL";
+  } else if (signal === "SELL" && priceAboveBothEmas && (candleDirectionUp === true || histogram > 0)) {
+    signal = "BUY";
+  }
   const bias: ScannerAnalysis["bias"] =
     Math.abs(net) < 0.12 ? "NEUTRAL" : net > 0 ? "BULLISH" : "BEARISH";
 
@@ -799,13 +814,13 @@ function symbolCandidates(symbol: string): string[] {
   const prefixStripped = cleaned.replace(/^[A-Z]{2,5}_/, "");
   if (prefixStripped && prefixStripped !== cleaned) candidates.add(prefixStripped);
   // Broker suffixes: dotted (XAUUSD.m, BTCUSD.pro) AND GLUED (XAUUSDM,
-  // US30m — Exness style with no separator).
+  // US30m — Exness style with no separator). The separator is optional so a
+  // single pattern covers both. This used to be a replacer callback that read
+  // its third argument as the source string; the replacer signature is
+  // (match, groups, offset, string), so `full` was the numeric offset and
+  // every suffixed symbol threw `full.slice is not a function`.
   const suffixStripped = cleaned
-    .replace(/\.(M|PRO|I|C|Z)$/i, "")
-    .replace(/(M|PRO|I|C|Z)$/i, (match, _offset, full) => {
-      const base = full.slice(0, full.length - match.length);
-      return base.length >= 5 ? base : full;
-    })
+    .replace(/[._-]?(M|PRO|I|C|Z)$/i, "")
     .replace(/^(HW|VH|AX|BM|BO|ICE)/, "");
   if (suffixStripped && suffixStripped !== cleaned) candidates.add(suffixStripped);
   // Index words hidden inside the name: HW_100 → 100, US100IDX → US100
