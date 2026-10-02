@@ -458,6 +458,25 @@ export function signOut() {
  * cloud fallback (the record even kept a dead password after the account
  * was healed in the shared store).
  */
+/**
+ * Make sure a local account record EXISTS for this cloud account before it is
+ * merged in. hydrateFromCloud only updates addresses it already holds, so a
+ * mentor signing in on a fresh phone — whose signup account write had failed,
+ * leaving only an approval row — had nothing to merge into and stayed signed
+ * out. Creates a skeleton from the cloud record when the device has none.
+ */
+export function ensureLocalAccount(cloud: Omit<Account, "password">): void {
+  load();
+  const key = cloud.email.trim().toLowerCase();
+  if (!key) return;
+  if (state.accounts.some((a) => a.email.toLowerCase() === key)) return;
+  state = normalise({
+    ...state,
+    accounts: [...state.accounts, { ...cloud, password: "" }],
+  });
+  persist();
+}
+
 export function adoptCloudPassword(email: string, password: string) {
   load();
   const clean = email.trim().toLowerCase();

@@ -12,7 +12,7 @@ import {
   useStore,
 } from "@/lib/auth-store";
 import { syncSendPasswordChangedEmail } from "@/lib/account-sync.server";
-import { syncSignIn } from "@/lib/account-sync.server";
+import { portalSignIn } from "@/lib/portal-cloud";
 
 export const Route = createFileRoute("/signin")({
   head: () => ({
@@ -81,16 +81,25 @@ function SignIn() {
               // users can sign in from any phone/browser. A failed/unreachable
               // cloud check falls through to the local error — it must NEVER
               // leave the button looking dead.
-              let cloud: Awaited<ReturnType<typeof syncSignIn>> | null = null;
+              //
+              // This reads the database directly. The previous check called
+              // syncSignIn, a server function this deployment does not serve:
+              // it returned the SPA shell, so signing in from a new phone
+              // always reported "wrong email or password".
+              let cloud: Awaited<ReturnType<typeof portalSignIn>> | null = null;
               try {
-                cloud = await syncSignIn({ data: { email: email.trim(), password } });
+                cloud = await portalSignIn(email.trim(), password);
               } catch (cloudError) {
                 console.error("[sign-in] cloud check failed:", cloudError);
                 cloud = null;
               }
-              if (cloud && cloud.enabled && cloud.ok) {
+              if (cloud && cloud.enabled && cloud.ok && cloud.account) {
                 // Seed this device with the cloud account and sign in locally.
-                const { adoptCloudPassword, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+                const { adoptCloudPassword, ensureLocalAccount, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+                // The stored account can be missing (signup write failed), so
+                // make sure a local record EXISTS before merging into it —
+                // hydrateFromCloud only updates accounts it already knows.
+                ensureLocalAccount(cloud.account);
                 hydrateFromCloud([cloud.account]);
                 adoptCloudPassword(email.trim(), password);
                 setCurrentAccount(email.trim());
@@ -100,7 +109,7 @@ function SignIn() {
                 navigate({ to: "/dashboard" });
                 return;
               }
-              setError(res.error);
+              setError(cloud?.error ?? res.error);
               return;
             }
             const account = store.accounts.find(

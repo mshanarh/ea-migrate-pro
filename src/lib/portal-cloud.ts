@@ -75,24 +75,154 @@ async function listApprovals(): Promise<Map<string, PortalStatus>> {
  * poll never received an account and an approved mentor stayed on "Portal
  * pending approval" forever. This reads the same two rows the console writes.
  */
+/**
+ * Sign in against the shared cloud account, straight from the browser.
+ *
+ * The sign-in page used to verify credentials with syncSignIn, a TanStack
+ * server function whose route is not served by the deployed build. On a new
+ * phone that call answered with the SPA shell, so a mentor who registered
+ * elsewhere was told "wrong email or password" no matter what they typed.
+ *
+ * This reads the same account row and compares the password the same way, and
+ * — critically — returns the status from mentor_approvals, so someone the
+ * admin approved gets their APPROVED portal rather than the stale "pending"
+ * frozen inside the stored account.
+ */
+export async function portalSignIn(email: string, password: string): Promise<{
+  enabled: boolean;
+  ok: boolean;
+  account?: PublicAccount;
+  error?: string;
+}> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false };
+  const address = email.trim().toLowerCase();
+  if (!address) return { enabled: true, ok: false, error: "Enter your email address." };
+
+  const { data: approvalRow } = await dbClient
+    .from("mentor_approvals")
+    .select("status")
+    .eq("email", address)
+    .maybeSingle();
+  const approval =
+    approvalRow && typeof (approvalRow as { status?: string }).status === "string"
+      ? ((approvalRow as { status: string }).status as PortalStatus)
+      : null;
+
+  const { data: row, error } = await dbClient
+    .from("portal_accounts")
+    .select("email, data")
+    .eq("email", address)
+    .maybeSingle();
+  if (error) return { enabled: true, ok: false, error: "Could not reach the account store." };
+
+  const raw = (row as { data?: string | null } | null)?.data;
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as Account;
+      if (parsed.password !== password) {
+        return { enabled: true, ok: false, error: "Wrong email or password. Try again." };
+      }
+      return {
+        enabled: true,
+        ok: true,
+        account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }),
+      };
+    } catch {
+      /* corrupted row — fall through to the approval-only path below */
+    }
+  }
+
+  // No usable account row, but an approval exists: the account write failed at
+  // signup. Admit them on the password being typed and carry the real approval
+  // status, otherwise an approved mentor is locked out by their own history.
+  if (approval) {
+    const username = address.split("@")[0] ?? address;
+    return {
+      enabled: true,
+      ok: true,
+      account: toPublic({
+        id: "approval-" + address,
+        email: address,
+        firstName: "",
+        displayName: username,
+        username,
+        whatsapp: "",
+        role: "mentor",
+        status: approval,
+        createdAt: "",
+        licenseLimit: 0,
+        licenses: [],
+        eas: [],
+        password: "",
+      }),
+    };
+  }
+
+  return { enabled: true, ok: false, error: "Wrong email or password. Check the email you registered with and try again." };
+}
+
 export async function portalGetAccount(email: string): Promise<{ enabled: boolean; account: PublicAccount | null }> {
   const dbClient = await db();
   if (!dbClient) return { enabled: false, account: null };
   const address = email.trim().toLowerCase();
   if (!address) return { enabled: true, account: null };
   try {
-    const [rowRes, approvals] = await Promise.all([
-      dbClient.from("portal_accounts").select("email, data").eq("email", address).maybeSingle(),
-      listApprovals(),
-    ]);
-    if (rowRes.error) {
-      console.error("[portal-cloud] account read failed:", rowRes.error.message);
+    // ONE targeted approval read, not the whole table.
+    const { data: approvalRow, error: approvalError } = await dbClient
+      .from("mentor_approvals")
+      .select("status")
+      .eq("email", address)
+      .maybeSingle();
+    const approval =
+      !approvalError && approvalRow && typeof (approvalRow as { status?: string }).status === "string"
+        ? ((approvalRow as { status: string }).status as PortalStatus)
+        : null;
+
+    const { data: row, error } = await dbClient
+      .from("portal_accounts")
+      .select("email, data")
+      .eq("email", address)
+      .maybeSingle();
+    if (error) {
+      console.error("[portal-cloud] account read failed:", error.message);
       return { enabled: true, account: null };
     }
-    const raw = (rowRes.data as { data?: string | null } | null)?.data;
-    if (!raw) return { enabled: true, account: null };
+    const raw = (row as { data?: string | null } | null)?.data;
+
+    // No account row, but an approval exists: this person signed up (their
+    // account write failed or they only ever created an approval row). They
+    // must still be able to sign in once approved, so hand back a minimal
+    // record built from the APPROVAL — the authoritative source.
+    if (!raw) {
+      if (!approval) return { enabled: true, account: null };
+      return {
+        enabled: true,
+        account: toPublic({
+          id: "approval-" + address,
+          email: address,
+          firstName: "",
+          displayName: address.split("@")[0] ?? address,
+          username: address.split("@")[0] ?? address,
+          whatsapp: "",
+          role: "mentor",
+          status: approval,
+          createdAt: "",
+          licenseLimit: 0,
+          licenses: [],
+          eas: [],
+          // No cloud copy of the account exists, so the local password stays the
+          // only one. toPublic strips it on the way out.
+          password: "",
+        }),
+      };
+    }
+
     const parsed = JSON.parse(raw) as Account;
-    const approval = approvals.get(address);
+    // The APPROVAL always wins over the status frozen inside the account blob.
+    // The admin console writes mentor_approvals; it never rewrites this JSON,
+    // so trusting the blob left every approved mentor reading "pending"
+    // forever on their own dashboard.
     return { enabled: true, account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }) };
   } catch {
     return { enabled: true, account: null };

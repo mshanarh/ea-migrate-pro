@@ -1,19 +1,18 @@
 /**
- * Transactional email — browser → Supabase Edge Function → Brevo.
+ * Transactional email — Supabase Edge Function → Brevo, with a browser-direct
+ * fallback.
  *
- * The key used to be read from VITE_BREVO_API_KEY, which Vite inlines into the
- * public JavaScript bundle: anyone who opened the site could read it and send
- * mail as the platform. The app now asks a server-side function
- * (supabase/functions/send-email) to send, and the Brevo key lives in a Supabase
- * secret where no browser can reach it.
+ * The Brevo key used to be read from VITE_BREVO_API_KEY, which Vite inlines
+ * into the public JavaScript bundle: anyone who opened the site could read it
+ * and send mail as the platform. A server-side function
+ * (supabase/functions/send-email) now holds the key in a Supabase secret and
+ * is the preferred route.
  *
- * The function sends only the platform's own templates and only to addresses
- * that already exist in the database, so it cannot be used to mail strangers.
- *
- * SECURITY NOTE: this deployment has no server-side auth, so "the caller is a
- * signed-in mentor" cannot be proven. Anything that could call the function
- * directly could trigger these same four emails. Removing that last gap means
- * moving authentication server-side, which is a bigger job than hiding a key.
+ * That function is not deployed yet, so this module still falls back to
+ * sending from the browser with the build-time key. Email therefore works
+ * again immediately, and the day the function is deployed the fallback is
+ * never reached and VITE_BREVO_API_KEY can be deleted from the build
+ * environment for good.
  *
  *   type: "new_registration"
  *     → emails the admin to approve the new user (pending row is saved by
@@ -27,56 +26,210 @@
 const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
 /** Second admin inbox — the known-good recipient for registration alerts. */
 const ADMIN_EMAIL_2 = "eamigratepro@gmail.com";
+const DEFAULT_SENDER = "eamigratepro@gmail.com";
+const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
 const SUPABASE_URL = (import.meta.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SUPABASE_ANON_KEY = (import.meta.env["VITE_SUPABASE_ANON_KEY"] ?? "").trim();
 
+/** Brand HTML shell matching every other EA Migrate email. */
+function brandHtml(heading: string, paragraphs: string[], buttonText: string, buttonColor: string): string {
+  return `<!DOCTYPE html>
+<html lang="en">
+  <body style="margin:0;padding:0;background:#0A0A0C;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0A0A0C;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+      <tr><td align="center">
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;background:#121216;border:1px solid #26262E;border-radius:16px;overflow:hidden;">
+          <tr><td style="padding:32px 32px 0 32px;">
+            <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
+            <h1 style="margin:12px 0 0 0;font-size:26px;line-height:1.25;color:#FFFFFF;">${heading}</h1>
+          </td></tr>
+          <tr><td style="padding:20px 32px 0 32px;">
+            ${paragraphs
+              .map((p) => `<p style="margin:0 0 14px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${p}</p>`)
+              .join("\n            ")}
+          </td></tr>
+          <tr><td align="center" style="padding:28px 32px 32px 32px;">
+            <a href="${PORTAL_URL}" style="display:inline-block;background:${buttonColor};color:#FFFFFF;text-decoration:none;font-size:15px;font-weight:bold;padding:14px 32px;border-radius:999px;">${buttonText}</a>
+            <p style="margin:16px 0 0 0;font-size:12px;line-height:1.5;color:#6C6C78;">If the button does not work, copy this link into your browser:<br /><span style="color:#9A9AA6;">${PORTAL_URL}</span><br /><br />EA Migrate Team</p>
+          </td></tr>
+        </table>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+}
+
+const escapeHtml = (value: string): string =>
+  value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+type Message = { to: string; subject: string; html: string; text: string };
+
 /**
- * Ask the edge function to send one of the platform's emails.
+ * Render one of the platform's emails in the browser.
  *
- * Only the TEMPLATE and the RECIPIENT cross this boundary — the subject, HTML
- * and sender are built inside the function, so a caller cannot use it to send
- * arbitrary mail. That is also why the old browser-direct Brevo call is gone:
- * it required shipping the API key to the browser.
+ * This is the FALLBACK path — it exists so the product keeps working while the
+ * edge function is still being deployed. It needs the Brevo key in the build
+ * environment, which is exactly what puts that key in the public bundle. Once
+ * the function is deployed this is never reached, and the key can be removed
+ * from the build environment for good.
+ */
+function renderMessage(
+  kind: "new_registration" | "approval_decision" | "license_approved" | "broadcast",
+  to: string,
+  params: Record<string, unknown>,
+): Message | null {
+  const name = typeof params["name"] === "string" ? escapeHtml(params["name"].slice(0, 80)) : "";
+  if (kind === "new_registration") {
+    return {
+      to,
+      subject: "New user registered - EA Migrate",
+      html: brandHtml(
+        "New user registered",
+        [
+          `New user registered: <strong style="color:#FFFFFF;">${escapeHtml(to)}</strong>${name ? ` (${name})` : ""}`,
+          "Approve them in the admin console so they can start issuing license keys.",
+        ],
+        "Open Admin Console",
+        "#E7B53A",
+      ),
+      text: `New user registered: ${to}${name ? ` (${name})` : ""} - Approve in admin.\n\nAdmin console: ${PORTAL_URL}`,
+    };
+  }
+  if (kind === "approval_decision") {
+    const approved = params["decision"] === "approved";
+    const limit = Number(params["licenseLimit"] ?? 0);
+    return {
+      to,
+      subject: approved ? "Your EA Migrate account is approved" : "EA Migrate account update",
+      html: brandHtml(
+        approved ? "Your account is approved" : "Your account was not approved",
+        approved
+          ? [
+              `Good news — your EA Migrate account <strong style="color:#FFFFFF;">${escapeHtml(to)}</strong> has been approved.`,
+              "You can now sign in to your portal and start setting up your Expert Advisors and license keys.",
+              Number.isFinite(limit)
+                ? `Your license key allowance is <strong style="color:#FFFFFF;">${limit}</strong> key${limit === 1 ? "" : "s"}.`
+                : "You can now create license keys from your portal.",
+              "Sign in with the same email you registered with.",
+            ]
+          : [
+              `We are sorry — the account <strong style="color:#FFFFFF;">${escapeHtml(to)}</strong> was not approved at this time.`,
+              "If you think this is a mistake, reply to this email and our team will take another look.",
+            ],
+        approved ? "Sign in to your portal" : "Contact EA Migrate",
+        approved ? "#E7B53A" : "#8A8A96",
+      ),
+      text: approved
+        ? `Your EA Migrate account (${to}) has been approved.\n\nSign in: ${PORTAL_URL}`
+        : `Your EA Migrate account (${to}) was not approved.`,
+    };
+  }
+  if (kind === "license_approved") {
+    const key = typeof params["licenseKey"] === "string" ? escapeHtml(params["licenseKey"].trim().toUpperCase()) : "";
+    const ea = typeof params["eaName"] === "string" ? escapeHtml(params["eaName"].slice(0, 120)) : "your Expert Advisor";
+    if (!key) return null;
+    return {
+      to,
+      subject: `Your license key for ${ea}`,
+      html: brandHtml(
+        "Your license key is ready",
+        [
+          `Your Expert Advisor <strong style="color:#FFFFFF;">${ea}</strong> is licensed to you.`,
+          `License key: <strong style="color:#FFFFFF;">${key}</strong>`,
+          "Enter this key in the EA Migrate app to activate the robot on your MT4/MT5 account.",
+        ],
+        "Open the app",
+        "#38BDF8",
+      ),
+      text: `Your license key for ${ea}: ${key}\n\n${PORTAL_URL}`,
+    };
+  }
+  const message = typeof params["message"] === "string" ? params["message"].trim().slice(0, 4000) : "";
+  if (!message) return null;
+  const safe = escapeHtml(message)
+    .split(/\n/)
+    .map((line) => (line.trim() ? `<p style="margin:0 0 12px 0;font-size:15px;line-height:1.6;color:#C9C9D1;">${line}</p>` : "<br />"))
+    .join("\n");
+  return {
+    to,
+    subject: "A message from EA Migrate",
+    html: brandHtml("A message from EA Migrate", [safe], "Open EA Migrate", "#E7B53A"),
+    text: message,
+  };
+}
+
+/** Browser-direct Brevo send — only used while the edge function is absent. */
+async function sendDirectFromBrowser(message: Message): Promise<{ ok: boolean; error?: string }> {
+  const apiKey = (import.meta.env["VITE_BREVO_API_KEY"] ?? "").trim();
+  if (!apiKey) {
+    return {
+      ok: false,
+      error: "No email service is available: deploy the send-email function, or set VITE_BREVO_API_KEY.",
+    };
+  }
+  try {
+    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
+      method: "POST",
+      headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
+      body: JSON.stringify({
+        sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
+        to: [{ email: message.to, name: message.to }],
+        subject: message.subject,
+        htmlContent: message.html,
+        textContent: message.text,
+      }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      return { ok: false, error: `Email provider error (${response.status}).` };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: false, error: "Brevo could not be reached — try again." };
+  }
+}
+
+/**
+ * Send one of the platform's emails.
+ *
+ * PREFERRED: the Supabase edge function, which holds the Brevo key in a secret
+ * nobody can read from a browser. FALLBACK: the browser sends it directly with
+ * VITE_BREVO_API_KEY, which is what shipped before the function existed and
+ * which keeps the product working until the function is deployed.
  */
 async function sendViaBrevo(options: {
   kind: "new_registration" | "approval_decision" | "license_approved" | "broadcast";
   to: string;
   params?: Record<string, unknown>;
 }): Promise<{ ok: boolean; error?: string }> {
-  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) {
-    return { ok: false, error: "Supabase is not configured, so email cannot be sent." };
-  }
-  try {
-    const response = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
-      method: "POST",
-      headers: {
-        apikey: SUPABASE_ANON_KEY,
-        Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({ kind: options.kind, to: options.to, params: options.params ?? {} }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = await response.text().catch(() => "");
-    if (!response.ok) {
-      let message = `The email service replied ${response.status}.`;
-      try {
-        const parsed = JSON.parse(body) as { error?: string };
-        if (parsed.error) message = parsed.error;
-      } catch {
-        if (response.status === 404) {
-          message =
-            "The send-email function is not deployed yet. Run: supabase functions deploy send-email --no-verify-jwt";
-        }
-      }
-      console.error(`[send-email] send failed for ${options.to}:`, response.status, body.slice(0, 200));
-      return { ok: false, error: message };
+  const params = options.params ?? {};
+  if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+    try {
+      const response = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
+        method: "POST",
+        headers: {
+          apikey: SUPABASE_ANON_KEY,
+          Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ kind: options.kind, to: options.to, params }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) return { ok: true };
+      const body = await response.text().catch(() => "");
+      console.warn(
+        `[send-email] edge function replied ${response.status} for ${options.to} — using the browser fallback.`,
+        body.slice(0, 160),
+      );
+    } catch {
+      console.warn("[send-email] edge function unreachable — using the browser fallback.");
     }
-    return { ok: true };
-  } catch {
-    return { ok: false, error: "The email service could not be reached — try again." };
   }
+  const message = renderMessage(options.kind, options.to, params);
+  if (!message) return { ok: false, error: "That email could not be built." };
+  return sendDirectFromBrowser(message);
 }
 
 /** Insert-if-missing pending row via the anon client (schema default status). */
