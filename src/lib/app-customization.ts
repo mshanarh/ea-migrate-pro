@@ -27,6 +27,11 @@ export const ACCENT_COLORS = [
   { id: "matrix", name: "Matrix Green", value: "#00FF41" },
   { id: "aquamarine", name: "Aquamarine", value: "#7FFFD4" },
   { id: "copper", name: "Copper", value: "#B87333" },
+  // Algohost trade palette — the red/amber/green tokens the Android layer
+  // uses for trade-execution notifications and the primary contact colour.
+  { id: "algohost-red", name: "Algohost Red", value: "#E11D48" },
+  { id: "algohost-amber", name: "Algohost Amber", value: "#F97316" },
+  { id: "algohost-green", name: "Algohost Green", value: "#22C55E" },
   { id: "white", name: "White", value: "#FFFFFF" },
 ] as const;
 
@@ -45,6 +50,8 @@ export const INTERFACE_THEMES = [
   { id: "SUPREME EQUINOX", name: "SUPREME EQUINOX", description: "Dual accent layout" },
   { id: "ULTRON MEGA", name: "ULTRON MEGA", description: "Heavy metal console" },
   { id: "EA CLOUD", name: "EA CLOUD", description: "Green ladder classic" },
+  { id: "SNIFFER", name: "Sniper", description: "Echoing reticle centre" },
+  { id: "PHOENIX", name: "Phoenix", description: "Rise from the embers" },
 ] as const;
 
 export const FONT_OPTIONS = [
@@ -83,6 +90,8 @@ export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
   "SUPREME EQUINOX": "Russo One",
   "ULTRON MEGA": "Rajdhani",
   "EA CLOUD": "Inter",
+  "SNIFFER": "Orbitron",
+  "PHOENIX": "Space Grotesk",
 };
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";

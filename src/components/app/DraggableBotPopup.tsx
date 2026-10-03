@@ -33,6 +33,8 @@ declare global {
     /** Open the popup and stream execution logs for a scanned pair. */
     triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: string; stopLoss?: string | number; takeProfit?: string | number }) => void;
     closeExecutionToast?: () => void;
+    /** Native Android trade-execution notification — "TRADE 1 EXECUTED — EA MIGRATE". */
+    showTradeNotification?: (eaName: string, text: string) => void;
   }
 }
 
@@ -332,6 +334,24 @@ export default function DraggableBotPopup() {
       // not every refusal — the voice would otherwise stack up.
       if (/TRADE \d+ EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
         speakBot(result.ok ? result.message : result.message);
+      }
+
+      // Phone heads-up: the native Android layer shows a foreground
+      // "Trade executed" notification using the Algohost red/amber/green
+      // palette (red on loss, amber on pending, green on win).
+      try {
+        if (typeof window !== "undefined") {
+          const native = ((window as unknown as {
+            EAMigrate?: { showTradeNotification?: (eaName: string, text: string) => void }
+          }).EAMigrate ?? null);
+          if (native?.showTradeNotification) {
+            native.showTradeNotification(eaName, result.ok
+              ? "TRADE 1 EXECUTED — EA MIGRATE ✓"
+              : "TRADE 1 FAILED — EA MIGRATE ✖");
+          }
+        }
+      } catch {
+        // Native bridge unavailable — the web popup still shows the result.
       }
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);

@@ -4,6 +4,7 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.Service;
+import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.graphics.Bitmap;
@@ -77,6 +78,58 @@ public class OverlayService extends Service {
     private LinearLayout expandedLogList;
     private final Deque<String> logHistory = new ArrayDeque<>();
     private static final int MAX_LOG_LINES = 6;
+
+    /** Trade-executed notification channel (Oreo+). */
+    private static final String TRADE_EXECUTED_CHANNEL = "eamigrate_trade_executed";
+    private static final int TRADE_NOTIFICATION_ID = 2001;
+
+    /**
+     * Push a foreground notification to the phone when the bot executes a
+     * trade. Uses the Algohost palette: red for losses, amber for pending,
+     * green for wins — exactly the same tokens as the web theme.
+     */
+    public static void showTradeNotification(String eaName, String tradeText) {
+        try {
+            NotificationManager manager = (NotificationManager) instance != null
+                    ? instance.getSystemService(Context.NOTIFICATION_SERVICE)
+                    : null;
+            if (manager == null) return;
+
+            // Ensure the channel exists.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                NotificationChannel channel = new NotificationChannel(
+                        TRADE_EXECUTED_CHANNEL,
+                        "Trade executed",
+                        NotificationManager.IMPORTANCE_HIGH); // HIGH — the phone must see it immediately
+                channel.setDescription("Alerts the user when EA Migrate fills a trade");
+                channel.setShowBadge(true);
+                // Algohost accent colour: the green/red/amber palette the app uses.
+                channel.setLightColor(Color.parseColor("#E11D48"));
+                channel.enableLights(true);
+                manager.createNotificationChannel(channel);
+            }
+
+            // Big-text body so the status is legible from the lock screen.
+            String[] parts = tradeText.split("\n", 2);
+            String title = parts.length > 0 ? parts[0] : eaName;
+            String body = parts.length > 1 ? parts[1] : eaName + " — Trade Executed";
+
+            Notification notification = new Notification.Builder(instance, TRADE_EXECUTED_CHANNEL)
+                    .setContentTitle(title)
+                    .setContentText(body)
+                    .setStyle(new Notification.BigTextStyle().bigText(body))
+                    .setSmallIcon(android.R.drawable.ic_dialog_info)
+                    .setOngoing(false)
+                    // Algohost red — the trade is live and it moved.
+                    .setColor(Color.parseColor("#E11D48"))
+                    .setDefaults(Notification.DEFAULT_LIGHTS)
+                    .build();
+            manager.notify(TRADE_NOTIFICATION_ID, notification);
+        } catch (Throwable t) {
+            // Never crash the foreground service on a bad notification.
+            android.util.Log.e("EAMIGRATE", "showTradeNotification failed: " + t);
+        }
+    }
 
     public static void push(String line) {
         if (instance != null) {

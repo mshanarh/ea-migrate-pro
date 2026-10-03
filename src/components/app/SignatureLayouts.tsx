@@ -503,6 +503,130 @@ export function SupremeEquinox(props: SignatureLayoutProps) {
   );
 }
 
+/* ---------------- SNIPER — sniper-first echoing-retticle layout ---------------- */
+
+export function Sniper(props: SignatureLayoutProps) {
+  const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
+  const actions = useActionDefs(props);
+  const image = robot?.image || "/logo.png";
+  return (
+    <div className="flex flex-col gap-6">
+      <motion.section
+        layout
+        initial={{ opacity: 0, y: 22 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-[#0a0a0a]"
+      >
+        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
+        <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.4) 0%, rgba(0,0,0,0.15) 45%, rgba(0,0,0,0.92) 100%)" }} />
+        <div className="relative flex h-full flex-col items-center justify-end pb-9">
+          <h1
+            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black uppercase leading-tight text-white sm:text-3xl"
+            style={{ fontFamily: `'${font}', sans-serif`, textShadow: "0 2px 20px rgba(0,0,0,0.85)" }}
+          >
+            {robot?.name ?? "YOUR ROBOT"}
+          </h1>
+          <p className="mt-2 text-sm font-bold tracking-[0.34em] uppercase" style={{ color: accent }}>
+            {robot?.running ? "DOING THE GROUND" : "WARMING THE ZERO"}
+          </p>
+        </div>
+      </motion.section>
+
+      <div className="mx-1 flex items-center justify-around rounded-[40px] border py-5" style={{ borderColor: `${accent}59`, background: "linear-gradient(180deg, rgba(0,0,0,0.02), rgba(0,0,0,0.72))" }}>
+        {actions.map(({ label, icon: Icon, onClick }) => (
+          <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-1.5 px-3">
+            <Icon className="size-7 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} />
+            <span className="text-[11px] font-black tracking-[0.18em] text-white/85">{label}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="flex justify-center"><PoweredBadge accent={accent} /></div>
+
+      <button
+        type="button"
+        onClick={onOpenScanner}
+        className="flex items-center justify-between gap-4 rounded-[28px] border-2 p-5 text-left"
+        style={{ borderColor: accent, backgroundColor: "#E11D48", boxShadow: "0 0 28px #E11D48" }}
+      >
+        <span className="flex items-center gap-4">
+          <span className="flex size-12 items-center justify-center rounded-2xl bg-black" style={{ border: `2px solid ${accent}` }}>
+            <ScanLine className="size-6" style={{ color: accent }} />
+          </span>
+          <span>
+            <span className="block text-base font-black tracking-wide text-white">SNIPER TRACKER</span>
+            <span className="block text-sm text-white/55">Auto executes the winning trigger</span>
+          </span>
+        </span>
+        <Info className="size-5 shrink-0" style={{ color: accent }} />
+      </button>
+    </div>
+  );
+}
+
+/* ---------------- PHOENIX — rise-from-the-embers circular layout ---------------- */
+
+export function Phoenix(props: SignatureLayoutProps) {
+  const { robot, accent, font, onOpenAdd, onOpenScanner } = props;
+  const actions = useActionDefs(props);
+  const image = robot?.image || "/logo.png";
+  return (
+    <div className="relative flex min-h-[62vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-black px-5 py-10">
+      <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
+      <div className="absolute inset-0" style={{ background: `radial-gradient(circle at 50% 30%, rgba(249,115,22,0.16) 0%, rgba(0,0,0,0.74) 58%, rgba(0,0,0,0.94) 100%))` }} />
+
+      <div className="relative flex flex-col items-center">
+        <motion.span
+          initial={{ opacity: 0, scale: 0.9 }}
+          animate={{ opacity: 1, scale: 1 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="relative flex size-52 items-center justify-center rounded-full border-4 bg-black p-1.5"
+          style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}59` }}
+        >
+          <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
+        </motion.span>
+
+        <p className="mt-7 text-sm font-bold tracking-[0.34em] text-white/60 uppercase">You're trading with</p>
+        <h1
+          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-3xl font-black leading-tight text-white uppercase sm:text-4xl"
+          style={{ fontFamily: `'${font}', sans-serif`, textShadow: `0 0 34px ${accent}80` }}
+        >
+          {robot?.name ?? "YOUR ROBOT"}
+        </h1>
+      </div>
+
+      <div className="relative mt-1"><PoweredBadge accent={accent} /></div>
+
+      {robot ? (
+        <div className="relative grid w-full max-w-sm grid-cols-3 gap-3">
+          {actions.map(({ label, icon: Icon, onClick }) => (
+            <button
+              key={label}
+              type="button"
+              onClick={onClick}
+              className="group flex size-24 flex-col items-center justify-center gap-1.5 rounded-full border-2 bg-black/90 transition-transform active:scale-95"
+              style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}
+            >
+              <Icon className="size-7" style={{ color: accent }} />
+              <span className="text-xs font-bold capitalize" style={{ color: accent }}>{label.toLowerCase()}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={onOpenAdd}
+          className="relative flex h-16 w-full max-w-sm items-center justify-center gap-3 rounded-full text-base font-black text-white transition-transform active:scale-[0.98]"
+          style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 12px 40px ${accent}59` }}
+        >
+          <Plus className="size-6" /> ADD ROBOT
+        </button>
+      )}
+    </div>
+  );
+}
+
 /* ---------------- EA CLOUD — green ladder classic ---------------- */
 
 export function EaCloud(props: SignatureLayoutProps) {

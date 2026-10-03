@@ -14,6 +14,8 @@ import {
   PabloElite,
   QuantumBlue,
   SupremeEquinox,
+  Sniper,
+  Phoenix,
 } from "@/components/app/SignatureLayouts";
 
 export type ThemeContentProps = {
@@ -393,6 +395,12 @@ function ThemeContentInner(props: ThemeContentProps) {
   }
   if (theme === "EA CLOUD") {
     return <EaCloud robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "SNIFFER") {
+    return <Sniper robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "PHOENIX") {
+    return <Phoenix robot={props.robot} accent={accent} font={font} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "TITAN EDGE") {
     return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} />;

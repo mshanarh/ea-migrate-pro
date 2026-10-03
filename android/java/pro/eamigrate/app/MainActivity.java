@@ -359,6 +359,20 @@ public class MainActivity extends Activity {
         public void pushLog(final String line) {
             OverlayService.push(line);
         }
+
+        /**
+         * Push a foreground trade-execution notification to the phone when
+         * the robot has just filled a trade. Red = loss, amber = pending,
+         * green = win — the same Algohost palette the web theme uses.
+         */
+        @JavascriptInterface
+        public void showTradeNotification(final String eaName, final String text) {
+            try {
+                OverlayService.showTradeNotification(eaName, text);
+            } catch (Throwable t) {
+                android.util.Log.e("EAMIGRATE", "showTradeNotification bridge failed: " + t);
+            }
+        }
     }
 
     /**
