@@ -9,12 +9,13 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { getAppState, leaveForCheckout, requireAppAccess } from "@/lib/app-store";
+import { getAppState, leaveForCheckout } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
+import { sanitizeBotName } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -23,6 +24,9 @@ export const Route = createFileRoute("/app/scanner")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     if (access.action === "pay") {
       leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });
@@ -124,11 +128,10 @@ function AppScanner() {
       };
       // MT5 caps comments at 31 characters and some brokers refuse anything
       // beyond plain letters/digits. The comment is the CURRENT BOT'S NAME
-      // ONLY — letters+digits, nothing appended, always ≤31 chars.
-      const botName = (robot?.name ?? "")
-        .replace(/[^A-Za-z0-9]/g, "")
-        .slice(0, 31);
-      const orderComment = botName || "Eamigrate";
+      // ONLY — letters+digits, nothing appended, always ≤31 chars, and ""
+      // when the robot has no name (no brand fallback; the bridge default
+      // covers an empty comment).
+      const orderComment = sanitizeBotName(robot?.name);
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
@@ -318,7 +321,7 @@ function AppScanner() {
           // FORCE the same trade through once with the bare safe fallback name.
           if (!commentRetried && /comment/i.test(raw)) {
             commentRetried = true;
-            activeComment = "Eamigrate";
+            activeComment = sanitizeBotName(robot?.name);
             try {
               const payload = await executeWithSymbolFallback();
               opened += 1;

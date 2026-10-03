@@ -274,12 +274,15 @@ async function executeVpsTradeInternal(input: {
   take_profit?: number | undefined;
   eaName?: string | undefined;
 }): Promise<{ success: boolean; error?: string; transportDown?: boolean }> {
+  // THE EA NAME ONLY in the order comment — the " ~ EA Migrate" suffix and
+  // the "EA Migrate" fallback were removed on request: letters, digits and
+  // spaces, capped at MT5's 31 characters, and an EMPTY comment when the EA
+  // has no usable name (the bridge applies its own default then).
   const safeEaName = (input.eaName ?? "")
-    .replace(/[^A-Za-z0-9 .,_()-]/g, " ")
+    .replace(/[^A-Za-z0-9 ]/g, "")
     .replace(/\s+/g, " ")
-    .trim();
-  const suffix = " ~ EA Migrate";
-  const shortEaName = safeEaName.slice(0, 31 - suffix.length).replace(/[\s.,_()-]+$/, "");
+    .trim()
+    .slice(0, 31);
   const result = await bridgeFetch("/trade/execute", {
     credentials: {
       login: Number(input.login),
@@ -291,7 +294,7 @@ async function executeVpsTradeInternal(input: {
     volume: input.volume,
     stop_loss: input.stop_loss || 0,
     take_profit: input.take_profit || 0,
-    comment: shortEaName ? `${shortEaName}${suffix}` : "EA Migrate",
+    comment: safeEaName,
   });
   if (result.transportError) {
     return { success: false, error: result.transportError, transportDown: true };

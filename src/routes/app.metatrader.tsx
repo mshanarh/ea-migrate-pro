@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { connectMt, disconnectMt, getAppState, leaveForCheckout, requireAppAccess, useAppState, type MtAccount } from "@/lib/app-store";
+import { connectMt, disconnectMt, getAppState, leaveForCheckout, useAppState, type MtAccount } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
@@ -21,6 +21,9 @@ export const Route = createFileRoute("/app/metatrader")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     if (access.action === "pay") {
       leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });

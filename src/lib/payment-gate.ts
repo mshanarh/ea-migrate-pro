@@ -20,16 +20,27 @@
  *
  * A tiny in-memory cache (60s) keeps navigation snappy; it never survives a page
  * reload and only caches DATABASE results, so editing localStorage cannot
- * influence the decision. When Supabase is unreachable/unconfigured the caller
- * falls back to the legacy local store (dev must keep working) — but a forged
- * LOCAL record can never be validated by the cloud path.
+ * influence the decision. There is NO local fallback: when the database cannot
+ * decide (unreachable, error, or unconfigured) the gate FAILS CLOSED and sends
+ * the account to checkout. A local record — including one a device forged or
+ * still remembers from a session the owner has since revoked — can never open
+ * the app, because it is never consulted.
  */
 import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 export type CloudAccess = "admin" | "paid" | "unpaid";
-export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
+/**
+ * `deactivate` is NOT a payment prompt — it means this device was let in
+ * before (the local record says paid/admin) and the database now says
+ * unpaid: the owner pressed "Set unpaid" in the console. The session ends
+ * and the person lands on /app/login?deactivated=1, which says so plainly
+ * instead of offering checkout for an account that was just revoked.
+ * A cloud-decided unpaid account that was NEVER paid also ends its session
+ * and returns to `signin` — the first page, where the email is entered.
+ */
+export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
 
 type Resolution = { status: CloudAccess; at: number };
 
@@ -45,6 +56,41 @@ const CACHE_TTL_MS = 60_000;
  */
 const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
+
+/**
+ * SESSION VERSION — the blunt instrument that forces every cached session on
+ * every device to re-check the cloud database exactly once.
+ *
+ * The gate's in-memory cache only lives for a page load, but a device that has
+ * been sitting on the app (an Android WebView, a phone home-screen app, a
+ * browser tab left open for days) is holding a session that was granted under
+ * the OLD rules. Bumping this number makes each of those sessions invalid on
+ * its very next check: the local session is signed out once, the cloud is
+ * re-read, and only an account the database still unlocks gets back in.
+ *
+ * Bump this whenever the access rules change. Nothing in Supabase is touched.
+ */
+export const SESSION_VERSION = 2;
+const SESSION_VERSION_KEY = "eamp_session_v2";
+
+/**
+ * True exactly ONCE per device per version bump. The version is written
+ * immediately, so the sign-out happens a single time and the person can sign
+ * straight back in — where the cloud gate decides again. Fails CLOSED is not
+ * needed here: an unreadable localStorage means we cannot tell, and the cloud
+ * gate still runs on the same pass, so the session is verified either way.
+ */
+function consumeStaleSession(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    const seen = Number(window.localStorage.getItem(SESSION_VERSION_KEY) ?? "0");
+    if (seen >= SESSION_VERSION) return false;
+    window.localStorage.setItem(SESSION_VERSION_KEY, String(SESSION_VERSION));
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 export function isOwnerEmail(email: string): boolean {
   return OWNER_EMAILS.includes(email.trim().toLowerCase());
@@ -178,6 +224,11 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
  * cannot be reached at all (Supabase unconfigured) so dev never blocks.
  */
 export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
+  // STALE SESSION KICK — runs BEFORE anything else, including the owner
+  // shortcut. A session cached under the previous access rules is not
+  // trusted at all: it is signed out here and the cloud decides again on
+  // this very pass. Owners are not exempt (they re-bind on sign-in).
+  if (consumeStaleSession()) appSignOut();
   if (!email) return { action: "signin" };
   // PLATFORM OWNERS pass EVERY gate instantly — before any database/Whop
   // call. A stale users row (is_admin/is_paid false) must never bounce the
@@ -207,7 +258,8 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     cloud = await resolveCloudAccess(email);
   } catch {
     // NEVER let a gate error crash a route (that was the "Dashboard didn't
-    // load" screen on Android) — degrade to the legacy local gate.
+    // load" screen on Android) — an undecided cloud falls through to the
+    // FAIL-CLOSED branch below, never to the local store.
     cloud = null;
   }
   if (cloud === "admin" || cloud === "paid") {
@@ -219,9 +271,34 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // Anything that is not paid goes to checkout — on Android, iOS and the web.
   // There is no approval branch: an approved mentor who was never marked paid
   // is sent to Whop like everybody else, which is the entire point.
-  if (cloud === "unpaid") return { action: "pay" };
-  // Cloud undecided (unconfigured) — legacy local behaviour.
-  return paymentStatusForEmail(email) === "unpaid" ? { action: "pay" } : { action: "pass" };
+  if (cloud === "unpaid") {
+    // DEACTIVATED, NOT UNPAID. This device holds a local paid/admin record —
+    // this session was let in — yet the cloud now says unpaid. That only
+    // happens when the owner flipped the account to unpaid in the console,
+    // so the session is revoked HERE (appSignOut clears it once) and the
+    // caller sends the person to /app/login?deactivated=1. A never-paid
+    // email has no local record and still goes to checkout as before.
+    if (paymentStatusForEmail(email) !== "unpaid") {
+      appSignOut();
+      return { action: "deactivate" };
+    }
+    // NEVER PAID — THE APP MUST NOT OPEN. The session ends here and the
+    // caller sends the person to /app/login?pay=1, which renders the CHOOSE
+    // PLAN screen (monthly + lifetime). This is `pay`, not `signin`: the
+    // person has already told us who they are, so the email form would be a
+    // pointless extra step in front of the only decision left — which plan.
+    // Nothing inside the app may open for an unpaid account.
+    appSignOut();
+    return { action: "pay" };
+  }
+  // CLOUD UNDECIDED — FAIL CLOSED. This branch used to hand the decision back
+  // to the legacy LOCAL store (`paymentStatusForEmail`), so a stale or forged
+  // local "paid" record opened the app whenever Supabase could not answer: a
+  // transient query error was enough. Nothing local may ever grant access, so
+  // an undecidable account is treated exactly like an unpaid one and sent to
+  // checkout — recoverable if the person really has paid, and a hole closed if
+  // they have not. The in-app UI reconciles from the cloud, never from here.
+  return { action: "pay" };
 }
 
 /**

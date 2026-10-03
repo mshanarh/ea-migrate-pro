@@ -42,7 +42,10 @@ export default function DraggableBotPopup() {
   const app = useAppState();
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   const running = robot?.running ?? false;
+  // THE EA NAME ONLY — the "~eamigrate" stamp was removed on request: every
+  // place that shows this name shows exactly what the robot is called.
   const eaName = robot?.name ?? "My EA";
+  const eaComment = eaName;
   const eaImage = robot?.image || "/logo.png";
   // INSIDE THE ANDROID APP the NATIVE chat-head bubble is THE popup — it
   // floats over MetaTrader and expands in place when tapped. Rendering the
@@ -298,6 +301,9 @@ export default function DraggableBotPopup() {
       const p = pairData ?? { symbol: "XAUUSD", lot_size: 0.01, max_trades: 5 };
       // The scanner ALWAYS sends a direction and SL/TP with the plan — no
       // placeholder signal text here; fall back only if a caller omits them.
+      // `name` is the caller-supplied EA name — shown exactly as it is,
+      // with nothing appended.
+      const eaDisplay = name || eaComment;
       const direction = p.direction === "SELL" ? "SELL" : "BUY";
       // NO fake fills here — the scanner dispatches a REAL per-trade event
       // ("TRADE N EXECUTED — EA MIGRATE ✓") after each broker confirmation,
@@ -314,6 +320,9 @@ export default function DraggableBotPopup() {
       setState("executed");
       setLogs([]);
       setOpen(true);
+      // Announce the EA name itself, without overwriting the caller's name.
+      const announcement = eaDisplay;
+      toast(announcement, { className: "text-sm" });
       stream.forEach((line, index) => {
         window.setTimeout(() => setLogs((prev) => (prev.some((existing) => existing.text === line.text && existing.kind === line.kind) ? prev : [...prev, line])), index * 500);
       });
@@ -475,7 +484,8 @@ export default function DraggableBotPopup() {
           </div>
 
           {/* Terminal trade log */}
-          <div className="min-h-[110px] bg-[#0F172A] p-4 font-mono text-[12px] leading-[22px]">
+          {/* Terminal trade log — scrollable, drops to a bounded height. */}
+          <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#0F172A] p-4 font-mono text-[12px] leading-[22px]" style={{ maxHeight: "calc(100% - 220px)" }}>
             {state === "ready" ? (
               READY_LINES.map((line, index) => (
                 <div key={index} className="flex gap-2">

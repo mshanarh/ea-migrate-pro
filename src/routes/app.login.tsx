@@ -4,7 +4,7 @@ import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
-import { verifyPaymentReturn, invalidateAccessCache, resolveCloudAccess } from "@/lib/payment-gate";
+import { verifyPaymentReturn, invalidateAccessCache, resolveCloudAccess, type CloudAccess } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
 export const Route = createFileRoute("/app/login")({
@@ -13,7 +13,31 @@ export const Route = createFileRoute("/app/login")({
   component: AppAccess,
 });
 
-const WHOP_CHECKOUT_URL = (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+/**
+ * THE TWO PLANS. An unpaid account stops on the Choose Plan screen and picks
+ * one; nothing hops automatically, because there are two destinations and
+ * guessing would send somebody to the wrong product. Both links are plain
+ * anchors, so every container (browser, Android WebView, iOS home-screen app)
+ * has a route out that does not depend on scripted navigation.
+ */
+const WHOP_MONTHLY_URL =
+  (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_wgIWJdSwjlMGS";
+const WHOP_LIFETIME_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+
+/** The plans, in the order they are offered. */
+const PLANS: Array<{ url: string; title: string; blurb: string; badge?: string }> = [
+  {
+    url: WHOP_MONTHLY_URL,
+    title: "Monthly Recurring",
+    blurb: "Billed every month. Cancel any time.",
+  },
+  {
+    url: WHOP_LIFETIME_URL,
+    title: "Lifetime Access",
+    blurb: "One payment. Yours for good, including every future update.",
+    badge: "BEST VALUE",
+  },
+];
 
 /**
  * A HARD DEADLINE around every cloud call on the way in.
@@ -47,9 +71,9 @@ function AppAccess() {
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
-  // Non-null once we know this email must pay: renders the tappable
-  // checkout link that WebViews actually honour.
-  const [checkoutUrl, setCheckoutUrl] = useState<string | null>(null);
+  // True once we know this email must pay: renders the Choose Plan screen
+  // (monthly + lifetime) instead of any part of the app.
+  const [choosePlan, setChoosePlan] = useState(false);
   // A sign-in attempt is IN FLIGHT. Set synchronously by the Proceed tap,
   // before the first await, and cleared on every exit except checkout.
   // Without it the auto-redirect effect below fired on the render right
@@ -60,6 +84,10 @@ function AppAccess() {
   // ?pay=1 — /app/home's guard decided this email must pay and handed the
   // decision here, because an external URL is NOT a valid router location.
   const [payPrompt, setPayPrompt] = useState(false);
+  // ?deactivated=1 — this account was marked UNPAID in the admin console
+  // while it was signed in. The gate ended the session and sent it here;
+  // the notice below is what the person is told.
+  const [deactivated, setDeactivated] = useState(false);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -81,7 +109,10 @@ function AppAccess() {
    * `null` means the database could not be reached; the local store is the
    * fallback hint until it answers.
    */
-  const [cloudStatus, setCloudStatus] = useState<"admin" | "paid" | "approved" | "unpaid" | "pending" | "rejected" | null>(null);
+  // Typed to `CloudAccess` ONLY — there is deliberately no "approved" member.
+  // Mentor approval is a PORTAL decision and must never reach this screen's
+  // access logic, so the state that drives the app cannot even represent it.
+  const [cloudStatus, setCloudStatus] = useState<CloudAccess | null>(null);
   // The user pressed "Back" on the checkout card. Until the decision changes
   // we stop forcing it back up, or the card would be impossible to leave.
   const [checkoutDismissed, setCheckoutDismissed] = useState(false);
@@ -91,9 +122,13 @@ function AppAccess() {
   // route component mounted across it — an effect keyed on app.email never
   // re-ran, the flag stayed false, and the checkout card never appeared.
   // Same value in, same value out: React bails out, so this costs nothing.
+  // ?deactivated=1 rides along: an admin pressed "Set unpaid" for this
+  // account and the access gate signed the session out on the way here —
+  // the FIRST screen must say so, instead of silently offering checkout.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setPayPrompt(params.get("pay") === "1");
+    setDeactivated(params.get("deactivated") === "1");
   });
 
   useEffect(() => {
@@ -157,7 +192,7 @@ function AppAccess() {
    * exactly the wrong thing to trust.
    */
   useEffect(() => {
-    if (!app.email || successReturn || checkoutUrl) return;
+    if (!app.email || successReturn || choosePlan) return;
     let cancelled = false;
     setCloudStatus(null);
     void (async () => {
@@ -166,20 +201,26 @@ function AppAccess() {
       setCloudStatus(status);
       if (status === "unpaid") {
         setCheckoutDismissed(false);
-        setRedirecting(true);
-        setCheckoutUrl(WHOP_CHECKOUT_URL);
+        setChoosePlan(true);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [app.email, successReturn, checkoutUrl]);
+  }, [app.email, successReturn, choosePlan]);
 
   useEffect(() => {
     if (!app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
-    if (busy || checkoutUrl || payPrompt || mustPay || blockedEmail) return;
+    if (busy || choosePlan || payPrompt || mustPay || blockedEmail) return;
+    // NOTHING IS DECIDED YET. `effectiveStatus` falls back to the device's own
+    // memory while the database is still answering, and that memory is exactly
+    // what a forged or stale session exploits — walking an account into
+    // /app/home on it is how an unpaid user reached the dashboard. Wait for the
+    // DATABASE to answer; the Choose Plan screen above handles "unpaid", so an
+    // unpaid session can never fall through to here.
+    if (cloudStatus === null) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
     // licence key is activated — so a freshly approved mentor signed in
@@ -187,36 +228,27 @@ function AppAccess() {
     // like a failed sign-in. The home screen has its own "Add robot" state.
     if (showLicenseView) return;
     // An UNPAID session must not round-trip through /app/home: that guard
-    // decides "pay" and sends the person back here, so the two would
-    // ping-pong with nothing ever happening. The checkout screen owns them.
+    // decides "unpaid" and sends the person back here, so the two would
+    // ping-pong with nothing ever happening. The Choose Plan screen owns them.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, checkoutUrl, payPrompt, mustPay, blockedEmail, effectiveStatus]);
+  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, effectiveStatus]);
 
   /**
-   * THE HOP TO WHOP — three attempts, because the first one is the one that
-   * gets swallowed. A plain browser tab or the Android WebView follows
-   * `location.replace` immediately; an iOS home-screen app silently refuses
-   * to leave for an external site, and the tappable link on the checkout
-   * card below is what works there. Covered here are all three ways the app
-   * decides someone must pay: the Proceed tap, the ?pay=1 deep link from a
-   * route guard, and simply OPENING the app on an unpaid session.
+   * THE CHOOSE PLAN GATE — one place decides whether ANY part of the app may
+   * paint. Every way the app can learn that somebody owes money funnels here:
+   *
+   *   • the Proceed tap            → registration said "checkout"
+   *   • ?pay=1 from a route guard  → the gate signed them out and sent them
+   *                                  here (see requireVerifiedAccess)
+   *   • opening the app on an unpaid session → resolveCloudAccess said so
+   *
+   * There is NO automatic hop any more. There are two products, so the choice
+   * belongs to the customer; a programmatic redirect could only ever guess,
+   * and it also silently fails in an iOS home-screen app. The screen below
+   * offers both plans as real links.
    */
-  const checkoutTarget = checkoutUrl ?? (payPrompt || mustPay ? WHOP_CHECKOUT_URL : null);
-  useEffect(() => {
-    if (!checkoutTarget) return;
-    const delays = [0, 600, 1800];
-    const timers = delays.map((delay) =>
-      setTimeout(() => {
-        try {
-          window.location.replace(checkoutTarget);
-        } catch {
-          /* the visible link is the fallback */
-        }
-      }, delay),
-    );
-    return () => timers.forEach(clearTimeout);
-  }, [checkoutTarget]);
+  const showChoosePlan = choosePlan || payPrompt || mustPay;
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -255,18 +287,14 @@ function AppAccess() {
       if (registration.outcome === "checkout") {
         if (successReturn) {
           // The URL flag says they returned from checkout — prove it on the
-          // server before granting anything. Unverifiable → straight to Whop.
+          // server before granting anything. Unverifiable → Choose Plan.
           const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
           if (verified) return;
         }
-        // A WebView (iOS WKWebView especially) drops a programmatic navigation
-        // that happens AFTER an await — by then the browser no longer counts it
-        // as a user gesture, so location.replace silently does nothing and the
-        // user is left staring at a disabled button. We show a real, tappable
-        // link as the reliable path, and keep the automatic hop (see the
-        // effect above) as the convenience route.
-        setRedirecting(true);
-        setCheckoutUrl(WHOP_CHECKOUT_URL);
+        // STOP HERE. The unpaid account does not go near /app/home; it lands
+        // on the Choose Plan screen and picks monthly or lifetime.
+        setRedirecting(false);
+        setChoosePlan(true);
         return;
       }
 
@@ -325,11 +353,10 @@ function AppAccess() {
       // immediately rather than waiting for the next render's cloud read.
       markEmailPaid(clean);
 
-      // allow / admin — hand them over to the app. This is NOT a forced
-      // navigation: the auto-redirect effect above only walks a session into
-      // /app/home when the LOCAL store says it is paid or admin, and
-      // /app/home re-checks the cloud before a single pixel renders. Forcing
-      // the jump here is what let an undecided account land in the app.
+      // ENTITLED — the database just confirmed it. The auto-redirect effect
+      // above walks the session into /app/home, which re-checks the cloud
+      // before a single pixel renders. Nothing is forced from here, so an
+      // undecided account can never be dropped into the app.
       setBusy(false);
       setRedirecting(false);
     } catch (error) {
@@ -352,7 +379,7 @@ function AppAccess() {
    * back to checkout.
    */
   const dismissCheckout = () => {
-    setCheckoutUrl(null);
+    setChoosePlan(false);
     setPayPrompt(false);
     setCheckoutDismissed(true);
     setRedirecting(false);
@@ -392,9 +419,9 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {checkoutTarget ? <CheckoutRedirect url={checkoutTarget} email={activeEmail} onCancel={dismissCheckout} /> :
+      {showChoosePlan ? <ChoosePlanView email={activeEmail} onCancel={dismissCheckout} /> :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -433,13 +460,19 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
   </div>;
 }
 
-function LoginView({ email, setEmail, onSubmit, checking, redirecting }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean }) {
+function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
+    {deactivated ? (
+      <div role="alert" className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left">
+        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[11px] font-black text-amber-950" aria-hidden="true">!</span>
+        <p className="text-sm font-semibold leading-6 text-amber-100">Your access has been deactivated.</p>
+      </div>
+    ) : null}
     <form className="mt-12 space-y-4" onSubmit={onSubmit}>
       <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
         <Mail className="size-6 shrink-0 text-[#aab2b7]" />
@@ -472,105 +505,92 @@ function useIsStandalone(): boolean {
 }
 
 /**
- * CHECKOUT REDIRECT — a real link, not a programmatic jump.
+ * CHOOSE PLAN — the one screen an unpaid account ever sees.
  *
- * Two different containers need two different routes out:
- *  • A browser tab or the Android WebView follows a normal external link.
- *  • An iOS home-screen (standalone) app CANNOT leave for an external site —
- *    it drops the navigation with no error at all. There the only thing that
- *    works is copying the link and opening it in the real browser, so that is
- *    what this screen offers when it detects it is running standalone.
+ * The app is gated on payment alone, so somebody who is not paid stops here
+ * and nothing else of EA Migrate is reachable. Two products are offered as
+ * real anchors (a browser tab, the Android WebView and an iOS home-screen app
+ * all follow a plain external link), and there is deliberately NO automatic
+ * redirect: with two destinations, a programmatic hop could only guess.
+ *
+ * The links are built from PLANS at module scope, so the exact checkout URLs
+ * live in exactly one place.
  */
-function CheckoutRedirect({ url, email, onCancel }: { url: string; email: string; onCancel: () => void }) {
+function ChoosePlanView({ email, onCancel }: { email: string; onCancel: () => void }) {
   const standalone = useIsStandalone();
-  const [copied, setCopied] = useState(false);
+  const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
   // If the automatic hop has not left the page after a couple of seconds,
   // it was dropped by the container (an iOS home-screen app, an embedded
   // WebView). Say so plainly instead of leaving a dead screen.
-  const [hopFailed, setHopFailed] = useState(false);
-  useEffect(() => {
-    const timer = setTimeout(() => setHopFailed(true), 2500);
-    return () => clearTimeout(timer);
-  }, []);
-
-  const copy = async () => {
+  const copy = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2500);
+      setCopiedUrl(url);
+      setTimeout(() => setCopiedUrl(null), 2500);
     } catch {
-      // Clipboard blocked — the link is on screen and selectable regardless.
+      // Clipboard blocked — the links are on screen and selectable regardless.
     }
   };
 
-  return <div className="-translate-y-8 text-center">
+  return <div className="-translate-y-4 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
     </div>
-    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Payment required</h1>
+    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Choose your plan</h1>
     <p className="mt-3 text-base leading-7 text-[#8a9298]">
-      This account needs an active subscription to use EA Migrate.
-      {email ? ` Pay for ${email}.` : ""}
+      This account has no active subscription yet, so the app stays closed.
+      {email ? ` Pay for ${email} below.` : ""}
     </p>
-    {!standalone && hopFailed ? (
-      <p role="status" className="mt-4 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left text-sm font-semibold leading-6 text-amber-100">
-        The automatic redirect did not open. Tap Continue to payment below to open Whop checkout.
-      </p>
-    ) : null}
 
-    {standalone ? (
-      <>
-        {/* iOS home-screen app: an external link cannot open from here, so the
-            link is handed to Safari instead of navigated to. */}
-        <div className="mt-8 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
-          <p className="text-sm font-semibold text-white">Taking you to checkout</p>
-          <p className="mt-2 text-sm leading-6 text-[#8a9298]">
-            Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
-            directly.
-          </p>
-          <button
-            type="button"
-            onClick={() => void copy()}
-            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
-          >
-            {copied ? "Link copied" : "Copy checkout link"}
-          </button>
-          <p className="mt-4 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            {url}
-          </p>
-          <a
-            href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(url)}`}
-            className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
-          >
-            Email me the link
-          </a>
+    <div className="mt-8 space-y-4 text-left">
+      {PLANS.map((plan) => (
+        <div key={plan.url} className="rounded-[1.75rem] border border-[#202930] bg-[#10161a] p-5 shadow-[0_0_28px_rgba(8,168,239,.10)]">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-lg font-bold text-white">{plan.title}</p>
+            {plan.badge ? (
+              <span className="shrink-0 rounded-full bg-[#08a8ef] px-3 py-1 text-[10px] font-black tracking-[0.12em] text-[#061018]">
+                {plan.badge}
+              </span>
+            ) : null}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.blurb}</p>
+          {standalone ? (
+            // iOS home-screen app: an external link cannot open from here, so
+            // the link is handed to Safari instead of navigated to.
+            <>
+              <button
+                type="button"
+                onClick={() => void copy(plan.url)}
+                className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
+              >
+                {copiedUrl === plan.url ? "Link copied" : "Copy checkout link"}
+              </button>
+              <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
+                {plan.url}
+              </p>
+            </>
+          ) : (
+            <a
+              href={plan.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-4 flex h-14 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+            >
+              Continue to payment <ArrowRight className="size-5" />
+            </a>
+          )}
         </div>
-      </>
-    ) : (
-      <>
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-10 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
-        >
-          Continue to payment <ArrowRight className="size-6" />
-        </a>
-        <a
-          href={url}
-          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full border border-white/15 bg-white/5 text-base font-semibold text-white/80"
-        >
-          Open checkout in this window
-        </a>
-      </>
-    )}
+      ))}
+    </div>
 
     <p className="mt-6 text-xs leading-5 text-[#59646b]">
-      Already subscribed? Use the exact email you paid with.
+      {standalone
+        ? "Tap copy, then open Safari and paste the link — iPhone apps cannot open payment pages directly."
+        : "Already subscribed? Use the exact email you paid with."}
     </p>
-    {/* ESCAPE HATCH — an approved account on a slow connection can reach
-        this card without owing anything, and being stuck on a payment page
-        with no way out is the worst possible outcome. */}
+    {/* ESCAPE HATCH — an account on a slow connection can reach this screen
+        without owing anything, and being stuck on a payment page with no way
+        out is the worst possible outcome. */}
     <button
       type="button"
       onClick={onCancel}

@@ -9,7 +9,7 @@ import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { usePlatform } from "@/lib/platform";
-import { getAppState, leaveForCheckout, requireAppAccess } from "@/lib/app-store";
+import { getAppState, leaveForCheckout } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
@@ -32,6 +32,9 @@ export const Route = createFileRoute("/app/settings")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     if (access.action === "pay") {
       leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });

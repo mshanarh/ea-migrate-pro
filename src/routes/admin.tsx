@@ -52,6 +52,14 @@ const TABS: Array<{ key: TabKey; label: string; short: string; icon: typeof Cloc
   { key: "messages", label: "Message users", short: "Messages", icon: MessageSquare },
 ];
 
+/**
+ * The key allowance a newly approved account gets when the admin did not type
+ * one. Approving somebody without an allowance left their licences page stuck
+ * on "Your admin has not set a key allowance yet", so approval always writes a
+ * real number and this is that number.
+ */
+const DEFAULT_LICENSE_LIMIT = 2000;
+
 function isAdminEmail(email: string): boolean {
   return OWNER_EMAILS.includes(email.trim().toLowerCase());
 }
@@ -297,7 +305,7 @@ function AdminConsole() {
   );
 
   useEffect(() => {
-    setLimitDraft(openUser?.licenseLimit ?? 0);
+    setLimitDraft(openUser?.licenseLimit ?? DEFAULT_LICENSE_LIMIT);
     setLimitSaved(false);
     setLimitError(null);
   }, [openUser?.email, openUser?.licenseLimit]);
@@ -397,29 +405,53 @@ function AdminConsole() {
   };
 
   /**
-   * APPROVE — write the decision, then tell the user. The email is the
-   * confirmation that their portal is open; a failed send never undoes the
-   * approval itself (the database is the source of truth), it is only
-   * reported so the admin can resend from the Messages tab.
+   * APPROVE — write the decision AND the key allowance, then tell the user.
+   *
+   * THE TWO WRITES BELONG TOGETHER. Approving used to write only the approval
+   * row, so an approved mentor's key allowance stayed unset (app_settings
+   * `limit:<email>` had no row) and their licences page showed "Your admin has
+   * not set a key allowance yet" — the account was approved and still could not
+   * create a key. The limit is now saved in the same action, defaulting to 2000
+   * (or whatever the admin typed in the sheet), so no account is ever left
+   * approved with an unset allowance.
+   *
+   * The email is the confirmation that their portal is open; a failed send
+   * never undoes the approval itself (the database is the source of truth), it
+   * is only reported so the admin can resend from the Messages tab.
    *
    * APPROVAL OPENS THE MENTOR PORTAL. IT DOES NOT OPEN THE APP. The app is
    * gated on payment alone, so the confirmation says so explicitly — the
    * old "they can sign in now" is exactly the wording that made people
    * approve somebody and then wonder why they still hit Whop checkout.
    */
-  const approve = (user: AdminUser) =>
-    void withUser(
+  const approve = (user: AdminUser) => {
+    // `limitDraft` is seeded from the open user's saved limit and is 0 when no
+    // allowance was ever set — 0 would mean "no keys at all", so an unset
+    // draft falls back to the platform default.
+    const limit = limitDraft > 0 ? limitDraft : DEFAULT_LICENSE_LIMIT;
+    return void withUser(
       user.email,
-      () => setUserApproval(user.email, "approved"),
+      async () => {
+        // Approval first: it is the decision. The limit is saved straight
+        // after, and its failure is reported rather than silently swallowed.
+        const approved = await setUserApproval(user.email, "approved");
+        if (!approved.ok) return approved;
+        const limited = await setUserLicenseLimit(user.email, limit);
+        if (!limited.ok) {
+          return { ...limited, error: `Approved, but the key allowance was not saved: ${limited.error ?? "database error"}` };
+        }
+        return approved;
+      },
       {
-        success: `${user.email} approved — portal open. Mark them PAID to let them into the app.`,
+        success: `${user.email} approved with a ${limit}-key allowance — portal open. Mark them PAID to let them into the app.`,
         failure: `Approve ${user.email}`,
       },
-      { status: "approved" },
+      { status: "approved", licenseLimit: limit },
     ).then((result) => {
       // Only tell the user they are in when the database actually wrote it.
       if (result.ok) void notifyDecision(user, "approved");
     });
+  };
 
   /** REJECT — same shape, with the decline copy. */
   const reject = (user: AdminUser) =>

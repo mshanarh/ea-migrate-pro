@@ -28,6 +28,7 @@ import { analyzeMarket } from "./market-scanner-core";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "./bridge-client";
 import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
 import { recordTrade } from "./trade-history";
+import { sanitizeBotName } from "./utils";
 
 /** Highest number of orders a single tap may open on one symbol. */
 const MAX_ORDERS_PER_SYMBOL = 20;
@@ -36,9 +37,9 @@ const DEFAULT_RISK_PCT = 0.005;
 /** 1:2.5 reward-to-risk, matching the scanner's stated plan. */
 const REWARD_RATIO = 2.5;
 /** Hard cap on the market read. Past this we trade the fallback, not stall. */
-const ANALYSIS_TIMEOUT_MS = 3500;
+const ANALYSIS_TIMEOUT_MS = 6000;
 /** Hard cap on the bridge's live-quote lookup. */
-const QUOTE_TIMEOUT_MS = 4000;
+const QUOTE_TIMEOUT_MS = 15000;
 
 export type PairDirection = "BOTH" | "BUY" | "SELL";
 export type ResolvedDirection = "BUY" | "SELL";
@@ -214,12 +215,10 @@ async function fetchLiveQuote(
     // spread, so keep a real buffer on top of the reported minimum.
     const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
     return { quote: { bid, ask, digits, point, minDistance } };
-  } catch (error) {
-    // An abort here is our own 4s cap firing, not the broker refusing.
-    const aborted = error instanceof Error && error.name === "AbortError";
-    return aborted
-      ? { failure: "unreachable", detail: `The bridge did not answer within ${QUOTE_TIMEOUT_MS / 1000}s` }
-      : { failure: "unreachable" };
+    } catch (error) {
+    const message = (error as Error)?.message || "Broker unavailable";
+    console.warn(`[EA-Migrate] Failed to fetch live quote for ${symbol}: ${message}`);
+    return { failure: "unavailable", detail: message };
   } finally {
     clearTimeout(timer);
   }
@@ -351,16 +350,12 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   announce(false, "EXECUTING...");
   onProgress?.("Executing...");
 
-  // MT5 comments allow only letters+digits, but the EA name may contain
-  // spaces and the user wants a readable label — so we strip only the
-  // characters MT5 forbids (spaces, symbols) and stamp "~eamigrate",
-  // e.g. "Raptor Plus~eamigrate".
-  let activeComment = (botName ?? "")
-    .replace(/[^A-Za-z0-9 ]/g, "")
-    .trim();
-  activeComment = activeComment.length > 0 ? activeComment : "Eamigrate";
-  // MT5 caps comments at ~31 chars; keep spaces but shorten if too long.
-  activeComment = activeComment.slice(0, 31 - "~eamigrate".length) + "~eamigrate";
+  // MT5 comments allow only letters+digits, but the bot name may contain
+  // spaces and the user wants a readable label — strip the characters MT5
+  // forbids (symbols) and keep compact spaces, e.g. "Sniper killer Ea".
+  // The BOT NAME ONLY; sanitizeBotName returns "" when there is no name
+  // (no brand fallback), and the bridge applies its own default then.
+  let activeComment = sanitizeBotName(botName);
 
   const executeOnce = async (target: string): Promise<Record<string, unknown>> => {
     const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
@@ -472,7 +467,7 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
       // Unsafe characters in the bot name → one retry with the safe stamp.
       if (!commentRetried && /comment/i.test(raw)) {
         commentRetried = true;
-        activeComment = "Eamigrate";
+        activeComment = sanitizeBotName(botName);
         try {
           const payload = await executeWithSymbolFallback();
           opened += 1;

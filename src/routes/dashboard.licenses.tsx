@@ -12,6 +12,13 @@ export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, compon
 
 const EXPIRY_OPTIONS = ["Lifetime", "1 Year", "6 Months", "3 Months", "1 Month", "1 Week"];
 
+/**
+ * The platform's default key allowance. Approving an account grants this many
+ * keys, and an approved account with no `limit:` row falls back to it here —
+ * which is what removes "Your admin has not set a key allowance yet".
+ */
+const DEFAULT_LICENSE_LIMIT = 2000;
+
 type KeyResult = {
   key: string;
   clientName: string;
@@ -57,7 +64,8 @@ function Licenses() {
   // the account's LOCAL licenseLimit, which the console never updates — so a
   // mentor who had been granted 500 keys still saw "no allowance set" and the
   // Generate button stayed disabled. The database value wins; the local one is
-  // only a fallback for the brief moment before the first read lands.
+  // the fallback for the brief moment before the first read lands AND for an
+  // approved account whose `limit:` row has not been written yet.
   const [cloudLimit, setCloudLimit] = useState<number | null>(null);
   useEffect(() => {
     if (!account) return;
@@ -81,17 +89,29 @@ function Licenses() {
   if (!account) return null;
 
   const used = account.licenses.length;
-  // The admin console writes the key allowance to the database (app_settings
-  // "limit:<email>"). This page reads it LIVE; the local licenseLimit is only a
-  // fallback before the first read lands. A cap of 0 means no keys at all.
-  const cloudLimitRaw = (() => {
+  /**
+   * THE ALLOWANCE, RESOLVED IN THREE STEPS — the account must never be told
+   * "your admin has not set a key allowance yet" while it is APPROVED.
+   *
+   *   1. app_settings `limit:<email>` — the admin console's value, read live
+   *      and authoritative whenever the row exists (an explicit 0 means the
+   *      admin really did block key creation, so it is honoured).
+   *   2. account.licenseLimit — the portal's own record, which carries the
+   *      real allowance for approved accounts. It used to be ignored unless
+   *      > 0, so a missing database row turned into the bogus "0 keys" dead
+   *      end that looked like the admin had blocked the account.
+   *   3. APPROVED WITH NOTHING SET ANYWHERE → the platform default (2000).
+   *      Approval is the admin's decision to let somebody create keys; the
+   *      absence of a `limit:` row must not contradict it. `allowed` is a
+   *      real number from here on, so the error message below cannot fire for
+   *      an approved account.
+   */
+  const allowed = (() => {
     if (typeof cloudLimit === "number") return cloudLimit;
-    const local = account.licenseLimit ?? 0;
-    return Number.isFinite(local) && local >= 0 ? local : null;
+    const local = Number(account.licenseLimit);
+    if (Number.isFinite(local) && local > 0) return local;
+    return account.status === "approved" ? DEFAULT_LICENSE_LIMIT : null;
   })();
-  // The database value wins; the local one is only a fallback. When neither is
-  // set we show "Not set" instead of a stale local number.
-  const allowed = cloudLimitRaw ?? account.licenseLimit ?? null;
   const remaining = allowed === null ? 0 : Math.max(allowed - used, 0);
   const selectedEa = account.eas.find((ea) => ea.id === eaId);
   const resetForm = () => {
@@ -119,7 +139,9 @@ function Licenses() {
     // limit that actually applies. A cap of 0 means no keys at all.
     try {
       const { getLicenseCapForEmail, countKeysForEmail } = await import("@/lib/admin-store");
-      const cap = await getLicenseCapForEmail(account.email);
+      // Same three-step resolution the page renders from, so what the button
+      // allows can never disagree with the allowance shown above it.
+      const cap = (await getLicenseCapForEmail(account.email)) ?? allowed;
       if (cap !== null) {
         const used = await countKeysForEmail(account.email);
         if (used >= cap) {
@@ -454,7 +476,13 @@ function Licenses() {
       </div>
       {account.eas.length === 0 && <p className="mt-3 text-sm text-muted-foreground">Create an EA profile before generating a key.</p>}
       {allowed === null && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet. Once they set one it appears here automatically.</p>}
-      {allowed !== null && remaining === 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all {allowed} key{allowed === 1 ? "" : "s"} allowed for this account.</p>}
+      {allowed !== null && remaining === 0 && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          {allowed === 0
+            ? "Your administrator has not allowed you any license keys yet. Ask them to set your key allowance."
+            : `You have used all ${allowed} key${allowed === 1 ? "" : "s"} allowed for this account.`}
+        </p>
+      )}
 
       {/* Re-activate Client lives on its own page: /dashboard/reactivate */}
       {account.licenses.length === 0 ? (

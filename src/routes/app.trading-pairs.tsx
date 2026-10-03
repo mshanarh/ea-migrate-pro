@@ -4,7 +4,7 @@ import { ArrowLeft, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { getAppState, leaveForCheckout, requireAppAccess, setRobotPairs, useAppState } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, setRobotPairs, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -22,6 +22,9 @@ export const Route = createFileRoute("/app/trading-pairs")({
     // database does not confirm → Whop checkout.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     if (access.action === "pay") {
       leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });

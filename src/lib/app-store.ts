@@ -33,13 +33,32 @@ export function leaveForCheckout(): void {
  * view enforces): an unsigned-in visitor goes to the app login, an unpaid
  * email goes to checkout, and paid/admin emails pass through.
  */
-export type AppAccessCheck = { action: "pass" | "signin" | "pay" };
+export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
 
-export function requireAppAccess(email: string | null): AppAccessCheck {
-  if (!email) return { action: "signin" };
-  const status = paymentStatusForEmail(email);
-  if (status === "unpaid") return { action: "pay" };
-  return { action: "pass" };
+/**
+ * LEGACY route guard — now a FAIL-CLOSED wrapper over the cloud gate.
+ *
+ * This used to decide from the LOCAL store alone (`paymentStatusForEmail`),
+ * which was the bypass: a forged or remembered local record said "paid" and
+ * the app opened for somebody who had never paid. Mentor approval is not
+ * payment either, so no local signal may decide this.
+ *
+ * Every answer now comes from `requireVerifiedAccess`, which is
+ * cloud-authoritative and never consults mentor approval:
+ *
+ *   platform owner / users.is_admin  → pass
+ *   users.is_paid                    → pass
+ *   license_keys row for this email  → pass
+ *   Whop membership (server-side)    → pass
+ *   anything else                    → signin / pay — the app does NOT open
+ *
+ * The import is DYNAMIC because payment-gate imports THIS module for
+ * `getDeviceId` and `appSignOut`; a static import would close that cycle at
+ * module-init time (the Android WebView bundle crashes on exactly that).
+ */
+export async function requireAppAccess(email: string | null): Promise<AppAccessCheck> {
+  const { requireVerifiedAccess } = await import("@/lib/payment-gate");
+  return requireVerifiedAccess(email);
 }
 
 /** Non-hook snapshot of the app state — safe inside route beforeLoad guards. */
@@ -738,7 +757,14 @@ export async function syncRobotsFromPortal() {
       }
       const symbols = Array.isArray(ea.symbols) ? ea.symbols : [];
       const oldPairs = robot.pairs ?? [];
-      const pairs: PairSetting[] = [];
+      // ALLOWED QUOTES ARE THE USER'S DECISION. A portal sync may only DROP a
+      // pair whose symbol the mentor removed from the EA — it must never wipe
+      // the list (it used to assign [], throwing away every symbol the user
+      // had allowed on each sync) and never seed new ones in.
+      const portalSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
+      const pairs: PairSetting[] = oldPairs.filter((pair) =>
+        portalSymbolKeys.has(pair.symbol.trim().toUpperCase()),
+      );
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) {
@@ -905,7 +931,13 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       if (!fresh) return robot;
       const symbols = fresh.symbols && fresh.symbols.length > 0 ? fresh.symbols : robot.symbols;
       const oldPairs = robot.pairs ?? [];
-      const pairs = symbols.map((symbol) => oldPairs.find((pair) => pair.symbol === symbol) ?? { symbol, lotSize: "0.01", maxTrades: "0" });
+      // ONLY the symbols the user already allowed survive this sync. Every
+      // other EA symbol must stay in "Selected Quotes" until they approve it
+      // — the old code filled the gap with a default entry, which dumped
+      // symbols they never allowed straight into "Allowed Quotes" (and START
+      // then traded them).
+      const cloudSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
+      const pairs = oldPairs.filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()));
       if (fresh.image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name) && symbols.length === robot.symbols.length) return robot;
       updated += 1;
       return {

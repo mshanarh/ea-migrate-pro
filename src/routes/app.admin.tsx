@@ -3,7 +3,7 @@ import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
-import { getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
+import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
@@ -34,6 +34,9 @@ export const Route = createFileRoute("/app/admin")({
     // done by the login page itself.
     const access = await requireVerifiedAccess(getAppState().email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     if (access.action === "pay") {
       leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });
@@ -67,7 +70,7 @@ function AppAdmin() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let result: { action: "pass" | "signin" | "pay" };
+      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
       try {
         result = await requireVerifiedAccess(app.email);
       } catch {
@@ -76,6 +79,12 @@ function AppAdmin() {
       if (cancelled) return;
       if (result.action === "pass") {
         setAccess("ok");
+        return;
+      }
+      // DEACTIVATED — this session's own account was set to unpaid. The gate
+      // already signed it out; land it on the first page with the notice.
+      if (result.action === "deactivate") {
+        window.location.replace("/app/login?deactivated=1");
         return;
       }
       if (result.action === "pay") {
@@ -159,6 +168,14 @@ function AppAdmin() {
     }
     toast.success(value ? `${user.email} approved` : `${user.email} set to unpaid`);
     patchUser(user.email, { is_paid: value });
+    // DEACTIVATING THIS SESSION'S OWN EMAIL — the signed-in account just
+    // lost its access, so kick it out to the first page right away (other
+    // people's sessions are thrown out by the access gate on their own
+    // device the next time it checks).
+    if (!value && user.email.trim().toLowerCase() === (app.email ?? "").trim().toLowerCase()) {
+      appSignOut();
+      window.location.replace("/app/login?deactivated=1");
+    }
   };
 
   const setAdmin = async (user: UserRow, value: boolean) => {

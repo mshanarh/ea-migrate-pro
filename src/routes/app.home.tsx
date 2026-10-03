@@ -65,8 +65,9 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, appSignOut, getAppState, leaveForCheckout, removeRobot, requireAppAccess, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { activateKey, appSignOut, getAppState, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
+import { paymentStatusForEmail } from "@/lib/auth-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -75,16 +76,49 @@ import { executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCo
 export const Route = createFileRoute("/app/home")({
   ssr: false,
   beforeLoad: async () => {
+    const email = getAppState().email;
+    // STRICT DATABASE CHECK FIRST — an explicit `resolveCloudAccess` pass in
+    // the route guard itself, not just inside the gate helper. "unpaid" here
+    // is a HARD STOP: the session is ended and the person is handed to
+    // /app/login?pay=1 (the Choose Plan screen). This is deliberately checked
+    // before anything else can decide the route may load.
+    //
+    // `fresh: true` skips the cache: the whole point of this guard is to
+    // re-read the database at the moment of entry, so a session that was
+    // allowed a moment ago under different rules cannot slip through on a
+    // remembered answer.
+    if (email) {
+      try {
+        const cloud = await resolveCloudAccess(email, { fresh: true });
+        if (cloud === "unpaid") {
+          // DEACTIVATED vs NEVER PAID — the same distinction the gate makes.
+          // A device still holding a paid/admin record is a session the owner
+          // has since revoked ("Set unpaid"), so it gets the plain notice. A
+          // never-paid account is the one that owes money and gets the plans.
+          const revoked = paymentStatusForEmail(email) !== "unpaid";
+          appSignOut();
+          invalidateAccessCache(email);
+          throw redirect({ href: revoked ? "/app/login?deactivated=1" : "/app/login?pay=1" });
+        }
+      } catch (error) {
+        // A gated redirect is control flow, not a failure — let it through.
+        // Anything else (the database unreachable) falls to
+        // requireVerifiedAccess below, which fails CLOSED.
+        if (error && typeof error === "object" && "href" in error) throw error;
+      }
+    }
     // Cloud-verified gates: no email → /app/login; an unpaid one → checkout.
-    const access = await requireVerifiedAccess(getAppState().email);
+    const access = await requireVerifiedAccess(email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid in the console) — the session
+    // is already signed out inside the gate; hand them the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
     // An EXTERNAL url is not a valid router location — `redirect({href:
     // "https://whop.com/…"})` was resolved as an app path and went nowhere,
     // which is part of why an unpaid user ended up back on the login screen
     // with nothing happening. Hand the decision to the login page instead:
-    // it owns the checkout card and performs the hop to Whop itself.
+    // /app/login?pay=1 renders the Choose Plan screen (monthly + lifetime).
     if (access.action === "pay") {
-      leaveForCheckout();
       throw redirect({ href: "/app/login?pay=1" });
     }
   },
@@ -318,7 +352,7 @@ function AppHome() {
     const verify = async () => {
       if (cancelled || running) return;
       running = true;
-      let result: { action: "pass" | "signin" | "pay" };
+      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
       try {
         result = await requireVerifiedAccess(app.email);
       } catch {
@@ -330,16 +364,31 @@ function AppHome() {
         setAccess("ok");
         return;
       }
-      // A moment of grace before throwing somebody out, so a flaky mobile
-      // connection cannot bounce a paying customer mid-session.
+      // DEACTIVATED — the owner set this account to unpaid while it was open.
+      // The gate already signed the session out; all that is left is the door.
+      if (result.action === "deactivate") {
+        window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      // UNPAID — the door, and the plans. No programmatic hop to Whop here:
+      // /app/login?pay=1 renders the Choose Plan screen (monthly + lifetime)
+      // and the customer picks. An automatic redirect could only guess which
+      // product, and it is silently dropped in an iOS home-screen app anyway.
       if (result.action === "pay") {
-        leaveForCheckout();
         window.location.replace("/app/login?pay=1");
         return;
       }
       window.location.replace("/app/login");
     };
     void verify();
+    // KEEP ASKING while this tab stays open — a deactivated account that
+    // never touches the screen must still be thrown out. The gate caches a
+    // paid answer for 60s, so this is at most one cheap check per minute,
+    // and only while the dashboard is actually visible.
+    const poll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void verify();
+    }, 60_000);
     const onWake = () => {
       if (document.visibilityState !== "visible") return;
       void verify();
@@ -357,6 +406,7 @@ function AppHome() {
     window.addEventListener("pageshow", throttled);
     return () => {
       cancelled = true;
+      window.clearInterval(poll);
       document.removeEventListener("visibilitychange", onWake);
       window.removeEventListener("focus", throttled);
       window.removeEventListener("pageshow", throttled);
