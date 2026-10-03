@@ -183,19 +183,24 @@ function load() {
         ...initial,
         ...saved,
         activeRobotId: saved.activeRobotId ?? initial.activeRobotId,
-        robots: Array.isArray(saved.robots)
-          ? saved.robots.map((robot) => ({
-              ...robot,
-              symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
-              pairs: Array.isArray(robot.pairs)
-                ? robot.pairs.map((pair) => ({
-                    symbol: typeof pair?.symbol === "string" ? pair.symbol : "",
-                    lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
-                    maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
-                  })).filter((pair) => pair.symbol)
-                : (Array.isArray(robot.symbols) ? robot.symbols : []).map((symbol) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
-            }))
-          : initial.robots,
+      robots: Array.isArray(saved.robots)
+        ? saved.robots.map((robot) => ({
+            ...robot,
+            symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
+            // Only restore pairs when this robot actually has configured
+            // symbols. robots created with pairs: [] (nothing configured
+            // yet) must NOT re-seed every EA symbol into Allowed Quotes on
+            // load — those symbols stay under Selected Quotes until the
+            // user presses Configure.
+            pairs: Array.isArray(robot.pairs) && robot.pairs.length > 0
+              ? robot.pairs.map((pair) => ({
+                  symbol: typeof pair?.symbol === "string" ? pair.symbol : "",
+                  lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
+                  maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
+                })).filter((pair) => pair.symbol)
+              : [],
+          }))
+        : initial.robots,
         settings: { ...initial.settings, ...(saved.settings ?? {}), backgroundEnabled: saved.settings?.backgroundEnabled ?? true },
       };
     }
@@ -301,7 +306,9 @@ export async function restoreRobotsFromCloud(): Promise<{ robots: number; mt5: b
         key: clean,
         name: license.eaName || "Private EA",
         symbols: license.symbols,
-        pairs: license.symbols.map((symbol) => ({ symbol, lotSize: state.settings.lotSize || "0.01", maxTrades: "0" })),
+        // All symbols start under Selected Quotes. Only the symbol the user
+        // configures is moved into pairs (Allowed Quotes) — press Configure.
+        pairs: [],
         ...(license.eaId ? { eaId: license.eaId } : {}),
         ...(license.image ? { image: license.image } : {}),
         ...(license.video ? { video: license.video } : {}),
@@ -663,7 +670,9 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     name: savedEa?.name || licenseResult.license.eaName || "Private EA",
     ...(savedEa?.version ? { version: savedEa.version } : {}),
     symbols,
-    pairs: symbols.map((symbol: string) => ({ symbol, lotSize: "0.01", maxTrades: "0" })),
+    // All symbols start under Selected Quotes. Only the symbol the user
+    // configures is moved into pairs (Allowed Quotes) — press Configure.
+    pairs: [],
     ...(savedEa?.eaId ? { eaId: savedEa.eaId } : {}),
     ...(robotImage ? { image: robotImage } : {}),
     ...(savedEa?.video ? { video: savedEa.video } : {}),
@@ -729,7 +738,7 @@ export async function syncRobotsFromPortal() {
       }
       const symbols = Array.isArray(ea.symbols) ? ea.symbols : [];
       const oldPairs = robot.pairs ?? [];
-      const pairs = symbols.map((symbol) => oldPairs.find((pair) => pair.symbol === symbol) ?? { symbol, lotSize: "0.01", maxTrades: "0" });
+      const pairs: PairSetting[] = [];
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) {
