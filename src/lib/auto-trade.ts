@@ -353,14 +353,14 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
 
   // MT5 comments allow only letters+digits, but the EA name may contain
   // spaces and the user wants a readable label — so we strip only the
-  // characters MT5 forbids (spaces, symbols) and stamp "~EAMigrate" using
-  // the bot's original casing, e.g. "Raptor Plus~EAMigrate".
+  // characters MT5 forbids (spaces, symbols) and stamp "~eamigrate",
+  // e.g. "Raptor Plus~eamigrate".
   let activeComment = (botName ?? "")
     .replace(/[^A-Za-z0-9 ]/g, "")
     .trim();
   activeComment = activeComment.length > 0 ? activeComment : "Eamigrate";
   // MT5 caps comments at ~31 chars; keep spaces but shorten if too long.
-  activeComment = activeComment.slice(0, 31 - "~EAMigrate".length) + "~EAMigrate";
+  activeComment = activeComment.slice(0, 31 - "~eamigrate".length) + "~eamigrate";
 
   const executeOnce = async (target: string): Promise<Record<string, unknown>> => {
     const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
