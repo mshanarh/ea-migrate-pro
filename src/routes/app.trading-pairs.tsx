@@ -138,20 +138,9 @@ function TradingPairsScreen() {
     const symbol = configSymbol;
     setConfigSymbol(null);
 
-    // Live execution is deferred: the symbol is saved to Allowed Quotes now,
-    // but the bot only runs when the user is on the Home screen and presses
-    // the rounded START pop-up. This keeps the trade request from firing
-    // mid-configuration and lets the user control when the bot acts.
-    const credentials = readMtCredentials(app.mt);
-    if (credentials) {
-      window.triggerExecutionToast?.(robot.name, robot.image, {
-        symbol,
-        lot_size: draftLot,
-        max_trades: safeTradeCount(draftTrades),
-        direction: draftDirection,
-      });
-      announceExecution(false, "ANALYZING MARKET...");
-    }
+    // Moving the symbol to Allowed Quotes only. Auto-trading is still reserved
+    // for the Home screen START button, which runs the symbols under
+    // Allowed Quotes. No trade fires here.
   };
 
   const removeSymbol = () => {
