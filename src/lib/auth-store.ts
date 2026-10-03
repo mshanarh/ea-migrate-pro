@@ -125,6 +125,59 @@ const seedMentor: Account = {
   eas: [],
 };
 
+/* ------------------------------------------------------------------ */
+/* GLOBAL AUTH EPOCH — the complete session wipe                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * BUMP THIS TO LOG EVERYONE OUT, EVERYWHERE, INCLUDING ADMINS.
+ *
+ * Each device remembers the epoch it last saw under localStorage
+ * `app_epoch`. When a build ships a HIGHER value, the device wipes BOTH
+ * storage buckets (localStorage + sessionStorage) once and the app reloads
+ * from the very first page. Nobody is exempt: platform owners and admins are
+ * signed out exactly like everyone else, and the app session store, the
+ * mentor-portal sign-in pointer and every cached flag die with the wipe.
+ *
+ * What this does NOT touch: the Supabase database. Users, payments, licences,
+ * approvals and device bindings all live in the cloud and are re-read on the
+ * next sign-in — so an admin can restore their own access immediately by
+ * signing in again, and the mentor portal repopulates itself from the cloud.
+ *
+ * Web and Android share this code path (the Android wrapper loads the same
+ * bundle), so one bump covers both at once.
+ */
+export const AUTH_EPOCH = "v3_force_reset_20261004";
+
+/** localStorage key that records the epoch this device has already applied. */
+export const AUTH_EPOCH_KEY = "app_epoch";
+
+/**
+ * Apply the epoch wipe if this device has not seen it yet.
+ *
+ * Returns true when a wipe actually ran (so the caller can send the visitor
+ * back to the first page). Safe to call on every boot: after the first run
+ * the stamp matches and this is a single localStorage read.
+ *
+ * `clear()` before `setItem()` is deliberate — the stamp must be written
+ * AFTER the buckets are emptied, or the wipe would erase its own record and
+ * run again on every load (an endless logout loop).
+ */
+export function enforceAuthEpoch(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (window.localStorage.getItem(AUTH_EPOCH_KEY) === AUTH_EPOCH) return false;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(AUTH_EPOCH_KEY, AUTH_EPOCH);
+    return true;
+  } catch {
+    // Storage blocked (private mode, a hardened WebView): nothing to wipe and
+    // nothing to stamp. The cloud gate still keeps unpaid accounts out.
+    return false;
+  }
+}
+
 /** Platform owner accounts — admins by definition, on every device. */
 export const OWNER_EMAILS = [
   "biyasentobeko222@gmail.com",

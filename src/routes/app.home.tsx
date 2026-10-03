@@ -83,6 +83,14 @@ export const Route = createFileRoute("/app/home")({
     // /app/login?pay=1 (the Choose Plan screen). This is deliberately checked
     // before anything else can decide the route may load.
     //
+    // MENTOR APPROVAL IS A DIFFERENT THING ENTIRELY. `mentor_approvals` /
+    // status: "approved" lets somebody use the MENTOR LICENSES DASHBOARD
+    // (/dashboard/licenses) and nothing else. It is NOT read here and it is
+    // NOT read in payment-gate.ts: an account the portal approved but never
+    // marked is_paid is treated as strictly UNPAID for the trading app, which
+    // is exactly what this guard enforces. Only is_paid (or an active Whop
+    // membership / a license key bound to the email) opens the app.
+    //
     // `fresh: true` skips the cache: the whole point of this guard is to
     // re-read the database at the moment of entry, so a session that was
     // allowed a moment ago under different rules cannot slip through on a

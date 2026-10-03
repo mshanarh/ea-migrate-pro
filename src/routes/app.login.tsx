@@ -1,9 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { ArrowRight, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
-import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { callNative } from "@/lib/native-bridge";
 import { verifyPaymentReturn, invalidateAccessCache, resolveCloudAccess, type CloudAccess } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 
@@ -14,30 +15,42 @@ export const Route = createFileRoute("/app/login")({
 });
 
 /**
- * THE TWO PLANS. An unpaid account stops on the Choose Plan screen and picks
- * one; nothing hops automatically, because there are two destinations and
- * guessing would send somebody to the wrong product. Both links are plain
- * anchors, so every container (browser, Android WebView, iOS home-screen app)
- * has a route out that does not depend on scripted navigation.
+ * THE TWO CHECKOUT TARGETS. Declared at the top of the file so the exact Whop
+ * URLs live in exactly one place and the plan cards cannot drift from them.
  */
-const WHOP_MONTHLY_URL =
-  (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_wgIWJdSwjlMGS";
-const WHOP_LIFETIME_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+export const WHOP_LIFETIME_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+export const WHOP_MONTHLY_URL = "https://whop.com/checkout/plan_wgIWJdSwjlMGS";
 
-/** The plans, in the order they are offered. */
-const PLANS: Array<{ url: string; title: string; blurb: string; badge?: string }> = [
-  {
+/** Which plan the customer picked. Monthly is the default. */
+export type PlanId = "monthly" | "lifetime";
+
+/**
+ * THE PLANS. An unpaid account stops on the Plan Selection screen and picks
+ * one; nothing hops automatically, because there are two destinations and
+ * guessing would send somebody to the wrong product.
+ */
+const PLANS: Record<
+  PlanId,
+  { url: string; title: string; badge: string; subtitle: string; note: string }
+> = {
+  monthly: {
     url: WHOP_MONTHLY_URL,
-    title: "Monthly Recurring",
-    blurb: "Billed every month. Cancel any time.",
+    title: "Monthly Subscription",
+    badge: "Recurring — Per Month",
+    subtitle: "Billed monthly. Cancel anytime.",
+    note: "(Recurring)",
   },
-  {
+  lifetime: {
     url: WHOP_LIFETIME_URL,
     title: "Lifetime Access",
-    blurb: "One payment. Yours for good, including every future update.",
-    badge: "BEST VALUE",
+    badge: "Lifetime Access",
+    subtitle: "Pay once, keep access forever. No recurring fees.",
+    note: "(One-Time)",
   },
-];
+};
+
+/** The order the plans are offered in — monthly first, it is the default. */
+const PLAN_ORDER: PlanId[] = ["monthly", "lifetime"];
 
 /**
  * A HARD DEADLINE around every cloud call on the way in.
@@ -74,6 +87,10 @@ function AppAccess() {
   // True once we know this email must pay: renders the Choose Plan screen
   // (monthly + lifetime) instead of any part of the app.
   const [choosePlan, setChoosePlan] = useState(false);
+  // WHICH PLAN THE CUSTOMER PICKED. Monthly is the default, and the choice
+  // only decides which Whop URL the Continue button opens — selecting a card
+  // never charges anybody or navigates on its own.
+  const [selectedPlan, setSelectedPlan] = useState<PlanId>("monthly");
   // A sign-in attempt is IN FLIGHT. Set synchronously by the Proceed tap,
   // before the first await, and cleared on every exit except checkout.
   // Without it the auto-redirect effect below fired on the render right
@@ -125,6 +142,20 @@ function AppAccess() {
   // ?deactivated=1 rides along: an admin pressed "Set unpaid" for this
   // account and the access gate signed the session out on the way here —
   // the FIRST screen must say so, instead of silently offering checkout.
+  /**
+   * GLOBAL AUTH EPOCH — enforced on the FIRST page as well as at boot.
+   *
+   * router.tsx runs the same check before any route loads, but this screen is
+   * the one place a wiped session must always land: if a device reaches
+   * /app/login with an epoch it has not applied yet (a bookmark, a deep link,
+   * a restored tab), the buckets are cleared here and the page reloads so
+   * every store re-initialises empty. `enforceAuthEpoch()` returns true only
+   * on the run that wipes, so this can never loop.
+   */
+  useEffect(() => {
+    if (enforceAuthEpoch()) window.location.replace("/app/login");
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     setPayPrompt(params.get("pay") === "1");
@@ -419,7 +450,14 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {showChoosePlan ? <ChoosePlanView email={activeEmail} onCancel={dismissCheckout} /> :
+      {showChoosePlan ? (
+        <PlanSelection
+          email={activeEmail}
+          selectedPlan={selectedPlan}
+          onSelectPlan={setSelectedPlan}
+          onCancel={dismissCheckout}
+        />
+      ) :
       blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
@@ -505,23 +543,53 @@ function useIsStandalone(): boolean {
 }
 
 /**
- * CHOOSE PLAN — the one screen an unpaid account ever sees.
+ * PLAN SELECTION — the one screen an unpaid account ever sees.
  *
  * The app is gated on payment alone, so somebody who is not paid stops here
- * and nothing else of EA Migrate is reachable. Two products are offered as
- * real anchors (a browser tab, the Android WebView and an iOS home-screen app
- * all follow a plain external link), and there is deliberately NO automatic
- * redirect: with two destinations, a programmatic hop could only guess.
+ * and nothing else of EA Migrate is reachable. The customer TAPS a plan (the
+ * card highlights) and presses Continue to Payment; there is deliberately no
+ * automatic redirect, because with two destinations a programmatic hop could
+ * only ever guess.
  *
- * The links are built from PLANS at module scope, so the exact checkout URLs
- * live in exactly one place.
+ * Every route out is covered: a browser tab and the Android WebView follow
+ * the link, the Android wrapper is asked to open the SYSTEM browser through
+ * its native bridge, and an iOS home-screen app (which cannot leave for an
+ * external site at all) gets copy-link and email-link fallbacks instead.
  */
-function ChoosePlanView({ email, onCancel }: { email: string; onCancel: () => void }) {
+function PlanSelection({
+  email,
+  selectedPlan,
+  onSelectPlan,
+  onCancel,
+}: {
+  email: string;
+  selectedPlan: PlanId;
+  onSelectPlan: (plan: PlanId) => void;
+  onCancel: () => void;
+}) {
   const standalone = useIsStandalone();
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
-  // If the automatic hop has not left the page after a couple of seconds,
-  // it was dropped by the container (an iOS home-screen app, an embedded
-  // WebView). Say so plainly instead of leaving a dead screen.
+
+  /**
+   * OPEN THE CHOSEN CHECKOUT.
+   *
+   * INSIDE THE ANDROID APP the page must NOT navigate itself to an external
+   * site: `callNative("openUrl")` asks the wrapper to launch the system
+   * browser, which is the only route iOS-style WebViews reliably honour and
+   * the one that keeps the payment page in a real browser where the customer
+   * can actually pay. Everywhere else a plain location assignment is what the
+   * container follows.
+   */
+  const openCheckout = (url: string) => {
+    if (typeof window === "undefined") return;
+    if (callNative("openUrl", url)) return;
+    try {
+      window.location.href = url;
+    } catch {
+      // A container that refuses to leave keeps the tappable link on screen.
+    }
+  };
+
   const copy = async (url: string) => {
     try {
       await navigator.clipboard.writeText(url);
@@ -542,46 +610,87 @@ function ChoosePlanView({ email, onCancel }: { email: string; onCancel: () => vo
       {email ? ` Pay for ${email} below.` : ""}
     </p>
 
-    <div className="mt-8 space-y-4 text-left">
-      {PLANS.map((plan) => (
-        <div key={plan.url} className="rounded-[1.75rem] border border-[#202930] bg-[#10161a] p-5 shadow-[0_0_28px_rgba(8,168,239,.10)]">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-lg font-bold text-white">{plan.title}</p>
-            {plan.badge ? (
-              <span className="shrink-0 rounded-full bg-[#08a8ef] px-3 py-1 text-[10px] font-black tracking-[0.12em] text-[#061018]">
-                {plan.badge}
-              </span>
-            ) : null}
-          </div>
-          <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.blurb}</p>
-          {standalone ? (
-            // iOS home-screen app: an external link cannot open from here, so
-            // the link is handed to Safari instead of navigated to.
-            <>
-              <button
-                type="button"
-                onClick={() => void copy(plan.url)}
-                className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
-              >
-                {copiedUrl === plan.url ? "Link copied" : "Copy checkout link"}
-              </button>
-              <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-                {plan.url}
+    {/* SELECTABLE PLAN CARDS — tap to choose, the active one is marked with
+        the brand border and a checkmark. Choosing never navigates: it only
+        decides what Continue to Payment opens. */}
+    <div className="mt-8 space-y-4 text-left" role="radiogroup" aria-label="Choose your plan">
+      {PLAN_ORDER.map((id) => {
+        const plan = PLANS[id];
+        const active = selectedPlan === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => onSelectPlan(id)}
+            className={`block w-full rounded-[1.75rem] border p-5 text-left transition-colors ${
+              active
+                ? "border-[#08a8ef] bg-[#08a8ef]/10 shadow-[0_0_30px_rgba(8,168,239,.28)]"
+                : "border-[#202930] bg-[#10161a] shadow-[0_0_28px_rgba(8,168,239,.10)]"
+            }`}
+          >
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-lg font-bold text-white">
+                {plan.title} <span className="text-[#8a9298]">{plan.note}</span>
               </p>
-            </>
-          ) : (
-            <a
-              href={plan.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="mt-4 flex h-14 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+              <span
+                className={`flex size-7 shrink-0 items-center justify-center rounded-full border ${
+                  active ? "border-[#08a8ef] bg-[#08a8ef] text-[#061018]" : "border-[#2b3440] text-transparent"
+                }`}
+              >
+                {active ? <Check className="size-4" /> : null}
+              </span>
+            </div>
+            <span
+              className={`mt-2 inline-block rounded-full px-3 py-1 text-[10px] font-black tracking-[0.12em] ${
+                active ? "bg-[#08a8ef] text-[#061018]" : "bg-[#08a8ef]/15 text-[#55c7ff]"
+              }`}
             >
-              Continue to payment <ArrowRight className="size-5" />
-            </a>
-          )}
-        </div>
-      ))}
+              {plan.badge}
+            </span>
+            <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
+          </button>
+        );
+      })}
     </div>
+
+    {/* CONTINUE TO PAYMENT — opens the SELECTED plan. On Android the native
+        bridge hands the URL to the system browser; elsewhere a plain
+        navigation (and, on iOS standalone, the copy/email fallbacks). */}
+    {standalone ? (
+      <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
+        <p className="text-sm font-semibold text-white">Finish in Safari</p>
+        <p className="mt-2 text-sm leading-6 text-[#8a9298]">
+          Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
+          directly.
+        </p>
+        <button
+          type="button"
+          onClick={() => void copy(PLANS[selectedPlan].url)}
+          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
+        >
+          {copiedUrl === PLANS[selectedPlan].url ? "Link copied" : "Copy checkout link"}
+        </button>
+        <a
+          href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(PLANS[selectedPlan].url)}`}
+          className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
+        >
+          Email me the link
+        </a>
+        <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
+          {PLANS[selectedPlan].url}
+        </p>
+      </div>
+    ) : (
+      <button
+        type="button"
+        onClick={() => openCheckout(PLANS[selectedPlan].url)}
+        className="mt-6 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+      >
+        Continue to Payment <ArrowRight className="size-6" />
+      </button>
+    )}
 
     <p className="mt-6 text-xs leading-5 text-[#59646b]">
       {standalone
