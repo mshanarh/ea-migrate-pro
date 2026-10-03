@@ -138,71 +138,20 @@ function TradingPairsScreen() {
     const symbol = configSymbol;
     setConfigSymbol(null);
 
-    // Live execution: needs BOTH the saved MT5 account and the password the
-    // MetaTrader page stored on this device. Missing either → settings-only.
+    // Live execution is deferred: the symbol is saved to Allowed Quotes now,
+    // but the bot only runs when the user is on the Home screen and presses
+    // the rounded START pop-up. This keeps the trade request from firing
+    // mid-configuration and lets the user control when the bot acts.
     const credentials = readMtCredentials(app.mt);
-    if (!credentials) {
-      toast.message("Saved. Add your MT5 details to trade this symbol automatically.", {
-        description: "MetaTrader page → save your account.",
+    if (credentials) {
+      window.triggerExecutionToast?.(robot.name, robot.image, {
+        symbol,
+        lot_size: draftLot,
+        max_trades: safeTradeCount(draftTrades),
+        direction: draftDirection,
       });
-      return;
+      announceExecution(false, "ANALYZING MARKET...");
     }
-
-    // Instant feedback, BEFORE the first await. The market read and the bridge
-    // round trip can take seconds on a symbol whose public feed is slow, and
-    // pressing Configure with no response at all is what made this look
-    // broken. The popup opens now and narrates from here.
-    window.triggerExecutionToast?.(robot.name, robot.image, {
-      symbol,
-      lot_size: draftLot,
-      max_trades: safeTradeCount(draftTrades),
-      direction: draftDirection,
-    });
-    announceExecution(false, "ANALYZING MARKET...");
-
-    // `settled` guards the popup against being abandoned mid-run: every exit
-    // below ends with a terminal line, and this catches the one that does not.
-    let settled = false;
-    void (async () => {
-      try {
-        const resolution = await resolveTradeDirection(symbol, draftDirection);
-        toast.message(
-          `${symbol} — ${resolution.direction} (${resolution.source === "analysis" ? "market read" : resolution.source === "selection" ? "your selection" : "default"})`,
-          { description: resolution.reason },
-        );
-        const result = await executeAutoTrade({
-          credentials,
-          symbol,
-          direction: resolution.direction,
-          lot: Number(entry.lotSize) || 0.01,
-          trades: safeTradeCount(entry.maxTrades),
-          ...(robot.name ? { botName: robot.name } : {}),
-          ...(robot.image ? { robotImage: robot.image } : {}),
-        });
-        // executeAutoTrade always closes its own run on the bus.
-        settled = true;
-        if (result.ok) {
-          toast.success(`${result.symbol} ${result.direction} opened on MT5`, {
-            description: result.message,
-          });
-        } else {
-          toast.error(`${result.symbol} did not open`, { description: result.message });
-          announceExecution(false, result.message.toUpperCase());
-        }
-      } catch (error) {
-        // Anything thrown before or between the engine's own guards.
-        settled = true;
-        const message = error instanceof Error ? error.message : "Unexpected error.";
-        toast.error(`${symbol} could not be executed`, { description: message });
-        announceExecution(false, message.toUpperCase());
-      } finally {
-        if (!settled) {
-          const message = `Execution of ${symbol} ended without a result — check your connection.`;
-          toast.error(`${symbol} could not be executed`, { description: message });
-          announceExecution(false, message.toUpperCase());
-        }
-      }
-    })();
   };
 
   const removeSymbol = () => {
