@@ -136,7 +136,7 @@ function Licenses() {
     }
     const key = generateKey();
     const recipient = clientEmail.trim() || account.email;
-    const result2 = addLicense(account.id, expiry, key, {
+    const result2 = await addLicense(account.id, expiry, key, {
       name: keyName.trim(),
       clientEmail: clientEmail.trim() || undefined,
       eaId: selectedEa.id,

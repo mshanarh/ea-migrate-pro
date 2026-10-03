@@ -525,24 +525,42 @@ export function setStatus(id: string, status: PortalStatus) {
   update(id, (a) => ({ ...a, status }));
 }
 
-export function addLicense(
+export async function addLicense(
   id: string,
   plan: string,
   key: string,
   details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
   /** The admin panel issues keys by its own authority — limit does not block it. */
   opts: { bypassLimit?: boolean } = {},
-): { error?: string; license?: License } {
+): Promise<{ error?: string; license?: License }> {
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
   if (!details.eaId) return { error: "Choose an Expert Advisor." };
   if (!opts.bypassLimit) {
-    if (account.licenseLimit <= 0) {
-      return { error: "The admin has not set a license limit for this account yet." };
-    }
-    if (account.licenses.length >= account.licenseLimit) {
-      return { error: "This account has reached its license limit." };
+    // Enforce the cap against the LIVE database value (app_settings
+    // limit:<email>), not the local account snapshot — the local
+    // licenseLimit field is only a cache and can be 0 while the DB has
+    // 800, which would wrongly block key creation.
+    try {
+      const { getLicenseCapForEmail, countKeysForEmail } = await import(
+        "@/lib/admin-store"
+      );
+      const cap = await getLicenseCapForEmail(account.email);
+      if (cap !== null) {
+        const used = await countKeysForEmail(account.email);
+        if (used >= cap) {
+          return {
+            error:
+              cap === 0
+                ? "The admin has not allowed you any license keys yet."
+                : `You have used all ${cap} of your license keys. Ask your
+                   administrator to raise your limit.`,
+          };
+        }
+      }
+    } catch {
+      /* never block key creation on a limit lookup failure */
     }
   }
   const linkedEa = account.eas.find((ea) => ea.id === details.eaId);
@@ -562,7 +580,7 @@ export function addLicense(
     expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "1 Week": 7, "1 Month": 30, "3 Months": 90, "6 Months": 180, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
   };
 
-  update(id, (a) => ({
+  await update(id, (a) => ({
     ...a,
     licenses: [...a.licenses, license],
   }));
