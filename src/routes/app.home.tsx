@@ -498,13 +498,19 @@ function AppHome() {
         onTouchStart={onTouchStart}
         onTouchEnd={(event) => {
           // A quick tap pauses (stops) the background video — does NOT toggle.
-          // A horizontal swipe opens the customisation drawer.
+          // A horizontal swipe (>70px) opens the customisation drawer.
           if (touchStartX.current !== null && event.changedTouches?.length === 1) {
             const touchEnd = event.changedTouches?.[0];
             if (!touchEnd) return;
-            const dx = touchEnd.clientX - touchStartX.current;
+            const dx = touchStartX.current - touchEnd.clientX;
+            if (dx > 70) {
+              // Horizontal swipe opens the customisation drawer.
+              setDrawerOpen(true);
+              touchStartX.current = null;
+              return;
+            }
             if (Math.abs(dx) < 70) {
-              // Single tap pauses the background video (stop).
+              // Single tap (no horizontal movement) pauses the background video.
               setVideoActive(false);
               touchStartX.current = null;
               return;
