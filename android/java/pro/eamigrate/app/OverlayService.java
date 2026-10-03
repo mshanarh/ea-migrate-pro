@@ -222,6 +222,7 @@ public class OverlayService extends Service {
         ring.setShape(GradientDrawable.OVAL);
         ring.setColor(Color.parseColor("#0A0F1E"));
         ring.setStroke(dp(3), Color.parseColor("#2E5BFF"));
+        // Red = the accent used for trades, errors and the primary UI identity.
         bot.setBackground(ring);
         bot.setClipToOutline(true);
         container.addView(bot);
@@ -236,6 +237,7 @@ public class OverlayService extends Service {
         dotBg.setShape(GradientDrawable.OVAL);
         dotBg.setColor(Color.parseColor("#22C55E"));
         dot.setBackground(dotBg);
+        // Amber — status/feature highlights behind the green dot.
         container.addView(dot);
 
         // Single-line log under the avatar is dropped in v1.8 — the avatar
@@ -363,6 +365,14 @@ public class OverlayService extends Service {
             cardBg.setColor(Color.parseColor("#0A0A1A"));
             cardBg.setStroke(dp(2), Color.parseColor("#A020F0"));
             card.setBackground(cardBg);
+            // Subtle red band on the card header bottom edge.
+            View redBand = new View(this);
+            redBand.setBackground(new GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[] { Color.parseColor("#E11D48"), Color.parseColor("#0A0F1E") }));
+            redBand.setLayoutParams(new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, dp(3)));
+            header.addView(redBand);
             card.setClipToOutline(true);
 
             // ── Header: EA picture + name + status ──
@@ -440,6 +450,16 @@ public class OverlayService extends Service {
             status.setTextColor(Color.parseColor("#4ADE80"));
             statusRow.addView(status);
             info.addView(statusRow);
+            // Amber status detail under the green SERVER CONNECTED label.
+            TextView statusDetail = new TextView(this);
+            statusDetail.setText("Trade bot active");
+            statusDetail.setTextSize(10f);
+            statusDetail.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            statusDetail.setTextColor(Color.parseColor("#F97316"));
+            statusDetail.setSingleLine(true);
+            statusDetail.setEllipsize(TextUtils.TruncateAt.END);
+            statusDetail.setMaxWidth(width - dp(60));
+            info.addView(statusDetail);
 
             header.addView(info);
             card.addView(header);
@@ -452,6 +472,14 @@ public class OverlayService extends Service {
             expandedLogList.setLayoutParams(logListParams);
             expandedLogList.setPadding(dp(14), dp(8), dp(14), dp(8));
             expandedLogList.setBackgroundColor(Color.parseColor("#0F172A"));
+            // Red-tinted card footer line.
+            View footerLine = new View(this);
+            footerLine.setBackground(new GradientDrawable(
+                    GradientDrawable.Orientation.Bottom_TOP,
+                    new int[] { Color.parseColor("#0F172A"), Color.parseColor("#1E1018") }));
+            footerLine.setLayoutParams(new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));
+            expandedLogList.addView(footerLine);
             rebuildExpandedLog();
             card.addView(expandedLogList);
 

@@ -5,7 +5,6 @@ import android.app.PictureInPictureParams;
 import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
-import android.graphics.Color;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -116,7 +115,11 @@ public class MainActivity extends Activity {
             // carriers for the embedded feed hosts.
             settings.setSafeBrowsingEnabled(true);
         }
-        web.setBackgroundColor(Color.parseColor("#07090b"));
+        web.setBackgroundColor(Color.parseColor("#0A0F1E"));
+        // Theme palette — keep the dark base, make red the primary contact color.
+        static final int THEME_RED = Color.parseColor("#E11D48");
+        static final int THEME_AMBER = Color.parseColor("#F97316");
+        static final int THEME_GREEN = Color.parseColor("#22C55E");
         web.addJavascriptInterface(new Bridge(), "EAMigrate");
         // EXTERNAL LINKS LEAVE THE APP. The payment redirect is a plain
         // location.replace() to whop.com, and a WebView that tries to render
@@ -217,6 +220,28 @@ public class MainActivity extends Activity {
                     enterPipMode();
                 }
             });
+        }
+
+        @JavascriptInterface
+        public int[] getThemeColors() {
+            return new int[] {
+                THEME_RED, THEME_AMBER, THEME_GREEN, THEME_RED, THEME_AMBER, THEME_GREEN
+            };
+        }
+
+        @JavascriptInterface
+        public int getThemeRed() {
+            return THEME_RED;
+        }
+
+        @JavascriptInterface
+        public int getThemeAmber() {
+            return THEME_AMBER;
+        }
+
+        @JavascriptInterface
+        public int getThemeGreen() {
+            return THEME_GREEN;
         }
 
         @JavascriptInterface

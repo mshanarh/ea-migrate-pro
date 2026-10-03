@@ -217,7 +217,7 @@ export function PabloCrimson(props: SignatureLayoutProps) {
         <div className="absolute inset-0" style={{ background: "linear-gradient(180deg, rgba(0,0,0,0.15) 0%, rgba(0,0,0,0.35) 55%, rgba(0,0,0,0.95) 100%)" }} />
         <div className="absolute inset-x-0 top-5 flex justify-center">
           <span className="rounded-full border px-5 py-1.5 text-[10px] font-black tracking-[0.3em] uppercase text-white/85 backdrop-blur-sm" style={{ borderColor: `${accent}88`, backgroundColor: "rgba(0,0,0,0.5)" }}>
-            Powered by EA Migrate
+            Powered by Ea migrate
           </span>
         </div>
         <div className="absolute inset-x-0 bottom-0 flex flex-col items-center pb-8">

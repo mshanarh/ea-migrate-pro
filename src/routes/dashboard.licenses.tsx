@@ -81,8 +81,18 @@ function Licenses() {
   if (!account) return null;
 
   const used = account.licenses.length;
-  const allowed = cloudLimit ?? account.licenseLimit;
-  const remaining = Math.max(allowed - used, 0);
+  // The admin console writes the key allowance to the database (app_settings
+  // "limit:<email>"). This page reads it LIVE; the local licenseLimit is only a
+  // fallback before the first read lands. A cap of 0 means no keys at all.
+  const cloudLimitRaw = (() => {
+    if (typeof cloudLimit === "number") return cloudLimit;
+    const local = account.licenseLimit ?? 0;
+    return Number.isFinite(local) && local >= 0 ? local : null;
+  })();
+  // The database value wins; the local one is only a fallback. When neither is
+  // set we show "Not set" instead of a stale local number.
+  const allowed = cloudLimitRaw ?? account.licenseLimit ?? null;
+  const remaining = allowed === null ? 0 : Math.max(allowed - used, 0);
   const selectedEa = account.eas.find((ea) => ea.id === eaId);
   const resetForm = () => {
     setKeyName("");
@@ -431,7 +441,7 @@ function Licenses() {
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Total allowed</p>
-            <p className="mt-1 text-2xl font-bold">{allowed}</p>
+            <p className="mt-1 text-2xl font-bold">{allowed === null ? "Not set" : allowed}</p>
           </div>
           <div>
             <p className="text-xs text-muted-foreground">Keys remaining</p>
@@ -443,8 +453,8 @@ function Licenses() {
         </Button>
       </div>
       {account.eas.length === 0 && <p className="mt-3 text-sm text-muted-foreground">Create an EA profile before generating a key.</p>}
-      {remaining === 0 && allowed > 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all {allowed} key{allowed === 1 ? "" : "s"} allowed for this account.</p>}
-      {allowed === 0 && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet. Once they set one it appears here automatically.</p>}
+      {allowed === null && <p className="mt-3 text-sm text-muted-foreground">Your admin has not set a key allowance yet. Once they set one it appears here automatically.</p>}
+      {allowed !== null && remaining === 0 && <p className="mt-3 text-sm text-muted-foreground">You have used all {allowed} key{allowed === 1 ? "" : "s"} allowed for this account.</p>}
 
       {/* Re-activate Client lives on its own page: /dashboard/reactivate */}
       {account.licenses.length === 0 ? (

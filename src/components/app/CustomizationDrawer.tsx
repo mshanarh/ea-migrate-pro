@@ -258,7 +258,7 @@ export function CustomizationPanel() {
 
       <div className="border-t border-white/10 px-5 py-5 text-center">
         <p className="text-sm font-black tracking-[0.18em] text-white/70 uppercase">
-          Powered by <span style={{ color: accent }}>EA MIGRATE</span>
+          Powered by <span style={{ color: accent }}>Ea migrate</span>
         </p>
         <p className="mt-1 text-[11px] font-semibold tracking-[0.2em] text-white/35 uppercase">
           Version 2.0

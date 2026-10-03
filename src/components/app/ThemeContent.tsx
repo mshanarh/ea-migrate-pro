@@ -34,7 +34,7 @@ export function PoweredBadge({ accent }: { accent: string }) {
       className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/85 px-6 py-2.5 text-sm font-bold text-white"
       style={{ boxShadow: `0 0 24px ${accent}33` }}
     >
-      Powered by <span style={{ color: accent }}>EA MIGRATE</span>
+      Powered by <span style={{ color: accent }}>Ea migrate</span>
     </span>
   );
 }
@@ -101,7 +101,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
               </button>
             ))}
           </div>
-          <p className="mt-7 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase">Powered by EA Migrate</p>
+          <p className="mt-7 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase">Powered by Ea migrate</p>
         </div>
       </motion.section>
 
