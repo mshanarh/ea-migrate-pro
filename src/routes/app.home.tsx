@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { toggleVideoPlayback } from "@/lib/video-playback";
+import { setVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 
 /** Double-tap on the HOME hero to play the current EA video as a full-screen
  *  background over black (toggle). The robot picture stays visible in the
@@ -17,9 +17,11 @@ function useHomeDoubleTap() {
     const wasQuick = lastTap.current !== null && now - lastTap.current < 300;
     lastTap.current = now;
 
-    // A double-tap (two taps within 300ms) plays the background video.
-    // Any other tap (single tap, or a tap outside the media) pauses it.
-    toggleVideoPlayback();
+    // Double-tap (two taps within 300ms) plays the background video.
+    // Any single tap does NOT toggle the video.
+    if (wasQuick) {
+      toggleVideoPlayback();
+    }
   }, []);
 
   useEffect(() => {
@@ -491,27 +493,26 @@ function AppHome() {
     toast.success(`${robot.name} removed`);
   };
 
-  return (
-    <div
-      className="app-fullscreen flex w-full flex-col bg-black text-white"
-      onTouchStart={onTouchStart}
-      onTouchEnd={(event) => {
-        // A quick vertical tap (not a horizontal swipe) pauses or toggles the
-        // background video; a horizontal swipe opens the customisation drawer.
-        if (touchStartX.current !== null && event.changedTouches?.length === 1) {
-          const touchEnd = event.changedTouches?.[0];
-          if (!touchEnd) return;
-          const dx = touchEnd.clientX - touchStartX.current;
-          if (Math.abs(dx) < 70) {
-            // Tap: single tap pauses, double tap (caught by the hook) plays.
-            toggleVideoPlayback();
-            touchStartX.current = null;
-            return;
+  return (      <div
+        className="app-fullscreen flex w-full flex-col bg-black text-white"
+        onTouchStart={onTouchStart}
+        onTouchEnd={(event) => {
+          // A quick tap pauses (stops) the background video — does NOT toggle.
+          // A horizontal swipe opens the customisation drawer.
+          if (touchStartX.current !== null && event.changedTouches?.length === 1) {
+            const touchEnd = event.changedTouches?.[0];
+            if (!touchEnd) return;
+            const dx = touchEnd.clientX - touchStartX.current;
+            if (Math.abs(dx) < 70) {
+              // Single tap pauses the background video (stop).
+              setVideoActive(false);
+              touchStartX.current = null;
+              return;
+            }
           }
-        }
-        touchStartX.current = null;
-      }}
-    >
+          touchStartX.current = null;
+        }}
+      >
       <div className="app-scroll-area">
       <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
         <ThemeContent

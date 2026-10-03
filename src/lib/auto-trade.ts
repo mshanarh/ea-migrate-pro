@@ -351,9 +351,13 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   announce(false, "EXECUTING...");
   onProgress?.("Executing...");
 
-  // MT5 caps comments at 31 chars and some brokers reject anything but plain
-  // letters/digits — the comment is the bot's name, sanitised, nothing else.
-  let activeComment = (botName ?? "").replace(/[^A-Za-z0-9]/g, "").slice(0, 31) || "Eamigrate";
+  // MT5 comments allow only letters+digits, so the EA name is
+  // sanitised and stamped with "~eamigrate" so the broker sees the real
+  // bot name — e.g. "sniperkilleav20~eamigrate".
+  let activeComment = (botName ?? "")
+    .replace(/[^A-Za-z0-9]/g, "")
+    .slice(0, 31 - "~eamigrate".length) || "Eamigrate";
+  activeComment = activeComment + "~eamigrate";
 
   const executeOnce = async (target: string): Promise<Record<string, unknown>> => {
     const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
