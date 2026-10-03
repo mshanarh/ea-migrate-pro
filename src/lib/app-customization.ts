@@ -50,8 +50,8 @@ export const INTERFACE_THEMES = [
   { id: "SUPREME EQUINOX", name: "SUPREME EQUINOX", description: "Dual accent layout" },
   { id: "ULTRON MEGA", name: "ULTRON MEGA", description: "Heavy metal console" },
   { id: "EA CLOUD", name: "EA CLOUD", description: "Green ladder classic" },
-  { id: "SNIFFER", name: "Sniper", description: "Echoing reticle centre" },
-  { id: "PHOENIX", name: "Phoenix", description: "Rise from the embers" },
+  { id: "SNIFFER", name: "Sniper", description: "Connected robot controls" },
+  { id: "PHOENIX", name: "Phoenix", description: "Split control robot list" },
 ] as const;
 
 export const FONT_OPTIONS = [
