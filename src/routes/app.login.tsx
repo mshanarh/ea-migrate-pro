@@ -730,20 +730,7 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
     </div>
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
-    {deactivated ? (
-      <div role="alert" className="mt-6 rounded-2xl border border-red-400/45 bg-red-500/15 p-5 text-left">
-        <div className="flex items-start gap-3">
-          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-red-400 text-[13px] font-black text-red-950" aria-hidden="true">!</span>
-          <div>
-            <p className="text-base font-bold leading-6 text-red-100">Your account has been deactivated.</p>
-            <p className="mt-1.5 text-sm leading-6 text-red-200/80">
-              An administrator turned this account off, so it can no longer be used. Signing in again will not bring it
-              back. Message support on WhatsApp with your email if you think this is a mistake.
-            </p>
-          </div>
-        </div>
-      </div>
-    ) : null}
+    {deactivated ? <DeactivatedNotice /> : null}
     <form className="mt-12 space-y-4" onSubmit={onSubmit}>
       <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
         <Mail className="size-6 shrink-0 text-[#aab2b7]" />
@@ -753,6 +740,44 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
     </form>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
   </div>;
+}
+
+/**
+ * THE DEACTIVATION NOTICE — the one thing a person whose account was turned
+ * off needs to read.
+ *
+ * It exists because the gate now answers "revoked" from the database rather
+ * than guessing from this device's memory, so a FRESH sign-in on a new phone
+ * reaches this screen too. Offering checkout there would tell somebody who was
+ * removed from the platform to buy their way back in, so the copy names the
+ * decision, says signing in again will not reverse it, and points at support.
+ */
+function DeactivatedNotice() {
+  return (
+    <div
+      role="alert"
+      className="mt-6 rounded-2xl border border-red-400/45 bg-red-500/15 p-5 text-left"
+    >
+      <div className="flex items-start gap-3">
+        <span
+          className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-red-400 text-[13px] font-black text-red-950"
+          aria-hidden="true"
+        >
+          !
+        </span>
+        <div>
+          <p className="text-base font-bold leading-6 text-red-100">
+            Your account has been deactivated.
+          </p>
+          <p className="mt-1.5 text-sm leading-6 text-red-200/80">
+            An administrator turned this account off, so it can no longer be used. Signing in again
+            will not bring it back. Message support on WhatsApp with your email if you think this is
+            a mistake.
+          </p>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 /**
