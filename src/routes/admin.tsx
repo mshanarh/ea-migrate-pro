@@ -29,7 +29,7 @@ import {
   type AdminSnapshot,
   type AdminUser,
   type AdminWriteResult,
-  type ApprovalStatus,
+  type ReviewStatus,
 } from "@/lib/admin-store";
 import { OWNER_EMAILS, signOut, useCurrentAccount } from "@/lib/auth-store";
 import { sendPortalEmail } from "@/lib/send-email";
@@ -121,15 +121,19 @@ function StatCard({
   );
 }
 
-function StatusPill({ status }: { status: ApprovalStatus }) {
+function StatusPill({ status }: { status: ReviewStatus }) {
+  // "app" is a trading-app account that never signed up on the mentor
+  // portal — shown plainly so the admin can tell it apart from a mentor
+  // waiting for review (and so it never reads as "pending").
   const map = {
     approved: "bg-emerald-400/15 text-emerald-300",
     rejected: "bg-red-400/15 text-red-300",
     pending: "bg-amber-400/15 text-amber-300",
+    app: "bg-secondary text-muted-foreground",
   } as const;
   return (
     <span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-wide ${map[status]}`}>
-      {status}
+      {status === "app" ? "app user" : status}
     </span>
   );
 }

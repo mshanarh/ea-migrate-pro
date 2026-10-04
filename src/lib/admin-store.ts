@@ -8,9 +8,16 @@
  *   users            → the accounts (email, created_at, is_paid, is_admin,
  *                      device_id — one email, one device).
  *   mentor_approvals → the approval state machine: one row per email with
- *                      status pending | approved | rejected. A NEW signup
- *                      writes a 'pending' row, so an account with no row
- *                      has never been reviewed and counts as pending.
+ *                      status pending | approved | rejected. The MENTOR
+ *                      PORTAL signup (/signup) writes the 'pending' row —
+ *                      that is the only thing that puts somebody in the
+ *                      review queue.
+ *
+ *                      A trading-app email is NOT a mentor signup. Typing an
+ *                      address into /app/login only ever asks "has this email
+ *                      paid?"; it writes no approval row and alerts nobody.
+ *                      Those accounts are reported as status "app" — present
+ *                      in the user list, absent from Pending Approvals.
  *   license_keys     → one row per issued key, bound to the owner's email.
  *                      The COUNT per email is the real key usage.
  *   paid_emails      → payment date for the Paid Users section.
@@ -29,12 +36,29 @@ import { supabase, supabaseConfigured } from "@/lib/supabase";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
+/**
+ * The status the CONSOLE displays, which is the review state plus one extra
+ * case: "app".
+ *
+ * "app" means a trading-app account that never signed up on the mentor
+ * portal. It is deliberately NOT "pending": a customer who entered their
+ * email to buy a licence is not waiting to be approved as a mentor, and
+ * counting them as pending filled the review queue with people who only ever
+ * wanted to pay. Nothing is written for these accounts — "app" is derived at
+ * read time from the absence of a portal signup and of a mentor_approvals row.
+ */
+export type ReviewStatus = ApprovalStatus | "app";
+
 /** One row of the admin's user table — merged from users + mentor_approvals. */
 export type AdminUser = {
   email: string;
   createdAt: string;
-  /** Approval state. No mentor_approvals row = never reviewed = pending. */
-  status: ApprovalStatus;
+  /**
+   * Review state as shown in the console. "pending" requires a PORTAL signup
+   * (`portal_accounts`) or an explicit `mentor_approvals` row; a trading-app
+   * address that has neither is "app" and never enters Pending Approvals.
+   */
+  status: ReviewStatus;
   /** True when the cloud row says is_paid. The ONLY source of "Paid". */
   isPaid: boolean;
   isAdmin: boolean;
@@ -273,8 +297,12 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
   }>) {
     const email = text(row.email).toLowerCase();
     if (!email) continue;
-    // No approval row = the account was never reviewed → it is PENDING.
-    const status: ApprovalStatus = approvals.get(email) ?? "pending";
+    // A `users` ROW IS NOT A MENTOR SIGNUP — this used to fall back to
+    // "pending" for every email, so anyone who had ever opened the trading app
+    // filled the Pending Approvals queue. Pending now requires a PORTAL signup
+    // (`portal_accounts`) or an explicit `mentor_approvals` row; an app-only
+    // address is "app" — listed as a user, never pending, never counted.
+    const status: ReviewStatus = approvals.get(email) ?? (portalSignups.has(email) ? "pending" : "app");
     byEmail.set(email, {
       email,
       createdAt: timestamp(row.created_at, portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback()),
