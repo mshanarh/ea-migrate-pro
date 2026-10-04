@@ -25,7 +25,15 @@ import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/
  *   ?success=true  — straight back from Whop checkout, awaiting verification
  *   ?reset=1       — the explicit "start over" escape hatch
  */
-const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset"]);
+const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset", "awaiting"]);
+
+/**
+ * Support contact shown wherever the customer has to finish something by hand.
+ * These are the same addresses the marketing FAQ quotes, so the copy matches
+ * what they have been told elsewhere on the site.
+ */
+const SUPPORT_EMAIL = "eamigratepro@gmail.com";
+const SUPPORT_WHATSAPP = "070 495 0612";
 
 export const Route = createFileRoute("/app/login")({
   ssr: false,
@@ -123,6 +131,46 @@ function AppAccess() {
   const [email, setEmail] = useState(app.email ?? "");
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
+  /**
+   * Paid on Whop, not yet activated by the owner. A waiting room, not a
+   * refusal — see the `verifyPaymentReturn` effect below.
+   */
+  const [awaitingActivation, setAwaitingActivation] = useState(false);
+
+  /**
+   * WAITING ROOM → APP, THE MOMENT THEY ARE MARKED PAID.
+   *
+   * Activation is a manual step the owner performs in the console, so the
+   * person who has already paid is sitting on a screen that cannot know when
+   * that happens. Polling turns that from "close the app and keep reopening it"
+   * into "leave it open and it goes through by itself".
+   *
+   * `fresh: true` on every tick is deliberate: the gate caches a POSITIVE
+   * answer for a minute, but a refusal is only cached for 5s, so the very first
+   * poll after the ledger row appears already sees it. 15s is well inside that.
+   * Anything other than a plain refusal — deactivated, revoked — leaves the
+   * screen alone rather than bouncing somebody somewhere they did not ask to
+   * go, and the route guards still decide what actually opens.
+   */
+  useEffect(() => {
+    if (!awaitingActivation) return;
+    const waitingEmail = app.email || email.trim().toLowerCase();
+    if (!waitingEmail) return;
+    let cancelled = false;
+    const poll = async () => {
+      const status = await resolveCloudAccess(waitingEmail, { fresh: true });
+      if (cancelled) return;
+      if (status === "paid" || status === "admin") {
+        setAwaitingActivation(false);
+        window.location.replace("/app/home");
+      }
+    };
+    const timer = window.setInterval(() => void poll(), 15_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [awaitingActivation, app.email, email]);
   const [redirecting, setRedirecting] = useState(false);
   // True once we know this email must pay: renders the Choose Plan screen
   // (monthly + lifetime) instead of any part of the app.
@@ -229,6 +277,9 @@ function AppAccess() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const success = typeof window !== "undefined" && params.get("success") === "true";
+    // ?awaiting=1 survives a reload on the waiting screen — it is only a
+    // "show this screen" flag and grants nothing, exactly like ?pay=1.
+    if (params.get("awaiting") === "1") setAwaitingActivation(true);
     setSuccessReturn(success);
     // SECURITY: ?success=true alone must NEVER unlock the app — typing that
     // URL used to call markEmailPaid() locally, which is exactly how a
@@ -240,7 +291,23 @@ function AppAccess() {
         if (verified) {
           if (typeof window !== "undefined") window.localStorage.removeItem("eamp.pending-payment-email");
         } else {
+          // NOT A REFUSAL — THIS ACCOUNT IS AWAITING ACTIVATION.
+          //
+          // We activate by hand: the customer pays on Whop, messages support,
+          // and the owner presses Mark paid. Until that button is pressed the
+          // database honestly says "unpaid", so this is exactly the state a
+          // real, just-paid customer is in on the way back from checkout.
+          //
+          // This used to fall through to the Choose Plan screen, which asked
+          // somebody who had ALREADY paid to pay a second time and never told
+          // them why. They had no route forward except guessing. It is a
+          // separate state with its own screen (AwaitingActivation), which
+          // names the situation, gives them support to contact with their
+          // email, and re-checks so the app opens by itself the moment the
+          // owner marks them paid.
+          setAwaitingActivation(true);
           setSuccessReturn(false);
+          if (typeof window !== "undefined") window.history.replaceState({}, "", "/app/login?awaiting=1");
         }
       });
     }
@@ -315,6 +382,19 @@ function AppAccess() {
       setResuming(false);
       return;
     }
+    /**
+     * THE WAITING ROOM OWNS THIS SESSION.
+     *
+     * Somebody coming back from Whop is still carrying their session, so this
+     * handshake runs — and its answer for a not-yet-activated account is "pay",
+     * which navigates them straight BACK to Whop. That is the loop that made a
+     * paid customer think checkout was broken. The waiting room's own poll is
+     * watching the same database, so skipping this loses nothing.
+     */
+    if (awaitingActivation) {
+      setResuming(false);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const access = await withDeadline<AppAccessCheck>(requireVerifiedAccess(sessionEmail), 25_000, { action: "signin" });
@@ -351,7 +431,7 @@ function AppAccess() {
     return () => {
       cancelled = true;
     };
-    }, [resuming, epochCleared]);
+    }, [resuming, epochCleared, awaitingActivation]);
 
   useEffect(() => {
     if (resuming || !app.email || successReturn || choosePlan) return;
@@ -607,6 +687,41 @@ function AppAccess() {
     }
   };
 
+  /**
+   * The "check again" button on the waiting room. Same question the poll asks,
+   * asked on demand so somebody who has just messaged support gets an answer
+   * without waiting out the interval.
+   */
+  const [checkingActivation, setCheckingActivation] = useState(false);
+  /**
+   * Back out of the waiting room for somebody who has NOT paid — they are on
+   * this screen because they came back from Whop or followed the link, and
+   * leaving it must not leave `?awaiting=1` behind in the history or a refresh
+   * would put them straight back on it.
+   */
+  const leaveWaitingRoom = () => {
+    setAwaitingActivation(false);
+    if (typeof window !== "undefined") {
+      window.history.replaceState({}, "", "/app/login");
+    }
+  };
+  const recheckActivation = async () => {
+    if (checkingActivation) return;
+    const waitingEmail = activeEmail;
+    if (!waitingEmail) return;
+    setCheckingActivation(true);
+    try {
+      const status = await resolveCloudAccess(waitingEmail, { fresh: true });
+      if (status === "paid" || status === "admin") {
+        window.location.replace("/app/home");
+        return;
+      }
+      toast.info("Not activated yet", { description: "We are still waiting on your activation message. Try again in a few minutes." });
+    } finally {
+      setCheckingActivation(false);
+    }
+  };
+
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -639,6 +754,8 @@ function AppAccess() {
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {resuming ? (
         <ResumingView />
+      ) : awaitingActivation && !successReturn && activeEmail ? (
+        <AwaitingActivation email={activeEmail} onRecheck={recheckActivation} checking={checkingActivation} onCancel={leaveWaitingRoom} />
       ) : showChoosePlan ? (
         <PlanSelection
           email={activeEmail}
@@ -740,6 +857,73 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
       <button type="submit" disabled={checking || redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Proceed"}<ArrowRight className="size-6" /></button>
     </form>
     <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
+  </div>;
+}
+
+/**
+ * PAID, WAITING FOR ACTIVATION — the waiting room.
+ *
+ * How access is actually granted here: the customer pays on Whop, messages
+ * support, and the owner presses "Mark paid". So on the way back from checkout
+ * the database honestly says "unpaid" for a few minutes or hours, and this
+ * screen is what sits in that gap. It is deliberately NOT the Choose Plan
+ * screen — that one asks somebody who has already handed over money to hand
+ * over money again, which is how a paying customer ends up believing the
+ * product is broken.
+ *
+ * The copy therefore does exactly three things: confirm the payment is in hand,
+ * say that a person (not a button) switches the account on, and hand over the
+ * address and number to message. It promises no timeline because there isn't
+ * one to promise.
+ *
+ * The parent polls while this is on screen and navigates to /app/home the
+ * instant the ledger row appears, so "check again" below is a reassurance for
+ * somebody in a hurry, not the mechanism that unlocks anything.
+ */
+function AwaitingActivation({ email, onRecheck, checking, onCancel }: { email: string; onRecheck: () => void; checking: boolean; onCancel: () => void }) {
+  const whatsappHref = `https://wa.me/27704950612?text=${encodeURIComponent(`Hi EA Migrate, I have just paid and I am waiting for activation. My email is ${email || "my email"}.`)}`;
+  return <div className="-translate-y-8 text-center">
+    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+    </div>
+    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Payment received</h1>
+    <p className="mt-2 text-base leading-7 text-[#8a9298]">
+      Thanks{email ? <> <span className="font-semibold text-[#55c7ff]">{email}</span></> : null} — your payment is in, and your
+      account is being switched on now.
+    </p>
+    <div role="status" className="mt-6 rounded-2xl border border-[#08a8ef]/45 bg-[#08a8ef]/10 p-5 text-left">
+      <p className="text-base font-bold leading-6 text-[#9fdcff]">Activation is done by hand</p>
+      <p className="mt-1.5 text-sm leading-6 text-[#bcd9e8]/80">
+        Each account is opened by our team after your payment is confirmed, so this step
+        takes a short time rather than being instant. Send us a message to get it moved
+        along — include the email you paid with.
+      </p>
+    </div>
+    <a
+      href={whatsappHref}
+      target="_blank"
+      rel="noreferrer"
+      className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#25D366] font-bold text-black transition hover:brightness-110"
+    >
+      Message us on WhatsApp
+    </a>
+    <p className="mt-2 text-sm text-[#8a9298]">
+      {SUPPORT_WHATSAPP} · or email <a className="font-semibold text-[#55c7ff] underline" href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("Payment received — please activate my account")}&body=${encodeURIComponent(`My email is ${email}. I have paid and I am waiting for activation.`)}`}>{SUPPORT_EMAIL}</a>
+    </p>
+    <button
+      type="button"
+      onClick={onRecheck}
+      disabled={checking}
+      className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 font-semibold transition hover:border-[#08a8ef]/60 hover:text-[#55c7ff] disabled:opacity-60"
+    >
+      {checking ? "Checking…" : "I have contacted support — check again"}
+    </button>
+    <p className="mt-4 text-sm text-[#8a9298]">
+      Leave this screen open — the app opens itself as soon as your account is activated.
+    </p>
+    <button type="button" onClick={onCancel} className="mt-4 text-sm font-semibold text-[#8a9298] underline transition hover:text-[#55c7ff]">
+      I haven&apos;t paid yet — back to sign in
+    </button>
   </div>;
 }
 
