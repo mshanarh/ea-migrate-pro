@@ -312,10 +312,29 @@ function AppAccess() {
       // read as "this account is fine" — an earlier "allow" fallback here was
       // a payment hole. An undecided account goes to checkout, which is
       // recoverable; walking into the app without paying is not.
-      const registration = await withDeadline(registerWithEmail(clean), left(), { outcome: "checkout", user: null } as Awaited<ReturnType<typeof registerWithEmail>>);
+      const registration = await withDeadline(registerWithEmail(clean), left(), {
+        outcome: "checkout",
+        user: null,
+        verified: false,
+      } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
 
-      if (registration.outcome === "checkout") {
+      /**
+       * STRICT ENTITLEMENT CHECK — the ONE gate in front of everything else.
+       *
+       * `registration.verified` is true only when the database positively
+       * confirmed this email (is_paid, is_admin, a platform owner, or a
+       * license_keys row issued to it). It is false for a checkout answer AND
+       * for every error path, so a failed or undecided lookup can never be
+       * mistaken for permission. A timeout lands here as `verified: false`
+       * too, because the deadline fallback above says so explicitly.
+       *
+       * NOTHING BELOW THIS BLOCK RUNS FOR AN UNVERIFIED ACCOUNT: no device
+       * binding, no blocked card, no sign-in. In particular an unpaid email can
+       * never be told "Account already used — ask your mentor", which is the
+       * screen that used to appear instead of the plans.
+       */
+      if (!registration.verified) {
         if (successReturn) {
           // The URL flag says they returned from checkout — prove it on the
           // server before granting anything. Unverifiable → Choose Plan.
@@ -323,16 +342,17 @@ function AppAccess() {
           if (verified) return;
         }
         // STOP HERE. The unpaid account does not go near /app/home; it lands
-        // on the Choose Plan screen and picks monthly or lifetime.
+        // on the Plan Selection screen and picks monthly or lifetime.
         setRedirecting(false);
         setChoosePlan(true);
         return;
       }
 
-      // ENTITLED — admin, or marked paid / holding a licence key. Only NOW do
-      // the device rules apply: if this email is bound to another phone, do
-      // NOT sign in — show the blocked card ("account already used, please
-      // tell your mentor to reactivate"). There is no self-service unlock.
+      // ENTITLED — the database has positively confirmed this account. Only
+      // NOW do the device rules apply: if this email is bound to another
+      // phone, do NOT sign in — show the blocked card ("account already used,
+      // please tell your mentor to reactivate"). There is no self-service
+      // unlock. This is reachable ONLY for a verified paid/admin account.
       try {
         const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), { boundToOtherDevice: false });
         if (binding.boundToOtherDevice) {

@@ -63,10 +63,15 @@ const DIRECTION_LABELS: Record<PairDirection, string> = {
 
 /**
  * Quotes for the ACTIVE robot — the symbols the EA's creator attached to this
- * EA, shown exactly as the bot added them. "Selected Quotes" are the switched-on
- * symbols with their trade settings (lot size, type, number of trades); the
- * "Allowed Quotes" tab lists the EA's remaining symbols ready to configure.
- * The scanner only scans Selected Quotes.
+ * EA, shown exactly as the bot added them.
+ *
+ * THE TWO TABS HOLD DISJOINT HALVES OF THAT UNIVERSE:
+ *   Selected Quotes — every EA symbol NOT yet configured (the pick list)
+ *   Allowed Quotes  — ONLY the symbols the user opened, set lot/direction/
+ *                     trade count for and pressed Configure on
+ *
+ * Configuring ONE symbol moves exactly that symbol across; the rest stay in
+ * Selected Quotes. START on the Home screen trades Allowed Quotes only.
  */
 function TradingPairsScreen() {
   const navigate = useNavigate();
@@ -110,14 +115,16 @@ function TradingPairsScreen() {
   };
 
   /**
-   * CONFIGURE — save the symbol's settings to the robot's Selected Quotes and
-   * then actually place the trade, rather than only filing the settings away.
+   * CONFIGURE — move exactly ONE symbol into Allowed Quotes.
    *
-   * The settings are saved FIRST and unconditionally, so the symbol is part of
-   * the robot even if the broker later refuses the order. Execution then runs
-   * in the background against the user's own saved MT5 account; without a
-   * configured account the save still stands and no error is raised, because
-   * configuring a symbol is not the same thing as trading it.
+   * Only `configSymbol` is written: the existing pairs are mapped over (an
+   * already-configured symbol is updated in place) and the new one is
+   * appended. Nothing else is added, reordered or auto-configured — a symbol
+   * the user never configured stays in Selected Quotes.
+   *
+   * NO TRADE FIRES HERE. Configuring is a filing action; execution belongs to
+   * the Home screen's START button, which runs exactly the symbols that made
+   * it into Allowed Quotes.
    */
   const saveConfig = () => {
     if (!robot || !configSymbol) return;
@@ -134,7 +141,7 @@ function TradingPairsScreen() {
         ? mine.map((pair) => (symbolKey(pair.symbol) === symbolKey(configSymbol) ? { ...pair, ...entry } : pair))
         : [...mine, entry],
     );
-    toast.success(exists ? `${configSymbol} updated` : `${configSymbol} added to Selected Quotes`);
+    toast.success(exists ? `${configSymbol} updated` : `${configSymbol} added to Allowed Quotes`);
     // After configuring, jump back to Allowed Quotes — that is the list the
     // user picks the next symbol from.
     setTab("allowed");

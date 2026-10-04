@@ -460,8 +460,18 @@ function AppHome() {
    * finished without an explanation.
    */
   const runConfiguredPairs = async (target: Robot) => {
+    // ALLOWED QUOTES ONLY. `target.pairs` IS the Allowed Quotes list — the
+    // symbols the user opened, set lot/direction/trade count for and pressed
+    // Configure on. Nothing is ever inferred from the EA's symbol universe
+    // (target.symbols), so a symbol sitting in Selected Quotes can never be
+    // traded by START.
     const pairs = target.pairs ?? [];
-    if (pairs.length === 0) return;
+    if (pairs.length === 0) {
+      // NOTHING TO TRADE — say so instead of leaving a running bot that
+      // silently does nothing, which reads as "the bot is broken".
+      toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
+      return;
+    }
     const credentials = readMtCredentials(app.mt);
     if (!credentials) {
       toast.message(`${target.name} is running`, {

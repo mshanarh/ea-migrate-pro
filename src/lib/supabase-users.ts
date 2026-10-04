@@ -11,15 +11,34 @@
  * to the mentor portal signup (src/routes/signup.tsx) and has no bearing on
  * whether somebody may use the app.
  *
- * While Supabase env vars are missing the module degrades gracefully and
- * the legacy local payment store decides, so the app never blocks. A
- * partially-migrated schema (e.g. a missing column) must never lock a
- * customer out either — failures here fail open to the legacy local gate.
+ * FAIL CLOSED. Every runtime failure — an upsert error, a read error, a row
+ * that does not exist — now returns "checkout" rather than "allow". An error
+ * is not evidence that somebody paid, and the previous fail-open behaviour
+ * handed the app to accounts the database had never confirmed. The one
+ * environment-level exception is Supabase being UNCONFIGURED at build time
+ * (missing VITE_SUPABASE_URL), which is not attacker-controllable; there the
+ * module keeps its documented offline fallback.
  */
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
 export type RegistrationOutcome = "allow" | "checkout" | "admin";
+
+/**
+ * The result of a registration attempt.
+ *
+ * `verified` is the flag the login screen gates on: it is true ONLY when the
+ * database POSITIVELY confirmed this email is entitled (paid, admin, a
+ * platform owner, or the holder of a license_keys row). It is false for every
+ * checkout answer AND for every error path — so "did the call succeed?" can
+ * never be mistaken for "may this account in?".
+ */
+export type RegistrationResult = {
+  outcome: RegistrationOutcome;
+  user: UserRow | null;
+  verified: boolean;
+  error?: string;
+};
 
 function clean(email: string) {
   return email.trim().toLowerCase();
@@ -31,20 +50,25 @@ function db() {
 }
 
 /**
- * Registration gate. Fail-open by design: every Supabase error path lands on
- * the legacy local payment store instead of an error screen, so a schema
- * hiccup degrades the check rather than blocking sign-in. The ONLY case that
- * blocks an email is an explicit unpaid decision from a successfully read
- * row — so nobody can skip checkout just because the database hiccuped.
+ * Registration gate. FAIL CLOSED on every runtime error: a failed upsert, a
+ * failed read or a missing row all answer "checkout", because none of them is
+ * proof that this email paid. Only a positive signal lets somebody through —
+ * is_paid, is_admin, an email in OWNER_EMAILS, or a license_keys row issued
+ * for that address (a key only exists because somebody paid for it).
  */
 export async function registerWithEmail(
   email: string,
   licenseKey?: string,
-): Promise<{ outcome: RegistrationOutcome; user: UserRow | null; error?: string }> {
+): Promise<RegistrationResult> {
   const dbClient = db();
   const address = clean(email);
-  if (!dbClient || !address) {
-    return { outcome: "allow", user: null, ...(supabaseConfigured ? {} : { error: "supabase-not-configured" }) };
+  if (!address) return { outcome: "checkout", user: null, verified: false, error: "missing-email" };
+  // UNCONFIGURED SUPABASE → CHECKOUT. There is no database to verify against,
+  // so there is no way to confirm anybody paid; "we cannot check" must never
+  // read as "this account is fine". This only affects a build with no
+  // VITE_SUPABASE_URL, which is not attacker-controllable.
+  if (!dbClient) {
+    return { outcome: "checkout", user: null, verified: false, error: "supabase-not-configured" };
   }
   const isOwner = OWNER_EMAILS.includes(address);
 
@@ -60,9 +84,11 @@ export async function registerWithEmail(
 
   if (upsertError) {
     // 42703 = PostgREST "column does not exist" — the table predates a
-    // migration. Treat as read failure, not a registration failure.
+    // migration. FAIL CLOSED: a failed upsert means the row could not be
+    // created AND could not be read, which is exactly the state an unverified
+    // account has. An error must never be read as "this account is fine".
     console.warn("[supabase] user upsert failed:", upsertError.code, upsertError.message);
-    return { outcome: "allow", user: null, error: upsertError.message };
+    return { outcome: "checkout", user: null, verified: false, error: upsertError.message };
   }
 
   // 2. NO APPROVAL ROW, NO ADMIN ALERT FROM THE APP.
@@ -100,25 +126,39 @@ export async function registerWithEmail(
     user = (fetched as UserRow | null) ?? null;
   }
 
-  // An unreadable row must NOT force the user to pay — fail open.
-  if (!user) return { outcome: "allow", user: null };
-  // PLATFORM OWNERS are admins BEFORE the database is consulted. Their live
-  // users row can lag (is_admin/is_paid false — e.g. created before the flag
-  // existed), and that stale row used to bounce the owner to Whop checkout
-  // right after sign-in (the "app kicks me out" bug) and blocked the
-  // scanner. The hardcoded owner list decides first, everywhere.
-  if (isOwner) return { outcome: "admin", user: { ...user, is_paid: true, is_admin: true } };
-  if (user.is_admin) return { outcome: "admin", user };
+  // A MISSING ROW IS NOT PERMISSION. This used to fail OPEN ("an unreadable
+  // row must not force the user to pay"), which meant a deleted row, a
+  // transient read failure or a schema mismatch handed the app to an account
+  // the database has never confirmed. Anything that is not a positive proof
+  // of payment is now treated exactly like an unpaid account: checkout.
+  //
+  // PLATFORM OWNERS are checked FIRST — before the row is even required —
+  // because their users row can lag (is_admin/is_paid false, or absent). The
+  // hardcoded owner list decides first, everywhere.
+  if (isOwner) {
+    return {
+      outcome: "admin",
+      user: user ? { ...user, is_paid: true, is_admin: true } : null,
+      verified: true,
+    };
+  }
+  if (!user) return { outcome: "checkout", user: null, verified: false };
+  if (user.is_admin) return { outcome: "admin", user, verified: true };
   // PAYMENT IS THE ONLY THING THAT OPENS THE APP.
   //   is_paid          → the owner marked this email as paid in the console.
-  //   a licence key    → the key only exists because they paid for it.
+  //   a licence key    → the key only exists because a mentor/admin issued it
+  //                      AFTER payment, so it is proof of payment, not
+  //                      permission. Kept deliberately: a client who has paid
+  //                      but not yet activated their key has is_paid = false,
+  //                      and dropping this would send them back to checkout to
+  //                      pay a second time.
   //   neither          → checkout, on Android, iOS and the web alike.
   // Mentor approval is deliberately NOT consulted: approving somebody in the
   // mentor portal says nothing about the app, and treating it as permission
   // is what let unpaied people in.
-  if (user.is_paid) return { outcome: "allow", user };
-  if (await emailHasLicenseKey(address)) return { outcome: "allow", user };
-  return { outcome: "checkout", user };
+  if (user.is_paid) return { outcome: "allow", user, verified: true };
+  if (await emailHasLicenseKey(address)) return { outcome: "allow", user, verified: true };
+  return { outcome: "checkout", user, verified: false };
 }
 
 /** Read one user's flags from Supabase ("read own user by email"). */
