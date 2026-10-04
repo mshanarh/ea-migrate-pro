@@ -1,7 +1,6 @@
 import { motion } from "framer-motion";
 import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
-import type { InterfaceThemeId } from "@/lib/app-customization";
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
@@ -323,11 +322,10 @@ export function ThemeContent(props: ThemeContentProps) {
         image={props.robot?.image || "/logo.png"}
         video={props.robot?.video}
         accent={accentColorValue(color)}
-        showImageWhenInactive={false}
-        // Big-screen themes play the video INSIDE the card (RobotMedia hero);
-        // only the small-circle theme (BLUEPRINT EDGE) uses this backdrop to
-        // play the video, so it must never run in two places at once.
-        videoWhenActive={theme === "BLUEPRINT EDGE"}
+        showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX"}
+        // Signature layouts use their robot media as the full background.
+        // The other big-screen themes play video inside their hero card.
+        videoWhenActive={theme === "BLUEPRINT EDGE" || theme === "SNIFFER" || theme === "PHOENIX"}
       />
       <ThemeContentInner {...props} />
     </>
@@ -371,10 +369,10 @@ function ThemeContentInner(props: ThemeContentProps) {
     return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "SNIFFER") {
-    return <Sniper robot={props.robot} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+    return <Sniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "PHOENIX") {
-    return <Phoenix robot={props.robot} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+    return <Phoenix robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "BLUEPRINT EDGE") {
     return (
