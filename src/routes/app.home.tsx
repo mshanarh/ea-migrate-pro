@@ -1,59 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
-import { setVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
-
-/** Double-tap on the HOME hero to play the current EA video as a full-screen
- *  background over black (toggle). The robot picture stays visible in the
- *  interface slots; a single tap or a tap outside the media pauses playback. */
-function useHomeDoubleTap() {
-  /** Tracks the timestamp of the most recent tap; a second tap inside the
-   *  window is a double-tap (plays the video), a solitary tap or a tap
-   *  outside pauses it. */
-  const lastTap = useRef<number | null>(null);
-
-  const onTap = useCallback((event: React.TouchEvent | MouseEvent) => {
-    const now = Date.now();
-    const wasQuick = lastTap.current !== null && now - lastTap.current < 300;
-    lastTap.current = now;
-
-    // Double-tap (two taps within 300ms) plays the background video.
-    // Any single tap does NOT toggle the video.
-    if (wasQuick) {
-      toggleVideoPlayback();
-    }
-  }, []);
-
-  useEffect(() => {
-    const onTouchEnd = (event: TouchEvent) => {
-      // Ignore multi-touch gestures (pinches, two-finger scrolls).
-      if ((event as TouchEvent).touches.length > 1) return;
-      const touch = (event as TouchEvent).changedTouches[0];
-      if (!touch) return;
-      onTap(touch as unknown as MouseEvent);
-    };
-    const onMouseUp = (event: MouseEvent) => {
-      // Exclude the right-click and text-selection drags.
-      if (event.button !== 0) return;
-      onTap(event);
-    };
-    window.addEventListener("touchend", onTouchEnd);
-    window.addEventListener("mouseup", onMouseUp);
-    return () => {
-      window.removeEventListener("touchend", onTouchEnd);
-      window.removeEventListener("mouseup", onMouseUp);
-    };
-  }, [onTap]);
-
-  // Optional mouse-level double-click as a secondary trigger.
-  const onDoubleClick = useCallback((event: MouseEvent) => {
-    if (event.detail === 2) toggleVideoPlayback();
-  }, []);
-  useEffect(() => {
-    window.addEventListener("dblclick", onDoubleClick as EventListener);
-    return () => window.removeEventListener("dblclick", onDoubleClick as EventListener);
-  }, [onDoubleClick]);
-}
 import {
   Dialog,
   DialogContent,
@@ -320,9 +267,6 @@ function AppHome() {
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
-  // Double-tap on Home toggles the EA video as a full-screen background over black.
-  useHomeDoubleTap();
-
   // Pull the mentor's latest EA data (symbols, image, video) into the activated
   // robots whenever the home screen mounts — portal edits appear instantly.
   // LOCAL store covers mentors on their own device; the CLOUD portal scan
@@ -565,7 +509,6 @@ function AppHome() {
         className="app-fullscreen flex w-full flex-col bg-black text-white"
         onTouchStart={onTouchStart}
         onTouchEnd={(event) => {
-          // A quick tap pauses (stops) the background video — does NOT toggle.
           // A horizontal swipe (>70px) opens the customisation drawer.
           if (touchStartX.current !== null && event.changedTouches?.length === 1) {
             const touchEnd = event.changedTouches?.[0];
@@ -574,12 +517,6 @@ function AppHome() {
             if (dx > 70) {
               // Horizontal swipe opens the customisation drawer.
               setDrawerOpen(true);
-              touchStartX.current = null;
-              return;
-            }
-            if (Math.abs(dx) < 70) {
-              // Single tap (no horizontal movement) pauses the background video.
-              setVideoActive(false);
               touchStartX.current = null;
               return;
             }

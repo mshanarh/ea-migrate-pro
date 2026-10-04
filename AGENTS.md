@@ -8,3 +8,6 @@
 > Commits you push to the connected branch sync back to Lovable and show up in
 > the editor, so keep the branch in a working state.
 <!-- LOVABLE:END -->
+
+- Phoenix and Sniper must derive robot names, imagery, running state, and accent color from live app state so user customization remains authoritative.
+- Robot background video is controlled only by a double press on the HOME navigation button; static robot imagery remains visible until then.
