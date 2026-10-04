@@ -707,6 +707,7 @@ function AdminConsole() {
               progress={sendProgress}
               recipientCount={users.length}
               onSend={() => void sendToAll()}
+              adminEmail={account.email}
               messages={messages}
             />
           ) : (
@@ -1057,6 +1058,7 @@ function MessagePanel({
   recipientCount,
   onSend,
   messages,
+  adminEmail,
 }: {
   message: string;
   setMessage: (value: string) => void;
@@ -1067,6 +1069,7 @@ function MessagePanel({
   recipientCount: number;
   onSend: () => void;
   messages: AdminMessage[];
+  adminEmail: string;
 }) {
   /**
    * CLEAR A MESSAGE — removes one row from the history.
@@ -1091,7 +1094,7 @@ function MessagePanel({
 
   const clearMessage = async (id: string) => {
     setClearing(id);
-    const result = await deleteBroadcast(id);
+    const result = await deleteBroadcast(id, adminEmail);
     setClearing(null);
     setConfirmClear(null);
     if (!result.ok) {

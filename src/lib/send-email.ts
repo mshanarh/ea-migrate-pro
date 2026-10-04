@@ -238,6 +238,47 @@ async function sendViaBrevo(options: {
   params?: Record<string, unknown>;
 }): Promise<{ ok: boolean; error?: string }> {
   const params = options.params ?? {};
+  const message = renderMessage(options.kind, options.to, params);
+  if (!message) return { ok: false, error: "That email could not be built." };
+
+  /* THE SERVER FIRST — this is the route that works on the real deployment.
+   *
+   * The two routes below it are both dead ends in production, which is why no
+   * email was arriving anywhere: the Supabase edge function has never been
+   * deployed (404), and the browser fallback needs `VITE_BREVO_API_KEY`, which
+   * is deliberately unset because Vite inlines it into the public bundle.
+   *
+   * `/api/portal` is a Vercel function (see api/portal.ts) that holds
+   * BREVO_API_KEY server-side, so the secret stays out of the shipped
+   * JavaScript. Nothing is lost by trying it first: both older routes are
+   * still attempted when it is absent, which is what keeps a bare `vite dev`
+   * working with no server at all.
+   */
+  try {
+    const response = await fetch("/api/portal", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "sendEmail",
+        to: message.to,
+        subject: message.subject,
+        html: message.html,
+        text: message.text,
+      }),
+      signal: AbortSignal.timeout(20_000),
+    });
+    if (response.ok) {
+      const reply = (await response.json()) as { ok: boolean; error?: string };
+      // A 200 carrying ok:false is a real refusal from Brevo (sender not
+      // verified, bad address). Falling through would hide it behind the
+      // browser fallback's vaguer message, so it is reported as-is.
+      return reply.ok ? { ok: true } : { ok: false, error: reply.error ?? "The email service refused the message." };
+    }
+    console.warn(`[send-email] /api/portal replied ${response.status} — trying the older routes.`);
+  } catch {
+    console.warn("[send-email] /api/portal unreachable — trying the older routes.");
+  }
+
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
       const response = await fetch(`${SUPABASE_URL}/functions/v1/send-email`, {
@@ -260,8 +301,6 @@ async function sendViaBrevo(options: {
       console.warn("[send-email] edge function unreachable — using the browser fallback.");
     }
   }
-  const message = renderMessage(options.kind, options.to, params);
-  if (!message) return { ok: false, error: "That email could not be built." };
   return sendDirectFromBrowser(message);
 }
 

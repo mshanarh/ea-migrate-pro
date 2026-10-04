@@ -520,16 +520,60 @@ export async function setUserPaid(email: string, paid: boolean): Promise<AdminWr
 /**
  * Delete one broadcast from the message history.
  *
- * Routed through the SERVER function because the anon key has no DELETE grant on
+ * Routed through the SERVER because the anon key has no DELETE grant on
  * `app_messages` — a direct browser delete fails with `42501 permission denied`
- * (verified live). The DYNAMIC import is deliberate and matches every other use
- * of supabase.server in this bundle: statically importing it pulls TanStack
+ * (verified live). `/api/portal` is tried first because it is the route that
+ * actually answers on the static deployment; the server function below is the
+ * fallback for a host that does run them.
+ *
+ * The DYNAMIC import is deliberate and matches every other use of
+ * supabase.server in this bundle: statically importing it pulls TanStack
  * server-function registration into the client graph, which crashed the Android
  * WebView build ("Dashboard didn't load").
  */
-export async function deleteBroadcast(id: string): Promise<AdminWriteResult> {
+export async function deleteBroadcast(id: string, adminEmail?: string): Promise<AdminWriteResult> {
   const clean = id.trim();
   if (!clean) return { ok: false, error: "Missing message id" };
+
+  /* THE ROUTE THAT WORKS ON THE STATIC DEPLOYMENT, tried first.
+   *
+   * The server function below answers **405** here, because this app ships as
+   * a static `dist/` and there is no long-running Node process to answer
+   * `POST /_serverFn/*`. `/api/portal` is a Vercel function (api/portal.ts)
+   * that deletes with the service-role key, which is the only thing that can
+   * remove a row at all — `app_messages` grants the anon key insert + select
+   * and no delete.
+   *
+   * The old path is still attempted when the function is absent, so a bare
+   * `vite dev` with no server behaves as it always did.
+   */
+  if (adminEmail) {
+    try {
+      const response = await fetch("/api/portal", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "deleteMessage", id: clean, adminEmail }),
+        signal: AbortSignal.timeout(15_000),
+      });
+      if (response.ok) {
+        const reply = (await response.json()) as { ok: boolean; error?: string };
+        // A 200 with ok:false is a real answer from the function — a refusal,
+        // or a row that was already gone. Falling through to the dead path
+        // would replace that with a confusing 405, so it is reported as-is.
+        return reply.ok
+          ? { ok: true }
+          : {
+              ok: false,
+              error: reply.error ?? "Could not delete that message.",
+              needsAttention: /not configured|permission/i.test(reply.error ?? ""),
+            };
+      }
+      console.warn(`[admin] /api/portal replied ${response.status} — trying the server function.`);
+    } catch {
+      console.warn("[admin] /api/portal unreachable — trying the server function.");
+    }
+  }
+
   try {
     const { adminDeleteMessage } = await import("@/lib/supabase.server");
     const result = await adminDeleteMessage({ data: { id: clean } });
