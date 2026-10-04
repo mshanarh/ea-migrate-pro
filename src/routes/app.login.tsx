@@ -1,15 +1,55 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, getDeviceId, useAppState } from "@/lib/app-store";
+import { activateKey, appSignIn, appSignOut, getAppState, getDeviceId, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
-import { verifyPaymentReturn, invalidateAccessCache, resolveCloudAccess, type CloudAccess } from "@/lib/payment-gate";
+import {
+  verifyPaymentReturn,
+  invalidateAccessCache,
+  resolveCloudAccess,
+  requireVerifiedAccess,
+  type AppAccessCheck,
+  type CloudAccess,
+} from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
+
+/**
+ * Query flags that mean "this page was DELIBERATELY sent here" — a route guard
+ * or a payment return. Each one has to keep the user on the login screen even
+ * when a session email is sitting in localStorage, or the resume redirect would
+ * bounce them straight back where they came from:
+ *   ?pay=1         — the access gate decided this account must pay
+ *   ?deactivated=1 — an admin pressed "Set unpaid"; there is a notice to read
+ *   ?success=true  — straight back from Whop checkout, awaiting verification
+ *   ?reset=1       — the explicit "start over" escape hatch
+ */
+const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset"]);
 
 export const Route = createFileRoute("/app/login")({
   ssr: false,
+  /**
+   * PERSISTENT SESSION — never ask for the email twice.
+   *
+   * A saved session (localStorage `eamp.app.v3`) used to be ignored here, so
+   * every app launch opened the email form even for someone already signed in
+   * — including on the deep link out of the Whatsop/checkout return. If the
+   * database is asked first (requireVerifiedAccess, which is the authority
+   * everywhere else), this screen can send an entitled session straight on.
+   *
+   * This is CONVENIENCE ONLY, never the security boundary: /app/home's own
+   * beforeLoad re-verifies against the cloud on entry, so a hand-edited
+   * localStorage still cannot grant access. The flags in RESUME_EXEMPT_FLAGS
+   * are the deliberate hand-offs and must survive the redirect.
+   */
+  beforeLoad: ({ location }) => {
+    const params = new URLSearchParams(location.search);
+    for (const flag of RESUME_EXEMPT_FLAGS) {
+      if (params.get(flag) === "1" || params.get(flag) === "true") return;
+    }
+    if (getAppState().email) throw redirect({ href: "/app/home" });
+  },
   head: () => ({ meta: [{ title: "Login — EA Migrate" }, { name: "description", content: "Enter your email to continue to EA Migrate." }] }),
   component: AppAccess,
 });
@@ -111,6 +151,21 @@ function AppAccess() {
   // NO self-reactivation: delete + reinstall must NOT unlock the account.
   // Applies to EVERYONE — clients and admins alike.
   const [blockedEmail, setBlockedEmail] = useState<string | null>(null);
+  /**
+   * RESUMING A SAVED SESSION.
+   *
+   * True from the first paint whenever localStorage already holds an email, and
+   * it stays true until the cloud has ruled on that session. It renders the
+   * "Restoring your session…" screen instead of the email form, which is the
+   * whole point of the persistent session: an activated user is NEVER asked for
+   * their email again on a normal launch.
+   *
+   * It is deliberately NOT seeded from `app.email` (a reactive snapshot) but
+   * from the store read at mount, so it cannot flicker on after a fresh
+   * sign-in typed on this very screen — that flow stays on the form until its
+   * own handler finishes.
+   */
+  const [resuming, setResuming] = useState<boolean>(() => Boolean(getAppState().email));
   // NOTE: there is deliberately no "waiting for approval" card here any more.
   // Mentor approval is a PORTAL decision; typing an email into the app is a
   // payment attempt, so the only two outcomes are "you are paid, welcome" and
@@ -152,8 +207,17 @@ function AppAccess() {
    * every store re-initialises empty. `enforceAuthEpoch()` returns true only
    * on the run that wipes, so this can never loop.
    */
+  const [epochCleared, setEpochCleared] = useState(false);
   useEffect(() => {
-    if (enforceAuthEpoch()) window.location.replace("/app/login");
+    if (enforceAuthEpoch()) {
+      // The buckets were just wiped. `resuming` was seeded from the email that
+      // no longer exists, so drop it — otherwise the resume handshake below
+      // would spend a cloud call verifying a session the epoch just revoked.
+      setResuming(false);
+      window.location.replace("/app/login");
+      return;
+    }
+    setEpochCleared(true);
   }, []);
 
   useEffect(() => {
@@ -222,8 +286,75 @@ function AppAccess() {
    * remembered "unpaid" from before the owner pressed Mark paid would be
    * exactly the wrong thing to trust.
    */
+  /**
+   * RESUME A SAVED SESSION — the persistent-session handshake.
+   *
+   * Runs ONCE, on mount, and only when a session email was already in the
+   * store when the page loaded. It asks `requireVerifiedAccess`, the SAME
+   * function every route guard uses, so this screen can never disagree with
+   * the gate:
+   *
+   *   pass       → straight into /app/home. No email prompt, and — deliberately
+   *                — no `robots.length > 0` condition: an activated account
+   *                with no robot yet belongs on the home screen, which has its
+   *                own "Add robot" state. Requiring a robot is what stranded
+   *                people on this login form looking like a failed sign-in.
+   *   signin     → no session any more (revoked elsewhere); show the form.
+   *   deactivate → the owner marked the account unpaid; sign out and show the
+   *                deactivation notice.
+   *   pay        → must pay; sign out (the gate's own rule) and show the plans.
+   *
+   * The deadline is deliberately generous (25s). A wrong or absent answer here
+   * must NEVER open the app — it falls through to the plain login form, and the
+   * cloud guard on /app/home re-checks everything regardless.
+   */
   useEffect(() => {
-    if (!app.email || successReturn || choosePlan) return;
+    if (!epochCleared || !resuming) return;
+    const sessionEmail = getAppState().email;
+    if (!sessionEmail) {
+      setResuming(false);
+      return;
+    }
+    let cancelled = false;
+    void (async () => {
+      const access = await withDeadline<AppAccessCheck>(requireVerifiedAccess(sessionEmail), 25_000, { action: "signin" });
+      if (cancelled) return;
+      if (access.action === "pass") {
+        // Mirror the verdict locally so the app renders as entitled from the
+        // very first frame instead of flashing an "unpaid" state on the way in.
+        markEmailPaid(sessionEmail);
+        setCloudStatus(paymentStatusForEmail(sessionEmail) === "admin" ? "admin" : "paid");
+        window.location.replace("/app/home");
+        return;
+      }
+      if (access.action === "deactivate") {
+        appSignOut();
+        setCloudStatus(null);
+        window.history.replaceState({}, "", "/app/login?deactivated=1");
+        setDeactivated(true);
+        setResuming(false);
+        return;
+      }
+      if (access.action === "pay") {
+        leaveForCheckout();
+        setCloudStatus("unpaid");
+        setChoosePlan(true);
+        setResuming(false);
+        return;
+      }
+      // signin — the stored session is no longer valid (device revoked or the
+      // epoch was reset). Drop it so the form starts clean.
+      appSignOut();
+      setCloudStatus(null);
+      setResuming(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    }, [resuming, epochCleared]);
+
+  useEffect(() => {
+    if (resuming || !app.email || successReturn || choosePlan) return;
     let cancelled = false;
     setCloudStatus(null);
     void (async () => {
@@ -238,10 +369,10 @@ function AppAccess() {
     return () => {
       cancelled = true;
     };
-  }, [app.email, successReturn, choosePlan]);
+  }, [app.email, successReturn, choosePlan, resuming]);
 
   useEffect(() => {
-    if (!app.email || successReturn) return;
+    if (resuming || !app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
     if (busy || choosePlan || payPrompt || mustPay || blockedEmail) return;
@@ -263,7 +394,7 @@ function AppAccess() {
     // ping-pong with nothing ever happening. The Choose Plan screen owns them.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, effectiveStatus]);
+  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, effectiveStatus, resuming]);
 
   /**
    * THE CHOOSE PLAN GATE — one place decides whether ANY part of the app may
@@ -470,7 +601,9 @@ function AppAccess() {
 
   return <div className="min-h-screen w-full bg-[#070d10] text-white">
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {showChoosePlan ? (
+      {resuming ? (
+        <ResumingView />
+      ) : showChoosePlan ? (
         <PlanSelection
           email={activeEmail}
           selectedPlan={selectedPlan}
@@ -482,6 +615,43 @@ function AppAccess() {
       !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
+}
+
+/**
+ * The persistent-session loader.
+ *
+ * Shown while `requireVerifiedAccess` rules on a session that was already in
+ * localStorage. It has to look like a considered part of the app rather than a
+ * frozen form — the alternative (painting the email input first and replacing
+ * it a second later) is exactly the flicker that made the old behaviour feel
+ * like the app had forgotten who you were.
+ *
+ * Nothing here is clickable: there is no decision to make while the cloud is
+ * thinking, and a button here could only ever be a lie about what it does.
+ */
+function ResumingView() {
+  return (
+    <div className="-translate-y-8 flex flex-col items-center text-center" role="status" aria-live="polite">
+      <div className="relative flex size-28 items-center justify-center">
+        <span
+          className="absolute inset-0 animate-ping rounded-full bg-[#08a8ef]/20"
+          style={{ animationDuration: "1.8s" }}
+          aria-hidden="true"
+        />
+        <div className="relative flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+          <img src="/logo.png" alt="" className="size-full object-contain" />
+        </div>
+      </div>
+      <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Welcome back</h1>
+      <p className="mt-2 text-base text-[#8a9298]">Restoring your session…</p>
+      <span
+        className="mt-10 h-1 w-40 overflow-hidden rounded-full bg-white/10"
+        aria-hidden="true"
+      >
+        <span className="block h-full w-1/2 animate-pulse rounded-full bg-[#08a8ef]" />
+      </span>
+    </div>
+  );
 }
 
 /**

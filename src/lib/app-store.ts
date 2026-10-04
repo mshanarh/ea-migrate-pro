@@ -443,7 +443,15 @@ async function findLicenseInCloud(
       console.error("[key-activation] cloud lookup failed:", error.message);
       return null;
     }
-    if (rows.length === 0) return null;
+    // THE PORTAL SCAN IS THE AUTHORITATIVE ANSWER, so it is collected BEFORE
+    // any rejection below. A key issued through the mentor portal often has no
+    // license_keys row at all, or one row whose `email` column is a different
+    // (or empty) value than the one being activated; both used to return early
+    // and throw away the scan that carried the EA's real name, picture and
+    // symbols — the robot then activated as "Private EA" with the platform
+    // logo and an empty Quotes list.
+    const fromPortal = await fromPortalPromise;
+    if (rows.length === 0) return fromPortal;
     // A key issued to a specific email belongs to THAT email (unset email =
     // open key, activated by whoever enters it first). Shared keys have one
     // row per user — the activator's own row (or the open row) wins.
@@ -451,6 +459,10 @@ async function findLicenseInCloud(
     const mine = rows.find((row) => typeof row.email === "string" && row.email.trim().toLowerCase() === lower);
     const open = rows.find((row) => typeof row.email !== "string" || row.email.trim() === "");
     if (!mine && !open) {
+      // The portal may still hold this key for a license whose clientEmail is
+      // blank or already this email — its verdict outranks the empty
+      // license_keys column. Only a genuine portal miss is an error.
+      if (fromPortal) return fromPortal;
       return { error: "That license key belongs to a different email." };
     }
     const data = (mine ?? open) as LicenseKeyRow;
@@ -461,10 +473,6 @@ async function findLicenseInCloud(
     const extended = data as unknown as { ea_name?: unknown; expiry?: unknown };
     if (typeof extended.ea_name === "string" && extended.ea_name) eaName = extended.ea_name;
     if (typeof extended.expiry === "string" && extended.expiry) expiry = extended.expiry;
-    // Both reads are done — collect the parallel portal scan. The mentor's
-    // portal account is the AUTHORITATIVE copy of the EA (picture, video,
-    // symbols); license_keys only fills the gaps.
-    const fromPortal = await fromPortalPromise;
     if (fromPortal?.license) {
       const mergedLicense: { eaName?: string; expiry?: string } = {};
       const mergedName = fromPortal.license.eaName || eaName;
@@ -544,21 +552,37 @@ async function findLicenseInPortalAccounts(
       for (const license of parsed.licenses ?? []) {
         if (typeof license.key !== "string" || license.key.trim().toUpperCase() !== key) continue;
         const clientEmail = typeof license.clientEmail === "string" ? license.clientEmail.trim().toLowerCase() : "";
-        const accountEmail = (parsed.email ?? row.email ?? "").trim().toLowerCase();
         // The key must belong to the activating email: either it was issued
         // TO them (clientEmail) or they are the mentor who holds it.
+        //
+        // A license with NO clientEmail is an UNASSIGNED key — a valid, open
+        // license waiting for whoever activates it first, not somebody else's
+        // property. Discarding those unless the activator happened to be the
+        // mentor made a perfectly good key fail to resolve, which is why
+        // robots activated through it showed "Private EA", the platform logo
+        // instead of the EA picture, and an empty symbol list. Only a license
+        // explicitly ASSIGNED to a different email is off limits.
         if (clientEmail && clientEmail !== email.trim().toLowerCase()) continue;
-        if (!clientEmail && accountEmail !== email.trim().toLowerCase()) continue;
         if (license.active === false) return { error: "That license key is paused." };
         const expiresAt = typeof license.expiresAt === "string" ? license.expiresAt : "";
         if (expiresAt && new Date(expiresAt).getTime() <= Date.now()) return { error: "That license key has expired." };
-        const ea = (parsed.eas ?? []).find((item) => item.id === license.eaId);
+        // Resolve the PARENT EA record. The eaId is the exact link, but
+        // licenses issued before the EA list carried ids only name the EA —
+        // and a name match is what brings back the picture and the symbols for
+        // exactly those keys, which is the whole point of this lookup.
+        const eas = parsed.eas ?? [];
+        const licenseName = typeof license.name === "string" ? license.name.trim().toLowerCase() : "";
+        const ea =
+          eas.find((item) => item.id && item.id === license.eaId)
+          ?? (licenseName ? eas.find((item) => typeof item.name === "string" && item.name.trim().toLowerCase() === licenseName) : undefined);
         const eaName = ea?.name || license.robotName || license.expertAdvisor || license.name || "";
         const symbols = (ea?.symbols ?? (Array.isArray(license.symbols) ? (license.symbols as string[]) : [])).filter(
           (symbol): symbol is string => typeof symbol === "string",
         );
         // Media from the EA entry first, then the license record itself
         // (issuance embeds the image/video on the license as a fallback).
+        // The license's OWN name is the last resort for the picture too — some
+        // issuances store it against the license and never on the EA row.
         const image = ea?.image ?? (license as { image?: unknown }).image;
         const video = ea?.video ?? (license as { video?: unknown }).video;
         // Fat cloud data URLs are stashed in IndexedDB behind a tiny ref so
@@ -894,20 +918,47 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
     };
     // key → EA details, from every mentor account holding a license for me.
     const byKey = new Map<string, { name?: string; symbols?: string[]; image?: string; video?: string }>();
-    for (const row of rows as Array<{ email?: string; data: unknown }>) {
+    // name → EA details, the FALLBACK link for robots whose key does not match
+    // anything in the portal (an EA re-issued under a new key, or a robot
+    // activated before the key was written to license_keys). Without this the
+    // picture and symbols never come back for those robots.
+    const byName = new Map<string, { name?: string; symbols?: string[]; image?: string; video?: string }>();
+    /**
+     * Index ONE account row's licenses.
+     *
+     * `strict` decides who owns an unassigned license. On the first (targeted)
+     * pass it is true, so only licenses issued TO this email — or held by this
+     * email's own mentor account — are indexed. On the second (full) pass it is
+     * false, and a license with a BLANK clientEmail counts too: that is a valid
+     * unassigned key this device may legitimately own, and refusing to index it
+     * is what left those robots with the platform logo and no symbols.
+     * A license explicitly assigned to a DIFFERENT email is never indexed.
+     */
+    const indexRow = async (row: { email?: string; data: unknown }, strict: boolean) => {
       let parsed: PortalAccountShape | null = null;
       try {
         parsed = typeof row.data === "string" ? (JSON.parse(row.data) as PortalAccountShape) : (row.data as PortalAccountShape);
       } catch {
-        continue;
+        return;
       }
-      if (!parsed) continue;
+      if (!parsed) return;
+      const accountEmail = (parsed.email ?? row.email ?? "").trim().toLowerCase();
       for (const license of parsed.licenses ?? []) {
         if (typeof license.key !== "string" || !license.key) continue;
         const clientEmail = typeof license.clientEmail === "string" ? license.clientEmail.trim().toLowerCase() : "";
-        const accountEmail = (parsed.email ?? row.email ?? "").trim().toLowerCase();
-        if (clientEmail !== email && (!clientEmail && accountEmail !== email)) continue;
-        const ea = (parsed.eas ?? []).find((item) => item.id === license.eaId);
+        if (strict) {
+          if (clientEmail !== email && accountEmail !== email) continue;
+        } else if (clientEmail && clientEmail !== email) {
+          continue;
+        }
+        // Resolve the parent EA by id first, then by name — licenses issued
+        // before the EA list carried ids only name it, and those keys are
+        // exactly the ones that came back with no picture and no symbols.
+        const eas = parsed.eas ?? [];
+        const licenseName = typeof license.name === "string" ? license.name.trim().toLowerCase() : "";
+        const ea =
+          eas.find((item) => item.id && item.id === license.eaId)
+          ?? (licenseName ? eas.find((item) => typeof item.name === "string" && item.name.trim().toLowerCase() === licenseName) : undefined);
         const eaName = ea?.name || license.robotName || license.expertAdvisor || license.name;
         // IMAGE/VIDEO come from the EA entry, falling back to the license
         // record itself (newer issuance embeds the media on the license so
@@ -916,20 +967,54 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
         const video = ea?.video ?? (license as { video?: unknown }).video;
         const resolvedVideo = typeof video === "string" && video ? await stashCloudVideo(video) : undefined;
         const resolvedImage = typeof image === "string" && image ? await stashCloudImage(image) : undefined;
-        byKey.set(license.key.trim().toUpperCase(), {
+        const details = {
           ...(eaName ? { name: eaName } : {}),
-          symbols: (ea?.symbols ?? []).filter((symbol): symbol is string => typeof symbol === "string"),
+          symbols: (ea?.symbols ?? (Array.isArray(license.symbols) ? (license.symbols as string[]) : [])).filter(
+            (symbol): symbol is string => typeof symbol === "string",
+          ),
           ...(resolvedImage ? { image: resolvedImage } : {}),
           ...(resolvedVideo ? { video: resolvedVideo } : {}),
-        });
+        };
+        byKey.set(license.key.trim().toUpperCase(), details);
+        if (details.name) byName.set(details.name.trim().toLowerCase(), details);
+      }
+    };
+    for (const row of rows as Array<{ email?: string; data: unknown }>) {
+      await indexRow(row, true);
+    }
+    // NO MATCHES FROM THE TARGETED READ — widen it. The `data.ilike` filter can
+    // only find accounts that literally contain this email, so an UNASSIGNED
+    // license (blank clientEmail, held in the mentor's account) is invisible to
+    // it. A second full read is the only way those robots get their EA back;
+    // it is the same fallback the filtered read already had for server errors.
+    let anyMatch = false;
+    for (const robot of state.robots) {
+      if (byKey.has(robot.key.trim().toUpperCase()) || byName.has((robot.name ?? "").trim().toLowerCase())) {
+        anyMatch = true;
+        break;
       }
     }
-    if (byKey.size === 0) return 0;
+    if (!anyMatch) {
+      const wide = await client.from("portal_accounts").select("email, data");
+      if (wide.error || !wide.data) return 0;
+      for (const row of wide.data as Array<{ email?: string; data: unknown }>) {
+        await indexRow(row, false);
+      }
+    }
+    if (byKey.size === 0 && byName.size === 0) return 0;
     let updated = 0;
     const robots = state.robots.map((robot) => {
-      const fresh = byKey.get(robot.key);
+      // Match on the key FIRST (it is the exact link) and fall back to the EA
+      // name, so a robot still recovers its picture and symbols when its key
+      // is not the one the portal holds.
+      const fresh = byKey.get(robot.key.trim().toUpperCase()) ?? byName.get((robot.name ?? "").trim().toLowerCase());
       if (!fresh) return robot;
+      // BACKFILL, do not clobber: an empty local symbol list is filled from the
+      // cloud rather than left empty (which showed "No symbols on this EA"
+      // forever), and a missing picture is taken from the cloud rather than
+      // falling back to the platform logo forever.
       const symbols = fresh.symbols && fresh.symbols.length > 0 ? fresh.symbols : robot.symbols;
+      const image = fresh.image ?? robot.image;
       const oldPairs = robot.pairs ?? [];
       // ONLY the symbols the user already allowed survive this sync. Every
       // other EA symbol must stay in "Selected Quotes" until they approve it
@@ -938,13 +1023,15 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       // then traded them).
       const cloudSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
       const pairs = oldPairs.filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()));
-      if (fresh.image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name) && symbols.length === robot.symbols.length) return robot;
+      const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
+      const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
+      if (sameSymbols && samePairs && image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name)) return robot;
       updated += 1;
       return {
         ...robot,
         symbols,
         pairs,
-        ...(fresh.image ? { image: fresh.image } : {}),
+        ...(image ? { image } : {}),
         ...(fresh.video ? { video: fresh.video } : {}),
         ...(fresh.name ? { name: fresh.name } : {}),
       };
