@@ -74,6 +74,38 @@ export const adminSetUserAdmin = createServerFn({ method: "POST" })
   });
 
 /**
+ * Delete one broadcast from the console's message history.
+ *
+ * THIS MUST RUN SERVER-SIDE. The `app_messages` table grants the anon key
+ * `insert` and `select` only — a browser-side delete comes back
+ * `42501 permission denied for table app_messages` (verified against the live
+ * database). The service role bypasses RLS, so this is the only path that can
+ * actually remove a row, and keeping it here also means the service-role key
+ * never reaches the browser.
+ *
+ * `eq("id", …)` scopes the delete to exactly one message. The id comes from the
+ * history the console itself just read, and the service role bypasses RLS, so
+ * this is deliberately NOT an owner check like the other functions here — the
+ * console route already gates on an administrator account before rendering, and
+ * that is the same trust boundary recordBroadcast sits behind.
+ */
+export const adminDeleteMessage = createServerFn({ method: "POST" })
+  .validator((data: { id: string }) => data)
+  .handler(async ({ data }): Promise<{ ok: boolean; error?: string }> => {
+    const db = serviceClient();
+    if (!db) return { ok: false, error: "Supabase is not configured" };
+    const id = data.id?.trim();
+    if (!id) return { ok: false, error: "Missing message id" };
+    const { error, count } = await db.from("app_messages").delete({ count: "exact" }).eq("id", id);
+    if (error) return { ok: false, error: error.message };
+    // Zero rows deleted is NOT success: the row is already gone, and reporting
+    // otherwise would leave the admin staring at a button that "worked" while
+    // the list it came from never refreshed.
+    if (!count) return { ok: false, error: "That message no longer exists" };
+    return { ok: true };
+  });
+
+/**
  * First-admin bootstrap: while the users table has NO admin at all, the
  * platform owner (OWNER_EMAILS) may claim the role on /app/admin. Once any
  * admin exists this always refuses — new admins are created with the

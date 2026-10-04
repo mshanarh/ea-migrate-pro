@@ -14,11 +14,13 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Trash2,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
 import { BrandLogo } from "@/components/BrandLogo";
 import {
+  deleteBroadcast,
   loadAdminSnapshot,
   recordBroadcast,
   setUserApproval,
@@ -1024,6 +1026,39 @@ function MessagePanel({
   onSend: () => void;
   messages: AdminMessage[];
 }) {
+  /**
+   * CLEAR A MESSAGE — removes one row from the history.
+   *
+   * The list is mirrored into local state so the row disappears the moment the
+   * delete succeeds, instead of waiting for the 10s console poll to notice. The
+   * delete itself has to run on the SERVER: the anon key has insert + select on
+   * `app_messages` and no delete, so a browser-side call fails with
+   * `42501 permission denied` (verified against the live database).
+   *
+   * Two taps, because the button destroys a record of what was actually sent to
+   * real people and that cannot be undone. `clearing` is the id currently being
+   * deleted, so only the row being worked on shows a spinner.
+   */
+  const [history, setHistory] = useState(messages);
+  const [clearing, setClearing] = useState<string | null>(null);
+  const [confirmClear, setConfirmClear] = useState<string | null>(null);
+
+  useEffect(() => {
+    setHistory(messages);
+  }, [messages]);
+
+  const clearMessage = async (id: string) => {
+    setClearing(id);
+    const result = await deleteBroadcast(id);
+    setClearing(null);
+    setConfirmClear(null);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not delete that message.");
+      return;
+    }
+    setHistory((current) => current.filter((item) => item.id !== id));
+    toast.success("Message removed from the history.");
+  };
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (!message.trim()) {
@@ -1073,15 +1108,15 @@ function MessagePanel({
 
       <section>
         <h3 className="text-sm font-bold uppercase tracking-[0.14em] text-muted-foreground">
-          Message history ({messages.length})
+          Message history ({history.length})
         </h3>
-        {messages.length === 0 ? (
+        {history.length === 0 ? (
           <div className="mt-3">
             <EmptyState title="No messages sent yet" hint="Everything you send is recorded here and stored in the database." />
           </div>
         ) : (
           <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-            {messages.map((item) => (
+            {history.map((item) => (
               <li key={item.id} className="rounded-2xl border border-white/10 bg-card/50 p-4">
                 <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">{item.body}</p>
                 <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
@@ -1092,6 +1127,43 @@ function MessagePanel({
                   </span>
                   <span aria-hidden="true">·</span>
                   <span className="truncate">by {item.sender}</span>
+                </div>
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  {confirmClear === item.id ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p className="mr-auto text-[11px] leading-4 text-muted-foreground">
+                        Delete this message from the history? This cannot be undone.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => void clearMessage(item.id)}
+                        disabled={clearing === item.id}
+                        className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-red-500 px-3 text-[11px] font-black uppercase text-red-950 disabled:opacity-60"
+                      >
+                        {clearing === item.id ? (
+                          <Loader2 className="size-3 animate-spin" aria-hidden="true" />
+                        ) : null}
+                        Yes, delete
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setConfirmClear(null)}
+                        disabled={clearing === item.id}
+                        className="inline-flex h-8 items-center rounded-lg border border-white/10 px-3 text-[11px] font-black uppercase text-muted-foreground disabled:opacity-60"
+                      >
+                        Keep
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => setConfirmClear(item.id)}
+                      className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-red-400/40 bg-red-500/10 px-3 text-[11px] font-black uppercase text-red-200"
+                    >
+                      <Trash2 className="size-3" aria-hidden="true" />
+                      Clear message
+                    </button>
+                  )}
                 </div>
               </li>
             ))}

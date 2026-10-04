@@ -12,11 +12,11 @@
  *             active membership FOR OUR PRODUCT — and only when WHOP_PRODUCT_ID
  *             is set, since an unscoped query matches any product on Whop
  *   revoked → the owner pressed "Mark unpaid" (`paid_emails` row with
- *             `paid_at = null`) or pressed "Reject" (`mentor_approvals.status
- *             = 'rejected'`). Both are DELIBERATE decisions, not missing
- *             records, so they are never answered as "unpaid" — that would send
- *             the person to checkout and hide the fact that the account was
- *             taken away.
+ *             `paid_at = null`), or pressed "Reject" for an account that HAD
+ *             paid. Both mean something was taken away, so they are never
+ *             answered as "unpaid" — that would hide why they were removed.
+ *             A rejected account that NEVER paid is answered `unpaid`, not
+ *             `revoked`; see "REJECTED IS NOT THE SAME AS DEACTIVATED".
  *   unpaid  → everything else, and every unpaid email is sent to checkout
  *
  * NOTHING BUT PAYMENT OPENS THIS APP — NOT EVEN AN ADMIN.
@@ -36,11 +36,28 @@
  * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE — with ONE exception. Being
  * APPROVED grants nothing (approving somebody in the mentor portal is a portal
  * decision, and reading it here is what let unpaid people walk into the
- * dashboard). Being REJECTED does revoke: the console's Reject button is the
- * owner telling the platform "this account is deactivated", and the only
- * honest way to honour that on a device that never had a local paid record is
- * to read the rejection itself. `mentor_approvals` is therefore consulted for
- * `rejected` ONLY, and never for `approved`.
+ * dashboard). Being REJECTED does close the app — but see REJECTED IS NOT THE
+ * SAME AS DEACTIVATED below. `mentor_approvals` is consulted for `rejected`
+ * ONLY, and never for `approved`.
+ *
+ * REJECTED CLOSES THE APP, AND IS ANSWERED "UNPAID" — NOT "DEACTIVATED".
+ *
+ * The console's Reject button removes an account, and a rejected account can
+ * never open the app again. But the SCREEN they are sent to has to be honest
+ * about why. Every rejected account on this database that was checked sat on the
+ * payment ledger as NEVER having paid, so nothing was ever taken away from them:
+ * telling such a person that their portal had been "deactivated" is untrue, and
+ * it strands them on a screen with no way forward. They are answered `unpaid`,
+ * which puts them on the plans — the only route by which they could ever buy in.
+ *
+ * THIS IS ALSO CHECKED BEFORE THE LICENCE-KEY FALLBACK, and that ordering is the
+ * entire mechanism. `license_keys.email` holds the address that ISSUED the key,
+ * which for a mentor is the mentor themselves: of the 22 key holders here, 13 are
+ * accounts the owner has since rejected and none of them ever paid us. Checking
+ * the key first answered "paid" for exactly the people who were removed.
+ *
+ * The distinction is made from the DATABASE, never from what this device
+ * remembers.
  *
  * A tiny in-memory cache (60s) keeps navigation snappy; it never survives a page
  * reload and only caches DATABASE results, so editing localStorage cannot
@@ -241,38 +258,25 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  *
  * A revocation marker is a DELIBERATE human decision, so it outranks every
  * derived signal below it (licence keys, Whop). Nothing outranks it — not an
- * admin flag, not a platform owner. The console's Reject button writes one of
- * these too, which is what makes "portal deactivated" a real verdict rather
- * than a message the app can only show to accounts it once let in.
+ * admin flag, not a platform owner.
  *
  * It answers with its own CloudAccess value ("revoked") rather than a bare
  * boolean folded into "unpaid", because "we revoked this" and "this person
  * never paid" are different messages and the login screen shows them
  * differently.
  *
+ * REJECTION IS NOT IN HERE, and that is deliberate. A console REJECTION is
+ * handled by isRejected below, because whether it means "deactivated" or
+ * "never paid" depends on whether the account ever paid — which only
+ * computeFromDatabase can answer. It used to be folded in here, which made
+ * every rejected account read as deactivated even when nothing had ever been
+ * taken from them.
+ *
  * Fails OPEN on a read error: an unreachable ledger must not lock out paying
  * customers. The other checks still decide in that case.
  */
 async function isExplicitlyRevoked(clean: string): Promise<boolean> {
   if (!supabase) return false;
-  // REJECTED IN THE ADMIN CONSOLE IS A REVOCATION. The owner pressing "Reject"
-  // is the platform saying "this account is deactivated". Until this was
-  // consulted, that decision lived only in `mentor_approvals` and nothing on a
-  // phone ever read it — so a rejected member saw Choose Plan on sign-in, and
-  // a rejected member with the app open kept it open. This is the ONLY thing
-  // this module reads from `mentor_approvals`; "approved" is still never
-  // consulted and still grants nothing.
-  try {
-    const { data: approval } = await supabase
-      .from("mentor_approvals")
-      .select("status")
-      .eq("email", clean)
-      .limit(1);
-    const rows = Array.isArray(approval) ? approval : [];
-    if (rows.some((row) => (row as { status?: string | null }).status === "rejected")) return true;
-  } catch {
-    /* a failed approval read falls through to the ledger check */
-  }
   try {
     // `.limit(1)` rather than `.maybeSingle()`: a single-row read ERRORS with
     // PGRST116 when an earlier cleanup left two rows for one email, and an
@@ -285,6 +289,36 @@ async function isExplicitlyRevoked(clean: string): Promise<boolean> {
       .limit(10);
     if (error || !Array.isArray(data) || data.length === 0) return false;
     return data.some((row) => (row as { paid_at?: string | null }).paid_at === null);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Has the owner REJECTED this account in the admin console?
+ *
+ * A rejection always closes the app — `computeFromDatabase` returns early on
+ * it so no licence key or Whop membership can reopen the account. What it does
+ * NOT decide on its own is WHICH screen the person is sent to: that depends on
+ * whether they ever paid (see "REJECTED IS NOT THE SAME AS DEACTIVATED" at the
+ * top of this file).
+ *
+ * This is the only thing this module reads from `mentor_approvals`. "approved"
+ * is never consulted and still grants nothing.
+ *
+ * Fails OPEN on a read error: an unreadable table must not be read as
+ * "rejected", or a database hiccup would lock out every paying customer.
+ */
+async function isRejected(clean: string): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    const { data, error } = await supabase
+      .from("mentor_approvals")
+      .select("status")
+      .eq("email", clean)
+      .limit(1);
+    if (error || !Array.isArray(data)) return false;
+    return data.some((row) => (row as { status?: string | null }).status === "rejected");
   } catch {
     return false;
   }
@@ -306,11 +340,6 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   //   • is_paid is a MIRROR of the ledger that the anon key is allowed to
   //     write, so it drifts and it can be set by anything holding the public
   //     key. The ledger row is the real record; the mirror is not.
-  //
-  // Mentor approval is a PORTAL decision and still has nothing to do with the
-  // app: `isExplicitlyRevoked` above reads `mentor_approvals` for "rejected"
-  // ONLY, so a rejection deactivates and an approval still grants nothing. An
-  // unpaid email is sent to checkout, on every platform.
   const { data: ledger } = await supabase!
     .from("paid_emails")
     .select("paid_at")
@@ -318,6 +347,24 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
     .limit(10);
   const ledgerRows = (Array.isArray(ledger) ? ledger : []) as Array<{ paid_at?: string | null }>;
   if (ledgerRows.some((row) => row.paid_at != null)) return "paid";
+
+  // REJECTION CLOSES THE APP — AND IT IS CHECKED BEFORE THE LICENCE-KEY
+  // FALLBACK, WHICH IS THE WHOLE POINT OF IT BEING HERE.
+  //
+  // `license_keys.email` is the address that HOLDS the key, which for a mentor
+  // is the mentor who ISSUED it. Of the 22 key holders on this database, 13 are
+  // accounts the owner has since REJECTED and not one of them is on the payment
+  // ledger — they are mentors holding keys they issued to clients, not customers
+  // who paid us. So "holds a licence key" is NOT evidence that this address ever
+  // bought anything, and checking it first answered "paid" for exactly the
+  // people the owner had removed.
+  //
+  // Answering `unpaid` (the plans) rather than `revoked` is deliberate: none of
+  // them were ever on the ledger, so nothing was taken away from them, and
+  // "your portal has been deactivated" on a first-ever sign-in — with no way off
+  // that screen — is simply untrue. The plans are the only route by which a
+  // rejected account could ever come back, which is the honest thing to offer.
+  if (await isRejected(clean)) return "unpaid";
 
   // A license_keys row bound to this email is payment in practice — the key
   // only exists because somebody paid for it. Exact match first, then a

@@ -375,14 +375,16 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
  *
  * APPROVAL IS NOT PAYMENT, AND THIS FUNCTION MUST NEVER BECOME A PAYMENT
  * WRITE. It touches the approval row, the `users` row (email ONLY — no is_paid,
- * ever, on any code path), the key allowance (from the caller) and, for a
- * REJECTION ONLY, a `paid_emails` revocation marker (`paid_at = null`) so the
- * app locks the account out too — that marker can only ever REMOVE access, and
- * is never a payment. People were approving a signup and coming
+ * ever, on any code path) and, from the caller, the key allowance. A REJECTION
+ * writes no payment record at all: the rejection itself is what closes the app
+ * (the access gate reads `mentor_approvals` directly), and writing a
+ * `paid_at = null` marker here would fabricate a payment history for accounts
+ * that never had one. People were approving a signup and coming
  * back days later to find it sitting in the Paid section having pressed
  * nothing, because payment state was being written from somewhere other
  * than this console's ledger. The console's "Mark paid" button is the only
- * way an account becomes paid.
+ * way an account becomes paid, and "Mark unpaid" is the only way to revoke
+ * one.
  */
 export async function setUserApproval(
   email: string,
@@ -401,23 +403,25 @@ export async function setUserApproval(
     .from("mentor_approvals")
     .upsert({ email: clean, status }, { onConflict: "email" });
   if (error) return { ok: false, error: error.message };
-  // REJECT IS ALSO A REVOCATION. The owner pressing "Reject" is telling the
-  // platform "this account is deactivated", so the app has to honour that on a
-  // phone that never had a local paid record: `paid_emails` is written with
-  // `paid_at = null`, the marker the access gate answers as "revoked" (see
-  // isExplicitlyRevoked in payment-gate.ts). Without it, Reject only closed the
-  // mentor portal and left the trading app open on whatever device it was
-  // already running on.
+  // REJECT CLOSES THE APP — BUT IT DOES NOT WRITE A PAYMENT MARKER.
   //
-  // This is a REVOCATION, never a payment: it can only ever remove access.
-  // APPROVING writes nothing here — approval still grants no payment, and
-  // "Mark paid" remains the only thing that puts anybody on the ledger.
-  if (status === "rejected") {
-    const { error: revokeError } = await supabase
-      .from("paid_emails")
-      .upsert({ email: clean, paid_at: null }, { onConflict: "email" });
-    if (revokeError) return { ok: false, error: revokeError.message };
-  }
+  // An earlier version of this file wrote `paid_emails.paid_at = null` here so
+  // that a rejection would also read as a deactivation on the phone. That was
+  // wrong in a way that only showed up against real data: it fabricated a
+  // payment history for accounts that had never paid, and the gate — correctly
+  // — treats that marker as "this account HAD access and it was taken away".
+  // The result was that all 29 rejected members were told their portal had
+  // been deactivated, on a screen with no way forward, when in truth nothing
+  // had ever been taken from them.
+  //
+  // Nothing is written here now. The rejection itself is the record, and the
+  // access gate reads `mentor_approvals` directly (isRejected in
+  // payment-gate.ts): a rejected account is closed regardless of payment, and
+  // is shown "deactivated" only when it actually held something. Never-paid
+  // rejected accounts get the plans, which is the only route to buying in.
+  //
+  // To genuinely deprecate someone who WAS paid, use "Mark unpaid" — that
+  // writes the `paid_at = null` marker and is exactly what it is for.
   return { ok: true };
 }
 
@@ -471,6 +475,43 @@ export async function setUserPaid(email: string, paid: boolean): Promise<AdminWr
     );
   if (paidError) return { ok: false, error: paidError.message };
   return { ok: true };
+}
+
+/**
+ * Delete one broadcast from the message history.
+ *
+ * Routed through the SERVER function because the anon key has no DELETE grant on
+ * `app_messages` — a direct browser delete fails with `42501 permission denied`
+ * (verified live). The DYNAMIC import is deliberate and matches every other use
+ * of supabase.server in this bundle: statically importing it pulls TanStack
+ * server-function registration into the client graph, which crashed the Android
+ * WebView build ("Dashboard didn't load").
+ */
+export async function deleteBroadcast(id: string): Promise<AdminWriteResult> {
+  const clean = id.trim();
+  if (!clean) return { ok: false, error: "Missing message id" };
+  try {
+    const { adminDeleteMessage } = await import("@/lib/supabase.server");
+    const result = await adminDeleteMessage({ data: { id: clean } });
+    if (!result.ok) {
+      const described = describeAdminError(result.error ?? "Could not delete that message");
+      return { ok: false, error: described.error, needsAttention: described.needsAttention };
+    }
+    return { ok: true };
+  } catch (error) {
+    // A static host has no server functions at all, so the RPC cannot run
+    // there. Say so plainly instead of reporting a generic failure.
+    const message = error instanceof Error ? error.message : String(error);
+    if (/fetch|network|server/i.test(message)) {
+      return {
+        ok: false,
+        error:
+          "Deleting a message needs the server, which this host does not run. The history is unchanged.",
+        needsAttention: true,
+      };
+    }
+    return { ok: false, error: message };
+  }
 }
 
 /**
