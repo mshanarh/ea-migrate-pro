@@ -129,14 +129,18 @@ export const whopVerifyMembership = createServerFn({ method: "POST" })
           (membership.status === "active" || membership.status === "trialing" || membership.status === "past_due"),
       );
       if (paid) {
-        // Back-fill the database so future checks are database-only and the
-        // admin console shows the user as approved.
-        const db = serviceClient();
-        if (db) {
-          await db
-            .from("users")
-            .upsert({ email: clean, is_paid: true }, { onConflict: "email", ignoreDuplicates: false });
-        }
+        // NO WRITES HERE. This check used to "back-fill" `users.is_paid = true`
+        // so future checks would be database-only, and that single line is how
+        // accounts the owner never marked paid ended up on the console's Paid
+        // list anyway. `WHOP_PRODUCT_ID` is optional, so with it unset this
+        // query is NOT scoped to our product: any membership the email has
+        // over Whop, on any product, satisfied it — and the back-fill then
+        // stamped that on the account permanently. A READ that writes the
+        // payment flag is the approve-to-paid drift, so it is gone: payment is
+        // recorded by the console's own ledger (Mark paid) or by a real licence
+        // key activation, and nothing else. Genuine payers are unaffected —
+        // the answer above is what opens the app.
+        console.log("[whop] active membership confirmed for", clean, "(no payment flag written)");
       }
       return { ok: true, paid };
     } catch (error) {

@@ -29,6 +29,40 @@ export function portalCloudConfigured(): boolean {
   return Boolean(SUPABASE_URL && SUPABASE_ANON_KEY);
 }
 
+/**
+ * "PAUSE WORK" — a pending account has nothing to do but wait, and the portal
+ * polls the cloud for an approval every few seconds. This flag lets the person
+ * stop that work: the pending screen switches to a paused state and the live
+ * sync stops until they resume it. It is just a localStorage bit, so it
+ * survives a reload and costs one extra tap to undo.
+ *
+ * It is deliberately a convenience and never a gate: resuming puts the account
+ * back on the next cloud poll (five seconds), so a pause can never cost
+ * somebody their approval notice. Nothing about access depends on this.
+ */
+const PORTAL_PAUSED_KEY = "eamp.portal.paused";
+
+/** True when the account asked to stop waiting (persists across reloads). */
+export function isPortalPaused(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return window.localStorage.getItem(PORTAL_PAUSED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+/** Pause or resume the live sync for this device. */
+export function setPortalPaused(paused: boolean): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (paused) window.localStorage.setItem(PORTAL_PAUSED_KEY, "1");
+    else window.localStorage.removeItem(PORTAL_PAUSED_KEY);
+  } catch {
+    /* private mode — the flag is a convenience, never a gate */
+  }
+}
+
 type Client = import("@supabase/supabase-js").SupabaseClient;
 let client: Client | null = null;
 

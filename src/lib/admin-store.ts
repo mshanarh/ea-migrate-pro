@@ -20,7 +20,12 @@
  *                      in the user list, absent from Pending Approvals.
  *   license_keys     → one row per issued key, bound to the owner's email.
  *                      The COUNT per email is the real key usage.
- *   paid_emails      → payment date for the Paid Users section.
+ *   paid_emails      → THE PAYMENT LEDGER. A row with a timestamp is the one
+ *                      and only thing that puts a user in the Paid section —
+ *                      it is written by "Mark paid" and by a real licence-key
+ *                      activation, and by nothing else. `users.is_paid` is a
+ *                      mirror that the anon key may write, so it is NOT read
+ *                      for this; see the isPaid field comment.
  *   app_settings     → key/value store. License limits live under
  *                      `limit:<email>` and broadcast history under
  *                      `msg:<timestamp>:<id>`, so the message history is a
@@ -59,7 +64,21 @@ export type AdminUser = {
    * address that has neither is "app" and never enters Pending Approvals.
    */
   status: ReviewStatus;
-  /** True when the cloud row says is_paid. The ONLY source of "Paid". */
+  /**
+   * True when the CONSOLE'S OWN LEDGER records a payment for this email — a
+   * `paid_emails` row carrying a timestamp.
+   *
+   * THIS IS DELIBERATELY NOT `users.is_paid`. `users.is_paid` is a plain
+   * boolean column that the anon key is GRANTED write access to (see
+   * supabase/00-RUN-THIS.sql), and a read-path check was writing it too, so an
+   * approved-but-unpaid mentor would drift into the Paid column on its own and
+   * be sitting there the next day with nobody having pressed anything. The
+   * ledger is written by exactly two deliberate acts — the console's "Mark
+   * paid" button and a real licence-key activation — so what the console shows
+   * as Paid is what somebody actually did. APPROVAL IS NOT ONE OF THEM:
+   * `setUserApproval` touches only `mentor_approvals`, `users` (email only) and
+   * the key allowance, and it must stay that way.
+   */
   isPaid: boolean;
   isAdmin: boolean;
   /** Maximum license keys the admin granted this user (0 = not set yet). */
@@ -307,7 +326,11 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
       email,
       createdAt: timestamp(row.created_at, portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback()),
       status,
-      isPaid: bool(row.is_paid),
+      // The LEDGER, never `users.is_paid` — see the isPaid doc comment. The
+      // `users` row is still read for is_admin / device_id / created_at, but
+      // its payment flag is a mirror somebody else can write, so it cannot
+      // decide what this console calls Paid.
+      isPaid: paidAt.has(email),
       isAdmin: bool(row.is_admin),
       licenseLimit: limits.get(email) ?? 0,
       keysUsed: usage.get(email) ?? 0,
@@ -349,6 +372,15 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
  * sign-in, which meant the owner pressed "Admin Portal" and was then
  * asked to sign in all over again. The console writes directly now (see
  * supabase/admin-simple-access.sql).
+ *
+ * APPROVAL IS NOT PAYMENT, AND THIS FUNCTION MUST NEVER BECOME A PAYMENT
+ * WRITE. It touches three things and nothing else: the approval row, the
+ * `users` row (email ONLY — no is_paid, ever, on any code path) and, from
+ * the caller, the key allowance. People were approving a signup and coming
+ * back days later to find it sitting in the Paid section having pressed
+ * nothing, because payment state was being written from somewhere other
+ * than this console's ledger. The console's "Mark paid" button is the only
+ * way an account becomes paid.
  */
 export async function setUserApproval(
   email: string,
@@ -389,7 +421,16 @@ export async function setUserLicenseLimit(
   return { ok: true };
 }
 
-/** Payment status is the users.is_paid flag — the app's sign-in gate reads it. */
+/**
+ * THE ONLY WAY AN ACCOUNT BECOMES PAID.
+ *
+ * It writes both halves deliberately: `users.is_paid`, which the app's sign-in
+ * gate reads, and the `paid_emails` ledger row with a timestamp, which is what
+ * the console's Paid section reads. Revoking writes the same two in the other
+ * direction (is_paid = false, paid_at = null) — the `paid_at = null` row IS the
+ * revocation marker the access gate looks for first (isExplicitlyRevoked in
+ * payment-gate.ts), so it is not optional bookkeeping.
+ */
 export async function setUserPaid(email: string, paid: boolean): Promise<AdminWriteResult> {
   if (!supabase) return { ok: false, error: "Database not configured" };
   const clean = normalizeEmail(email);

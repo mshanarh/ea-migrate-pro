@@ -361,6 +361,19 @@ function AppAccess() {
       const status = await withDeadline(resolveCloudAccess(app.email, { fresh: true }), 15_000, null);
       if (cancelled) return;
       setCloudStatus(status);
+      // DEACTIVATED — the database says this account was revoked by the owner.
+      // The notice is shown instead of the plans: offering checkout to somebody
+      // whose account was taken away hides the reason they are locked out.
+      if (status === "revoked") {
+        appSignOut();
+        setCloudStatus(null);
+        setChoosePlan(false);
+        setPayPrompt(false);
+        setCheckoutDismissed(false);
+        window.history.replaceState({}, "", "/app/login?deactivated=1");
+        setDeactivated(true);
+        return;
+      }
       if (status === "unpaid") {
         setCheckoutDismissed(false);
         setChoosePlan(true);
@@ -471,6 +484,28 @@ function AppAccess() {
           // server before granting anything. Unverifiable → Choose Plan.
           const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
           if (verified) return;
+        }
+        // DEACTIVATED FIRST, ALWAYS. An account the owner revoked is not an
+        // unpaid account: it must never be answered with Choose Plan, on any
+        // device. `registerWithEmail` cannot tell the two apart (both are
+        // "not entitled"), so the gate is asked for the cloud's own verdict
+        // before this sign-in is allowed to fall through to checkout. This is
+        // the path a FRESH sign-in takes — a device that was never let in has
+        // no local record, which is exactly why the answer is read from the
+        // database rather than from memory.
+        const cloud = await withDeadline(resolveCloudAccess(clean, { fresh: true }), left(), null);
+        if (cloud === "revoked") {
+          appSignOut();
+          invalidateAccessCache(clean);
+          setCloudStatus(null);
+          setChoosePlan(false);
+          setPayPrompt(false);
+          setCheckoutDismissed(false);
+          setBusy(false);
+          setRedirecting(false);
+          window.history.replaceState({}, "", "/app/login?deactivated=1");
+          setDeactivated(true);
+          return;
         }
         // STOP HERE. The unpaid account does not go near /app/home; it lands
         // on the Plan Selection screen and picks monthly or lifetime.
@@ -696,9 +731,17 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
     <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
     {deactivated ? (
-      <div role="alert" className="mt-6 flex items-start gap-3 rounded-2xl border border-amber-300/40 bg-amber-400/15 p-4 text-left">
-        <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-amber-400 text-[11px] font-black text-amber-950" aria-hidden="true">!</span>
-        <p className="text-sm font-semibold leading-6 text-amber-100">Your access has been deactivated.</p>
+      <div role="alert" className="mt-6 rounded-2xl border border-red-400/45 bg-red-500/15 p-5 text-left">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full bg-red-400 text-[13px] font-black text-red-950" aria-hidden="true">!</span>
+          <div>
+            <p className="text-base font-bold leading-6 text-red-100">Your account has been deactivated.</p>
+            <p className="mt-1.5 text-sm leading-6 text-red-200/80">
+              An administrator turned this account off, so it can no longer be used. Signing in again will not bring it
+              back. Message support on WhatsApp with your email if you think this is a mistake.
+            </p>
+          </div>
+        </div>
       </div>
     ) : null}
     <form className="mt-12 space-y-4" onSubmit={onSubmit}>

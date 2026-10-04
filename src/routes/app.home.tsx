@@ -45,12 +45,14 @@ export const Route = createFileRoute("/app/home")({
     if (email) {
       try {
         const cloud = await resolveCloudAccess(email, { fresh: true });
-        if (cloud === "unpaid") {
+        if (cloud === "unpaid" || cloud === "revoked") {
           // DEACTIVATED vs NEVER PAID — the same distinction the gate makes.
-          // A device still holding a paid/admin record is a session the owner
-          // has since revoked ("Set unpaid"), so it gets the plain notice. A
-          // never-paid account is the one that owes money and gets the plans.
-          const revoked = paymentStatusForEmail(email) !== "unpaid";
+          // "revoked" is the database's own answer (the owner pressed Mark
+          // unpaid), so it always gets the plain notice. A never-paid account
+          // is the one that owes money and gets the plans; a stale local paid
+          // record beside an "unpaid" answer is the older, weaker signal for
+          // the same thing and is kept as a fallback.
+          const revoked = cloud === "revoked" || paymentStatusForEmail(email) !== "unpaid";
           appSignOut();
           invalidateAccessCache(email);
           throw redirect({ href: revoked ? "/app/login?deactivated=1" : "/app/login?pay=1" });

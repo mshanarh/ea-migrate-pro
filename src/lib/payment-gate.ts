@@ -6,12 +6,16 @@
  * is exactly how a non-paying user unlocked the app. This module decides access
  * from SUPABASE (and Whop, server-side) only:
  *
- *   admin  → the users row is is_admin, or the email is a platform owner
- *   paid   → the users row is is_paid (the owner marked them paid in the
- *            console), OR a license_keys row is bound to the email (the key
- *            only exists because they paid), OR Whop reports an active
- *            membership for the email
- *   unpaid → everything else, and every unpaid email is sent to checkout
+ *   admin   → the users row is is_admin, or the email is a platform owner
+ *   paid    → the users row is is_paid (the owner marked them paid in the
+ *             console), OR a license_keys row is bound to the email (the key
+ *             only exists because they paid), OR Whop reports an active
+ *             membership for the email
+ *   revoked → the owner pressed "Mark unpaid": `paid_emails` holds a row with
+ *             `paid_at = null`. A DELIBERATE decision, not a missing record,
+ *             so it is never answered as "unpaid" (which would send the person
+ *             to checkout and hide the fact that the account was taken away).
+ *   unpaid  → everything else, and every unpaid email is sent to checkout
  *
  * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE. Approving somebody in the
  * mentor portal is a portal decision; it has never had anything to do with the
@@ -30,15 +34,34 @@ import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-s
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
-export type CloudAccess = "admin" | "paid" | "unpaid";
 /**
- * `deactivate` is NOT a payment prompt — it means this device was let in
- * before (the local record says paid/admin) and the database now says
- * unpaid: the owner pressed "Set unpaid" in the console. The session ends
- * and the person lands on /app/login?deactivated=1, which says so plainly
- * instead of offering checkout for an account that was just revoked.
- * A cloud-decided unpaid account that was NEVER paid also ends its session
- * and returns to `signin` — the first page, where the email is entered.
+ * `revoked` is DELIBERATE and separate from `unpaid`.
+ *
+ * `unpaid` means "we have no record of payment" — that account still owes
+ * money and belongs at checkout. `revoked` means the owner pressed "Mark
+ * unpaid" for an account that WAS paid: `paid_emails` carries a row with
+ * `paid_at = null` (see isExplicitlyRevoked). That is a decision, not a
+ * missing record, so the two must never collapse into one answer — they send
+ * the person to completely different screens.
+ *
+ * Until this existed, `deactivate` was inferred on the DEVICE ("does my
+ * local store still remember a paid record?"), so the notice only appeared
+ * for a session the owner had already let in. Someone who signed in afresh on
+ * a new phone after being deactivated had no local record, was answered
+ * `unpaid`, and was pushed to Choose Plan instead of being told their account
+ * had been deactivated. The answer now comes from the database, where the
+ * owner's decision actually lives, so EVERY sign-in of a deactivated account
+ * is told so plainly — first phone or tenth.
+ */
+export type CloudAccess = "admin" | "paid" | "unpaid" | "revoked";
+/**
+ * `deactivate` is NOT a payment prompt — it means the database says this
+ * account was REVOKED by the owner ("Mark unpaid" in the console). The
+ * session ends and the person lands on /app/login?deactivated=1, which says
+ * so plainly instead of offering checkout for an account that was just
+ * deactivated. A cloud-decided unpaid account that was NEVER paid also ends
+ * its session and returns to `signin` — the first page, where the email is
+ * entered.
  */
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
 
@@ -120,7 +143,11 @@ export async function resolveCloudAccess(
 
   const cached = cache.get(clean);
   if (!options?.fresh && cached) {
-    const ttl = cached.status === "unpaid" ? UNPAID_CACHE_TTL_MS : CACHE_TTL_MS;
+    // Only a POSITIVE answer is worth holding for a minute. "unpaid" and
+    // "revoked" are both refusals the owner can lift at any moment by
+    // pressing Mark paid, so they get the short TTL like everything else.
+    const ttl =
+      cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
     if (Date.now() - cached.at < ttl) return cached.status;
   }
 
@@ -197,6 +224,11 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  * thing it does not outrank is a platform owner, and `resolveCloudAccess`
  * already returns "admin" for those before this is ever reached.
  *
+ * It answers with its own CloudAccess value ("revoked") rather than a bare
+ * boolean folded into "unpaid", because "we revoked this" and "this person
+ * never paid" are different messages and the login screen shows them
+ * differently.
+ *
  * Fails OPEN on a read error: an unreachable ledger must not lock out paying
  * customers. The other checks still decide in that case.
  */
@@ -224,7 +256,7 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   // isExplicitlyRevoked — every check after this one is a DERIVED signal, and
   // letting any of them override a deliberate revocation is what made "Mark
   // unpaid" a button that did nothing.
-  if (await isExplicitlyRevoked(clean)) return "unpaid";
+  if (await isExplicitlyRevoked(clean)) return "revoked";
 
   // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE.
   //
@@ -316,16 +348,27 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     markEmailPaid(email);
     return { action: "pass" };
   }
+  // DEACTIVATED BY THE OWNER. The database holds a revocation marker for this
+  // email (`paid_emails.paid_at = null`), which is a decision the owner made
+  // in the console and not a missing payment record. It is answered HERE,
+  // from the cloud, and never from this device's memory: the previous
+  // `paymentStatusForEmail(email) !== "unpaid"` test could only recognise a
+  // session the owner had already let in, so the same person signing in on a
+  // new phone was told "choose a plan" for an account that had been taken
+  // away. Every sign-in of a deactivated account now ends here and lands on
+  // /app/login?deactivated=1, which says so in as many words.
+  if (cloud === "revoked") {
+    appSignOut();
+    return { action: "deactivate" };
+  }
   // Anything that is not paid goes to checkout — on Android, iOS and the web.
   // There is no approval branch: an approved mentor who was never marked paid
   // is sent to Whop like everybody else, which is the entire point.
   if (cloud === "unpaid") {
-    // DEACTIVATED, NOT UNPAID. This device holds a local paid/admin record —
-    // this session was let in — yet the cloud now says unpaid. That only
-    // happens when the owner flipped the account to unpaid in the console,
-    // so the session is revoked HERE (appSignOut clears it once) and the
-    // caller sends the person to /app/login?deactivated=1. A never-paid
-    // email has no local record and still goes to checkout as before.
+    // A local paid/admin record with an UNPAID cloud answer can still mean the
+    // owner flipped the flag before the ledger marker existed (Mark unpaid on
+    // an account whose `paid_emails` row had been cleaned up). Same outcome,
+    // kept as a second door rather than the only one.
     if (paymentStatusForEmail(email) !== "unpaid") {
       appSignOut();
       return { action: "deactivate" };
@@ -365,7 +408,7 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
       markEmailPaid(clean);
       return true;
     }
-    if (cloud === "unpaid") return false;
+    if (cloud === "unpaid" || cloud === "revoked") return false;
   } catch {
     /* fall through to the explicit Whop check */
   }

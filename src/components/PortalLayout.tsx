@@ -7,9 +7,12 @@ import {
   Bot,
   ChevronRight,
   CircleUserRound,
+  Clock,
   Globe2,
   KeyRound,
   LayoutGrid,
+  Pause,
+  Play,
   RefreshCcw,
   LogOut,
   Menu,
@@ -19,7 +22,8 @@ import {
 } from "lucide-react";
 import { Send } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { signOut, useCurrentAccount } from "@/lib/auth-store";
+import { signOut, useCurrentAccount, type PortalStatus } from "@/lib/auth-store";
+import { isPortalPaused, setPortalPaused } from "@/lib/portal-cloud";
 import { mirrorAccount } from "@/routes/dashboard.eas";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; badge?: boolean; mentorOnly?: boolean; adminOnly?: boolean };
@@ -62,6 +66,91 @@ function BrandMark({ size = "size-9" }: { size?: string }) {
   );
 }
 
+/**
+ * THE PENDING MENU — what the three-horizontal-lines button opens for an
+ * account that has not been approved yet.
+ *
+ * It is the ONLY thing in that sheet. A pending signup used to be handed the
+ * full mentor navigation — Generate Key, Manage EAs, Copy Trading, Wallet,
+ * Website — none of which it can use, and every one of which leads to an empty
+ * screen or a "not set yet" error. So the menu for an unapproved account shows
+ * the waiting state itself: a timer, the sentence that says what is happening,
+ * and the two things somebody in that state can actually do — sign out, or
+ * pause the work while they wait.
+ */
+function PendingMenu({
+  status,
+  surfaceBg,
+  onSignOut,
+}: {
+  status: PortalStatus;
+  surfaceBg: string;
+  onSignOut: () => void;
+}) {
+  const [paused, setPaused] = useState(isPortalPaused);
+  const rejected = status === "rejected";
+  // The timer keeps turning while the person is waiting and stops when they
+  // pause — a paused screen should look paused.
+  const spin = paused
+    ? { duration: 0 }
+    : { repeat: Infinity, ease: "linear" as const, duration: 8 };
+
+  return (
+    <div className={`${surfaceBg} flex h-full flex-col`}>
+      <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
+        <BrandMark />
+        <p className="text-xl font-black tracking-tight">
+          EA <span className="text-primary">Migrate</span>
+        </p>
+      </div>
+
+      <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
+        <span className="glow-ring flex size-24 items-center justify-center rounded-full border-2 border-primary/60 bg-primary/10">
+          <motion.span
+            animate={paused ? { opacity: 0.55 } : { rotate: 360 }}
+            transition={spin}
+            className="flex size-full items-center justify-center"
+          >
+            <Clock className="size-11 text-primary" aria-hidden="true" />
+          </motion.span>
+        </span>
+
+        <h2 className="mt-6 text-xl font-black tracking-tight">
+          {paused ? "Work paused" : rejected ? "Application declined" : "Waiting for approval"}
+        </h2>
+        <p className="mt-2 text-sm leading-6 text-white/60">
+          {paused
+            ? "We stopped checking for you. Tap Resume work whenever you want to pick it back up."
+            : rejected
+              ? "Your portal application was declined. Reach out to support and we'll look at it again."
+              : "Your account is in the queue. An admin reviews every signup by hand, and the moment it's approved this menu becomes the real dashboard."}
+        </p>
+
+        <div className="mt-8 flex w-full flex-col gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              setPortalPaused(!paused);
+              setPaused(!paused);
+            }}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:border-primary/40 hover:text-primary"
+          >
+            {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
+            {paused ? "Resume work" : "Pause work"}
+          </button>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 text-sm font-semibold text-white/70 transition-colors hover:border-red-400/40 hover:text-red-300"
+          >
+            <LogOut className="size-4" /> Sign out
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function PortalLayout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
   const [bright, setBright] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("eamp.portal.bright") === "1");
@@ -89,6 +178,19 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
 
   const pageBg = bright ? "bg-[#10151c]" : "bg-[#0A0A0A]";
   const surfaceBg = bright ? "bg-[#151b23]" : "bg-[#0A0A0A]";
+
+  // AN UNAPPROVED ACCOUNT GETS NO NAVIGATION AT ALL. Not a disabled one, not a
+  // filtered one — none. Every item in `sections` leads to a page that needs an
+  // approval this account does not have, so showing the menu meant showing a
+  // list of doors that all fail. The hamburger and the desktop sidebar both
+  // fall back to the pending screen instead.
+  const pendingStatus: PortalStatus | null =
+    account && account.status !== "approved" ? account.status : null;
+
+  const signOutNow = () => {
+    signOut();
+    navigate({ to: "/signin" });
+  };
 
   const visibleSections = sections
     .map((section) => ({
@@ -158,10 +260,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
 
       <div className="border-t border-white/10 p-4">
         <button
-          onClick={() => {
-            signOut();
-            navigate({ to: "/signin" });
-          }}
+          onClick={signOutNow}
           className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/10 text-sm font-semibold text-white/70 transition-colors hover:border-red-400/40 hover:text-red-300"
         >
           <LogOut className="size-4" /> Logout
@@ -186,7 +285,15 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
               </SheetTrigger>
               <SheetContent side="left" className="w-80 border-white/10 p-0">
                 <SheetTitle className="sr-only">Portal menu</SheetTitle>
-                {sidebar}
+                {pendingStatus ? (
+                  <PendingMenu
+                    status={pendingStatus}
+                    surfaceBg={surfaceBg}
+                    onSignOut={signOutNow}
+                  />
+                ) : (
+                  sidebar
+                )}
               </SheetContent>
             </Sheet>
             <Link to="/dashboard" className="flex items-center gap-2 lg:hidden">
@@ -218,9 +325,11 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
       </header>
 
       <div className="mx-auto flex max-w-6xl">
-        <aside className="hidden w-72 shrink-0 border-r border-white/10 lg:block">
-          <div className="sticky top-16 h-[calc(100vh-4rem)]">{sidebar}</div>
-        </aside>
+        {pendingStatus ? null : (
+          <aside className="hidden w-72 shrink-0 border-r border-white/10 lg:block">
+            <div className="sticky top-16 h-[calc(100vh-4rem)]">{sidebar}</div>
+          </aside>
+        )}
         <main className="min-w-0 flex-1 px-5 py-8">
           {children}
           <footer className="mt-14 border-t border-white/10 pt-6">
