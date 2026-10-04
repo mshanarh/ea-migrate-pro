@@ -2,6 +2,8 @@ import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { claimKeyWithoutServer } from "@/lib/license-lock";
+import { claimLicenseKeyFor } from "@/lib/activation-client";
 
 /** Same checkout the app login redirects unpaid users to. */
 export const WHOP_CHECKOUT_URL =
@@ -642,6 +644,17 @@ async function findSavedLicenseForEmail(key: string, email: string) {
   }
 }
 
+/**
+ * Run the offline (anon-key) licence lock and shape its answer like
+ * `activateKey`'s, so both locks read identically at the call site.
+ */
+async function claimKeyWithoutServerOrRefuse(key: string, email: string): Promise<{ error?: string }> {
+  const outcome = await claimKeyWithoutServer(key, email);
+  if (!outcome.ok) return { error: outcome.error };
+  if (outcome.alreadyInUse) console.log("[key-activation] key already held by this account:", key);
+  return {};
+}
+
 export async function activateKey(key: string): Promise<{ error?: string; robot?: Robot }> {
   load();
   // ADMIN LICENSE CAP — the dashboard's "maximum license keys" per user is
@@ -702,36 +715,38 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   /**
    * SINGLE USE — the key is locked to the FIRST phone that activates it.
    *
-   * This is the one check that CANNOT be done from the browser: the lock lives
-   * in `users.license_key`, the single activation column the public anon key
-   * is not allowed to rewrite (verified live — UPDATE returns 42501). So the
-   * check AND the write happen server-side with the service role, and a second
-   * device re-using a claimed key is told so in plain words instead of quietly
-   * getting a second bot.
-   *
    * Placed AFTER the licence lookup (a key that was never issued must not be
    * locked to whoever typed it) and BEFORE the robot is built (nothing local
    * should exist for a key we are about to refuse).
    *
-   * FAIL CLOSED with the server's own words. A transport failure here is NOT
-   * treated as "allowed" — that is exactly the "we cannot check, so let them
-   * in" rule that made every other gate in this file bypassable.
+   * TWO LOCKS, IN ORDER, because this app ships two ways:
+   *
+   *   1. `/api/activation` — the strong one. The lock is written to
+   *      `users.license_key`, the single activation column the public anon key
+   *      cannot rewrite (verified live — UPDATE answers 42501), so a customer
+   *      cannot release their own key.
+   *   2. `claimKeyWithoutServer` — for a deployment with NO server at all. A
+   *      key that cannot be claimed is a key nobody can use, so refusing every
+   *      activation because there is nowhere to run the check would break the
+   *      product outright. This keeps single-use enforced (insert-once row, see
+   *      that file for the probed permissions and its one real weakness).
+   *
+   * A REFUSAL from either is final and uses the same words, so the app cannot
+   * behave differently per deployment. Only "there is no server here" falls
+   * through to the second lock; every other answer stands.
    */
-  try {
-    const { claimLicenseKey } = await import("@/lib/activation.server");
-    const claim = await claimLicenseKey({ data: { key: clean, email: state.email } });
-    if (!claim.ok) {
-      return { error: claim.error ?? "That licence key could not be activated. Please try again." };
-    }
-    if (claim.alreadyInUse) {
+  const lock = await claimLicenseKeyFor(state.email, clean);
+  if (lock.status === "ok") {
+    if (!lock.ok) return { error: lock.error ?? "That licence key could not be activated. Please try again." };
+    if (lock.alreadyInUse) {
       // This account already holds the key — the phone that owns it is live.
       // Re-entering it there is a no-op, not a new activation, so activation
       // continues normally below.
       console.log("[key-activation] key already held by this account:", clean);
     }
-  } catch (claimError) {
-    console.warn("[key-activation] single-use check failed:", claimError);
-    return { error: "We could not check that licence key. Please check your connection and try again." };
+  } else {
+    console.warn("[key-activation] no activation endpoint here — using the offline lock:", lock.error);
+    return await claimKeyWithoutServerOrRefuse(clean, state.email);
   }
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };

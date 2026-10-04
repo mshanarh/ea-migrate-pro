@@ -14,6 +14,7 @@ import {
   type CloudAccess,
 } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, recordAppUserName, registerWithEmail } from "@/lib/supabase-users";
+import { checkActivationCode, requestActivationCode } from "@/lib/activation-client";
 
 /**
  * Query flags that mean "this page was DELIBERATELY sent here" — a route guard
@@ -661,20 +662,27 @@ function AppAccess() {
        * browser's), the account is sent to the plans rather than being let in.
        */
       setSendingCode(true);
-      let codeSent: { ok: boolean; error?: string };
-      try {
-        const { issueActivationCode } = await import("@/lib/activation.server");
-        codeSent = await issueActivationCode({ data: { email: clean } });
-      } catch (error) {
-        console.warn("[app-login] activation code request failed:", error);
-        codeSent = { ok: false, error: "We could not send your code. Please try again." };
-      }
+      const codeSent = await requestActivationCode(clean);
       setSendingCode(false);
       setBusy(false);
       setRedirecting(false);
+      if (codeSent.status === "offline") {
+        // NO SERVER TO SEND A CODE FROM. This deployment cannot prove inbox
+        // control, so the code step is skipped entirely rather than faked —
+        // and the account is NOT sent to the plans, because it is paid. The
+        // waiting room is the honest screen: activation is done by hand.
+        console.warn("[app-login] no activation endpoint:", codeSent.error);
+        toast.error("We could not send your code right now. Please try again in a moment.");
+        setAwaitingActivation(true);
+        setSuccessReturn(false);
+        if (typeof window !== "undefined") window.history.replaceState({}, "", "/app/login?awaiting=1");
+        return;
+      }
       if (!codeSent.ok) {
+        // The endpoint answered. "Not entitled" is the plans screen; anything
+        // else is a send failure that must not look like a payment problem.
         toast.error(codeSent.error ?? "We could not send your code. Please try again.");
-        setChoosePlan(true);
+        if (/has not been activated/i.test(codeSent.error ?? "")) setChoosePlan(true);
         return;
       }
       setCodeValue("");
@@ -710,13 +718,12 @@ function AppAccess() {
     setVerifyingCode(true);
     setCodeError("");
     try {
-      let result: { ok: boolean; error?: string };
-      try {
-        const { verifyActivationCode } = await import("@/lib/activation.server");
-        result = await verifyActivationCode({ data: { email: codeStage.email, code } });
-      } catch (error) {
-        console.warn("[app-login] activation code verify failed:", error);
-        result = { ok: false, error: "We could not check that code. Please try again." };
+      const result = await checkActivationCode(codeStage.email, code);
+      if (result.status === "offline") {
+        // The endpoint disappeared between sending and checking. Say so; do NOT
+        // let them in on a check that never ran.
+        setCodeError("We could not check that code. Please try again in a moment.");
+        return;
       }
       if (!result.ok) {
         setCodeError(result.error ?? "That code is not right.");
@@ -864,13 +871,10 @@ function AppAccess() {
     setResendingCode(true);
     setCodeError("");
     try {
-      let result: { ok: boolean; error?: string };
-      try {
-        const { issueActivationCode } = await import("@/lib/activation.server");
-        result = await issueActivationCode({ data: { email: codeStage.email } });
-      } catch (error) {
-        console.warn("[app-login] activation code resend failed:", error);
-        result = { ok: false, error: "We could not send your code. Please try again." };
+      const result = await requestActivationCode(codeStage.email);
+      if (result.status === "offline") {
+        setCodeError("We could not send your code. Please try again in a moment.");
+        return;
       }
       if (!result.ok) {
         setCodeError(result.error ?? "We could not send your code. Please try again.");
