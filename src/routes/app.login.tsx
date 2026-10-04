@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail, User } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getAppState, getDeviceId, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
@@ -13,7 +13,7 @@ import {
   type AppAccessCheck,
   type CloudAccess,
 } from "@/lib/payment-gate";
-import { bindDeviceToEmail, checkDeviceBinding, recordAppUserName, registerWithEmail } from "@/lib/supabase-users";
+import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 import { checkActivationCode, requestActivationCode } from "@/lib/activation-client";
 
 /**
@@ -130,17 +130,6 @@ function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> 
 function AppAccess() {
   const app = useAppState();
   const [email, setEmail] = useState(app.email ?? "");
-  /**
-   * THE NAME THIS PERSON REGISTERS WITH.
-   *
-   * The app has always asked for an email and nothing else, which left the
-   * admin console unable to answer "who is this?" for a customer. It is
-   * optional so an existing customer who simply wants to get in is never
-   * stopped by a field they have never been asked for before, and it is stored
-   * once (see recordAppUserName) — the console shows it beside the email in
-   * the App users tab.
-   */
-  const [fullName, setFullName] = useState("");
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   /**
@@ -575,11 +564,6 @@ function AppAccess() {
         verified: false,
       } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
-      // REMEMBER THE NAME (best effort). Fired here rather than at the end so
-      // it is saved on the very first sign-in, whatever the payment decision
-      // turns out to be, and deliberately not awaited — a name is a
-      // convenience for the owner, and must never sit in front of the gate.
-      if (fullName.trim()) void recordAppUserName(clean, fullName);
 
       /**
        * STRICT ENTITLEMENT CHECK — the ONE gate in front of everything else.
@@ -657,9 +641,11 @@ function AppAccess() {
        * runs once that code comes back (see `submitActivationCode`).
        *
        * An unpaid email never gets this far — `registration.verified` was
-       * required above — and if the SERVER still refuses to issue a code
-       * (its entitlement check is the authority, and it is stricter than the
+       * required above — and if the SERVER refuses to issue a code (its
+       * entitlement check is the authority, and it is stricter than the
        * browser's), the account is sent to the plans rather than being let in.
+       *
+       * If there is no endpoint at all, NOTHING opens: see the branch below.
        */
       setSendingCode(true);
       const codeSent = await requestActivationCode(clean);
@@ -672,10 +658,19 @@ function AppAccess() {
         // and the account is NOT sent to the plans, because it is paid. The
         // waiting room is the honest screen: activation is done by hand.
         console.warn("[app-login] no activation endpoint:", codeSent.error);
-        toast.error("We could not send your code right now. Please try again in a moment.");
-        setAwaitingActivation(true);
-        setSuccessReturn(false);
-        if (typeof window !== "undefined") window.history.replaceState({}, "", "/app/login?awaiting=1");
+        // FAIL CLOSED ON THE GATE. This used to hand the account to the waiting
+        // room, whose 15-second poll resolves the cloud and sends any PAID
+        // account straight to /app/home — which is the code gate quietly not
+        // happening. That is exactly the bypass this screen exists to close, so
+        // the account stays on the form instead: no endpoint, no code, no entry.
+        //
+        // The remedy is a deployment fix (the function must exist and be
+        // configured), not a way around it, and the plans screen is NOT the right
+        // answer either — this account is paid and must never be asked to pay
+        // again.
+        toast.error("We could not send your code right now. Please try again in a moment.", {
+          description: "If this keeps happening, message support and we will help you in.",
+        });
         return;
       }
       if (!codeSent.ok) {
@@ -955,7 +950,7 @@ function AppAccess() {
           onCancel={dismissCheckout}
         />
       ) :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} fullName={fullName} setFullName={setFullName} onSubmit={continueWithEmail} checking={(busy && !redirecting) || sendingCode} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={(busy && !redirecting) || sendingCode} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -1031,7 +1026,7 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
   </div>;
 }
 
-function LoginView({ email, setEmail, fullName, setFullName, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; fullName: string; setFullName: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
+function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
@@ -1040,13 +1035,6 @@ function LoginView({ email, setEmail, fullName, setFullName, onSubmit, checking,
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
     {deactivated ? <DeactivatedNotice /> : null}
     <form className="mt-12 space-y-4" onSubmit={onSubmit}>
-      {/* NAME — optional on purpose. It is what the admin console shows beside
-          the email, and it is remembered once, so nobody is forced through a
-          field they have never been asked for before. */}
-      <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
-        <User className="size-6 shrink-0 text-[#aab2b7]" />
-        <input type="text" autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name (optional)" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />
-      </label>
       <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
         <Mail className="size-6 shrink-0 text-[#aab2b7]" />
         <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />

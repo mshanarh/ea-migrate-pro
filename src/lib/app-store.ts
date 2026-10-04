@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
-import { claimKeyWithoutServer } from "@/lib/license-lock";
+import { ALREADY_IN_USE, claimKeyWithoutServer } from "@/lib/license-lock";
 import { claimLicenseKeyFor } from "@/lib/activation-client";
 
 /** Same checkout the app login redirects unpaid users to. */
@@ -651,7 +651,6 @@ async function findSavedLicenseForEmail(key: string, email: string) {
 async function claimKeyWithoutServerOrRefuse(key: string, email: string): Promise<{ error?: string }> {
   const outcome = await claimKeyWithoutServer(key, email);
   if (!outcome.ok) return { error: outcome.error };
-  if (outcome.alreadyInUse) console.log("[key-activation] key already held by this account:", key);
   return {};
 }
 
@@ -691,7 +690,11 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   if (!validFormat) {
     return { error: "That license key is invalid. It should look like EMP-XXXX-XXXX-XXXX (no spaces)." };
   }
-  if (state.robots.some((robot) => robot.key === clean)) return { error: "That key is already activated." };
+  // ONE ACTIVATION, ONE KEY. A key that this device has already activated is
+  // spent, and re-entering it is the same mistake as entering it on a second
+  // phone: it says the same words the server lock says, so the rule is stated
+  // once instead of twice with different phrasing.
+  if (state.robots.some((robot) => robot.key === clean)) return { error: ALREADY_IN_USE };
   if (!state.email) return { error: "Sign in with your email before activating a key." };
   // Validate the key first, then enforce the one-device binding before creating a robot.
   // CLOUD FIRST — a license_keys row bound to this email IS proof of payment, so it
@@ -738,12 +741,6 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   const lock = await claimLicenseKeyFor(state.email, clean);
   if (lock.status === "ok") {
     if (!lock.ok) return { error: lock.error ?? "That licence key could not be activated. Please try again." };
-    if (lock.alreadyInUse) {
-      // This account already holds the key — the phone that owns it is live.
-      // Re-entering it there is a no-op, not a new activation, so activation
-      // continues normally below.
-      console.log("[key-activation] key already held by this account:", clean);
-    }
   } else {
     console.warn("[key-activation] no activation endpoint here — using the offline lock:", lock.error);
     return await claimKeyWithoutServerOrRefuse(clean, state.email);

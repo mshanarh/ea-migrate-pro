@@ -12,9 +12,9 @@
  *   3. That code verifies            → the licence screen opens
  *   4. A wrong code                  → refused
  *   5. Unlock the key                → the bot activates
- *   6. The SAME key on another phone → "This licence key is already in use."
- *   7. A second key does not release the first
- *   8. The admin console's App users list sees the account
+ *   6. The SAME key again, same user → "License key already in use"
+ *   7. The SAME key, another user    → "License key already in use"
+ *   8. A second key does not release the first
  *
  * Every row it creates is deleted afterwards.
  *
@@ -117,9 +117,20 @@ async function main() {
   const claim1 = await call({ action: "claimKey", email: PAID, key: KEY_A });
   check("the first phone activates the key", claim1.status === 200 && claim1.body.ok === true, claim1.body.error ?? "");
   const reenter = await call({ action: "claimKey", email: PAID, key: KEY_A });
+  // CHANGED ASSERTION, on purpose. This used to expect a no-op ("the same phone
+  // re-entering its own key is allowed"), which is what let one key be re-run on
+  // a replacement phone. The requested rule is one activation per key, for
+  // EVERYONE including the account that activated it, so the assertion below is
+  // the opposite of what it was — not weakened, replaced with the new contract.
   check(
-    "the same phone re-entering its own key is a no-op, not a refusal",
-    reenter.body.ok === true && reenter.body.alreadyInUse === true,
+    "the same account activating it again is refused",
+    reenter.body.ok === false && reenter.body.alreadyInUse === true,
+    reenter.body.error ?? "",
+  );
+  check(
+    '  ...with exactly "License key already in use"',
+    reenter.body.error === "License key already in use",
+    reenter.body.error ?? "",
   );
 
   // ---- 6. a second account is told the key is already in use ---------------
@@ -127,7 +138,7 @@ async function main() {
   check("a second account is refused the key", claim2.body.ok === false && claim2.body.alreadyInUse === true);
   check(
     "the refusal says exactly what was asked for",
-    claim2.body.error === "This licence key is already in use.",
+    claim2.body.error === "License key already in use",
     claim2.body.error ?? "",
   );
 

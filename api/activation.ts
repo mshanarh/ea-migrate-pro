@@ -65,8 +65,14 @@ const SENDER = (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").t
 /** Told apart from "not entitled" and "key taken" by the client. */
 const UNAVAILABLE = "Activation is unavailable right now.";
 const NOT_ENTITLED = "This account has not been activated yet.";
-/** The exact wording the customer asked for. */
-const ALREADY_IN_USE = "This licence key is already in use.";
+/**
+ * The one message a key that is already activated produces — whether the
+ * person trying is the account that activated it or a different one. Both are
+ * the same situation from the customer's point of view: the key is spent, and a
+ * spent key cannot be activated again. Spelling it one way means the app cannot
+ * describe the same fact two different ways depending on who is asking.
+ */
+const ALREADY_IN_USE = "License key already in use";
 
 type Action = "issueCode" | "verifyCode" | "claimKey";
 
@@ -230,10 +236,14 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
     return { ok: false, alreadyInUse: true, error: ALREADY_IN_USE };
   }
   if (mine.some((entry) => entry.toUpperCase() === key)) {
-    // This account already holds the key — the phone that owns it is live.
-    // Re-entering it there is a no-op, not a new activation, so it must NOT
-    // be refused.
-    return { ok: true, alreadyInUse: true };
+    // THE SAME ACCOUNT, THE SAME KEY. It is already activated — on this phone,
+    // or on a phone whose device binding has since been released. Either way
+    // the key is spent, and a spent key is not activated a second time. This
+    // used to answer "already yours, carry on", which is what let one key be
+    // re-entered and re-run on a replacement phone; the customer asked for it
+    // to be refused, and the same wording is used for both cases so the rule is
+    // stated once.
+    return { ok: false, alreadyInUse: true, error: ALREADY_IN_USE };
   }
 
   const { data: written, error: claimError } = await client

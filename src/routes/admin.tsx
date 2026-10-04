@@ -53,7 +53,7 @@ const TABS: Array<{ key: TabKey; label: string; short: string; icon: typeof Cloc
   { key: "approved", label: "Approved users", short: "Approved", icon: CheckCircle2 },
   { key: "paid", label: "Paid users", short: "Paid", icon: CreditCard },
   { key: "rejected", label: "Rejected users", short: "Rejected", icon: Ban },
-  { key: "appusers", label: "App users", short: "App", icon: Smartphone },
+  { key: "appusers", label: "Activated, not paid", short: "Not paid", icon: Smartphone },
   { key: "messages", label: "Message users", short: "Messages", icon: MessageSquare },
 ];
 
@@ -305,7 +305,7 @@ function AdminConsole() {
     approved: stats.approved,
     paid: stats.paid,
     rejected: stats.rejected,
-    appusers: users.filter((user) => user.usedApp).length,
+    appusers: users.filter((user) => user.usedApp && !user.isPaid).length,
     messages: messages.length,
   };
 
@@ -326,10 +326,12 @@ function AdminConsole() {
       approved: match(users.filter((user) => user.status === "approved")),
       paid: match(users.filter((user) => user.isPaid)),
       rejected: match(users.filter((user) => user.status === "rejected")),
-      // EVERY account that has opened the trading app, whatever its payment or
-      // approval state. This is the owner's answer to "who is using the app",
-      // so it must not be filtered by anything else.
-      appusers: match(users.filter((user) => user.usedApp)),
+      // EVERY account that has opened the trading app AND is not on the payment
+      // ledger. That combination is the point of the tab: these people are
+      // running the software on their own account without ever having been
+      // marked paid, so they are the ones worth chasing. Listing paying
+      // accounts here too buried them under everyone who did the right thing.
+      appusers: match(users.filter((user) => user.usedApp && !user.isPaid)),
     };
   }, [users, search]);
 
@@ -722,8 +724,8 @@ function AdminConsole() {
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search name or email"
-                    aria-label="Search users by name or email"
+                    placeholder="Search email or name"
+                    aria-label="Search users by email or name"
                     className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
                   />
                 </div>
@@ -740,7 +742,7 @@ function AdminConsole() {
                       : tab === "paid"
                         ? "An account appears here once its payment flag is set to paid in the database."
                         : tab === "appusers"
-                          ? "Every account that has opened the trading app appears here, with the name it registered with."
+                          ? "Every account that has opened the trading app but is not on the payment ledger appears here."
                           : "Accounts move here when you approve or reject them."
                   }
                 />

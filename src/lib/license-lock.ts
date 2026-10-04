@@ -47,8 +47,16 @@
  */
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
-/** The one message the customer is shown when the key is already claimed. */
-export const ALREADY_IN_USE = "This licence key is already in use.";
+/**
+ * The one message a key that is already activated produces.
+ *
+ * SAME STRING AS `api/activation.ts`, deliberately: a key that is already
+ * activated reads identically whether the server lock or the offline lock
+ * caught it, and identically whether the same account or a different one is
+ * asking. The customer's rule is "a licence key can only be activated once",
+ * and one sentence is what that sounds like.
+ */
+export const ALREADY_IN_USE = "License key already in use";
 
 const LOCK_PREFIX = "lock:";
 
@@ -63,22 +71,13 @@ function lockRowKey(key: string): string {
   return `${LOCK_PREFIX}${key}`;
 }
 
-function readHolder(value: unknown): string {
-  if (typeof value !== "string") return "";
-  try {
-    return ((JSON.parse(value) as { email?: unknown }).email ?? "") as string;
-  } catch {
-    return "";
-  }
-}
-
 /**
- * Claim `key` for `email`, or refuse because somebody else already holds it.
+ * Claim `key` for `email`, or refuse because the key is already activated.
  *
- * Same three outcomes as the server lock, with the same wording, so the app
- * cannot behave differently depending on which deployment it is running on.
- * The same account re-entering its own key is a NO-OP rather than a refusal —
- * that is the phone that already has the bot, not a second activation.
+ * Same outcomes and the same wording as the server lock, so the app cannot
+ * behave differently depending on which deployment it is running on. A key that
+ * is already activated is refused for EVERYONE, including the account that
+ * activated it — one activation, one key, one message.
  */
 export async function claimKeyWithoutServer(key: string, email: string): Promise<LockOutcome> {
   if (!supabaseConfigured || !supabase) {
@@ -103,10 +102,10 @@ export async function claimKeyWithoutServer(key: string, email: string): Promise
   }
   const rows = (existing ?? []) as Array<{ value?: string | null }>;
   if (rows.length > 0) {
-    const holder = readHolder(rows[0]?.value);
-    // An unreadable holder is still a CLAIMED key — the row existing is the
-    // lock. Falling back to "unlocked" here would hand out a live key.
-    if (!holder || holder === address) return { ok: true, alreadyInUse: true };
+    // THE ROW EXISTING IS THE LOCK — it does not matter who it names. The same
+    // account asking again is just as spent as anybody else asking, and both get
+    // the same words. An unreadable holder is also a claim: treating it as
+    // unlocked would hand out a key somebody already has.
     return { ok: false, error: ALREADY_IN_USE, alreadyInUse: true };
   }
 
