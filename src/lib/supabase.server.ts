@@ -108,6 +108,16 @@ export const whopVerifyMembership = createServerFn({ method: "POST" })
     const apiKey = (process.env["WHOP_API_KEY"] ?? process.env["VITE_WHOP_API_KEY"] ?? "").trim();
     const productId = (process.env["WHOP_PRODUCT_ID"] ?? process.env["VITE_WHOP_PRODUCT_ID"] ?? "").trim();
     if (!apiKey) return { ok: false, paid: false, error: "WHOP_API_KEY is not configured" };
+    // AN UNSCOPED WHOP QUERY CANNOT PROVE PAYMENT, SO IT IS NOT ASKED.
+    // `product` is what narrows the membership list to OUR product. Without it
+    // the API answers with every membership on the account, so a person who
+    // ever bought anything from any other seller on Whop would be confirmed as
+    // a paying customer of this one — and this is a path that opens the app
+    // without an entry in the payment ledger. That is precisely the "not marked
+    // paid, still got in" case, so an unset product id answers "no" rather than
+    // falling back to a broader-than-honest query. Set WHOP_PRODUCT_ID (or
+    // VITE_WHOP_PRODUCT_ID) to re-enable this.
+    if (!productId) return { ok: false, paid: false, error: "WHOP_PRODUCT_ID is not configured" };
     try {
       const url = new URL("https://api.whop.com/api/v1/memberships");
       url.searchParams.set("page_size", "100");

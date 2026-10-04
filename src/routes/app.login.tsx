@@ -546,7 +546,8 @@ function AppAccess() {
       console.log("[app-login] Login success");
       // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
       window.sessionStorage.setItem("eamp_pending_welcome", "1");
-      if (registration.outcome === "admin") toast.success("Admin access enabled — no payment is required.");
+      // There is no "no payment required" path here any more: every account,
+      // admins and platform owners included, is opened by a payment record.
 
       // Bind THIS device in the cloud before letting them in. The access gate
       // treats a missing binding as a stale session (the global access reset),
@@ -767,12 +768,12 @@ function DeactivatedNotice() {
         </span>
         <div>
           <p className="text-base font-bold leading-6 text-red-100">
-            Your account has been deactivated.
+            Your portal has been deactivated.
           </p>
           <p className="mt-1.5 text-sm leading-6 text-red-200/80">
-            An administrator turned this account off, so it can no longer be used. Signing in again
-            will not bring it back. Message support on WhatsApp with your email if you think this is
-            a mistake.
+            An administrator turned this account off — by rejecting it or marking it unpaid — so the
+            portal and the app can no longer be used. Signing in again will not bring it back.
+            Message support on WhatsApp with your email if you think this is a mistake.
           </p>
         </div>
       </div>

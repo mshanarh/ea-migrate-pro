@@ -374,9 +374,11 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
  * supabase/admin-simple-access.sql).
  *
  * APPROVAL IS NOT PAYMENT, AND THIS FUNCTION MUST NEVER BECOME A PAYMENT
- * WRITE. It touches three things and nothing else: the approval row, the
- * `users` row (email ONLY — no is_paid, ever, on any code path) and, from
- * the caller, the key allowance. People were approving a signup and coming
+ * WRITE. It touches the approval row, the `users` row (email ONLY — no is_paid,
+ * ever, on any code path), the key allowance (from the caller) and, for a
+ * REJECTION ONLY, a `paid_emails` revocation marker (`paid_at = null`) so the
+ * app locks the account out too — that marker can only ever REMOVE access, and
+ * is never a payment. People were approving a signup and coming
  * back days later to find it sitting in the Paid section having pressed
  * nothing, because payment state was being written from somewhere other
  * than this console's ledger. The console's "Mark paid" button is the only
@@ -399,6 +401,23 @@ export async function setUserApproval(
     .from("mentor_approvals")
     .upsert({ email: clean, status }, { onConflict: "email" });
   if (error) return { ok: false, error: error.message };
+  // REJECT IS ALSO A REVOCATION. The owner pressing "Reject" is telling the
+  // platform "this account is deactivated", so the app has to honour that on a
+  // phone that never had a local paid record: `paid_emails` is written with
+  // `paid_at = null`, the marker the access gate answers as "revoked" (see
+  // isExplicitlyRevoked in payment-gate.ts). Without it, Reject only closed the
+  // mentor portal and left the trading app open on whatever device it was
+  // already running on.
+  //
+  // This is a REVOCATION, never a payment: it can only ever remove access.
+  // APPROVING writes nothing here — approval still grants no payment, and
+  // "Mark paid" remains the only thing that puts anybody on the ledger.
+  if (status === "rejected") {
+    const { error: revokeError } = await supabase
+      .from("paid_emails")
+      .upsert({ email: clean, paid_at: null }, { onConflict: "email" });
+    if (revokeError) return { ok: false, error: revokeError.message };
+  }
   return { ok: true };
 }
 

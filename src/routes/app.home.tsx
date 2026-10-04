@@ -336,13 +336,16 @@ function AppHome() {
     };
     void verify();
     // KEEP ASKING while this tab stays open — a deactivated account that
-    // never touches the screen must still be thrown out. The gate caches a
-    // paid answer for 60s, so this is at most one cheap check per minute,
-    // and only while the dashboard is actually visible.
+    // never touches the screen must still be thrown out. Fifteen seconds, not
+    // a minute: the requirement is that the app locks the moment the owner
+    // presses Reject or Mark unpaid, and a session left running on a phone
+    // all afternoon must not be usable for an hour afterwards. The gate
+    // caches a "paid" answer for 60s, so this only costs one read a minute
+    // even at this cadence, and only while the dashboard is visible.
     const poll = window.setInterval(() => {
       if (document.visibilityState !== "visible") return;
       void verify();
-    }, 60_000);
+    }, 15_000);
     const onWake = () => {
       if (document.visibilityState !== "visible") return;
       void verify();

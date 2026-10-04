@@ -6,21 +6,41 @@
  * is exactly how a non-paying user unlocked the app. This module decides access
  * from SUPABASE (and Whop, server-side) only:
  *
- *   admin   → the users row is is_admin, or the email is a platform owner
- *   paid    → the users row is is_paid (the owner marked them paid in the
- *             console), OR a license_keys row is bound to the email (the key
- *             only exists because they paid), OR Whop reports an active
- *             membership for the email
- *   revoked → the owner pressed "Mark unpaid": `paid_emails` holds a row with
- *             `paid_at = null`. A DELIBERATE decision, not a missing record,
- *             so it is never answered as "unpaid" (which would send the person
- *             to checkout and hide the fact that the account was taken away).
+ *   paid    → the console's payment LEDGER (`paid_emails`) holds a row with a
+ *             timestamp for this email, OR a license_keys row is bound to the
+ *             email (the key only exists because they paid), OR Whop reports an
+ *             active membership FOR OUR PRODUCT — and only when WHOP_PRODUCT_ID
+ *             is set, since an unscoped query matches any product on Whop
+ *   revoked → the owner pressed "Mark unpaid" (`paid_emails` row with
+ *             `paid_at = null`) or pressed "Reject" (`mentor_approvals.status
+ *             = 'rejected'`). Both are DELIBERATE decisions, not missing
+ *             records, so they are never answered as "unpaid" — that would send
+ *             the person to checkout and hide the fact that the account was
+ *             taken away.
  *   unpaid  → everything else, and every unpaid email is sent to checkout
  *
- * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE. Approving somebody in the
- * mentor portal is a portal decision; it has never had anything to do with the
- * app, and reading it here is what let unpaied people walk into the dashboard.
- * `mentor_approvals` is not consulted anywhere in this module.
+ * NOTHING BUT PAYMENT OPENS THIS APP — NOT EVEN AN ADMIN.
+ *
+ * The owner list, `users.is_admin` and `users.is_paid` are all GONE from the
+ * grant path. Each one was a way in that had nothing to do with money:
+ *   • the owner list answered "admin" before any database call, so every
+ *     platform address opened the app forever with no payment record;
+ *   • `is_admin` opened the app for anybody an admin had flagged;
+ *   • `is_paid` is a MIRROR column the anon key may write, so it could be set
+ *     by anything holding the public key.
+ * The console shows Paid from the same `paid_emails` ledger this gate reads, so
+ * what the owner sees and what the app enforces are now the same table. If you
+ * are not on that table, the app does not open — that includes the owner, and
+ * that is deliberate.
+ *
+ * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE — with ONE exception. Being
+ * APPROVED grants nothing (approving somebody in the mentor portal is a portal
+ * decision, and reading it here is what let unpaid people walk into the
+ * dashboard). Being REJECTED does revoke: the console's Reject button is the
+ * owner telling the platform "this account is deactivated", and the only
+ * honest way to honour that on a device that never had a local paid record is
+ * to read the rejection itself. `mentor_approvals` is therefore consulted for
+ * `rejected` ONLY, and never for `approved`.
  *
  * A tiny in-memory cache (60s) keeps navigation snappy; it never survives a page
  * reload and only caches DATABASE results, so editing localStorage cannot
@@ -30,7 +50,7 @@
  * still remembers from a session the owner has since revoked — can never open
  * the app, because it is never consulted.
  */
-import { OWNER_EMAILS, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 
@@ -93,8 +113,8 @@ const cache = new Map<string, Resolution>();
  *
  * Bump this whenever the access rules change. Nothing in Supabase is touched.
  */
-export const SESSION_VERSION = 2;
-const SESSION_VERSION_KEY = "eamp_session_v2";
+export const SESSION_VERSION = 3;
+const SESSION_VERSION_KEY = "eamp_session_v3";
 
 /**
  * True exactly ONCE per device per version bump. The version is written
@@ -113,10 +133,6 @@ function consumeStaleSession(): boolean {
   } catch {
     return false;
   }
-}
-
-export function isOwnerEmail(email: string): boolean {
-  return OWNER_EMAILS.includes(email.trim().toLowerCase());
 }
 
 /** Drop any remembered answer for this email — used the moment a payment lands. */
@@ -138,7 +154,11 @@ export async function resolveCloudAccess(
 ): Promise<CloudAccess | null> {
   const clean = (email ?? "").trim().toLowerCase();
   if (!clean) return "unpaid";
-  if (isOwnerEmail(clean)) return "admin";
+  // NO OWNER SHORTCUT. This used to answer "admin" before touching the
+  // database, which meant a platform address opened the app with no payment
+  // record at all — the exact thing "paid only" has to mean. Every email,
+  // owner included, now goes to computeFromDatabase below and is answered by
+  // the ledger.
   if (!supabase) return null; // unconfigured — caller decides the fallback
 
   const cached = cache.get(clean);
@@ -220,9 +240,10 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  * console said unpaid; the gate said paid; the customer kept trading.
  *
  * A revocation marker is a DELIBERATE human decision, so it outranks every
- * derived signal below it (licence keys, Whop) and even `is_admin`. The one
- * thing it does not outrank is a platform owner, and `resolveCloudAccess`
- * already returns "admin" for those before this is ever reached.
+ * derived signal below it (licence keys, Whop). Nothing outranks it — not an
+ * admin flag, not a platform owner. The console's Reject button writes one of
+ * these too, which is what makes "portal deactivated" a real verdict rather
+ * than a message the app can only show to accounts it once let in.
  *
  * It answers with its own CloudAccess value ("revoked") rather than a bare
  * boolean folded into "unpaid", because "we revoked this" and "this person
@@ -234,6 +255,24 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  */
 async function isExplicitlyRevoked(clean: string): Promise<boolean> {
   if (!supabase) return false;
+  // REJECTED IN THE ADMIN CONSOLE IS A REVOCATION. The owner pressing "Reject"
+  // is the platform saying "this account is deactivated". Until this was
+  // consulted, that decision lived only in `mentor_approvals` and nothing on a
+  // phone ever read it — so a rejected member saw Choose Plan on sign-in, and
+  // a rejected member with the app open kept it open. This is the ONLY thing
+  // this module reads from `mentor_approvals`; "approved" is still never
+  // consulted and still grants nothing.
+  try {
+    const { data: approval } = await supabase
+      .from("mentor_approvals")
+      .select("status")
+      .eq("email", clean)
+      .limit(1);
+    const rows = Array.isArray(approval) ? approval : [];
+    if (rows.some((row) => (row as { status?: string | null }).status === "rejected")) return true;
+  } catch {
+    /* a failed approval read falls through to the ledger check */
+  }
   try {
     // `.limit(1)` rather than `.maybeSingle()`: a single-row read ERRORS with
     // PGRST116 when an earlier cleanup left two rows for one email, and an
@@ -258,23 +297,27 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   // unpaid" a button that did nothing.
   if (await isExplicitlyRevoked(clean)) return "revoked";
 
-  // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE.
+  // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE. NOT EVEN FOR ADMINS.
   //
-  // Mentor approval is a PORTAL decision and has nothing to do with the app.
-  // `mentor_approvals` used to be read first here, and an approved mentor was
-  // let straight into the app without ever being marked paid — which is
-  // exactly the confusion this gate exists to remove. It is no longer read at
-  // all: approving somebody in the mentor portal says nothing about whether
-  // they may use the app, and marking somebody paid is the only thing that
-  // does. An unpaid email is sent to checkout, on every platform.
-  const { data: user, error: userError } = await supabase!
-    .from("users")
-    .select("is_paid, is_admin")
+  // `users.is_admin` and `users.is_paid` used to grant access here. Both are
+  // gone:
+  //   • is_admin is a ROLE, not a payment. Reading it meant anybody an admin
+  //     had flagged could open the trading app without paying a cent.
+  //   • is_paid is a MIRROR of the ledger that the anon key is allowed to
+  //     write, so it drifts and it can be set by anything holding the public
+  //     key. The ledger row is the real record; the mirror is not.
+  //
+  // Mentor approval is a PORTAL decision and still has nothing to do with the
+  // app: `isExplicitlyRevoked` above reads `mentor_approvals` for "rejected"
+  // ONLY, so a rejection deactivates and an approval still grants nothing. An
+  // unpaid email is sent to checkout, on every platform.
+  const { data: ledger } = await supabase!
+    .from("paid_emails")
+    .select("paid_at")
     .eq("email", clean)
-    .maybeSingle();
-  if (userError) throw userError;
-  if (user?.is_admin) return "admin";
-  if (user?.is_paid) return "paid";
+    .limit(10);
+  const ledgerRows = (Array.isArray(ledger) ? ledger : []) as Array<{ paid_at?: string | null }>;
+  if (ledgerRows.some((row) => row.paid_at != null)) return "paid";
 
   // A license_keys row bound to this email is payment in practice — the key
   // only exists because somebody paid for it. Exact match first, then a
@@ -304,31 +347,22 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
  * cannot be reached at all (Supabase unconfigured) so dev never blocks.
  */
 export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
-  // STALE SESSION KICK — runs BEFORE anything else, including the owner
-  // shortcut. A session cached under the previous access rules is not
-  // trusted at all: it is signed out here and the cloud decides again on
-  // this very pass. Owners are not exempt (they re-bind on sign-in).
+  // STALE SESSION KICK — runs BEFORE anything else. A session cached under the
+  // previous access rules is not trusted at all: it is signed out here and the
+  // cloud decides again on this very pass. Nobody is exempt, owners included.
   if (consumeStaleSession()) appSignOut();
   if (!email) return { action: "signin" };
-  // PLATFORM OWNERS pass EVERY gate instantly — before any database/Whop
-  // call. A stale users row (is_admin/is_paid false) must never bounce the
-  // owner to checkout (the "scanner says paid emails only" bug).
-  if (isOwnerEmail(email)) {
-    // …but the GLOBAL ACCESS RESET still applies to them: if the database
-    // does not bind THIS device to the email, the old session ends here.
-    // Sign back in on this device and the binding is re-created.
-    const ownerKick = await deviceBindingRevoked(email);
-    if (ownerKick) {
-      appSignOut();
-      return { action: "signin" };
-    }
-    return { action: "pass" };
-  }
-  // GLOBAL ACCESS RESET — everyone else: if the database no longer binds
-  // this device to the email (the reset cleared every binding), the stale
-  // session is dead. appSignOut clears it ONCE and the route sends the
-  // person to /app/login, where the cloud gate decides who gets back in:
-  // unpaid emails go to checkout, paid/admin emails re-bind on sign-in.
+  // NO OWNER PASS-THROUGH. Platform owners used to return "pass" here before
+  // any database call, so the owner account could never be locked out of the
+  // app it administers. That is precisely the hole "paid only, everybody"
+  // closes: if the owner's email is not on the payment ledger, the app does not
+  // open for it either. Mark it paid in the console like any other account.
+  //
+  // GLOBAL ACCESS RESET — everyone: if the database no longer binds this
+  // device to the email (the reset cleared every binding), the stale session
+  // is dead. appSignOut clears it ONCE and the route sends the person to
+  // /app/login, where the cloud gate decides who gets back in: unpaid emails
+  // go to checkout, paid emails re-bind on sign-in.
   if (await deviceBindingRevoked(email)) {
     appSignOut();
     return { action: "signin" };
@@ -349,8 +383,9 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     return { action: "pass" };
   }
   // DEACTIVATED BY THE OWNER. The database holds a revocation marker for this
-  // email (`paid_emails.paid_at = null`), which is a decision the owner made
-  // in the console and not a missing payment record. It is answered HERE,
+  // email (`paid_emails.paid_at = null`) or a console REJECTION
+  // (`mentor_approvals.status = 'rejected'`), which is a decision the owner
+  // made in the console and not a missing payment record. It is answered HERE,
   // from the cloud, and never from this device's memory: the previous
   // `paymentStatusForEmail(email) !== "unpaid"` test could only recognise a
   // session the owner had already let in, so the same person signing in on a
@@ -365,11 +400,17 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // There is no approval branch: an approved mentor who was never marked paid
   // is sent to Whop like everybody else, which is the entire point.
   if (cloud === "unpaid") {
-    // A local paid/admin record with an UNPAID cloud answer can still mean the
+    // A local PAID record beside an UNPAID cloud answer can still mean the
     // owner flipped the flag before the ledger marker existed (Mark unpaid on
     // an account whose `paid_emails` row had been cleaned up). Same outcome,
     // kept as a second door rather than the only one.
-    if (paymentStatusForEmail(email) !== "unpaid") {
+    //
+    // ONLY a genuine local "paid" record counts. `paymentStatusForEmail` also
+    // answers "admin" for the hardcoded payment-exempt list, and treating that
+    // as evidence of a revoked payment would tell somebody who has simply never
+    // been marked paid that they were deactivated — the wrong message for an
+    // account that owes money and belongs at checkout.
+    if (paymentStatusForEmail(email) === "paid") {
       appSignOut();
       return { action: "deactivate" };
     }

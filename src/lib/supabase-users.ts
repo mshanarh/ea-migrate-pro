@@ -2,8 +2,10 @@
  * Supabase registration flow (browser side, anon key only):
  *   1. Upsert the user into public.users (created unpaid if new).
  *   2. Insert a session row into public.user_sessions.
- *   3. Return the access outcome — "checkout" for unpaid, "allow" for
- *      paid, "admin" for admins.
+ *   3. Return the access outcome — "checkout" for anything not on the payment
+ *      ledger, "allow" for a paid account. There is no "admin" outcome: an
+ *      admin with no payment record is answered exactly like any other unpaid
+ *      account.
  *
  * This is the APP's sign-in path, and it has exactly one question to answer:
  * has this email been marked as paid? It deliberately does NOT touch
@@ -22,7 +24,7 @@
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
 
-export type RegistrationOutcome = "allow" | "checkout" | "admin";
+export type RegistrationOutcome = "allow" | "checkout";
 
 /**
  * The result of a registration attempt.
@@ -52,9 +54,12 @@ function db() {
 /**
  * Registration gate. FAIL CLOSED on every runtime error: a failed upsert, a
  * failed read or a missing row all answer "checkout", because none of them is
- * proof that this email paid. Only a positive signal lets somebody through —
- * is_paid, is_admin, an email in OWNER_EMAILS, or a license_keys row issued
- * for that address (a key only exists because somebody paid for it).
+ * proof that this email paid. Only a positive signal lets somebody through: a
+ * `paid_emails` LEDGER row carrying a timestamp (the console's own Paid list),
+ * or a license_keys row issued for that address (a key only exists because
+ * somebody paid for it). Neither `is_paid`, nor `is_admin`, nor an email in
+ * OWNER_EMAILS opens this app — a role is not a receipt, and only a payment
+ * record is.
  */
 export async function registerWithEmail(
   email: string,
@@ -70,7 +75,6 @@ export async function registerWithEmail(
   if (!dbClient) {
     return { outcome: "checkout", user: null, verified: false, error: "supabase-not-configured" };
   }
-  const isOwner = OWNER_EMAILS.includes(address);
 
   // 1. Upsert — an existing row is NOT modified (admin/paid flags stay).
   // Runs for EVERY email INCLUDING owners: the device-binding write below
@@ -132,31 +136,30 @@ export async function registerWithEmail(
   // the database has never confirmed. Anything that is not a positive proof
   // of payment is now treated exactly like an unpaid account: checkout.
   //
-  // PLATFORM OWNERS are checked FIRST — before the row is even required —
-  // because their users row can lag (is_admin/is_paid false, or absent). The
-  // hardcoded owner list decides first, everywhere.
-  if (isOwner) {
-    return {
-      outcome: "admin",
-      user: user ? { ...user, is_paid: true, is_admin: true } : null,
-      verified: true,
-    };
-  }
+  // PLATFORM OWNERS ARE NOT AN EXEMPTION HERE ANY MORE, AND NEITHER IS
+  // is_admin. Both used to answer "verified" with no payment record at all,
+  // which is exactly the hole this gate exists to close — a role is not a
+  // receipt. Both lists still govern what they are good for (portal admin
+  // rights); neither opens the trading app.
   if (!user) return { outcome: "checkout", user: null, verified: false };
-  if (user.is_admin) return { outcome: "admin", user, verified: true };
   // PAYMENT IS THE ONLY THING THAT OPENS THE APP.
-  //   is_paid          → the owner marked this email as paid in the console.
+  //   a ledger row     → the console's "Mark paid" wrote it, or a real licence-key
+  //                      activation did. `paid_emails` is the same table the
+  //                      console's Paid tab reads, so "paid" here means exactly
+  //                      what "Paid" means there.
   //   a licence key    → the key only exists because a mentor/admin issued it
   //                      AFTER payment, so it is proof of payment, not
   //                      permission. Kept deliberately: a client who has paid
-  //                      but not yet activated their key has is_paid = false,
-  //                      and dropping this would send them back to checkout to
-  //                      pay a second time.
+  //                      but not yet activated their key has no ledger row
+  //                      yet, and dropping this would send them back to
+  //                      checkout to pay a second time.
   //   neither          → checkout, on Android, iOS and the web alike.
-  // Mentor approval is deliberately NOT consulted: approving somebody in the
-  // mentor portal says nothing about the app, and treating it as permission
-  // is what let unpaied people in.
-  if (user.is_paid) return { outcome: "allow", user, verified: true };
+  // `users.is_paid` is deliberately NOT read: it is a mirror column the anon
+  // key may write, so it drifts and it can be forged. Mentor approval is
+  // deliberately NOT consulted: approving somebody in the mentor portal says
+  // nothing about the app, and treating it as permission is what let unpaid
+  // people in.
+  if (await emailPaidInLedger(address)) return { outcome: "allow", user, verified: true };
   if (await emailHasLicenseKey(address)) return { outcome: "allow", user, verified: true };
   return { outcome: "checkout", user, verified: false };
 }
@@ -189,6 +192,29 @@ export async function emailHasLicenseKey(email: string): Promise<boolean> {
   if (data) return true;
   const { data: loose } = await dbClient.from("license_keys").select("key").ilike("email", address).limit(1).maybeSingle();
   return !!loose;
+}
+
+/**
+ * Does the console's payment LEDGER record this email as paid?
+ *
+ * A `paid_emails` row carrying a timestamp is the one and only definition of
+ * "paid" on this side of the app, and it is the very same row the admin
+ * console lists under Paid — so the sign-in screen and the console can no
+ * longer disagree about who has paid. A row with `paid_at = null` is a
+ * revocation marker ("Mark unpaid") and deliberately does NOT count as paid
+ * here; the gate answers that case separately, as "deactivated".
+ */
+export async function emailPaidInLedger(email: string): Promise<boolean> {
+  const dbClient = db();
+  const address = clean(email);
+  if (!dbClient || !address) return false;
+  const { data, error } = await dbClient
+    .from("paid_emails")
+    .select("paid_at")
+    .eq("email", address)
+    .limit(10);
+  if (error || !Array.isArray(data)) return false;
+  return data.some((row) => (row as { paid_at?: string | null }).paid_at != null);
 }
 
 /**
