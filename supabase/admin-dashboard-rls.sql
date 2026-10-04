@@ -151,10 +151,15 @@ begin
     raise exception 'admin only';
   end if;
   update public.users set is_paid = coalesce(p_paid, false) where email = v_email;
-  if p_paid then
-    insert into public.paid_emails (email, paid_at) values (v_email, now())
-      on conflict (email) do update set paid_at = excluded.paid_at;
-  end if;
+  -- THE LEDGER MUST BE WRITTEN IN BOTH DIRECTIONS. This used to insert only
+  -- when p_paid was true, so revoking through this function left the previous
+  -- paid_at timestamp in place and — because the app gate treats a paid_emails
+  -- row with paid_at = null as an explicit revocation — an account marked
+  -- unpaid here still read as paid. A revocation with no marker is a button
+  -- that does nothing.
+  insert into public.paid_emails (email, paid_at)
+  values (v_email, case when p_paid then now() else null end)
+    on conflict (email) do update set paid_at = excluded.paid_at;
   return true;
 end;
 $$;

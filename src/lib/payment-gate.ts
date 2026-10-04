@@ -177,7 +177,55 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
   }
 }
 
+/**
+ * EXPLICIT REVOCATION — has the owner marked this email UNPAID on purpose?
+ *
+ * `paid_emails` is the console's own payment ledger. `setUserPaid(email,
+ * false)` writes a row for the email with `paid_at = null`: the row says "we
+ * know this account, and the answer right now is NO". A row with a timestamp
+ * is a normal payment and says nothing here.
+ *
+ * WHY THIS MUST BE CHECKED FIRST. Without it, "Mark unpaid" did not actually
+ * revoke anybody: `computeFromDatabase` read `users.is_paid`, saw false, and
+ * then fell through to the licence-key check — and because activating a key
+ * binds a `license_keys` row to the email, that fallback answered "paid" and
+ * reopened the app for the very person the owner had just locked out. The
+ * console said unpaid; the gate said paid; the customer kept trading.
+ *
+ * A revocation marker is a DELIBERATE human decision, so it outranks every
+ * derived signal below it (licence keys, Whop) and even `is_admin`. The one
+ * thing it does not outrank is a platform owner, and `resolveCloudAccess`
+ * already returns "admin" for those before this is ever reached.
+ *
+ * Fails OPEN on a read error: an unreachable ledger must not lock out paying
+ * customers. The other checks still decide in that case.
+ */
+async function isExplicitlyRevoked(clean: string): Promise<boolean> {
+  if (!supabase) return false;
+  try {
+    // `.limit(1)` rather than `.maybeSingle()`: a single-row read ERRORS with
+    // PGRST116 when an earlier cleanup left two rows for one email, and an
+    // error here would fail OPEN and quietly undo the revocation. Reading the
+    // rows and asking "is any of them a marker?" cannot be defeated that way.
+    const { data, error } = await supabase
+      .from("paid_emails")
+      .select("paid_at")
+      .eq("email", clean)
+      .limit(10);
+    if (error || !Array.isArray(data) || data.length === 0) return false;
+    return data.some((row) => (row as { paid_at?: string | null }).paid_at === null);
+  } catch {
+    return false;
+  }
+}
+
 async function computeFromDatabase(clean: string): Promise<CloudAccess> {
+  // THE OWNER'S EXPLICIT "UNPAID" IS THE FIRST WORD ON IT. See
+  // isExplicitlyRevoked — every check after this one is a DERIVED signal, and
+  // letting any of them override a deliberate revocation is what made "Mark
+  // unpaid" a button that did nothing.
+  if (await isExplicitlyRevoked(clean)) return "unpaid";
+
   // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE.
   //
   // Mentor approval is a PORTAL decision and has nothing to do with the app.

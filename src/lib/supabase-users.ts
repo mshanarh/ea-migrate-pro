@@ -254,7 +254,17 @@ export async function recordKeyActivationInCloud(
   // Steps 1–3 touch different columns, so the paid write and the read-before-
   // bind run IN PARALLEL; the bind update itself only fires when the row was
   // unbound. Sequential awaits used to stack three round trips on every unlock.
-  const paidPromise = dbClient.from("users").update({ is_paid: true }).eq("email", address);
+  // A REAL RE-PAYMENT CLEARS THE REVOCATION MARKER, mirroring what
+  // claim_license_key does on the server. The app gate treats a paid_emails row
+  // with paid_at = null as an explicit "owner marked this account unpaid", and
+  // that marker deliberately outranks is_paid — otherwise "Mark unpaid" would
+  // still be undone by the licence-key fallback. Restoring the timestamp here
+  // is what makes revocation mean "until they pay again" rather than "forever",
+  // so this legacy path must behave exactly like the RPC one.
+  const paidPromise = Promise.all([
+    dbClient.from("users").update({ is_paid: true }).eq("email", address),
+    dbClient.from("paid_emails").upsert({ email: address, paid_at: new Date().toISOString() }, { onConflict: "email" }),
+  ]).then(([result]) => result);
   if (deviceId) {
     const [{ error: paidError }, { data: bound }] = await Promise.all([
       paidPromise,

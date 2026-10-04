@@ -70,6 +70,17 @@ begin
     update public.license_keys set email = v_email where key = v_key;
   end if;
 
+  -- A REAL RE-PAYMENT CLEARS THE REVOCATION. The app gate reads a paid_emails
+  -- row with paid_at = null as "the owner marked this account unpaid", and that
+  -- marker now outranks is_paid so revocation actually works. Without this
+  -- line somebody the owner had locked out could never get back in by paying
+  -- again — they would activate their key, see is_paid = true, and still be
+  -- told they are unpaid. Restoring the timestamp is what makes "marked unpaid"
+  -- mean "until they pay again" rather than "permanently".
+  insert into public.paid_emails (email, paid_at)
+  values (v_email, now())
+    on conflict (email) do update set paid_at = excluded.paid_at;
+
   if p_device is not null and btrim(p_device) <> '' then
     update public.users
        set device_email = v_email,
