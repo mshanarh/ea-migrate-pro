@@ -175,9 +175,24 @@ async function mailCode(email: string, code: string): Promise<Reply> {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
-      console.error("[activation] Brevo rejected the code email for", email, response.status);
+      const body = await response.text().catch(() => "");
+      console.error("[activation] Brevo rejected the code email for", email, response.status, body.slice(0, 400));
       return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
     }
+    /* LOG THE SUCCESS TOO — this is the line that answers "did the code
+     * actually go out?", which is the question a deploy log gets asked.
+     *
+     * This function previously logged ONLY failures, so a working deployment
+     * was completely silent and there was nothing to grep for when a code was
+     * not arriving. Brevo answers 201 with a messageId that is the only handle
+     * on the message in Brevo's own logs, so it is recorded here.
+     *
+     * The code itself is NOT logged — only the address and the id — so this
+     * line is safe to leave in production logs.
+     */
+    const sent = (await response.json().catch(() => null)) as { messageId?: unknown } | null;
+    const messageId = typeof sent?.messageId === "string" ? sent.messageId : "(none returned)";
+    console.log(`[activation] Brevo accepted the code for ${email}: HTTP ${response.status} messageId=${messageId}`);
     return { ok: true };
   } catch (error) {
     console.error("[activation] code email failed for", email, error);
