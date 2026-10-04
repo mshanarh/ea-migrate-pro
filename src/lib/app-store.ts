@@ -699,6 +699,40 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   }
   if (licenseResult.error) return { error: licenseResult.error };
   if (!licenseResult.license) return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
+  /**
+   * SINGLE USE — the key is locked to the FIRST phone that activates it.
+   *
+   * This is the one check that CANNOT be done from the browser: the lock lives
+   * in `users.license_key`, the single activation column the public anon key
+   * is not allowed to rewrite (verified live — UPDATE returns 42501). So the
+   * check AND the write happen server-side with the service role, and a second
+   * device re-using a claimed key is told so in plain words instead of quietly
+   * getting a second bot.
+   *
+   * Placed AFTER the licence lookup (a key that was never issued must not be
+   * locked to whoever typed it) and BEFORE the robot is built (nothing local
+   * should exist for a key we are about to refuse).
+   *
+   * FAIL CLOSED with the server's own words. A transport failure here is NOT
+   * treated as "allowed" — that is exactly the "we cannot check, so let them
+   * in" rule that made every other gate in this file bypassable.
+   */
+  try {
+    const { claimLicenseKey } = await import("@/lib/activation.server");
+    const claim = await claimLicenseKey({ data: { key: clean, email: state.email } });
+    if (!claim.ok) {
+      return { error: claim.error ?? "That licence key could not be activated. Please try again." };
+    }
+    if (claim.alreadyInUse) {
+      // This account already holds the key — the phone that owns it is live.
+      // Re-entering it there is a no-op, not a new activation, so activation
+      // continues normally below.
+      console.log("[key-activation] key already held by this account:", clean);
+    }
+  } catch (claimError) {
+    console.warn("[key-activation] single-use check failed:", claimError);
+    return { error: "We could not check that licence key. Please check your connection and try again." };
+  }
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };
   const savedEa = licenseResult.ea;

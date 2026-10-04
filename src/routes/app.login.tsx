@@ -1,6 +1,6 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail, User } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getAppState, getDeviceId, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
@@ -13,7 +13,7 @@ import {
   type AppAccessCheck,
   type CloudAccess,
 } from "@/lib/payment-gate";
-import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
+import { bindDeviceToEmail, checkDeviceBinding, recordAppUserName, registerWithEmail } from "@/lib/supabase-users";
 
 /**
  * Query flags that mean "this page was DELIBERATELY sent here" — a route guard
@@ -129,6 +129,17 @@ function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> 
 function AppAccess() {
   const app = useAppState();
   const [email, setEmail] = useState(app.email ?? "");
+  /**
+   * THE NAME THIS PERSON REGISTERS WITH.
+   *
+   * The app has always asked for an email and nothing else, which left the
+   * admin console unable to answer "who is this?" for a customer. It is
+   * optional so an existing customer who simply wants to get in is never
+   * stopped by a field they have never been asked for before, and it is stored
+   * once (see recordAppUserName) — the console shows it beside the email in
+   * the App users tab.
+   */
+  const [fullName, setFullName] = useState("");
   const [key, setKey] = useState("");
   const [successReturn, setSuccessReturn] = useState(false);
   /**
@@ -346,6 +357,27 @@ function AppAccess() {
   // act on anything but `cloudStatus === "unpaid"`.
   const mustPay = Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
 
+  /* ── The six-digit activation code ───────────────────────────────────
+   *
+   * `codeStage` is the email a code was just sent to, and it is non-null only
+   * between "Proceed was pressed on a paid account" and "the code came back
+   * right". It is the app's own state rather than a URL flag on purpose: the
+   * code is the gate, and a flag anybody could add to the address bar would be
+   * exactly the thing the code exists to prevent.
+   *
+   * `sendingCode` and `verifyingCode` are separate from `busy` because they
+   * describe two different screens' buttons, and both are cleared the moment
+   * their step ends — a stuck spinner on a screen nobody is on is what made
+   * this screen feel broken before.
+   */
+  const [codeStage, setCodeStage] = useState<{ email: string } | null>(null);
+  const [codeValue, setCodeValue] = useState("");
+  const [codeError, setCodeError] = useState("");
+  const [sendingCode, setSendingCode] = useState(false);
+  const [verifyingCode, setVerifyingCode] = useState(false);
+  /** Put a new code in the inbox for an account that is already mid-flow. */
+  const [resendingCode, setResendingCode] = useState(false);
+
   /**
    * Ask the database who this session is, and send an unpaid one straight to
    * Whop without waiting to be asked. ALWAYS FRESH — this is the answer that
@@ -468,7 +500,7 @@ function AppAccess() {
     if (resuming || !app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
-    if (busy || choosePlan || payPrompt || mustPay || blockedEmail) return;
+    if (busy || choosePlan || payPrompt || mustPay || blockedEmail || codeStage) return;
     // NOTHING IS DECIDED YET. `effectiveStatus` falls back to the device's own
     // memory while the database is still answering, and that memory is exactly
     // what a forged or stale session exploits — walking an account into
@@ -487,7 +519,7 @@ function AppAccess() {
     // ping-pong with nothing ever happening. The Choose Plan screen owns them.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, effectiveStatus, resuming]);
+  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, codeStage, effectiveStatus, resuming]);
 
   /**
    * THE CHOOSE PLAN GATE — one place decides whether ANY part of the app may
@@ -542,6 +574,11 @@ function AppAccess() {
         verified: false,
       } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
+      // REMEMBER THE NAME (best effort). Fired here rather than at the end so
+      // it is saved on the very first sign-in, whatever the payment decision
+      // turns out to be, and deliberately not awaited — a name is a
+      // convenience for the owner, and must never sit in front of the gate.
+      if (fullName.trim()) void recordAppUserName(clean, fullName);
 
       /**
        * STRICT ENTITLEMENT CHECK — the ONE gate in front of everything else.
@@ -610,53 +647,40 @@ function AppAccess() {
       } catch {
         /* unreachable cloud — fall through to the normal sign-in path */
       }
-      const result = appSignIn(clean);
-      if (result.error) {
-        console.log("[app-login] Login error:", result.error);
-        // The device's own record also knows about bindings, so a repeat
-        // offender is shown the same blocked card the cloud produced rather
-        // than a bare toast — one clear way to say "this email is on another
-        // phone", never a dead end.
-        if (/already used|another device/i.test(result.error)) setBlockedEmail(clean);
-        else toast.error(result.error);
-        setBusy(false);
-        setRedirecting(false);
-        return;
-      }
-      console.log("[app-login] Login success");
-      // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
-      window.sessionStorage.setItem("eamp_pending_welcome", "1");
-      // There is no "no payment required" path here any more: every account,
-      // admins and platform owners included, is opened by a payment record.
-
-      // Bind THIS device in the cloud before letting them in. The access gate
-      // treats a missing binding as a stale session (the global access reset),
-      // so an entitled person must be bound on THIS device or the very next
-      // route change would sign them straight back out again. A bind failure
-      // is never worth an error toast here — it says nothing the customer can
-      // act on, and a red banner over a working sign-in reads as a failure.
+      /**
+       * THE SIX-DIGIT CODE — nobody enters the app without it.
+       *
+       * From here on the database has positively confirmed this account, so
+       * Proceed now sends a one-time code to the inbox it paid with and waits.
+       * The sign-in below is deliberately NOT reached yet: `finishSignIn` only
+       * runs once that code comes back (see `submitActivationCode`).
+       *
+       * An unpaid email never gets this far — `registration.verified` was
+       * required above — and if the SERVER still refuses to issue a code
+       * (its entitlement check is the authority, and it is stricter than the
+       * browser's), the account is sent to the plans rather than being let in.
+       */
+      setSendingCode(true);
+      let codeSent: { ok: boolean; error?: string };
       try {
-        const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), left(), { ok: false, error: "Device binding timed out" });
-        if (!bound.ok && bound.error) console.warn("[app-login] device bind:", bound.error);
-      } catch {
-        /* a failed bind must never block sign-in */
+        const { issueActivationCode } = await import("@/lib/activation.server");
+        codeSent = await issueActivationCode({ data: { email: clean } });
+      } catch (error) {
+        console.warn("[app-login] activation code request failed:", error);
+        codeSent = { ok: false, error: "We could not send your code. Please try again." };
       }
-
-      // ENTITLED — the database just said so, so drop any remembered refusal
-      // before the route guards ask. Without this a cached "unpaid" from
-      // before the owner pressed Mark paid could send them back to Whop on
-      // the very next navigation.
-      invalidateAccessCache(clean);
-      // Mirror the verdict locally so the in-app UI agrees with the database
-      // immediately rather than waiting for the next render's cloud read.
-      markEmailPaid(clean);
-
-      // ENTITLED — the database just confirmed it. The auto-redirect effect
-      // above walks the session into /app/home, which re-checks the cloud
-      // before a single pixel renders. Nothing is forced from here, so an
-      // undecided account can never be dropped into the app.
+      setSendingCode(false);
       setBusy(false);
       setRedirecting(false);
+      if (!codeSent.ok) {
+        toast.error(codeSent.error ?? "We could not send your code. Please try again.");
+        setChoosePlan(true);
+        return;
+      }
+      setCodeValue("");
+      setCodeError("");
+      setCodeStage({ email: clean });
+      return;
     } catch (error) {
       // A thrown network/registration error must never leave the button
       // stuck on "Redirecting to Whop…" forever.
@@ -665,6 +689,112 @@ function AppAccess() {
       setRedirecting(false);
       toast.error("Could not sign you in. Check your connection and try again.");
     }
+  };
+
+  /**
+   * THE SECOND HALF OF SIGN-IN, behind the code.
+   *
+   * Everything the paid path did after its entitlement check lives here, and
+   * it runs only when `verifyActivationCode` says the six digits match the
+   * code this server issued for this email. Proving inbox control is what
+   * turns "typed a paid address" into "is the person who paid".
+   */
+  const submitActivationCode = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!codeStage || verifyingCode) return;
+    const code = codeValue.replace(/\D/g, "").slice(0, 6);
+    if (code.length !== 6) {
+      setCodeError("Enter the six-digit code from your email.");
+      return;
+    }
+    setVerifyingCode(true);
+    setCodeError("");
+    try {
+      let result: { ok: boolean; error?: string };
+      try {
+        const { verifyActivationCode } = await import("@/lib/activation.server");
+        result = await verifyActivationCode({ data: { email: codeStage.email, code } });
+      } catch (error) {
+        console.warn("[app-login] activation code verify failed:", error);
+        result = { ok: false, error: "We could not check that code. Please try again." };
+      }
+      if (!result.ok) {
+        setCodeError(result.error ?? "That code is not right.");
+        return;
+      }
+      // VERIFIED — the account is proved, so the session is opened and the
+      // licence-key screen takes over from here.
+      await finishSignIn(codeStage.email);
+      // An account that ALREADY has a robot activated has nothing to enter on
+      // the licence screen, so it goes to the app instead. Without this it
+      // would be dropped back onto the login form looking like a failed
+      // sign-in.
+      if (getAppState().robots.length > 0) {
+        setCodeStage(null);
+        window.location.replace("/app/home");
+        return;
+      }
+      setCodeStage(null);
+    } finally {
+      setVerifyingCode(false);
+    }
+  };
+
+  /**
+   * Open the session for an account whose payment (and inbox) are proven.
+   *
+   * Split out of `continueWithEmail` so the paid path has exactly ONE sign-in
+   * implementation: pressing Proceed and typing the code cannot drift into two
+   * different sets of rules.
+   */
+  const finishSignIn = async (clean: string) => {
+    const result = appSignIn(clean);
+    if (result.error) {
+      console.log("[app-login] Login error:", result.error);
+      // The device's own record also knows about bindings, so a repeat
+      // offender is shown the same blocked card the cloud produced rather
+      // than a bare toast — one clear way to say "this email is on another
+      // phone", never a dead end.
+      if (/already used|another device/i.test(result.error)) setBlockedEmail(clean);
+      else toast.error(result.error);
+      setBusy(false);
+      setRedirecting(false);
+      return;
+    }
+    console.log("[app-login] Login success");
+    // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+    window.sessionStorage.setItem("eamp_pending_welcome", "1");
+    // There is no "no payment required" path here any more: every account,
+    // admins and platform owners included, is opened by a payment record.
+
+    // Bind THIS device in the cloud before letting them in. The access gate
+    // treats a missing binding as a stale session (the global access reset),
+    // so an entitled person must be bound on THIS device or the very next
+    // route change would sign them straight back out again. A bind failure
+    // is never worth an error toast here — it says nothing the customer can
+    // act on, and a red banner over a working sign-in reads as a failure.
+    try {
+      const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, { ok: false, error: "Device binding timed out" });
+      if (!bound.ok && bound.error) console.warn("[app-login] device bind:", bound.error);
+    } catch {
+      /* a failed bind must never block sign-in */
+    }
+
+    // ENTITLED — the database just said so, so drop any remembered refusal
+    // before the route guards ask. Without this a cached "unpaid" from
+    // before the owner pressed Mark paid could send them back to Whop on
+    // the very next navigation.
+    invalidateAccessCache(clean);
+    // Mirror the verdict locally so the in-app UI agrees with the database
+    // immediately rather than waiting for the next render's cloud read.
+    markEmailPaid(clean);
+
+    // The auto-redirect effect above walks an entitled session into
+    // /app/home, which re-checks the cloud before a single pixel renders.
+    // Nothing is forced from here, so an undecided account can never be
+    // dropped into the app.
+    setBusy(false);
+    setRedirecting(false);
   };
 
   /** Dismiss the blocked card and try a different email. */
@@ -722,6 +852,50 @@ function AppAccess() {
     }
   };
 
+  /**
+   * Send the code again for the account already on the code screen.
+   *
+   * The code is derived, not stored, so a "resend" simply asks for it to be
+   * mailed again — there is nothing to invalidate, and a resend inside the same
+   * half hour simply arrives as the same six digits.
+   */
+  const resendActivationCode = async () => {
+    if (!codeStage || resendingCode) return;
+    setResendingCode(true);
+    setCodeError("");
+    try {
+      let result: { ok: boolean; error?: string };
+      try {
+        const { issueActivationCode } = await import("@/lib/activation.server");
+        result = await issueActivationCode({ data: { email: codeStage.email } });
+      } catch (error) {
+        console.warn("[app-login] activation code resend failed:", error);
+        result = { ok: false, error: "We could not send your code. Please try again." };
+      }
+      if (!result.ok) {
+        setCodeError(result.error ?? "We could not send your code. Please try again.");
+        return;
+      }
+      toast.success("We sent a new code to your email.");
+    } finally {
+      setResendingCode(false);
+    }
+  };
+
+  /**
+   * Leave the code screen for a different email.
+   *
+   * Only the code step is discarded. Nothing has been signed in yet — the
+   * session is opened by `finishSignIn` after the code comes back — so there is
+   * no half-proved session to clean up, and an account that was already signed
+   * in on this device keeps its session and its robots exactly as they were.
+   */
+  const cancelActivationCode = () => {
+    setCodeStage(null);
+    setCodeValue("");
+    setCodeError("");
+  };
+
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -754,6 +928,19 @@ function AppAccess() {
     <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
       {resuming ? (
         <ResumingView />
+      ) : blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
+      codeStage ? (
+        <ActivationCodeView
+          email={codeStage.email}
+          value={codeValue}
+          setValue={setCodeValue}
+          error={codeError}
+          verifying={verifyingCode}
+          resending={resendingCode}
+          onSubmit={submitActivationCode}
+          onResend={resendActivationCode}
+          onCancel={cancelActivationCode}
+        />
       ) : awaitingActivation && !successReturn && activeEmail ? (
         <AwaitingActivation email={activeEmail} onRecheck={recheckActivation} checking={checkingActivation} onCancel={leaveWaitingRoom} />
       ) : showChoosePlan ? (
@@ -764,8 +951,7 @@ function AppAccess() {
           onCancel={dismissCheckout}
         />
       ) :
-      blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={busy && !redirecting} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
+      !showLicenseView ? <LoginView email={email} setEmail={setEmail} fullName={fullName} setFullName={setFullName} onSubmit={continueWithEmail} checking={(busy && !redirecting) || sendingCode} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
     </main>
   </div>;
 }
@@ -841,7 +1027,7 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
   </div>;
 }
 
-function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
+function LoginView({ email, setEmail, fullName, setFullName, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; fullName: string; setFullName: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
   return <div className="-translate-y-8 text-center">
     <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
       <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
@@ -850,6 +1036,13 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
     <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
     {deactivated ? <DeactivatedNotice /> : null}
     <form className="mt-12 space-y-4" onSubmit={onSubmit}>
+      {/* NAME — optional on purpose. It is what the admin console shows beside
+          the email, and it is remembered once, so nobody is forced through a
+          field they have never been asked for before. */}
+      <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
+        <User className="size-6 shrink-0 text-[#aab2b7]" />
+        <input type="text" autoComplete="name" value={fullName} onChange={(event) => setFullName(event.target.value)} placeholder="Your name (optional)" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />
+      </label>
       <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
         <Mail className="size-6 shrink-0 text-[#aab2b7]" />
         <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />
@@ -1153,9 +1346,116 @@ function PlanSelection({
   </div>;
 }
 
+/**
+ * THE SIX-DIGIT CODE — the second step of every paid sign-in.
+ *
+ * Reached only after the database positively confirmed the account, so the copy
+ * never has to hedge about payment: the money is in, what is left is proving
+ * this device can read the inbox it was paid with. The code itself is never
+ * stored anywhere (it is derived server-side from a secret), so there is no
+ * "we forgot your code" state — Resend is the whole recovery path.
+ *
+ * Six separate boxes rather than one field: it is the shape people expect from
+ * a code they are reading out of an email, it keeps the digits legible on a
+ * phone, and it makes a mistyped digit obvious instead of silent.
+ */
+function ActivationCodeView({
+  email,
+  value,
+  setValue,
+  error,
+  verifying,
+  resending,
+  onSubmit,
+  onResend,
+  onCancel,
+}: {
+  email: string;
+  value: string;
+  setValue: (value: string) => void;
+  error: string;
+  verifying: boolean;
+  resending: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  onResend: () => void;
+  onCancel: () => void;
+}) {
+  const digits = value.padEnd(6, " ").slice(0, 6).split("");
+  // Keep focus in the hidden input so typing, pasting and backspace all work
+  // while the six boxes are what the customer sees.
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  return <div className="-translate-y-4 text-center">
+    <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-[#08a8ef]/10 text-[#55c7ff]">
+      <Mail className="size-9" />
+    </div>
+    <h1 className="mt-7 text-3xl font-bold">Enter your code</h1>
+    <p className="mt-3 text-sm leading-6 text-[#8a9298]">
+      We sent a six-digit code to <span className="font-semibold text-[#55c7ff]">{email}</span>. Enter it to
+      continue to your licence key.
+    </p>
+    <form className="mt-8" onSubmit={onSubmit}>
+      <div className="relative">
+        <input
+          ref={inputRef}
+          value={value}
+          onChange={(event) => setValue(event.target.value.replace(/\D/g, "").slice(0, 6))}
+          inputMode="numeric"
+          autoComplete="one-time-code"
+          autoFocus
+          aria-label="Six-digit activation code"
+          className="absolute inset-0 h-full w-full opacity-0"
+        />
+        <div className="pointer-events-none flex justify-between gap-2" aria-hidden="true">
+          {digits.map((digit, index) => (
+            <span
+              key={index}
+              className={`flex h-16 flex-1 items-center justify-center rounded-2xl border text-2xl font-black transition-colors ${
+                error
+                  ? "border-red-400/60 bg-red-500/10 text-red-200"
+                  : index === value.length
+                    ? "border-[#08a8ef] bg-[#08a8ef]/10 text-white"
+                    : "border-[#202930] bg-[#10161a] text-white"
+              }`}
+            >
+              {digit.trim()}
+            </span>
+          ))}
+        </div>
+      </div>
+      {error ? (
+        <p role="alert" className="mt-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
+          {error}
+        </p>
+      ) : null}
+      <button
+        type="submit"
+        disabled={verifying}
+        className="mt-6 flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+      >
+        {verifying ? "Checking your code…" : "Continue"}
+        <ArrowRight className="size-6" />
+      </button>
+    </form>
+    <div className="mt-5 space-y-2">
+      <button
+        type="button"
+        onClick={onResend}
+        disabled={resending}
+        className="h-11 w-full text-sm font-semibold text-[#55c7ff] disabled:cursor-wait disabled:opacity-60"
+      >
+        {resending ? "Sending…" : "Send the code again"}
+      </button>
+      <button type="button" onClick={onCancel} className="h-11 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white">
+        Use a different email
+      </button>
+    </div>
+    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 60 minutes.</p>
+  </div>;
+}
+
 function LicenseView({ email, setEmail, keyValue, setKey, onSubmit, admin, paid, unlocking }: { email: string; setEmail: (value: string) => void; keyValue: string; setKey: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; admin: boolean; paid: boolean; unlocking: boolean }) {
   return <div className="-translate-y-4">
     <div className="text-center"><div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-emerald-400/10 text-emerald-300"><CheckCircle2 className="size-9" /></div><h1 className="mt-7 text-3xl font-bold">Add your licence key</h1><p className="mt-3 text-sm leading-6 text-[#8a9298]">{admin ? "Admin access is active. No payment is required for this email." : paid ? "Payment received. Add the licence key sent to your email." : "Your payment return was received. Add the licence key sent to your email."}</p></div>
-    <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">{email ? <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">{email}</div> : <label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Payment email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]" placeholder="you@example.com" /></label>}<form onSubmit={onSubmit}><label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Licence key</span><input autoFocus required value={keyValue} onChange={(event) => setKey(event.target.value.toUpperCase())} placeholder="EMP-XXXXXXXXXXXX" className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]" /></label><button type="submit" disabled={unlocking} className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70">{unlocking ? "Unlocking…" : "Unlock robot"}<ArrowRight className="size-4" /></button></form><p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]"><LockKeyhole className="size-3" /> One email, one activated device</p></section>
+    <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">{email ? <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">{email}</div> : <label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Payment email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]" placeholder="you@example.com" /></label>}<form onSubmit={onSubmit}><label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Licence key</span><input autoFocus required value={keyValue} onChange={(event) => setKey(event.target.value.toUpperCase())} placeholder="EMP-XXXXXXXXXXXX" className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]" /></label><button type="submit" disabled={unlocking} className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70">{unlocking ? "Unlocking…" : "Unlock bot"}<ArrowRight className="size-4" /></button></form><p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]"><LockKeyhole className="size-3" /> One email, one activated device</p></section>
   </div>;
 }

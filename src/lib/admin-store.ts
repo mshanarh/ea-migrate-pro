@@ -58,6 +58,10 @@ export type ReviewStatus = ApprovalStatus | "app";
 export type AdminUser = {
   email: string;
   createdAt: string;
+  /** The name this person registered with, or null when they never gave one. */
+  name: string | null;
+  /** True when this account has actually opened the trading app. */
+  usedApp: boolean;
   /**
    * Review state as shown in the console. "pending" requires a PORTAL signup
    * (`portal_accounts`) or an explicit `mentor_approvals` row; a trading-app
@@ -240,6 +244,16 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
   // Portal signups: email → the signup moment, taken from the stored account
   // (createdAt) so the console's date column is real rather than epoch-zero.
   const portalSignups = new Map<string, string>();
+  // email → the name they registered with. Same blob, no second read.
+  //
+  // There is no name column on `users` and no DDL path to add one (every SQL
+  // entry point on this deployment answers PGRST202), so the name comes out of
+  // `portal_accounts.data` — where the website signup already keeps
+  // firstName / displayName / username, and where the app stores `appName`.
+  //
+  // The email local-part is deliberately NOT used as a name. It is a guess, and
+  // a guessed label in front of the owner is worse than an honest dash.
+  const registeredNames = new Map<string, string>();
   for (const row of (accountsResult?.data ?? []) as Array<{
     email?: string;
     data?: string | null;
@@ -250,8 +264,25 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     let created = text(row.updated_at);
     if (row.data) {
       try {
-        const parsed = JSON.parse(row.data) as { createdAt?: unknown; email?: unknown };
+        const parsed = JSON.parse(row.data) as {
+          createdAt?: unknown;
+          firstName?: unknown;
+          lastName?: unknown;
+          displayName?: unknown;
+          username?: unknown;
+          appName?: unknown;
+        };
         if (typeof parsed.createdAt === "string" && parsed.createdAt) created = parsed.createdAt;
+        const both = [parsed.firstName, parsed.lastName]
+          .map((part) => text(part).trim())
+          .filter(Boolean)
+          .join(" ");
+        const name =
+          text(parsed.appName).trim() ||
+          text(parsed.displayName).trim() ||
+          both ||
+          text(parsed.username).trim();
+        if (name) registeredNames.set(email, name);
       } catch {
         /* corrupted row — the updated_at timestamp still orders it */
       }
@@ -325,6 +356,10 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     byEmail.set(email, {
       email,
       createdAt: timestamp(row.created_at, portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback()),
+      // The name comes from the signup blob, not from this row: `users` has no
+      // name column. `usedApp` is true precisely because this row exists.
+      name: registeredNames.get(email) ?? null,
+      usedApp: true,
       status,
       // The LEDGER, never `users.is_paid` — see the isPaid doc comment. The
       // `users` row is still read for is_admin / device_id / created_at, but
@@ -349,6 +384,11 @@ export async function loadAdminSnapshot(): Promise<AdminSnapshot> {
     byEmail.set(email, {
       email,
       createdAt: portalSignups.get(email) ?? approvalDates.get(email) ?? epochFallback(),
+      name: registeredNames.get(email) ?? null,
+      // No `users` row means this account has never opened the trading app —
+      // it only registered on the website. That distinction is exactly what
+      // separates "people using the app" from "mentor signups".
+      usedApp: false,
       status: approvals.get(email) ?? "pending",
       isPaid: paidAt.has(email),
       isAdmin: false,

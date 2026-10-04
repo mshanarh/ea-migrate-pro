@@ -98,6 +98,35 @@ function ReactivateClientPage() {
   }, [account, isAdmin]);
 
   if (!account) return null;
+  /**
+   * ADMIN-ONLY — releasing a device is a platform decision.
+   *
+   * The nav entry is already hidden from mentors (PortalLayout marks this item
+   * `adminOnly`), but the URL still resolves and a bookmark still works. This
+   * is the guard that actually stops it: without it, hiding a menu item would
+   * be the only thing standing between a mentor and the power to release any
+   * account on the platform.
+   */
+  if (!isAdmin) {
+    return (
+      <div className="mx-auto max-w-3xl">
+        <div className="panel mt-6 p-6">
+          <div className="flex items-start gap-3">
+            <span className="flex size-12 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+              <Lock className="size-6" />
+            </span>
+            <div>
+              <h1 className="text-xl font-bold">Admins only</h1>
+              <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                Re-activating a client is handled by the platform admins. If a paid client needs a new
+                device, message support on WhatsApp and an admin will release it.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
   const allowed = isAdmin || cloudAllowed;
 
   const copyLink = async () => {

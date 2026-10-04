@@ -14,7 +14,9 @@ import {
   Search,
   Send,
   ShieldCheck,
+  Smartphone,
   Trash2,
+  User,
   X,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -44,13 +46,14 @@ export const Route = createFileRoute("/admin")({
 });
 
 /** Which slice of the console is on screen — one bottom-nav tab at a time. */
-type TabKey = "pending" | "approved" | "paid" | "rejected" | "messages";
+type TabKey = "pending" | "approved" | "paid" | "rejected" | "appusers" | "messages";
 
 const TABS: Array<{ key: TabKey; label: string; short: string; icon: typeof Clock3 }> = [
   { key: "pending", label: "Pending users", short: "Pending", icon: Clock3 },
   { key: "approved", label: "Approved users", short: "Approved", icon: CheckCircle2 },
   { key: "paid", label: "Paid users", short: "Paid", icon: CreditCard },
   { key: "rejected", label: "Rejected users", short: "Rejected", icon: Ban },
+  { key: "appusers", label: "App users", short: "App", icon: Smartphone },
   { key: "messages", label: "Message users", short: "Messages", icon: MessageSquare },
 ];
 
@@ -165,11 +168,25 @@ function UserCard({
         </span>
         <div className="min-w-0 flex-1">
           <p className="break-all text-sm font-bold sm:text-base">{user.email}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">Joined {formatDate(user.createdAt)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            {user.name ? (
+              <>
+                <span className="font-semibold text-foreground">{user.name}</span>
+                <span aria-hidden="true"> · </span>
+              </>
+            ) : null}
+            Joined {formatDate(user.createdAt)}
+          </p>
         </div>
         <StatusPill status={user.status} />
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-2 text-[11px] font-semibold">
+        {user.name ? (
+          <span className="rounded-lg bg-primary/15 px-2 py-1 text-primary">
+            <User className="mr-1 inline size-3" aria-hidden="true" />
+            {user.name}
+          </span>
+        ) : null}
         <span className="rounded-lg bg-secondary px-2 py-1 text-muted-foreground">
           <KeyRound className="mr-1 inline size-3" aria-hidden="true" />
           {showUsage ? `${user.keysUsed} / ${user.licenseLimit} keys` : `Limit ${user.licenseLimit}`}
@@ -288,18 +305,31 @@ function AdminConsole() {
     approved: stats.approved,
     paid: stats.paid,
     rejected: stats.rejected,
+    appusers: users.filter((user) => user.usedApp).length,
     messages: messages.length,
   };
 
   const search = query.trim().toLowerCase();
   const byTab = useMemo(() => {
+    // The name is searchable too: the owner is looking for a person, and on a
+    // phone screen they are far more likely to remember "Biyu" than
+    // "biyasentobeko222@gmail.com".
     const match = (list: AdminUser[]) =>
-      search ? list.filter((user) => user.email.toLowerCase().includes(search)) : list;
+      search
+        ? list.filter(
+            (user) =>
+              user.email.toLowerCase().includes(search) || (user.name ?? "").toLowerCase().includes(search),
+          )
+        : list;
     return {
       pending: match(users.filter((user) => user.status === "pending")),
       approved: match(users.filter((user) => user.status === "approved")),
       paid: match(users.filter((user) => user.isPaid)),
       rejected: match(users.filter((user) => user.status === "rejected")),
+      // EVERY account that has opened the trading app, whatever its payment or
+      // approval state. This is the owner's answer to "who is using the app",
+      // so it must not be filtered by anything else.
+      appusers: match(users.filter((user) => user.usedApp)),
     };
   }, [users, search]);
 
@@ -692,8 +722,8 @@ function AdminConsole() {
                   <input
                     value={query}
                     onChange={(event) => setQuery(event.target.value)}
-                    placeholder="Search email"
-                    aria-label="Search users by email"
+                    placeholder="Search name or email"
+                    aria-label="Search users by name or email"
                     className="h-11 w-full rounded-xl border border-white/10 bg-white/5 pl-9 pr-3 text-sm outline-none focus:border-primary/50"
                   />
                 </div>
@@ -709,7 +739,9 @@ function AdminConsole() {
                       ? "New sign-ups appear here automatically and wait for your decision."
                       : tab === "paid"
                         ? "An account appears here once its payment flag is set to paid in the database."
-                        : "Accounts move here when you approve or reject them."
+                        : tab === "appusers"
+                          ? "Every account that has opened the trading app appears here, with the name it registered with."
+                          : "Accounts move here when you approve or reject them."
                   }
                 />
               ) : (
@@ -846,7 +878,15 @@ function UserSheet({
         <div className="flex items-start gap-3 border-b border-white/10 px-5 py-4">
           <div className="min-w-0 flex-1">
             <p className="break-all text-base font-black">{user.email}</p>
-            <p className="mt-0.5 text-xs text-muted-foreground">Joined {formatDate(user.createdAt)}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {user.name ? (
+                <>
+                  <span className="font-semibold text-foreground">Registered as {user.name}</span>
+                  <span aria-hidden="true"> · </span>
+                </>
+              ) : null}
+              Joined {formatDate(user.createdAt)}
+            </p>
           </div>
           <button
             type="button"

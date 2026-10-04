@@ -164,6 +164,64 @@ export async function registerWithEmail(
   return { outcome: "checkout", user, verified: false };
 }
 
+/**
+ * REMEMBER THE NAME somebody typed on the app's sign-in screen.
+ *
+ * The admin console's "App users" list has to answer "who is this?", and the
+ * trading app only ever asks for an email — so the name has to be captured
+ * somewhere. `users` has no name column and this deployment has no DDL path
+ * (every SQL entry point answers PGRST202), so it is stored in
+ * `portal_accounts.data` alongside the fields the website signup already keeps
+ * there, under `appName`.
+ *
+ * THE BLOB IS MERGED, NEVER REPLACED. `portal_accounts.data` IS a mentor's
+ * whole account record — licences, EAs, settings — so writing our one field
+ * over it would delete their work. A name is written ONCE: an account that
+ * already has one is left exactly as it is, which also means this can never
+ * become a way to rewrite somebody else's record.
+ *
+ * Best effort by design: a failed write must not block a sign-in, so the caller
+ * treats a false result as "the name was simply not remembered".
+ */
+export async function recordAppUserName(email: string, name: string): Promise<{ ok: boolean }> {
+  const dbClient = db();
+  const address = clean(email);
+  const label = name.trim().replace(/\s+/g, " ").slice(0, 60);
+  if (!dbClient || !address || !label) return { ok: false };
+  try {
+    const { data, error } = await dbClient.from("portal_accounts").select("data").eq("email", address).limit(1);
+    if (error) {
+      console.warn("[app-name] read failed:", error.message);
+      return { ok: false };
+    }
+    const existing = ((data ?? []) as Array<{ data?: string | null }>)[0];
+    let blob: Record<string, unknown> = {};
+    if (existing?.data) {
+      try {
+        const parsed = JSON.parse(existing.data) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) blob = parsed as Record<string, unknown>;
+      } catch {
+        /* a corrupted blob is not ours to fix — write the name into a fresh one */
+      }
+    }
+    // FIRST WRITE WINS — see the note above.
+    if (typeof blob["appName"] === "string" && blob["appName"].trim()) return { ok: true };
+    blob["appName"] = label;
+    const payload = { email: address, data: JSON.stringify(blob) };
+    const write = existing
+      ? await dbClient.from("portal_accounts").update(payload).eq("email", address)
+      : await dbClient.from("portal_accounts").insert(payload);
+    if (write.error) {
+      console.warn("[app-name] write failed:", write.error.message);
+      return { ok: false };
+    }
+    return { ok: true };
+  } catch (error) {
+    console.warn("[app-name] save failed:", error);
+    return { ok: false };
+  }
+}
+
 /** Read one user's flags from Supabase ("read own user by email"). */
 export async function getUserByEmail(email: string): Promise<UserRow | null> {
   const dbClient = db();

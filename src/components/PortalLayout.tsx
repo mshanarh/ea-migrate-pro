@@ -33,7 +33,7 @@ const sections: { label?: string; items: NavItem[] }[] = [
     items: [
       { to: "/dashboard", label: "Dashboard", icon: LayoutGrid },
       { to: "/dashboard/licenses", label: "Generate Key", icon: KeyRound },
-      { to: "/dashboard/reactivate", label: "Re-activate Client", icon: RefreshCcw },
+      { to: "/dashboard/reactivate", label: "Re-activate Client", icon: RefreshCcw, adminOnly: true },
       { to: "/dashboard/eas", label: "Manage EAs", icon: Bot },
     ],
   },
