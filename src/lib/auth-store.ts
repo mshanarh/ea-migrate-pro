@@ -178,14 +178,21 @@ export function enforceAuthEpoch(): boolean {
   }
 }
 
-/** Platform owner accounts — admins by definition, on every device. */
+/**
+ * Platform owner accounts — admins by definition, on every device.
+ *
+ * `eamigratepro@gmail.com` WAS on this list and has been removed. That is the
+ * public SUPPORT mailbox printed on /support (SUPPORT_EMAIL in support.tsx) —
+ * the address customers write to. It is not a customer and not a buyer: it must
+ * not be marked paid and must not open the trading app. It lives in
+ * REVOKED_PAYMENT_EMAILS below instead, which says exactly that.
+ */
 export const OWNER_EMAILS = [
   "biyasentobeko222@gmail.com",
   "biyasentobeko222@gmail",
   "admin@eamigrate.pro",
   "lwethunkandi3@gmail.com",
   "ntobekotraders.official@gmail.com",
-  "eamigratepro@gmail.com",
 ];
 
 /**
@@ -203,12 +210,19 @@ export const PAYMENT_EXEMPT_EMAILS = [
 ];
 
 /**
- * Emails that lost their platform privileges: they must ALWAYS go through
- * payment, even when a device still holds a stale paid/admin record for
- * them. Currently EMPTY — lwethunkandi3@gmail.com was restored to admin by
- * the platform owner (clearing this list was part of that restoration).
+ * Emails that must ALWAYS go through payment, even when a device still holds a
+ * stale paid/admin record for them. An address here is answered "unpaid" no
+ * matter what the local store remembers, and it can never be marked paid by a
+ * list — the only thing that pays an account is a row in the payment ledger.
+ *
+ * `eamigratepro@gmail.com` — the public SUPPORT mailbox printed on /support.
+ * Customers write to it; it does not buy anything, so it must not open the
+ * trading app. It used to sit in OWNER_EMAILS, which is the list this whole
+ * codebase once treated as "paid and may open anything"; being removed from
+ * there and added here is what actually locks it out rather than merely
+ * demoting it.
  */
-export const REVOKED_PAYMENT_EMAILS: string[] = [];
+export const REVOKED_PAYMENT_EMAILS: string[] = ["eamigratepro@gmail.com"];
 
 function cleanEmail(email: string) {
   return email.trim().toLowerCase();
