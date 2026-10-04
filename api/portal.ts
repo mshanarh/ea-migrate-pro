@@ -84,29 +84,69 @@ function db(): SupabaseClient | null {
 }
 
 /**
+ * The platform owner's addresses — THE SAME LIST as OWNER_EMAILS in
+ * src/lib/auth-store.ts, which the console gate uses. Duplicated rather than
+ * imported because that module is browser state (localStorage) and importing
+ * it into a serverless function would drag the client graph in with it.
+ *
+ * ⚠ KEEP IN SYNC with `OWNER_EMAILS` in src/lib/auth-store.ts. It is checked
+ * by `bun scripts/verify-admin-can-delete.ts`, which fails if the two drift
+ * and somebody can open the console but not clear a message.
+ */
+const OWNER_EMAILS = [
+  "biyasentobeko222@gmail.com",
+  "biyasentobeko222@gmail",
+  "admin@eamigrate.pro",
+  "lwethunkandi3@gmail.com",
+  "ntobekotraders.official@gmail.com",
+];
+
+/**
  * Is this address an administrator?
  *
- * HONEST SCOPE, and it matters: this is a DATABASE ROLE CHECK, not an
- * authenticated session. The console is admin-only and `users.is_admin` is
- * what it already gates on, so the check cannot grant access to somebody who
- * is not an admin — but the caller names the address, and the anon key can
- * insert a `users` row with any `is_admin` value it likes (verified live). So
- * this stops the console's own button from breaking and stops casual abuse; it
- * is NOT cryptographic authentication. The durable fix is a real signed-in
+ * IT MUST ANSWER EXACTLY WHAT THE CONSOLE GATE ANSWERS, no narrower. The
+ * console opens for `account.role === "admin"` OR an OWNER_EMAILS entry
+ * (isAdminEmail in src/routes/admin.tsx). An earlier version of this function
+ * checked only `users.is_admin`, and a live check showed 4 of the 5 addresses
+ * that can open the console — including the platform owner — would have been
+ * refused here with "Only an administrator can do that". That is the exact
+ * error this endpoint exists to remove, so all three conditions the console
+ * honours are honoured here.
+ *
+ * HONEST SCOPE, and it matters: this is a ROLE CHECK, not an authenticated
+ * session. The caller names the address, and the anon key can insert a
+ * `users` row with any `is_admin` value it likes (verified live). So this
+ * stops the console's own button from breaking and stops casual abuse; it is
+ * NOT cryptographic authentication. The durable fix is a real signed-in
  * session checked here, which this deployment has no way to mint.
  *
  * It is recorded here rather than left implicit because a delete that looks
  * authenticated but is not should never be a surprise.
  */
 async function isAdmin(client: SupabaseClient, email: string): Promise<boolean> {
-  const { data, error } = await client
-    .from("users")
-    .select("is_admin")
-    .eq("email", email.trim().toLowerCase())
-    .limit(1);
-  if (error) return false;
-  const rows = (data ?? []) as Array<{ is_admin?: boolean | null }>;
-  return rows.some((row) => row.is_admin === true);
+  const clean = email.trim().toLowerCase();
+  if (OWNER_EMAILS.includes(clean)) return true;
+
+  // 1. The console's own database role.
+  const flag = await client.from("users").select("is_admin").eq("email", clean).limit(1);
+  if (!flag.error && ((flag.data ?? []) as Array<{ is_admin?: boolean | null }>).some((r) => r.is_admin === true)) {
+    return true;
+  }
+
+  // 2. The portal account's own role — the console reads this as
+  //    `account.role`, so somebody the portal calls an admin is one here too.
+  const portal = await client.from("portal_accounts").select("data").eq("email", clean).limit(1);
+  const rows = (portal.data ?? []) as Array<{ data?: string | null }>;
+  for (const row of rows) {
+    if (!row.data) continue;
+    try {
+      const parsed = JSON.parse(row.data) as { role?: unknown };
+      if (typeof parsed.role === "string" && parsed.role.toLowerCase() === "admin") return true;
+    } catch {
+      /* a blob that will not parse carries no role */
+    }
+  }
+  return false;
 }
 
 /** Raw Brevo v3 send. The full response is logged so failures are diagnosable. */
