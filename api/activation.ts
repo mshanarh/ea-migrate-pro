@@ -198,32 +198,43 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * times as the holder of that paid inbox likes; what cannot happen twice is
  * activating a key.
  */
-/** 5 MINUTES, and ONLY the current window is accepted.
+/**
+ * HOW LONG A CODE STAYS USABLE, and how many earlier windows still verify.
  *
- * The owner asked for the code to be usable within two minutes of it being sent,
- * so that is what this is. `PAST_WINDOWS = 0` means a code stops being accepted
- * the moment its window closes, so nothing lives on for longer than the window
- * itself.
+ * FIVE MINUTES for the window, and `PAST_WINDOWS = 0` so a code stops being
+ * accepted the moment its own window closes. Nothing lives on for longer than
+ * the window the email promised.
+ *
+ * It is five minutes rather than the two originally asked for because delivery
+ * is not instant: a message can take a minute or two to reach an inbox, and a
+ * two-minute code was observed expiring before the customer had finished
+ * reading the email that carried it. The number is stated to the customer
+ * verbatim in the email body, so what the email says and what the server
+ * enforces are the same number.
+ *
+ * This does not widen the brute-force surface in any way that matters: the code
+ * for a window is a fixed 6-digit value, so the number of guesses needed is the
+ * same 1,000,000 regardless of how wide the window is.
  *
  * THE WINDOW IS EPOCH-BUCKETED, NOT CLOCK-ALIGNED TO A TIMEZONE, and that is
- * deliberate. `Math.floor(now / WINDOW_MS)` gives the same two-minute period to
- * every caller in the world, so "two minutes" means two minutes in South
+ * deliberate. `Math.floor(now / WINDOW_MS)` gives the same five-minute period to
+ * every caller in the world, so "five minutes" means five minutes in South
  * Africa, in Lagos, in London and on a server in `us-east-1` alike. A window
- * computed from wall-clock hours would be a different length depending on
- * where the request landed, and a code could expire sooner or later than
- * advertised.
+ * computed from wall-clock hours would be a different length depending on where
+ * the request landed, and a code could expire sooner or later than advertised.
  *
- * ⚠ THIS ONLY WORKS IF MAIL ARRIVES FAST. Delivery from a @gmail.com From
- * address has been observed taking about TWO HOURS, because gmail.com's SPF
- * record does not authorise Mailjet any more than it authorised Brevo. Until
- * MAILJET_SENDER_EMAIL is an address on a domain with published SPF + DKIM, a
- * two-minute code will expire long before the email reaches the inbox, and the
- * symptom will be exactly "no code is ever sent". Changing provider does not fix
- * that; authenticating the sender domain does.
+ * ⚠ THIS ONLY WORKS IF MAIL ARRIVES AT ALL. A sender address on a domain with
+ * published SPF + DKIM is what stops receiving servers deferring or discarding
+ * the message. See the note on MAILJET_SENDER_EMAIL in src/lib/mailjet.server.ts
+ * - changing the provider never fixed that, authenticating the sender domain
+ * does.
  */
 const WINDOW_MS = 5 * 60 * 1000;
-/** How many PAST windows still verify. 0 = expire with the window, as asked. */
+/** How many PAST windows still verify. 0 = expire with the window, as promised. */
 const PAST_WINDOWS = 0;
+
+/** The window length in minutes, for text shown to the customer. */
+const WINDOW_MINUTES = Math.round(WINDOW_MS / 60_000);
 
 /**
  * The code for one window: EXACTLY six digits.
@@ -234,12 +245,6 @@ const PAST_WINDOWS = 0;
  * promise. The digest is therefore read as a number and folded into
  * 100000–999999, which is always six digits and never has a leading zero the
  * customer would have to guess at.
- */
-
-/**
- * How many PAST windows still verify. When the window is tiny (two minutes),
- * a whole 2-minute window can expire before delivery. Five minutes helps a bit
- * and keeps the code useful long enough to use if email is a bit slow.
  */
 async function codeForWindow(email: string, window: number): Promise<string> {
   const digest = await hmac(SERVICE_ROLE, `eamp-activation-v1|${email}|${window}`);
@@ -269,9 +274,9 @@ async function mailCode(email: string, code: string): Promise<Reply> {
               <h1 style="margin:12px 0 0;font-size:22px;">Your activation code</h1>
               <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Use this code in the app to continue to your licence key.</p>
               <p style="margin:24px 0;font-size:40px;font-weight:bold;letter-spacing:0.3em;color:#fff;text-align:center;">${code}</p>
-              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 2 minutes. If you did not ask to sign in, ignore this email.</p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after ${WINDOW_MINUTES} minutes. If you did not ask to sign in, ignore this email.</p>
             </div></div>`,
-    text: `Your EA Migrate Pro activation code is ${code}. It stops working after 2 minutes.`,
+    text: `Your EA Migrate Pro activation code is ${code}. It stops working after ${WINDOW_MINUTES} minutes.`,
   });
   if (!result.ok) {
     // Return the SPECIFIC failure, not the generic fallback. When Mailjet tells us
