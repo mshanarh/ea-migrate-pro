@@ -5,7 +5,7 @@
  * the same thing the browser does.
  *
  * WHAT IT PROVES
- *   POST sendEmail     → exactly one Brevo call, to the right address, with
+ *   POST sendEmail     → exactly one mail send, to the right address, with
  *                        the right subject (this is the path that was dead in
  *                        production, so it is the one that matters)
  *   POST deleteMessage → the row is REALLY gone from `app_messages`
@@ -14,7 +14,8 @@
  *   GET                → 405
  *
  * HOW the send is observed: `globalThis.fetch` is wrapped so calls to
- * api.brevo.com are recorded and answered locally. **No email is ever really
+ * the mail module is replaced, so messages are recorded locally. **No email is ever
+ * really
  * sent.** Everything else (the Supabase client) passes straight through.
  *
  * READ/WRITE: it inserts and removes ONLY rows it created itself, on the
@@ -38,29 +39,21 @@ const NOTADMIN = "probe.portal.plain@eamigratepro.invalid";
 const MSG_ID = "probe-portal-msg-001";
 const PROBES = [ADMIN, NOTADMIN];
 
-/** Every outbound Brevo call, captured live. */
-const sent: Array<{ to: string; subject: string }> = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (target.includes("api.brevo.com")) {
-    let to = "";
-    let subject = "";
-    try {
-      const parsed = JSON.parse(String(init?.body ?? "{}")) as {
-        to?: Array<{ email?: string }>;
-        subject?: string;
-      };
-      to = parsed.to?.[0]?.email ?? "";
-      subject = parsed.subject ?? "";
-    } catch {
-      /* recorded as unreadable */
-    }
-    sent.push({ to, subject });
-    return new Response(JSON.stringify({ messageId: "<probe>" }), { status: 201 });
-  }
-  return realFetch(input, init);
-}) as typeof fetch;
+/**
+ * Every outbound message, captured in the mail module and never actually sent.
+ *
+ * This used to stub `globalThis.fetch` for api.brevo.com. That no longer works:
+ * node-mailjet sends through axios's **http** adapter, not global fetch, so the
+ * stub stopped firing. Left alone, this suite would have sent REAL mail on every
+ * run and then failed its own 'exactly one call' assertion. See
+ * ./lib/mail-intercept.ts.
+ */
+import { assertInterceptable, interceptMail, sentMessages } from "./lib/mail-intercept";
+
+interceptMail();
+await assertInterceptable();
+
+const sent = sentMessages();
 
 type Reply = { ok: boolean; error?: string };
 type ApiRequest = { method?: string; body?: unknown };
@@ -135,7 +128,7 @@ async function main() {
     text: "probe",
   });
   check("sendEmail is accepted", mailed.body.ok === true, mailed.body.error ?? "");
-  check("exactly one Brevo call", sent.length === before + 1, `${sent.length - before}`);
+  check("exactly one mail send", sent.length === before + 1, `${sent.length - before}`);
   const last = sent[sent.length - 1];
   check("addressed to the recipient", last?.to === NOTADMIN, last?.to || "none");
   check("carries the subject", last?.subject === "EA Migrate probe", last?.subject || "none");
@@ -170,7 +163,6 @@ async function main() {
   await admin.from("users").delete().in("email", PROBES);
   check("probe rows removed", ((await admin.from("users").select("email").in("email", PROBES)).data ?? []).length === 0);
 
-  globalThis.fetch = realFetch;
   server.stop();
   console.log(
     failures === 0

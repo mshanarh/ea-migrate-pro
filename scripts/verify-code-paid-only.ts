@@ -4,15 +4,15 @@
  * `scripts/probe-activation-http.ts` shows that an unpaid address is told "not
  * activated yet". That is weaker than what is being claimed: a refusal is only
  * evidence if the mail could not have been sent anyway. This probe therefore
- * watches the actual outbound call to Brevo.
+ * watches the actual outbound call to the mail service.
  *
  * WHAT IT ASSERTS
  *   1. Unpaid  -> refused with the exact wording "This email is not marked as
- *                 paid. Contact admin." AND zero Brevo calls. Nothing leaves
+ *                 paid. Contact admin." AND zero sends attempted. Nothing leaves
  *                 the server and no code is generated.
  *   2. Unpaid  -> the code is refused even when it is the CORRECT code, so the
  *                 gate is on the account, not on guessing well.
- *   3. Paid    -> exactly one Brevo call, addressed to that exact address.
+ *   3. Paid    -> exactly one Mailjet send, addressed to that exact address.
  *   4. Forging `users.is_paid` buys nothing. That column is writable by the
  *                 ANON key (re-verified live), so if it were the entitlement
  *                 signal, anyone could mark themselves paid and mail a code to
@@ -23,9 +23,14 @@
  *   6. Codes EXPIRE: only the current 2-minute window verifies, so a code from
  *                 the previous window is refused.
  *
- * IT SENDS NO REAL MAIL, and that is deliberate: `fetch` is wrapped so calls to
- * api.brevo.com are answered locally, because simply verifying the code would
- * otherwise put a message into a real inbox on every run.
+ * IT SENDS NO REAL MAIL, and that is deliberate. It used to work by wrapping
+ * `globalThis.fetch` and answering api.brevo.com locally; that no longer works,
+ * because node-mailjet sends via axios's **http** adapter rather than global
+ * fetch (measured: a replaced fetch was called ZERO times and the message still
+ * reached the real host). A fetch stub would therefore have kept reporting PASS
+ * while quietly sending real email. It now replaces the mail MODULE itself — see
+ * ./lib/mail-intercept.ts, which self-tests so a future refactor cannot
+ * silently restore real sends.
  *
  * The handler is imported DYNAMICALLY so what is under test is the payment gate
  * rather than module-load ordering, and the sender is left exactly as the app
@@ -37,6 +42,12 @@
  * Run: bun scripts/verify-code-paid-only.ts
  */
 import { createClient } from "@supabase/supabase-js";
+import { assertInterceptable, interceptMail, sentMessages } from "./lib/mail-intercept";
+
+/* Interception is installed BEFORE the handler is imported, and self-tested,
+ * so this suite cannot send real mail even if the mail path moves again. */
+interceptMail();
+await assertInterceptable();
 
 const { default: handler } = await import("../api/activation");
 
@@ -54,23 +65,8 @@ const PAID = "probe.paidonly.paid@eamigratepro.invalid";
 const UNPAID = "probe.paidonly.unpaid@eamigratepro.invalid";
 const PROBES = [PAID, UNPAID];
 
-/** Every outbound call to Brevo, captured live. */
-const sent: Array<{ to: unknown }> = [];
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (target.includes("api.brevo.com")) {
-    let to: unknown = null;
-    try {
-      to = (JSON.parse(String(init?.body ?? "{}")) as { to?: unknown }).to;
-    } catch {
-      /* recorded as unreadable */
-    }
-    sent.push({ to });
-    return new Response(JSON.stringify({ messageId: "<probe>" }), { status: 201 });
-  }
-  return realFetch(input, init);
-}) as typeof fetch;
+/** Every outbound message, captured in the mail module itself and never sent. */
+const sent = sentMessages();
 
 type Reply = { ok: boolean; unavailable?: boolean; error?: string };
 type ApiRequest = { method?: string; body?: unknown };
@@ -151,9 +147,9 @@ async function main() {
     unpaid.body.error ?? "",
   );
   check(
-    "unpaid: Brevo was NOT called (nothing was sent)",
+    "unpaid: no mail was attempted at all",
     sent.length === before,
-    `${sent.length - before} call(s) to api.brevo.com`,
+    `${sent.length - before} message(s) attempted`,
   );
 
   // 2 — holding the right code does not help an unpaid account.
@@ -167,14 +163,14 @@ async function main() {
   check(
     "unpaid verifyCode sent nothing either",
     sent.length === before,
-    `${sent.length - before} call(s) to api.brevo.com`,
+    `${sent.length - before} message(s) attempted`,
   );
 
   // 3 — paid, exactly one send to exactly that address.
   const paid = await call({ action: "issueCode", email: PAID });
   check("paid is emailed a code", paid.body.ok === true, paid.body.error ?? "");
   const paidCalls = sent.slice(before);
-  check("paid: exactly one Brevo call", paidCalls.length === 1, `${paidCalls.length} call(s)`);
+  check("paid: exactly one mail send", paidCalls.length === 1, `${paidCalls.length} message(s)`);
   check(
     "the code went to the paid address and nowhere else",
     JSON.stringify(paidCalls[0]?.to ?? "").includes(PAID),
@@ -243,7 +239,6 @@ async function main() {
   const left = await admin.from("users").select("email").in("email", PROBES);
   check("probe rows removed", (left.data ?? []).length === 0);
 
-  globalThis.fetch = realFetch;
   console.log(
     failures === 0
       ? "RESULT: OK — a code is sent to paid accounts only, and nothing is sent to anyone else"

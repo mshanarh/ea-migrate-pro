@@ -1,20 +1,26 @@
 /**
  * A REAL SEND, THROUGH THE REAL HANDLER, WITH THE REAL KEY.
  *
- * Every other probe stubs `api.brevo.com`. That proves the code decides what to
- * send and to whom, but it cannot prove Brevo ACCEPTS the message that the
+ * Every other probe replaces the mail module. That proves the code decides what
+ * to send and to whom, but it cannot prove Mailjet ACCEPTS the message the
  * configured sender produces — which is the thing that was in doubt.
  *
  * So this one inserts a paid probe row, calls the actual `/api/activation`
- * handler with the real `BREVO_API_KEY`, and reports the HTTP status and whether
- * the reply was `ok: true`. A 201 with a `messageId` means Brevo queued it and
- * the code step opens on the app.
+ * handler with the real `MAILJET_API_KEY` / `MAILJET_SECRET_KEY`, and reports
+ * the HTTP status and whether the reply was `ok: true`. Mailjet answers HTTP
+ * 200 with `Messages: [{ Status: "success" }]` when it accepts a message onto
+ * its queue, and the code step opens on that.
  *
  * WHAT IT DELIBERATELY DOES NOT CLAIM
  *
- * 201 is acceptance onto Brevo's queue, not arrival in an inbox. Only the
- * recipient can confirm that, and the app has no delivery webhook. This script
- * therefore reports "accepted by Brevo" and never "delivered".
+ * `Status: "success"` is acceptance onto Mailjet's queue, not arrival in an
+ * inbox. Only the recipient can confirm that, and the app has no delivery
+ * webhook. This script therefore reports "accepted by Mailjet" and never
+ * "delivered".
+ *
+ * ⚠ IT SENDS REAL MAIL. The probe address is on the reserved
+ * `.invalid` TLD (RFC 2606), which can never receive mail — so the message is
+ * accepted by Mailjet and then bounces, without reaching a real person.
  *
  * READ/WRITE: one probe row on the reserved `@eamigratepro.invalid` domain,
  * deleted at the end.
@@ -29,10 +35,13 @@ if (!url || !serviceRole) {
   console.log("Missing Supabase env — nothing sent.");
   process.exit(1);
 }
-if (!(process.env["BREVO_API_KEY"] ?? "").trim()) {
-  console.log("BREVO_API_KEY is not set — nothing sent.");
+if (!(process.env["MAILJET_API_KEY"] ?? "").trim() || !(process.env["MAILJET_SECRET_KEY"] ?? "").trim()) {
+  console.log("MAILJET_API_KEY / MAILJET_SECRET_KEY is not set — nothing sent.");
   process.exit(1);
 }
+
+const sender = (process.env["MAILJET_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim();
+console.log(`sender: ${sender}`);
 
 const admin = createClient(url, serviceRole, { auth: { persistSession: false } });
 const { default: handler } = await import("../api/activation");
@@ -68,10 +77,10 @@ const left = await admin.from("users").select("email").eq("email", PAID);
 console.log(`probe rows removed: ${(left.data ?? []).length === 0}`);
 
 if (payload?.ok === true) {
-  console.log("OK — Brevo accepted the code from the configured sender; the code step opens.");
+  console.log("OK — Mailjet ACCEPTED the code from the configured sender; the code step opens.");
   process.exit(0);
 }
 console.log(
-  "NOT SENT — Brevo did not accept this message. See the reply above and the handler log.",
+  "NOT SENT — Mailjet did not accept this message. See the reply above and the handler log.",
 );
 process.exit(1);

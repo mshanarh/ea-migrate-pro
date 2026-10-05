@@ -1,4 +1,5 @@
 import { createServerFn } from "@tanstack/react-start";
+import { sendMail } from "./mailjet.server";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { MENTOR_ONLY_EMAILS, OWNER_EMAILS, type Account, type PaymentRecord, type PortalStatus } from "@/lib/auth-store";
 
@@ -241,7 +242,7 @@ export const syncRegister = createServerFn({ method: "POST" })
     // brand-new account, and never for the owner (they approve themselves).
     if (writeOk && !existing && !OWNER_EMAILS.includes(email)) {
       void sendPendingEmail(email, merged.firstName).catch((error) =>
-        console.error("[brevo] pending email unexpected failure:", error),
+        console.error("[mailjet] pending email unexpected failure:", error),
       );
     }
     return { enabled: true, ok: writeOk };
@@ -492,15 +493,21 @@ export type AdminPatch = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Brevo welcome email — fired once when a mentor's status moves to   */
-/* "approved". Uses the raw Brevo v3 REST endpoint (no SDK needed).   */
-/* A missing BREVO_API_KEY or a Brevo failure never blocks approval.  */
+/* Portal welcome email — fired once when a mentor's status moves to   */
+/* "approved". A missing Mailjet credential or a send failure never    */
+/* blocks approval.                                                     */
 /* ------------------------------------------------------------------ */
 
 const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
-/** Shared Brevo wiring for every portal email. */
-async function sendBrevoEmail(options: {
+/**
+ * Shared Mailjet wiring for every portal email.
+ *
+ * Delegates to the same client the /api/* functions use, so this module only
+ * decides WHAT is said, never HOW it is sent. The `fromName` override is kept
+ * because a few of these notices have always carried their own sender.
+ */
+async function sendMailjetEmail(options: {
   to: string;
   toName: string;
   subject: string;
@@ -509,42 +516,9 @@ async function sendBrevoEmail(options: {
   /** Display name for the From header. Defaults to the platform brand. */
   fromName?: string;
 }): Promise<boolean> {
-  const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
-  if (apiKey.length === 0) {
-    console.error("[brevo] BREVO_API_KEY is not set — email skipped for", options.to);
-    return false;
-  }
-  try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "api-key": apiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: { name: options.fromName ?? "EA Migrate", email: "eamigratepro@gmail.com" },
-        to: [{ email: options.to, name: options.toName }],
-        subject: options.subject,
-        htmlContent: options.html,
-        textContent: options.text,
-      }),
-      // Never let a slow email provider delay the approval/registration.
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      const detail = await response.text().catch(() => "");
-      console.error(
-        `[brevo] send failed (${response.status}) for ${options.to}:`,
-        detail.slice(0, 400),
-      );
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error("[brevo] request error for", options.to, error);
-    return false;
-  }
+  const result = await sendMail(options);
+  if (!result.ok) console.error("[mailjet] send failed for", options.to, result.error);
+  return result.ok;
 }
 
 /** Dark brand HTML shared by the approval and pending emails. */
@@ -608,7 +582,7 @@ async function sendApprovalEmail(userEmail: string, firstName: string): Promise<
     footer: "— The EA Migrate Team",
   });
   const text = `Hi ${name},\n\nWelcome to the EA Migrate Portal! 🔓🎉\n\nWe've confirmed your request and your access has been accepted.\n\nWelcome to the team, Brother! 🤝\n\nOpen your portal: ${PORTAL_URL}`;
-  return sendBrevoEmail({
+  return sendMailjetEmail({
     to: userEmail,
     toName: name,
     subject: `Welcome to EA Migrate, ${name}! 🔓`,
@@ -658,7 +632,7 @@ async function sendPendingEmail(userEmail: string, firstName: string): Promise<b
   </body>
 </html>`;
   const text = `Welcome to EA Migrate!\n\nWe have successfully received your registration.\n\nYour account is currently on our pending list. You will be approved once the admin reviews and approves your account.\n\nYou will be notified via email once your account is approved.\n\nThank you,\nEA Migrate Team\n\nOpen your portal: ${PORTAL_URL}`;
-  return sendBrevoEmail({
+  return sendMailjetEmail({
     to: userEmail,
     toName: name,
     subject: "Registration Received - Pending Approval | EA Migrate",
@@ -787,7 +761,7 @@ async function sendLicenseEmail(options: {
   const name = options.clientName.trim().length > 0 ? options.clientName.trim() : "Trader";
   const eaName = options.eaName.trim().length > 0 ? options.eaName.trim() : "EA";
   const expiry = options.expiry.trim().length > 0 ? options.expiry.trim() : "Lifetime";
-  return sendBrevoEmail({
+  return sendMailjetEmail({
     to: options.to,
     toName: name,
     subject: `Your EA Migrate License Key - ${eaName}`,
@@ -823,10 +797,6 @@ export const syncSendLicenseEmail = createServerFn({ method: "POST" })
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
       return { enabled: true, ok: false, error: "A valid recipient email is required." };
     }
-    const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
-    if (apiKey.length === 0) {
-      return { enabled: true, ok: false, error: "BREVO_API_KEY is not set — add it in Settings → Environment." };
-    }
     const sent = await sendLicenseEmail({
       to,
       clientName: data.clientName,
@@ -837,7 +807,7 @@ export const syncSendLicenseEmail = createServerFn({ method: "POST" })
     });
     return sent
       ? { enabled: true, ok: true }
-      : { enabled: true, ok: false, error: "Brevo rejected the send — check the key and verified sender." };
+      : { enabled: true, ok: false, error: "The email service refused the send — check the Mailjet credentials and verified sender." };
   });
 
 export type SyncSendPasswordChangedEmailInput = { toEmail: string };
@@ -845,7 +815,7 @@ export type SyncSendPasswordChangedEmailResult = { enabled: boolean; ok: boolean
 
 /**
  * Sent right after a successful password reset. Exact brand config:
- * From: "EA Migrate Team <eamigratepro@gmail.com>" via Brevo (BREVO_API_KEY).
+ * From: "EA Migrate Team <eamigratepro@gmail.com>" via Mailjet.
  */
 export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
   .validator((data: SyncSendPasswordChangedEmailInput) => data)
@@ -853,10 +823,6 @@ export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
     const to = data.toEmail.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
       return { enabled: true, ok: false, error: "A valid recipient email is required." };
-    }
-    const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
-    if (apiKey.length === 0) {
-      return { enabled: true, ok: false, error: "BREVO_API_KEY is not set — add it in Settings → Environment." };
     }
     const html = brandEmailHtml({
       heading: "Password Changed Successfully",
@@ -869,7 +835,7 @@ export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
       buttonColor: "#1E90FF",
       footer: "EA Migrate Team",
     });
-    const sent = await sendBrevoEmail({
+    const sent = await sendMailjetEmail({
       to,
       toName: to,
       subject: "Password Changed Successfully - EA Migrate",
@@ -879,7 +845,7 @@ export const syncSendPasswordChangedEmail = createServerFn({ method: "POST" })
     });
     return sent
       ? { enabled: true, ok: true }
-      : { enabled: true, ok: false, error: "Brevo rejected the send — check the key and verified sender." };
+      : { enabled: true, ok: false, error: "The email service refused the send — check the Mailjet credentials and verified sender." };
   });
 
 export type SyncAdminUpdateInput = { adminEmail: string; targetEmail: string; patch: AdminPatch };
@@ -975,7 +941,7 @@ export const syncAdminUpdate = createServerFn({ method: "POST" })
       !isRemovedAdmin(targetEmail)
     ) {
       void sendApprovalEmail(targetEmail, base.firstName).catch((error) =>
-        console.error("[brevo] unexpected failure:", error),
+        console.error("[mailjet] unexpected failure:", error),
       );
     }
     return {

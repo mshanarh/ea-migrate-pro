@@ -12,11 +12,11 @@
  *   1. EMAIL. `src/lib/send-email.ts` tried, in order:
  *        a) the Supabase edge function `supabase/functions/send-email`
  *           → **404 "Requested function was not found"**. It was never
- *             deployed, and nothing in this repository can deploy it.
+ *           deployed, and nothing in this repository can deploy it.
  *        b) a browser-direct Brevo send using `VITE_BREVO_API_KEY`
  *           → **not set**, and deliberately so: Vite inlines it into the
- *             public bundle, so anybody could read the key and send mail as
- *             the platform.
+ *           public bundle, so anybody could read the key and send mail as
+ *           the platform.
  *      Both routes are dead ends, so EVERY email — registration alerts,
  *      approval decisions, licence keys and admin broadcasts to mentors —
  *      failed with "No email service is available". The wiring was correct;
@@ -29,24 +29,26 @@
  *      grants the anon key `insert` + `select` and **no delete** — a direct
  *      delete returns `42501 permission denied` (verified live).
  *
- * Both need `SUPABASE_SERVICE_ROLE_KEY` / `BREVO_API_KEY`, secrets a browser
- * must never see. Vercel runs anything in `/api` as a serverless function and
- * serves it alongside the static `dist/`, so this file is the whole server
- * half of those two features. Same shape and the same reasons as
+ * Both need `SUPABASE_SERVICE_ROLE_KEY` / `MAILJET_SECRET_KEY`, secrets a
+ * browser must never see. Vercel runs anything in `/api` as a serverless
+ * function and serves it alongside the static `dist/`, so this file is the whole
+ * server half of those two features. Same shape and the same reasons as
  * `api/activation.ts`.
  *
  * ACTIONS
  * ───────
- *   sendEmail      one transactional email through Brevo
+ *   sendEmail      one transactional email through Mailjet
  *   deleteMessage  remove one row from the console's broadcast history
  *
  * ENV VARS (Vercel project settings):
- *   BREVO_API_KEY              sends the mail
- *   BREVO_SENDER_EMAIL         optional; falls back to eamigratepro@gmail.com
- *   SUPABASE_URL               optional; VITE_SUPABASE_URL is used otherwise
- *   SUPABASE_SERVICE_ROLE_KEY  the secret, used ONLY to delete
+ *   MAILJET_API_KEY             sends the mail
+ *   MAILJET_SECRET_KEY          Mailjet private API key
+ *   MAILJET_SENDER_EMAIL        the From address; falls back to eamigratepro@gmail.com
+ *   SUPABASE_URL                optional; VITE_SUPABASE_URL is used otherwise
+ *   SUPABASE_SERVICE_ROLE_KEY   the secret, used ONLY to delete
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { sendMail } from "../src/lib/mailjet.server";
 
 /**
  * The Vercel request/response shape, declared locally.
@@ -70,10 +72,6 @@ type Action = "sendEmail" | "deleteMessage";
 
 const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
-const BREVO_API_KEY = (process.env["BREVO_API_KEY"] ?? "").trim();
-const SENDER =
-  (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
-  "eamigratepro@gmail.com";
 
 const NOT_CONFIGURED = "Email service is not configured on the server.";
 const NOT_AUTHORISED = "Only an administrator can do that.";
@@ -81,19 +79,13 @@ const NOT_AUTHORISED = "Only an administrator can do that.";
 /**
  * DID THE MAIL GET SENT?
  *
- * Brevo answers 201 as soon as it accepts a message onto its queue. That is
- * receipt, not delivery, and a 201 is exactly what this function reports as
- * success. Delivery can only be read back from the receiving server minutes
- * later, and this app has no webhook configured to read it — so the only
- * honest answer this function gives is what Brevo actually answered.
- *
- * A 200 means Brevo accepted the message without an error. Like 201, that is
- * queue-acceptance, not inbox delivery, and like it this function reports it
- * as success because the one thing it can observe is Brevo's own answer. A
- * different HTTP status would mean the message was refused and must not be
- * reported as sent.
+ * Mailjet answers HTTP 200 with `Status: "success"` as soon as it accepts a
+ * message onto its queue. That is receipt, not delivery. Delivery can only be
+ * read back from the receiving server minutes later, and this app has no webhook
+ * configured to read it — so the only honest answer this function gives is what
+ * Mailjet actually answered, and `sendMail` in src/lib/mailjet.server.ts is where
+ * that is decided.
  */
-
 type Reply = { ok: boolean; error?: string };
 
 function db(): SupabaseClient | null {
@@ -172,70 +164,6 @@ async function isAdmin(client: SupabaseClient, email: string): Promise<boolean> 
   return false;
 }
 
-/** Raw Brevo v3 send. The full response is logged so failures are diagnosable. */
-async function mailViaBrevo(options: {
-  to: string;
-  subject: string;
-  html: string;
-  text: string;
-}): Promise<Reply> {
-  if (!BREVO_API_KEY) {
-    console.error("[portal] BREVO_API_KEY is not set — email skipped for", options.to);
-    return { ok: false, error: NOT_CONFIGURED };
-  }
-  try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "api-key": BREVO_API_KEY,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: { name: "EA Migrate Team", email: SENDER },
-        to: [{ email: options.to }],
-        subject: options.subject,
-        htmlContent: options.html,
-        textContent: options.text,
-      }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    const body = await response.text().catch(() => "");
-    /* A 200 or 201 means Brevo accepted the message onto its queue. Both are
-     * reported as ok:true, because the code step opens on any HTTP 2xx — and a
-     * different status would mean the message was refused and must not be.
-     * `error` is kept so the client can still tell the customer what went
-     * wrong and the operator can read the log. */
-    console.log(
-      `[portal] Brevo response for ${options.to}: HTTP ${response.status}`,
-      body.slice(0, 400),
-    );
-    /* WORDING MATTERS HERE. `accepted` is what Brevo answered; `delivered` is
-     * something only the receiving server can say, minutes later, and this
-     * function never learns it without a webhook. Logging "sent" for a queued
-     * message is what made a two-hour-old arrival look like an instant one. */
-    if (response.ok)
-      console.log(`[portal] Brevo QUEUED (not yet delivered) the message for ${options.to}`);
-    if (!response.ok) {
-      let detail = body.slice(0, 200);
-      try {
-        const parsed = JSON.parse(body) as { message?: unknown };
-        if (typeof parsed.message === "string") detail = parsed.message.slice(0, 200);
-      } catch {
-        /* keep the raw body */
-      }
-      return {
-        ok: false,
-        error: `The email service refused the message (${response.status})${detail ? `: ${detail}` : "."}`,
-      };
-    }
-    return { ok: true };
-  } catch (error) {
-    console.error("[portal] Brevo request error for", options.to, error);
-    return { ok: false, error: "The email service could not be reached — try again." };
-  }
-}
-
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   // Only POST. A GET here would be a link a browser could be lured into
   // following with a prefetch; neither action should ever be reachable that way.
@@ -272,12 +200,14 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       return;
     }
     // A subject with no heading is how a notice arrives looking like spam, and
-    // Brevo rejects an empty subject outright — either way it must not send.
+    // Mailjet refuses an empty subject outright — either way it must not send.
     if (!subject || !html) {
       response.status(200).json({ ok: false, error: "That email could not be built." });
       return;
     }
-    response.status(200).json(await mailViaBrevo({ to, subject, html, text: text || subject }));
+    response
+      .status(200)
+      .json(await sendMail({ to, subject, html, text: text || subject }));
     return;
   }
 

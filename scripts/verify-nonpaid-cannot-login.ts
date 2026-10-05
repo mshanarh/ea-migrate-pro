@@ -28,10 +28,21 @@
  * Run: bun scripts/verify-nonpaid-cannot-login.ts
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { assertInterceptable, interceptMail, sentMessages } from "./lib/mail-intercept";
+
+interceptMail();
+await assertInterceptable();
 
 const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
-const BREVO_API_KEY = (process.env["BREVO_API_KEY"] ?? "").trim();
+/* The mail-provider credentials are only used for the closing NOTE. After the
+ * Brevo → Mailjet migration a leftover BREVO_API_KEY check would have gone
+ * permanently false and printed "the send path was never exercised" on every
+ * run — a stale gate that reads like a skipped assertion. It must name the
+ * variables the app actually uses now. */
+const MAILJET_CONFIGURED = Boolean(
+  (process.env["MAILJET_API_KEY"] ?? "").trim() && (process.env["MAILJET_SECRET_KEY"] ?? "").trim(),
+);
 
 if (!SUPABASE_URL || !SERVICE_ROLE) {
   console.log("Missing Supabase env — nothing verified.");
@@ -140,42 +151,32 @@ type HandlerResponse = {
 };
 
 async function callActivation(body: Record<string, unknown>): Promise<{ status: number; body: Reply; sent: string[] }> {
-  const sent: string[] = [];
-  const realFetch = globalThis.fetch;
-  // Record any attempt to send mail, so "nothing was sent" is asserted rather
-  // than assumed. Brevo is NOT called: the request is refused before mailCode.
-  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : String(input?.url ?? input);
-    if (url.includes("api.brevo.com")) {
-      sent.push(url);
-      return new Response(JSON.stringify({ messageId: "<probe>" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    return realFetch(input, init);
-  }) as typeof fetch;
-  try {
-    const handler = (await import("../api/activation")).default;
-    let status = 0;
-    let payload: Reply = null;
-    const response: HandlerResponse = {
-      status(code: number) {
-        status = code;
-        return response;
-      },
-      json(body: unknown) {
-        payload = body;
-      },
-      setHeader() {
-        return response;
-      },
-    };
-    await handler({ method: "POST", body }, response);
-    return { status, body: payload, sent };
-  } finally {
-    globalThis.fetch = realFetch;
-  }
+  // Record any attempt to send mail, so "nothing was sent" is ASSERTED rather
+  // than assumed.
+  //
+  // This used to intercept `globalThis.fetch` for api.brevo.com. That can no
+  // longer work: node-mailjet sends through axios's **http** adapter, not global
+  // fetch, so the stub never fired and `sent` was always empty — the "nothing was
+  // sent" assertion would have passed for the WRONG reason. The mail module
+  // itself is intercepted instead; see ./lib/mail-intercept.ts.
+  const before = sentMessages().length;
+  const handler = (await import("../api/activation")).default;
+  let status = 0;
+  let payload: Reply = null;
+  const response: HandlerResponse = {
+    status(code: number) {
+      status = code;
+      return response;
+    },
+    json(body: unknown) {
+      payload = body;
+    },
+    setHeader() {
+      return response;
+    },
+  };
+  await handler({ method: "POST", body }, response);
+  return { status, body: payload, sent: sentMessages().slice(before).map((m) => m.to) };
 }
 
 const issue = await callActivation({ action: "issueCode", email: UNPAID });
@@ -321,5 +322,6 @@ const { data: residue } = await admin.from("users").select("email").eq("email", 
 check("probe rows removed", (residue ?? []).length === 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
-if (!BREVO_API_KEY) console.log("note: BREVO_API_KEY absent — the send path was never exercised.");
+if (!MAILJET_CONFIGURED)
+  console.log("note: Mailjet credentials absent — the send path was never exercised.");
 process.exit(fail === 0 ? 0 : 1);

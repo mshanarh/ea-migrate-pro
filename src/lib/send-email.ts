@@ -1,18 +1,19 @@
 /**
- * Transactional email — Supabase Edge Function → Brevo, with a browser-direct
- * fallback.
+ * Transactional email — server-only, via the `/api/portal` Vercel function.
  *
- * The Brevo key used to be read from VITE_BREVO_API_KEY, which Vite inlines
- * into the public JavaScript bundle: anyone who opened the site could read it
- * and send mail as the platform. A server-side function
- * (supabase/functions/send-email) now holds the key in a Supabase secret and
- * is the preferred route.
+ * THE BROWSER MUST NEVER HOLD A MAIL-PROVIDER KEY. Vite inlines every
+ * `VITE_*` variable into the public JavaScript bundle, so any such key is
+ * readable by anyone who opens the site. This module used to have a last-ditch
+ * `sendDirectFromBrowser` fallback reading `VITE_BREVO_API_KEY`; it is deleted
+ * rather than repointed at Mailjet, because a `VITE_MAILJET_SECRET_KEY` would
+ * publish a full Mailjet API credential — one that can read the account's
+ * contacts and send as any verified sender. That is strictly worse than the
+ * key it would replace.
  *
- * That function is not deployed yet, so this module still falls back to
- * sending from the browser with the build-time key. Email therefore works
- * again immediately, and the day the function is deployed the fallback is
- * never reached and VITE_BREVO_API_KEY can be deleted from the build
- * environment for good.
+ * So mail is server-only. `api/portal.ts` holds MAILJET_SECRET_KEY and sends
+ * through `src/lib/mailjet.server.ts`, the same client the `/api/*` functions
+ * use. When no server is reachable this module says so plainly instead of
+ * leaking a secret to make an email go out.
  *
  *   type: "new_registration"
  *     → emails the admin to approve the new user (pending row is saved by
@@ -22,11 +23,9 @@
  *     → saves the issued key into the license_keys table and emails the
  *       user their license key.
  */
-
 const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
 /** Second admin inbox — the known-good recipient for registration alerts. */
 const ADMIN_EMAIL_2 = "eamigratepro@gmail.com";
-const DEFAULT_SENDER = "eamigratepro@gmail.com";
 const PORTAL_URL = "https://eamigratepro.vercel.app/";
 
 const SUPABASE_URL = (import.meta.env["VITE_SUPABASE_URL"] ?? "").trim();
@@ -160,79 +159,12 @@ function renderMessage(
 }
 
 /**
- * Browser-direct Brevo send — only used while the edge function is absent.
- *
- * Mobile networks and embedded WebViews are slow: the old 12s ceiling aborted
- * the request before Brevo ever answered and the failure surfaced as the
- * useless "could not be reached". The timeout is now generous, the attempt is
- * retried once, and the real HTTP status / provider message is reported so a
- * failure is diagnosable instead of a dead end.
- */
-async function sendDirectFromBrowser(message: Message): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = (import.meta.env["VITE_BREVO_API_KEY"] ?? "").trim();
-  if (!apiKey) {
-    return {
-      ok: false,
-      error: "No email service is available: deploy the send-email function, or set VITE_BREVO_API_KEY.",
-    };
-  }
-  const payload = JSON.stringify({
-    sender: { name: "EA Migrate Team", email: DEFAULT_SENDER },
-    to: [{ email: message.to, name: message.to }],
-    subject: message.subject,
-    htmlContent: message.html,
-    textContent: message.text,
-  });
-  let lastError = "The email service could not be reached — try again.";
-  // Two attempts: a single dropped mobile connection should not cost the
-  // client their licence-key email.
-  for (let attempt = 1; attempt <= 2; attempt += 1) {
-    try {
-      const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-        method: "POST",
-        headers: { "api-key": apiKey, "content-type": "application/json", accept: "application/json" },
-        body: payload,
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (response.ok) return { ok: true };
-      const body = await response.text().catch(() => "");
-      // Brevo answers with {"code":"…","message":"…"} — surface the message,
-      // it is the difference between "sender not verified" and "bad key".
-      let detail = body.slice(0, 200);
-      try {
-        const parsed = JSON.parse(body) as { message?: unknown; code?: unknown };
-        if (typeof parsed.message === "string") {
-          detail = parsed.message.slice(0, 200);
-        }
-      } catch {
-        /* keep the raw body */
-      }
-      console.error(`[send-email] Brevo refused the send (${response.status}):`, detail);
-      lastError = `The email service rejected the message (${response.status})${detail ? `: ${detail}` : "."}`;
-      // 4xx is a permanent refusal — retrying changes nothing.
-      if (response.status < 500) return { ok: false, error: lastError };
-    } catch (error) {
-      // A timeout, an offline device or a blocked cross-origin request all
-      // land here; the reason is logged because the user only ever sees this.
-      lastError =
-        error instanceof DOMException && error.name === "TimeoutError"
-          ? "The email service timed out — try again."
-          : "The email service could not be reached — try again.";
-      console.warn(`[send-email] Brevo attempt ${attempt} failed:`, error);
-    }
-  }
-  return { ok: false, error: lastError };
-}
-
-/**
  * Send one of the platform's emails.
  *
- * PREFERRED: the Supabase edge function, which holds the Brevo key in a secret
- * nobody can read from a browser. FALLBACK: the browser sends it directly with
- * VITE_BREVO_API_KEY, which is what shipped before the function existed and
- * which keeps the product working until the function is deployed.
+ * Every route here is SERVER-SIDE. There is no browser-direct send, by design:
+ * see the note at the top of this file about keys in the public bundle.
  */
-async function sendViaBrevo(options: {
+async function sendViaPortalServer(options: {
   kind: "new_registration" | "approval_decision" | "license_approved" | "broadcast";
   to: string;
   params?: Record<string, unknown>;
@@ -243,16 +175,14 @@ async function sendViaBrevo(options: {
 
   /* THE SERVER FIRST — this is the route that works on the real deployment.
    *
-   * The two routes below it are both dead ends in production, which is why no
-   * email was arriving anywhere: the Supabase edge function has never been
-   * deployed (404), and the browser fallback needs `VITE_BREVO_API_KEY`, which
-   * is deliberately unset because Vite inlines it into the public bundle.
+   * `/api/portal` is a Vercel function (see api/portal.ts) that holds the
+   * Mailjet secret key server-side and sends through src/lib/mailjet.server.ts,
+   * so the credential stays out of the shipped JavaScript.
    *
-   * `/api/portal` is a Vercel function (see api/portal.ts) that holds
-   * BREVO_API_KEY server-side, so the secret stays out of the shipped
-   * JavaScript. Nothing is lost by trying it first: both older routes are
-   * still attempted when it is absent, which is what keeps a bare `vite dev`
-   * working with no server at all.
+   * The Supabase edge function is still attempted afterwards because it costs
+   * nothing and may be deployed in future; it currently answers 404 and is not
+   * relied upon. If no server answers at all, this module reports the failure
+   * rather than falling back to a browser send.
    */
   try {
     const response = await fetch("/api/portal", {
@@ -301,7 +231,15 @@ async function sendViaBrevo(options: {
       console.warn("[send-email] edge function unreachable — using the browser fallback.");
     }
   }
-  return sendDirectFromBrowser(message);
+  /* NO BROWSER FALLBACK, and that is the point.
+   *
+   * There used to be a last-ditch attempt to send straight from the browser
+   * with `VITE_BREVO_API_KEY`. It is gone for good rather than being repointed
+   * at Mailjet: any provider key reachable from a browser is in the public
+   * bundle, and a Mailjet secret key is a full account credential — it could
+   * read your contacts and send as any sender you have verified. Failing loudly
+   * here is safer than succeeding with a published secret. */
+  return { ok: false, error: "The email service could not be reached — try again." };
 }
 
 /** Insert-if-missing pending row via the anon client (schema default status). */
@@ -466,8 +404,8 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
     // clusters these alerts made "new registrations never arrive". The function
     // sends one message per recipient; any address that receives it is enough.
     const [first, second] = await Promise.allSettled([
-      sendViaBrevo({ kind: "new_registration", to: ADMIN_EMAIL, params: name ? { name } : {} }),
-      sendViaBrevo({ kind: "new_registration", to: ADMIN_EMAIL_2, params: name ? { name } : {} }),
+      sendViaPortalServer({ kind: "new_registration", to: ADMIN_EMAIL, params: name ? { name } : {} }),
+      sendViaPortalServer({ kind: "new_registration", to: ADMIN_EMAIL_2, params: name ? { name } : {} }),
     ]);
     if (first.status === "fulfilled" && first.value.ok) return { success: true };
     if (second.status === "fulfilled" && second.value.ok) return { success: true };
@@ -481,7 +419,7 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
   // exact key allowance that was granted, because that is the number they
   // will hit when they create their first license key.
   if (data.type === "approval_decision") {
-    const sent = await sendViaBrevo({
+    const sent = await sendViaPortalServer({
       kind: "approval_decision",
       to: email,
       params: { decision: data.decision, licenseLimit: Number(data.licenseLimit ?? 0) },
@@ -493,7 +431,7 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
   if (data.type === "broadcast") {
     const message = data.message.trim();
     if (!message) return { success: false, error: "The message is empty." };
-    const sent = await sendViaBrevo({ kind: "broadcast", to: email, params: { message } });
+    const sent = await sendViaPortalServer({ kind: "broadcast", to: email, params: { message } });
     return sent.ok ? { success: true } : { success: false, ...(sent.error ? { error: sent.error } : {}) };
   }
 
@@ -521,7 +459,7 @@ export const sendPortalEmail = async ({ data }: { data: SendEmailInput }): Promi
     console.warn("[send-email] license_keys save failed for", email, "— sending the key email anyway:", saveError);
   }
 
-  const send = await sendViaBrevo({
+  const send = await sendViaPortalServer({
     kind: "license_approved",
     to: email,
     params: { licenseKey, eaName },

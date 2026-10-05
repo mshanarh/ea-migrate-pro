@@ -27,16 +27,21 @@
  * tries this endpoint first and falls back, so the app behaves the same on
  * every deployment.
  *
+ * MAIL: sent by `src/lib/mailjet.server.ts`, the one Mailjet v3.1 client every
+ * email path in this app shares. Brevo was removed from the codebase entirely.
+ *
  * ENV VARS (Vercel project settings — required for the code step to work):
  *   SUPABASE_SERVICE_ROLE_KEY   the secret; the browser must never see it
- *   BREVO_API_KEY              sends the code
- *   SUPABASE_URL               optional; VITE_SUPABASE_URL is used otherwise
- *   BREVO_SENDER_EMAIL         optional; falls back to eamigratepro@gmail.com
+ *   MAILJET_API_KEY             Mailjet public API key
+ *   MAILJET_SECRET_KEY          Mailjet private API key
+ *   MAILJET_SENDER_EMAIL        the From address; falls back to eamigratepro@gmail.com
+ *   SUPABASE_URL                optional; VITE_SUPABASE_URL is used otherwise
  *
  * NOTHING here trusts the caller: entitlement is re-read from the database on
  * every request, so a forged `{ paid: true }` from the browser mails nothing.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { sendMail } from "../src/lib/mailjet.server";
 
 /**
  * The Vercel request/response shape, declared locally.
@@ -59,10 +64,6 @@ type ApiResponse = {
 
 const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
-const BREVO_API_KEY = (process.env["BREVO_API_KEY"] ?? "").trim();
-const SENDER =
-  (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
-  "eamigratepro@gmail.com";
 
 /** Told apart from "not entitled" and "key taken" by the client. */
 const UNAVAILABLE = "Activation is unavailable right now.";
@@ -129,16 +130,23 @@ function safeEqual(a: string, b: string): boolean {
  * `users.is_paid` looks like the obvious column and MUST NOT be used here.
  * Re-verified against the live database today: the PUBLIC anon key — which is
  * shipped inside the JavaScript bundle and therefore held by anyone who opens
- * the site — can UPDATE it. Adding it as an alternative would mean a stranger
- * could `UPDATE users SET is_paid = true` on their own row, then ask for a
- * code against ANY inbox they control, and the six-digit code that is supposed
- * to prove "I am the person who paid" would prove nothing at all. It is a
- * mirror the console maintains; it is not a receipt.
+ * the site — can UPDATE it. A live probe this session set `is_paid = true` on a
+ * throwaway row with nothing but the browser-published anon key. Adding it as
+ * an alternative would mean a stranger could mark themselves paid and mail a
+ * code to ANY inbox they control, and the six-digit code that is supposed to
+ * prove "I am the person who paid" would prove nothing at all. It is a mirror
+ * the console maintains; it is not a receipt.
  *
- * `is_whitelisted` does not exist on this deployment (PostgREST answers 42703,
- * undefined column), and there is no DDL path to add one — every SQL entry
- * point answers PGRST202 — so it could not be honoured even if it were trusted.
- * `users.is_admin` is likewise not here: a role is not a payment.
+ * There is ALSO no `purchases` table on this deployment to check: a service-role
+ * read answers `PGRST205 Could not find the table 'public.purchases'`, and the
+ * anon key gets the same. So a `status = 'paid'` purchase lookup cannot be
+ * honoured here even in principle — there is nowhere to read it from. The
+ * ledger is both the only TRUSTED signal and the only one that EXISTS.
+ *
+ * `is_whitelisted` does not exist on this deployment either (PostgREST answers
+ * 42703, undefined column), and there is no DDL path to add one — every SQL
+ * entry point answers PGRST202. `users.is_admin` is likewise not here: a role
+ * is not a payment.
  *
  * `paid_emails` is the right signal because exactly two deliberate acts write
  * it — the console's "Mark paid" button, and nothing else a stranger can reach.
@@ -205,22 +213,20 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * where the request landed, and a code could expire sooner or later than
  * advertised.
  *
- * ⚠ THIS ONLY WORKS IF MAIL ARRIVES FAST. Delivery on this account has been
- * observed taking about TWO HOURS, because the sender is a @gmail.com address
- * relayed through Brevo and `gmail.com`'s SPF record does not authorise Brevo.
- * Until that is fixed — authenticate a domain and set BREVO_SENDER_EMAIL — a
+ * ⚠ THIS ONLY WORKS IF MAIL ARRIVES FAST. Delivery from a @gmail.com From
+ * address has been observed taking about TWO HOURS, because gmail.com's SPF
+ * record does not authorise Mailjet any more than it authorised Brevo. Until
+ * MAILJET_SENDER_EMAIL is an address on a domain with published SPF + DKIM, a
  * two-minute code will expire long before the email reaches the inbox, and the
- * symptom will be exactly "no code is ever sent". Two minutes is a sound
- * choice the moment the sender is authenticated, because a code only ever
- * proves inbox control and has no reason to linger. It is not a workaround for
- * a slow mail path, and it is not one.
+ * symptom will be exactly "no code is ever sent". Changing provider does not fix
+ * that; authenticating the sender domain does.
  */
 const WINDOW_MS = 2 * 60 * 1000;
 /** How many PAST windows still verify. 0 = expire with the window, as asked. */
 const PAST_WINDOWS = 0;
 
 /**
- * The code for one 30-minute window: EXACTLY six digits.
+ * The code for one window: EXACTLY six digits.
  *
  * Slicing the hex digest would be the obvious thing and it is wrong — hex
  * contains `a`–`f`, so roughly half of all codes came out as "3f9a1c" and
@@ -241,70 +247,30 @@ async function acceptedCodes(email: string): Promise<string[]> {
   return Promise.all(windows.map((window) => codeForWindow(email, window)));
 }
 
+/**
+ * Mail the activation code through Mailjet.
+ *
+ * The caller has ALREADY passed the paid check by the time this runs, so there
+ * is no entitlement decision here — only delivery.
+ */
 async function mailCode(email: string, code: string): Promise<Reply> {
-  if (!BREVO_API_KEY) {
-    console.error("[activation] BREVO_API_KEY is not set — code not sent to", email);
-    return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
-  }
-
-  try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "api-key": BREVO_API_KEY,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: { name: "EA Migrate", email: SENDER },
-        to: [{ email }],
-        subject: `${code} is your EA Migrate activation code`,
-        htmlContent: `<div style="font-family:Arial,Helvetica,sans-serif;background:#0A0A0C;padding:32px;color:#fff">
+  const result = await sendMail({
+    to: email,
+    subject: "Your EA Migrate Pro License Code",
+    html: `<div style="font-family:Arial,Helvetica,sans-serif;background:#0A0A0C;padding:32px;color:#fff">
             <div style="max-width:520px;margin:0 auto;background:#121216;border:1px solid #26262E;border-radius:16px;padding:32px">
-              <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate</p>
+              <p style="margin:0;font-size:12px;font-weight:bold;letter-spacing:0.22em;color:#E7B53A;text-transform:uppercase;">EA Migrate Pro</p>
               <h1 style="margin:12px 0 0;font-size:22px;">Your activation code</h1>
               <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Use this code in the app to continue to your licence key.</p>
               <p style="margin:24px 0;font-size:40px;font-weight:bold;letter-spacing:0.3em;color:#fff;text-align:center;">${code}</p>
               <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 2 minutes. If you did not ask to sign in, ignore this email.</p>
             </div></div>`,
-        textContent: `Your EA Migrate activation code is ${code}. It stops working after 2 minutes.`,
-      }),
-      signal: AbortSignal.timeout(8_000),
-    });
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      console.error(
-        "[activation] Brevo rejected the code email for",
-        email,
-        response.status,
-        body.slice(0, 400),
-      );
-      return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
-    }
-    /* LOG THE SUCCESS TOO — this is the line that answers "did the code
-     * actually go out?", which is the question a deploy log gets asked.
-     *
-     * This function previously logged ONLY failures, so a working deployment
-     * was completely silent and there was nothing to grep for when a code was
-     * not arriving. Brevo answers 201 with a messageId that is the only handle
-     * on the message in Brevo's own logs, so it is recorded here.
-     *
-     * The code itself is NOT logged — only the address and the id — so this
-     * line is safe to leave in production logs.
-     */
-    const sent = (await response.json().catch(() => null)) as { messageId?: unknown } | null;
-    const messageId = typeof sent?.messageId === "string" ? sent.messageId : "(none returned)";
-    console.log(
-      `[activation] Brevo QUEUED the code for ${email} (from ${SENDER}): HTTP ${response.status} messageId=${messageId}`,
-    );
-    console.log(
-      "[activation] NOTE: 201 means accepted onto the queue, NOT delivered. A bounce or a deferral appears later, at the receiving server.",
-    );
-    return { ok: true };
-  } catch (error) {
-    console.error("[activation] code email failed for", email, error);
+    text: `Your EA Migrate Pro activation code is ${code}. It stops working after 2 minutes.`,
+  });
+  if (!result.ok) {
     return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
   }
+  return { ok: true };
 }
 
 /* ── 2. The single-use licence lock ────────────────────────────────────
@@ -453,7 +419,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
    * Every action below this line — issuing a code, verifying one, claiming a
    * key — is unreachable until `isMarkedPaid` says yes. Nothing reaches
    * `mailCode` for an account the admin has not marked paid, so no code is
-   * generated, no email is sent, and no messageId is logged for them.
+   * generated, no email is sent, and no Mailjet message id is logged for them.
    */
   let markedPaid: boolean;
   try {
@@ -469,7 +435,7 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return;
   }
   if (!markedPaid) {
-    // Logged WITHOUT any code or messageId — there was none, by design.
+    // Logged WITHOUT any code or message id — there was none, by design.
     console.warn(
       `[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`,
     );

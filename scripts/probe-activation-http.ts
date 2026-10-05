@@ -20,14 +20,14 @@
  *
  * IT SENDS NO REAL MAIL, and that is a deliberate change.
  *
- * This probe previously called the LIVE Brevo API on every run, so simply
- * verifying the code put a message into a real inbox each time. Brevo is
+ * This probe previously called the LIVE mail API on every run, so simply
+ * verifying the code put a message into a real inbox each time. It is
  * stubbed here, which also makes the run deterministic.
  *
  * What this probe is for — routing, status codes, the method guard, the
  * database lock — is unaffected by stubbing. Whether the message actually
  * reaches an inbox is a separate question, answered by
- * `scripts/check-live-send.ts` against the real Brevo API.
+ * `scripts/check-live-send.ts` against the real Mailjet API.
  *
  * Every row it creates is deleted afterwards.
  *
@@ -35,15 +35,20 @@
  */
 import { createClient } from "@supabase/supabase-js";
 
-/** Stub Brevo so no real message is ever sent from a probe run. */
-const realFetch = globalThis.fetch;
-globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
-  const target = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-  if (target.includes("api.brevo.com")) {
-    return new Response(JSON.stringify({ messageId: "<probe>" }), { status: 201 });
-  }
-  return realFetch(input, init);
-}) as typeof fetch;
+/**
+ * No real message is ever sent from a probe run.
+ *
+ * This used to be a `globalThis.fetch` stub aimed at api.brevo.com. That
+ * no longer works: node-mailjet sends through axios's **http** adapter, not
+ * global fetch (measured — a replaced fetch was called zero times while the
+ * message still went out), so a fetch stub would have reported success while
+ * sending real mail. The mail module itself is replaced instead; see
+ * ./lib/mail-intercept.ts.
+ */
+import { assertInterceptable, interceptMail } from "./lib/mail-intercept";
+
+interceptMail();
+await assertInterceptable();
 
 const { default: handler } = await import("../api/activation");
 
@@ -157,7 +162,7 @@ async function main() {
 
   const issued = await post({ action: "issueCode", email: PAID });
   check(
-    "paid account: a 6-digit code is emailed via Brevo",
+    "paid account: a 6-digit code is emailed via Mailjet",
     issued.body.ok === true,
     issued.body.error ?? "",
   );

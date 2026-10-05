@@ -1,5 +1,6 @@
 import { createServerFn } from "@tanstack/react-start";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { sendMail } from "./mailjet.server";
 
 /**
  * /api/send-email equivalent — one backend endpoint for the platform's
@@ -16,9 +17,11 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  *     → saves the issued key into the license_keys table and emails the user
  *       their license key.
  *
- * Secrets: BREVO_API_KEY + BREVO_SENDER_EMAIL (falls back to the verified
- * gmail sender) and SUPABASE_SERVICE_ROLE_KEY. The full Brevo HTTP response
- * is logged on every send so failures are diagnosable from the deploy logs.
+ * Secrets: MAILJET_API_KEY + MAILJET_SECRET_KEY + MAILJET_SENDER_EMAIL and
+ * SUPABASE_SERVICE_ROLE_KEY. Mail is sent by the shared client in
+ * ./mailjet.server.ts — the same one the /api/* serverless functions use — and
+ * its full response is logged on every send so failures are diagnosable from
+ * the deploy logs.
  */
 
 const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
@@ -40,48 +43,22 @@ function db(): SupabaseClient | null {
   return cachedClient;
 }
 
-/** Raw Brevo v3 send — logs the FULL response (status + body) every time. */
-async function sendViaBrevo(options: {
+/**
+ * Send one of the platform's emails through Mailjet v3.1.
+ *
+ * A thin, named wrapper over the shared client: `sendMail` owns the credentials,
+ * the timeout and the accept-vs-deliver wording, so this module only decides
+ * WHAT is being said. There is deliberately no provider logic left here — that
+ * is what let the four Brevo copies drift apart.
+ */
+async function sendViaMailjet(options: {
   to: string;
   toName: string;
   subject: string;
   html: string;
   text: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  const apiKey = (process.env["BREVO_API_KEY"] ?? "").trim();
-  const sender = (process.env["BREVO_SENDER_EMAIL"] ?? DEFAULT_SENDER).trim() || DEFAULT_SENDER;
-  if (apiKey.length === 0) {
-    console.error("[send-email] BREVO_API_KEY is not set — email skipped for", options.to);
-    return { ok: false, error: "BREVO_API_KEY is not set — add it in Settings → Environment." };
-  }
-  try {
-    const response = await fetch("https://api.brevo.com/v3/smtp/email", {
-      method: "POST",
-      headers: {
-        accept: "application/json",
-        "api-key": apiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        sender: { name: "EA Migrate Team", email: sender },
-        to: [{ email: options.to, name: options.toName }],
-        subject: options.subject,
-        htmlContent: options.html,
-        textContent: options.text,
-      }),
-      signal: AbortSignal.timeout(10_000),
-    });
-    // Full Brevo response — logged verbatim for deploy-log diagnosis.
-    const body = await response.text().catch(() => "");
-    console.log(`[send-email] Brevo response for ${options.to}: HTTP ${response.status}`, body.slice(0, 800));
-    if (!response.ok) {
-      return { ok: false, error: `Brevo rejected the send (HTTP ${response.status}): ${body.slice(0, 200)}` };
-    }
-    return { ok: true };
-  } catch (error) {
-    console.error("[send-email] Brevo request error for", options.to, error);
-    return { ok: false, error: "Brevo could not be reached — try again." };
-  }
+  return sendMail(options);
 }
 
 /** Brand HTML shell matching every other EA Migrate email. */
@@ -126,14 +103,14 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
   .handler(async ({ data }): Promise<SendEmailResult> => {
     // Generic passthrough first — the caller has already built the mail.
     if (data.type === "generic") {
-      const send = await sendViaBrevo({
+      const send = await sendViaMailjet({
         to: data.email.trim().toLowerCase(),
         toName: data.email.trim().toLowerCase(),
         subject: data.subject,
         html: data.html,
         text: data.text ?? data.subject,
       });
-      return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+      return send.ok ? { success: true } : { success: false, error: send.error ?? "Mailjet send failed." };
     }
     const email = data.email.trim().toLowerCase();
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
@@ -162,7 +139,7 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
         }
       }
       const name = (data.displayName ?? data.firstName ?? "").trim();
-      const send = await sendViaBrevo({
+      const send = await sendViaMailjet({
         to: ADMIN_EMAIL,
         toName: "EA Migrate Admin",
         subject: "New user registered - EA Migrate",
@@ -177,7 +154,7 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
         ),
         text: `New user registered: ${email}${name ? ` (${name})` : ""} - Approve in admin.\n\nAdmin console: ${PORTAL_URL}`,
       });
-      return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+      return send.ok ? { success: true } : { success: false, error: send.error ?? "Mailjet send failed." };
     }
 
     // license_approved — save the key, then email it to the user.
@@ -203,7 +180,7 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
 
     const eaName = data.eaName?.trim() || "Your EA";
     const expiry = data.expiry?.trim() || "Lifetime";
-    const send = await sendViaBrevo({
+    const send = await sendViaMailjet({
       to: email,
       toName: email,
       subject: "Approved - Your EA License",
@@ -220,5 +197,5 @@ export const sendPortalEmail = createServerFn({ method: "POST" })
       ),
       text: `Approved - Your EA License\n\nEA: ${eaName}\nExpiry: ${expiry}\nLicense key: ${licenseKey}\n\nActivate it in the EA Migrate Portal: ${PORTAL_URL}\n\nKeep this email safe — you will need the key whenever you reinstall the EA.`,
     });
-    return send.ok ? { success: true } : { success: false, error: send.error ?? "Brevo send failed." };
+    return send.ok ? { success: true } : { success: false, error: send.error ?? "Mailjet send failed." };
   });
