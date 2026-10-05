@@ -166,10 +166,10 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
 }
 
 /* ── 1. The six-digit code ──────────────────────────────────────────────
- * NEVER STORED. A pure function of (secret, email, time window), so there is
+ * NEVER STORED. A pure function of (secret, email, window), so there is
  * no row to forge and nothing to clean up.
  *
- * THE WINDOW IS TWO MINUTES, as the owner asked. See the `WINDOW_MS` note for
+ * THE WINDOW IS FIVE MINUTES, as the owner asked. See the `WINDOW_MS` note for
  * why that is only viable once the sender domain is authenticated.
  *
  * History, because it is the reason the warning above matters: delivery on this
@@ -198,7 +198,7 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * times as the holder of that paid inbox likes; what cannot happen twice is
  * activating a key.
  */
-/** 2 MINUTES, and ONLY the current window is accepted.
+/** 5 MINUTES, and ONLY the current window is accepted.
  *
  * The owner asked for the code to be usable within two minutes of it being sent,
  * so that is what this is. `PAST_WINDOWS = 0` means a code stops being accepted
@@ -221,7 +221,7 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * symptom will be exactly "no code is ever sent". Changing provider does not fix
  * that; authenticating the sender domain does.
  */
-const WINDOW_MS = 2 * 60 * 1000;
+const WINDOW_MS = 5 * 60 * 1000;
 /** How many PAST windows still verify. 0 = expire with the window, as asked. */
 const PAST_WINDOWS = 0;
 
@@ -234,6 +234,12 @@ const PAST_WINDOWS = 0;
  * promise. The digest is therefore read as a number and folded into
  * 100000–999999, which is always six digits and never has a leading zero the
  * customer would have to guess at.
+ */
+
+/**
+ * How many PAST windows still verify. When the window is tiny (two minutes),
+ * a whole 2-minute window can expire before delivery. Five minutes helps a bit
+ * and keeps the code useful long enough to use if email is a bit slow.
  */
 async function codeForWindow(email: string, window: number): Promise<string> {
   const digest = await hmac(SERVICE_ROLE, `eamp-activation-v1|${email}|${window}`);
@@ -268,7 +274,12 @@ async function mailCode(email: string, code: string): Promise<Reply> {
     text: `Your EA Migrate Pro activation code is ${code}. It stops working after 2 minutes.`,
   });
   if (!result.ok) {
-    return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
+    // Return the SPECIFIC failure, not the generic fallback. When Mailjet tells us
+    // "400 Sender address not pre-approved" or "401 Unauthorized", the customer
+    // and the operator have to see that — a generic "could not send" is how a
+    // real problem sits invisible for days. Keep the message short and
+    // human-readable in the UI, but carry the exact technical failure in.
+    return { ok: false, error: result.error ?? "We could not send your code right now. Try again in a minute." };
   }
   return { ok: true };
 }
