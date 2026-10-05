@@ -33,8 +33,6 @@ declare global {
     /** Open the popup and stream execution logs for a scanned pair. */
     triggerExecutionToast?: (name?: string, image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: string; stopLoss?: string | number; takeProfit?: string | number }) => void;
     closeExecutionToast?: () => void;
-    /** Native Android trade-execution notification — "TRADE 1 EXECUTED — EA MIGRATE". */
-    showTradeNotification?: (eaName: string, text: string) => void;
   }
 }
 
@@ -348,19 +346,24 @@ export default function DraggableBotPopup() {
       // Phone heads-up: the native Android layer shows a foreground
       // "Trade executed" notification using the Algohost red/amber/green
       // palette (red on loss, amber on pending, green on win).
-      try {
-        if (typeof window !== "undefined") {
-          const native = ((window as unknown as {
-            EAMigrate?: { showTradeNotification?: (eaName: string, text: string) => void }
-          }).EAMigrate ?? null);
-          if (native?.showTradeNotification) {
-            native.showTradeNotification(eaName, result.ok
-              ? "TRADE 1 EXECUTED — EA MIGRATE ✓"
-              : "TRADE 1 FAILED — EA MIGRATE ✖");
-          }
-        }
-      } catch {
-        // Native bridge unavailable — the web popup still shows the result.
+      //
+      // THE MESSAGE IS PASSED THROUGH, NOT REWRITTEN. This used to send a
+      // hardcoded "TRADE 1 EXECUTED" for every fill, so a five-trade run put
+      // five identical notifications on the phone and the trader could not tell
+      // how many had actually gone through. `result.message` is the same string
+      // the in-app log shows and already carries the real trade number and
+      // symbol, so the notification and the log can no longer disagree.
+      //
+      // Only fills are worth a heads-up. Refusals and connection chatter
+      // ("EXECUTING…", "TRADE 2 REFUSED — INSUFFICIENT MARGIN") would buzz the
+      // phone for something that never happened, which trains users to swipe
+      // the alerts away without reading them.
+      if (result.ok && /EXECUTED|SUMMARY|OPENED/.test(result.message)) {
+        // callNative, not window.EAMigrate directly: it re-resolves the bridge
+        // every call and swallows the "non-injected object" throw that a
+        // recreated activity produces, so a stale bridge can never break the
+        // trade log it is being called from.
+        callNative("showTradeNotification", eaName, result.message);
       }
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);

@@ -62,6 +62,36 @@ import java.util.List;
 public class OverlayService extends Service {
     private static OverlayService instance;
 
+    /**
+     * The application context, remembered for as long as this process lives.
+     *
+     * Trade alerts are fired from the WEB APP, which runs whether or not the
+     * floating bubble service is alive. They used to reach the NotificationManager
+     * through the static `instance` — null whenever the bubble was stopped, so
+     * every alert was silently discarded in exactly the state most users are in.
+     * An application context outlives the service and needs nothing running, so
+     * an alert can always be posted.
+     *
+     * It is published by BOTH the service's own onCreate AND MainActivity, which
+     * matters: a user who never turns the floating bubble on never starts this
+     * service at all, so setting it only here would leave every alert with no
+     * context in precisely the case that needed fixing. MainActivity is alive
+     * whenever the web app can execute a trade, so its copy is the one that
+     * actually guarantees delivery.
+     */
+    private static volatile Context lastKnownContext;
+
+    /**
+     * Publish the application context for trade alerts. Called from
+     * MainActivity.onCreate and from this service's onCreate. Idempotent and
+     * cheap; safe to call on either side.
+     */
+    public static void setNotificationContext(Context context) {
+        if (context != null) {
+            lastKnownContext = context.getApplicationContext();
+        }
+    }
+
     /** Where a site-relative image path (the app's own "/logo.png") lives. */
     private static final String SITE_ORIGIN = "https://eamigratepro.vercel.app";
     /** Pixels: the bubble is 56dp and the card header 170dp — bigger is waste. */
@@ -84,15 +114,51 @@ public class OverlayService extends Service {
     private static final int TRADE_NOTIFICATION_ID = 2001;
 
     /**
+     * Monotonic counter behind the per-trade notification id.
+     *
+     * Each fill posts under its OWN id so several alerts can sit in the shade at
+     * once instead of each one replacing the last. It starts at the old fixed id
+     * so ids cannot collide with anything else this app posts, and wraps well
+     * clear of zero: Android treats an id change as a new notification, and a
+     * wrap onto a live id would silently overwrite an older alert instead.
+     */
+    private static final java.util.concurrent.atomic.AtomicInteger tradeNotificationSeq =
+            new java.util.concurrent.atomic.AtomicInteger(TRADE_NOTIFICATION_ID);
+
+    /** The next free per-trade notification id. */
+    private static int nextTradeNotificationId() {
+        int id = tradeNotificationSeq.incrementAndGet();
+        if (id <= 0) {
+            // Overflowed to a non-positive value — restart well clear of both
+            // the base id and zero rather than posting under an invalid id.
+            tradeNotificationSeq.set(TRADE_NOTIFICATION_ID);
+            id = TRADE_NOTIFICATION_ID;
+        }
+        return id;
+    }
+
+    /**
      * Push a foreground notification to the phone when the bot executes a
      * trade. Uses the Algohost palette: red for losses, amber for pending,
      * green for wins — exactly the same tokens as the web theme.
+     *
+     * THE CONTEXT MUST NOT BE THE SERVICE. This used to resolve its
+     * NotificationManager from the static `instance`, which exists only while
+     * the floating bubble is running and is nulled in onDestroy. So with the
+     * bubble stopped — the normal state for anyone who has not turned it on —
+     * every trade alert was dropped on the floor with no error and no
+     * notification. Trades execute from the web app regardless of the bubble,
+     * so the alerts have to as well. The application context is used instead;
+     * it lives exactly as long as the process and needs no service running.
      */
     public static void showTradeNotification(String eaName, String tradeText) {
         try {
-            NotificationManager manager = (NotificationManager) instance != null
-                    ? instance.getSystemService(Context.NOTIFICATION_SERVICE)
-                    : null;
+            Context context = instance != null ? instance : lastKnownContext;
+            if (context == null) {
+                android.util.Log.e("EAMIGRATE", "trade alert skipped: no context available");
+                return;
+            }
+            NotificationManager manager = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
             if (manager == null) return;
 
             // Ensure the channel exists.
@@ -111,10 +177,19 @@ public class OverlayService extends Service {
 
             // Big-text body so the status is legible from the lock screen.
             String[] parts = tradeText.split("\n", 2);
-            String title = parts.length > 0 ? parts[0] : eaName;
-            String body = parts.length > 1 ? parts[1] : eaName + " — Trade Executed";
+            // Never post a null or blank title: the lock screen would show an
+            // empty header, and the EA name is the one thing that identifies
+            // which robot traded.
+            String robot = eaName != null && !eaName.trim().isEmpty() ? eaName.trim() : "EA Migrate";
+            String title = parts.length > 0 && !parts[0].trim().isEmpty() ? parts[0] : robot;
+            String body = parts.length > 1 && !parts[1].trim().isEmpty()
+                    ? parts[1]
+                    : "Trade executed: " + tradeText;
 
-            Notification notification = new Notification.Builder(instance, TRADE_EXECUTED_CHANNEL)
+            // Built from `context`, NOT from `instance`: the channel-aware
+            // constructor needs a live Context and `instance` is null whenever
+            // the bubble is stopped, which is when most alerts arrive.
+            Notification notification = new Notification.Builder(context, TRADE_EXECUTED_CHANNEL)
                     .setContentTitle(title)
                     .setContentText(body)
                     .setStyle(new Notification.BigTextStyle().bigText(body))
@@ -122,9 +197,19 @@ public class OverlayService extends Service {
                     .setOngoing(false)
                     // Algohost red — the trade is live and it moved.
                     .setColor(Color.parseColor("#E11D48"))
-                    .setDefaults(Notification.DEFAULT_LIGHTS)
+                    // HIGH so it heads-up over MetaTrader, and DEFAULT_ALL so it
+                    // buzzes and flashes on devices/OEM skins that ignore the
+                    // builder hint. The CHANNEL's IMPORTANCE_HIGH is what
+                    // actually governs on Oreo+, so both are set deliberately.
+                    .setPriority(Notification.PRIORITY_HIGH)
+                    .setDefaults(Notification.DEFAULT_ALL)
+                    .setAutoCancel(true)
                     .build();
-            manager.notify(TRADE_NOTIFICATION_ID, notification);
+            // A PER-TRADE ID, not one shared id. Posting every alert under the
+            // same id REPLACED the previous notification, so a run of three
+            // fills left the phone showing only the last one and the trader
+            // could not tell how many had gone through.
+            manager.notify(nextTradeNotificationId(), notification);
         } catch (Throwable t) {
             // Never crash the foreground service on a bad notification.
             android.util.Log.e("EAMIGRATE", "showTradeNotification failed: " + t);
@@ -134,6 +219,40 @@ public class OverlayService extends Service {
     public static void push(String line) {
         if (instance != null) {
             instance.setLine(line);
+        }
+    }
+
+    /**
+     * Capture the application context and register the trade-alert channel.
+     *
+     * The channel is created here AND in MainActivity: this service only runs
+     * while the bubble is up, so on its own a channel created here would not
+     * exist for a trade that fires with no bubble running. MainActivity's copy
+     * covers that case. createNotificationChannel() is idempotent per id, so
+     * the two calls are safe — but the id, name and IMPORTANCE must match,
+     * because a second call with different importance is IGNORED for an
+     * existing channel rather than reconfiguring it.
+     */
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        setNotificationContext(this);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                NotificationManager manager = getSystemService(NotificationManager.class);
+                if (manager != null && manager.getNotificationChannel(TRADE_EXECUTED_CHANNEL) == null) {
+                    NotificationChannel channel = new NotificationChannel(
+                            TRADE_EXECUTED_CHANNEL,
+                            "Trade executed",
+                            NotificationManager.IMPORTANCE_HIGH);
+                    channel.setDescription("Alerts the user when EA Migrate fills a trade");
+                    channel.enableLights(true);
+                    channel.setLightColor(Color.parseColor("#E11D48"));
+                    manager.createNotificationChannel(channel);
+                }
+            } catch (Throwable t) {
+                android.util.Log.e("EAMIGRATE", "channel setup failed: " + t);
+            }
         }
     }
 

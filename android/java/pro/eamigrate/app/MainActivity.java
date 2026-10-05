@@ -1,8 +1,11 @@
 package pro.eamigrate.app;
 
 import android.app.Activity;
+import android.app.NotificationChannel;
+import android.app.NotificationManager;
 import android.app.PictureInPictureParams;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.net.Uri;
@@ -44,6 +47,92 @@ import android.webkit.ConsoleMessage;
 public class MainActivity extends Activity {
     private static final String START_URL = "https://eamigratepro.vercel.app/app";
     private static final int FILE_CHOOSER_REQUEST = 4242;
+
+    /**
+     * Request code for the Android 13+ notification permission. Distinct from
+     * FILE_CHOOSER_REQUEST so the two answers can never be confused in
+     * onRequestPermissionsResult.
+     */
+    private static final int NOTIFICATION_PERMISSION_REQUEST = 9001;
+
+    /**
+     * The trade-alert channel, registered here as well as in OverlayService.
+     *
+     * WHY IT IS REGISTERED TWICE. A notification channel only becomes visible
+     * and configurable in system settings once it has been CREATED, and it is
+     * only ever created by the process that calls createNotificationChannel().
+     * OverlayService creates it — but that service only runs while the floating
+     * bot bubble is alive, so a trade alert fired with the bubble stopped could
+     * otherwise have nowhere to post. Creating the channel in the Activity
+     * means it exists from the moment the app opens, bubble or no bubble.
+     *
+     * The id, name, description and IMPORTANCE must stay identical to
+     * OverlayService's copy: createNotificationChannel() is idempotent on id, so
+     * a second call with different importance settings does NOT reconfigure an
+     * existing channel — it is silently ignored, and the two copies drifting
+     * apart would be invisible until a user's alerts quietly stopped buzzing.
+     */
+    private static final String TRADE_CHANNEL_ID = "eamigrate_trade_executed";
+    private static final String TRADE_CHANNEL_NAME = "Trade executed";
+
+    /** Create the trade-alert channel so Android recognises it immediately. */
+    private void ensureNotificationChannels() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return;
+        try {
+            NotificationManager manager = getSystemService(NotificationManager.class);
+            if (manager == null) return;
+            if (manager.getNotificationChannel(TRADE_CHANNEL_ID) != null) return; // already right
+            NotificationChannel channel = new NotificationChannel(
+                    TRADE_CHANNEL_ID,
+                    TRADE_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_HIGH); // HIGH — a fill must be seen now
+            channel.setDescription("Alerts the user when EA Migrate fills a trade");
+            channel.enableVibration(true);
+            channel.enableLights(true);
+            channel.setShowBadge(true);
+            channel.setLightColor(Color.parseColor("#E11D48"));
+            manager.createNotificationChannel(channel);
+        } catch (Throwable t) {
+            // A missing channel costs the heads-up, never the launch.
+            android.util.Log.e("EAMIGRATE", "notification channel setup failed: " + t);
+        }
+    }
+
+    /**
+     * Ask for POST_NOTIFICATIONS on Android 13+.
+     *
+     * On API 33+ the permission is RUNTIME, so declaring it in the manifest
+     * (which is now done) is only half the job: until the user grants it,
+     * every NotificationManager.notify() call is dropped without an error. The
+     * request is made once per launch and only when it is actually missing, so
+     * a granted user is never nagged.
+     *
+     * NOT called before super.onCreate() and NOT re-asked on every resume:
+     * Android ignores a second prompt after a denial, so hammering it would
+     * achieve nothing. openNotificationSettings() is the way back for a user
+     * who said no once — see the bridge method of the same name.
+     */
+    private void requestNotificationPermissionIfNeeded() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return; // granted at install below 13
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED) {
+            return;
+        }
+        try {
+            requestPermissions(
+                    new String[] { android.Manifest.permission.POST_NOTIFICATIONS },
+                    NOTIFICATION_PERMISSION_REQUEST);
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "notification permission request failed: " + t);
+        }
+    }
+
+    /** True when this app may post notifications. Always true below Android 13. */
+    private boolean notificationsAllowed() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return true;
+        return checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS)
+                == PackageManager.PERMISSION_GRANTED;
+    }
     private WebView web;
     private boolean autoPip = false;
     private ValueCallback<Uri[]> fileChooserCallback;
@@ -97,6 +186,17 @@ public class MainActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Trade alerts must work from the first fill, whether or not the floating
+        // bubble happens to be running: register the channel, then ask for the
+        // permission Android 13+ requires. Both are cheap and neither can throw
+        // — they are guarded internally and never block the WebView loading.
+        ensureNotificationChannels();
+        requestNotificationPermissionIfNeeded();
+        // Publish the application context for trade alerts. The bubble service is
+        // NOT guaranteed to be running when a trade fires — it is not even
+        // started at all unless the user turned it on — so the alerts resolve
+        // their NotificationManager from here, where the context always exists.
+        OverlayService.setNotificationContext(this);
         web = new WebView(this);
         WebSettings settings = web.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -372,6 +472,51 @@ public class MainActivity extends Activity {
             } catch (Throwable t) {
                 android.util.Log.e("EAMIGRATE", "showTradeNotification bridge failed: " + t);
             }
+        }
+
+        /**
+         * May this app post notifications right now? The web app asks before it
+         * promises the user an alert, so a blocked permission shows an honest
+         * "turn on notifications" path instead of silently doing nothing.
+         */
+        @JavascriptInterface
+        public boolean canPostNotifications() {
+            return notificationsAllowed();
+        }
+
+        /**
+         * Open this app's notification settings directly.
+         *
+         * NEEDED because a runtime denial is effectively sticky: once the user
+         * has dismissed the Android 13+ prompt, the system will not ask again,
+         * so calling requestPermissions() a second time is a silent no-op and
+         * the app can never recover on its own. The only route back is the
+         * settings screen, which is what this opens — scoped to THIS package, so
+         * the user lands on EA Migrate's own toggle and not a list of apps.
+         */
+        @JavascriptInterface
+        public void openNotificationSettings() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        Intent intent = new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                                .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName())
+                                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                        startActivity(intent);
+                        android.widget.Toast.makeText(
+                                MainActivity.this,
+                                "Turn on notifications for EA Migrate, then come back",
+                                android.widget.Toast.LENGTH_LONG).show();
+                    } catch (Throwable t) {
+                        android.util.Log.e("EAMIGRATE", "could not open notification settings: " + t);
+                        android.widget.Toast.makeText(
+                                MainActivity.this,
+                                "Open Settings \u2192 Apps \u2192 EA Migrate \u2192 Notifications",
+                                android.widget.Toast.LENGTH_LONG).show();
+                    }
+                }
+            });
         }
     }
 

@@ -27,6 +27,23 @@ type NativeBridge = {
   pushLog?: (line: string) => void;
   reportError?: (message: string) => void;
   openUrl?: (url: string) => void;
+  /**
+   * Post a "trade executed" heads-up. The Android side owns the channel and
+   * the notification id, so the web app only supplies what to say.
+   */
+  showTradeNotification?: (eaName: string, text: string) => void;
+  /**
+   * False when Android 13+ has notifications switched off for this app, in which
+   * case showTradeNotification is silently dropped by the OS. Callers use this
+   * to tell the user WHY no alert arrived instead of appearing to be broken.
+   */
+  canPostNotifications?: () => boolean;
+  /**
+   * Opens this app's notification settings. Needed because a denied runtime
+   * prompt is sticky: Android will not ask a second time, so the settings screen
+   * is the only way back.
+   */
+  openNotificationSettings?: () => void;
 };
 
 function currentBridge(): NativeBridge | null {

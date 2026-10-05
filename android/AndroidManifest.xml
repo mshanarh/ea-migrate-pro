@@ -13,6 +13,19 @@
          bubble starts. -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
+    <!-- REQUIRED: Android 13 (API 33) and newer BLOCK every notification that is
+         not covered by a runtime-granted POST_NOTIFICATIONS permission. Without
+         this declaration NotificationManager.notify() is silently dropped, so the
+         "trade executed" heads-up never appears — and because the permission was
+         never declared at all, the system's "Allow notifications" toggle is
+         greyed out and cannot be re-enabled by hand either. That is precisely the
+         "trade notifications are blocked" symptom.
+
+         Declaring it is NECESSARY BUT NOT SUFFICIENT on 13+: the runtime request
+         lives in MainActivity.onCreate, and MainActivity also registers the
+         "eamigrate_trade_executed" channel up front so the channel exists before
+         the first trade fires. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-sdk android:minSdkVersion="24" android:targetSdkVersion="34" />
 
     <application
@@ -38,7 +51,7 @@
             android:foregroundServiceType="specialUse">
             <property
                 android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="Floating trading bot status bubble shown over the user\'s trading apps" />
+                android:value="Floating trading bot status bubble shown over the user's trading apps" />
         </service>
     </application>
 </manifest>
