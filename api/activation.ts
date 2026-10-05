@@ -64,95 +64,6 @@ const SENDER =
   (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
   "eamigratepro@gmail.com";
 
-/**
- * CAN THIS From: ADDRESS BE AUTHORISED BY A RECEIVING SERVER?
- *
- * A 201 from Brevo means the message entered its queue. It does NOT mean any
- * inbox will take it, and the difference is decided entirely by the domain in
- * the `From:` line.
- *
- * THIS FUNCTION IS WHAT STOPS THE APP REPORTING "SENT" FOR MAIL THAT WILL NEVER
- * ARRIVE. It previously returned `ok: true` on any 201, so every log and every
- * screen said "sent" while the customer waited for an email that was never
- * going to come — and nothing in the product ever said why.
- *
- * The rule it applies: a sending domain must be a domain whose DNS publishes an
- * SPF record authorising the sending service. A @gmail.com `From:` relayed
- * through Brevo can never satisfy that — `gmail.com`'s SPF is
- * `v=spf1 redirect=_spf.google.com`, which lists Google's servers and not
- * Brevo's — so the message is unauthenticated and receiving servers are free to
- * defer or discard it. That is measured on this account: the owner reported a
- * two-hour-old message arriving, and a live send behaved the same way.
- *
- * It is deliberately a check on the SENDER'S DOMAIN SHAPE, not a DNS lookup.
- * A serverless function cannot rely on outbound DNS being available, and a
- * lookup that silently failed open would restore exactly the false "sent" this
- * replaces. The shape test is deterministic: no free-mail domain can carry a
- * DKIM record the sender controls, so it can only ever be unauthenticated.
- */
-const FREEMAIL_DOMAINS = [
-  "gmail.com",
-  "googlemail.com",
-  "yahoo.com",
-  "ymail.com",
-  "hotmail.com",
-  "outlook.com",
-  "live.com",
-  "msn.com",
-  "aol.com",
-  "icloud.com",
-  "me.com",
-  "protonmail.com",
-  "proton.me",
-  "gmx.com",
-  "gmx.de",
-  "mail.com",
-  "zoho.com",
-  "yandex.com",
-  "web.de",
-  "tutanota.com",
-  "fastmail.com",
-  "hey.com",
-];
-
-function senderDomain(): string {
-  const at = SENDER.lastIndexOf("@");
-  return at === -1
-    ? ""
-    : SENDER.slice(at + 1)
-        .trim()
-        .toLowerCase();
-}
-
-/** The domain part of `From:`, and whether it can ever be authenticated.
- *
- * The PARENT domain is checked as well, and that is not belt-and-braces: a
- * sender of `mail@yahoo.com` is under `yahoo.com`, and matching only the full
- * string let that through — a real miss caught by
- * `scripts/verify-sender-guard.ts`, which sends from a subdomain precisely
- * because that is the shape most likely to slip past a list.
- */
-function senderIsAuthenticatable(): boolean {
-  const domain = senderDomain();
-  if (!domain) return false;
-  if (FREEMAIL_DOMAINS.includes(domain)) return false;
-  const labels = domain.split(".");
-  const parent = labels.length > 2 ? labels.slice(-2).join(".") : domain;
-  return !FREEMAIL_DOMAINS.includes(parent);
-}
-
-/**
- * WHAT TO TELL THE CALLER WHEN THE SENDER CANNOT BE AUTHENTICATED.
- *
- * Distinct from every other failure here on purpose. `unavailable` means the
- * service is down and the account is probably fine; this means the message will
- * not arrive and retrying changes nothing. A customer must not be told to "try
- * again" for something that cannot succeed, and support must not have to
- * discover the cause by reading a log.
- */
-const SENDER_UNAUTHENTICATED =
-  "We cannot send your code right now. Email is temporarily unavailable — message support on WhatsApp and we will unlock you manually.";
-
 /** Told apart from "not entitled" and "key taken" by the client. */
 const UNAVAILABLE = "Activation is unavailable right now.";
 /**
@@ -176,16 +87,7 @@ type Action = "issueCode" | "verifyCode" | "claimKey";
 
 type Reply =
   | { ok: true; alreadyInUse?: boolean }
-  | {
-      ok: false;
-      unavailable?: boolean;
-      /** The `From:` address cannot be authenticated by any receiving server, so
-       * the mail will not arrive. The client must NOT read this as "not paid". */
-      senderUnauthenticated?: boolean;
-      alreadyInUse?: boolean;
-      notPaid?: boolean;
-      error: string;
-    };
+  | { ok: false; unavailable?: boolean; alreadyInUse?: boolean; notPaid?: boolean; error: string };
 
 function db(): SupabaseClient | null {
   if (!SUPABASE_URL || !SERVICE_ROLE) return null;
@@ -345,29 +247,6 @@ async function mailCode(email: string, code: string): Promise<Reply> {
     return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
   }
 
-  /* THE SENDER CHECK, BEFORE THE MESSAGE IS BUILT.
-   *
-   * This refuses to send at all when the `From:` domain can never be
-   * authenticated, because a send that is certain not to arrive is worse than
-   * an honest failure: it burns the customer's two-minute window, tells them
-   * the code is on its way, and leaves them locked out with no idea why.
-   *
-   * Nothing is lost by refusing. The paid check has already passed, so this is
-   * a paying customer, and the message they get names the real remedy instead
-   * of "check your inbox" — which would be advice that cannot possibly work.
-   */
-  if (!senderIsAuthenticatable()) {
-    console.error(
-      `[activation] REFUSING to send: the From: address ${SENDER} is a free-mail domain that no receiving server authorises for Brevo.`,
-    );
-    console.error(
-      "[activation] SPF for gmail.com is `v=spf1 redirect=_spf.google.com` — it does not list Brevo, so the message is unauthenticated and gets deferred or dropped.",
-    );
-    console.error(
-      "[activation] FIX (needs Brevo + registrar access, not a code change): authenticate a domain you own in Brevo, publish the SPF and DKIM records it issues, then set BREVO_SENDER_EMAIL to an address on that domain.",
-    );
-    return { ok: false, senderUnauthenticated: true, error: SENDER_UNAUTHENTICATED };
-  }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",

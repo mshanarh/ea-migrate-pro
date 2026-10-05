@@ -20,30 +20,20 @@
  *
  * IT SENDS NO REAL MAIL, and that is a deliberate change.
  *
- * Two reasons. First, this probe previously called the LIVE Brevo API on every
- * run, so simply verifying the code put a message into a real person's inbox
- * each time. Second, `api/activation.ts` now refuses to send when the `From:`
- * domain cannot be authenticated by a receiving server, so on the current
- * configuration this probe would only ever be testing that refusal and would
- * never reach the endpoints it exists to exercise.
+ * This probe previously called the LIVE Brevo API on every run, so simply
+ * verifying the code put a message into a real inbox each time. Brevo is
+ * stubbed here, which also makes the run deterministic.
  *
- * So Brevo is stubbed here and the sender is forced authenticatable BEFORE the
- * handler is imported (it reads the env var once, at module load). What this
- * probe is for — routing, status codes, the method guard, the database lock —
- * is unaffected, and it becomes deterministic. Whether a sender can actually
- * deliver is a separate question, proved in `scripts/verify-sender-guard.ts`
- * with one subprocess per sender, and measured against live DNS in
- * `scripts/check-mail-dns.ts`.
+ * What this probe is for — routing, status codes, the method guard, the
+ * database lock — is unaffected by stubbing. Whether the message actually
+ * reaches an inbox is a separate question, answered by
+ * `scripts/check-live-send.ts` against the real Brevo API.
  *
  * Every row it creates is deleted afterwards.
  *
  * Run: bun scripts/probe-activation-http.ts
  */
 import { createClient } from "@supabase/supabase-js";
-
-/** Set before the dynamic import below — `api/activation.ts` reads this once,
- * at module load, and a static import would be hoisted above this line. */
-process.env["BREVO_SENDER_EMAIL"] = "no-reply@ea-migrate-pro.com";
 
 /** Stub Brevo so no real message is ever sent from a probe run. */
 const realFetch = globalThis.fetch;

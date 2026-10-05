@@ -1,8 +1,16 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail, MailX } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
-import { activateKey, appSignIn, appSignOut, getAppState, getDeviceId, leaveForCheckout, useAppState } from "@/lib/app-store";
+import {
+  activateKey,
+  appSignIn,
+  appSignOut,
+  getAppState,
+  getDeviceId,
+  leaveForCheckout,
+  useAppState,
+} from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
 import {
@@ -59,7 +67,12 @@ export const Route = createFileRoute("/app/login")({
     }
     if (getAppState().email) throw redirect({ href: "/app/home" });
   },
-  head: () => ({ meta: [{ title: "Login — EA Migrate" }, { name: "description", content: "Enter your email to continue to EA Migrate." }] }),
+  head: () => ({
+    meta: [
+      { title: "Login — EA Migrate" },
+      { name: "description", content: "Enter your email to continue to EA Migrate." },
+    ],
+  }),
   component: AppAccess,
 });
 
@@ -290,7 +303,8 @@ function AppAccess() {
     if (success && app.email) {
       void verifyPaymentReturn(app.email).then((verified) => {
         if (verified) {
-          if (typeof window !== "undefined") window.localStorage.removeItem("eamp.pending-payment-email");
+          if (typeof window !== "undefined")
+            window.localStorage.removeItem("eamp.pending-payment-email");
         } else {
           // NOT A REFUSAL — THIS ACCOUNT IS AWAITING ACTIVATION.
           //
@@ -308,7 +322,8 @@ function AppAccess() {
           // owner marks them paid.
           setAwaitingActivation(true);
           setSuccessReturn(false);
-          if (typeof window !== "undefined") window.history.replaceState({}, "", "/app/login?awaiting=1");
+          if (typeof window !== "undefined")
+            window.history.replaceState({}, "", "/app/login?awaiting=1");
         }
       });
     }
@@ -328,7 +343,7 @@ function AppAccess() {
   // not be reached). Everything below — the license screen, the auto-hop to
   // Whop, the hop into the app — reads this one value, so the first screen
   // can never disagree with the route guard that follows it.
-  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;  // A signed-in session that ALREADY has a robot goes to the app. The key
+  const effectiveStatus = cloudStatus ?? sessionPaymentStatus; // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
   // including people whose robot was already activated — so opening the app
   // always demanded another key, with no way past it. The home screen has an
@@ -345,7 +360,8 @@ function AppAccess() {
   // signing in and the database answering, this screen believed the hint,
   // decided "unpaid", and fired three hard redirects at Whop. Nothing here may
   // act on anything but `cloudStatus === "unpaid"`.
-  const mustPay = Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
+  const mustPay =
+    Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
 
   /* ── The six-digit activation code ───────────────────────────────────
    *
@@ -367,15 +383,6 @@ function AppAccess() {
   const [verifyingCode, setVerifyingCode] = useState(false);
   /** Put a new code in the inbox for an account that is already mid-flow. */
   const [resendingCode, setResendingCode] = useState(false);
-  /**
-   * THE MAIL ROUTE ITSELF IS BROKEN — the server cannot send a code that any
-   * inbox will accept, because the `From:` domain cannot be authenticated.
-   *
-   * A separate screen from every other failure because the remedy is different:
-   * this account has paid and nothing on this screen can help, so the only
-   * honest offer is a person who can unlock them by hand.
-   */
-  const [mailBroken, setMailBroken] = useState(false);
 
   /**
    * Ask the database who this session is, and send an unpaid one straight to
@@ -428,7 +435,11 @@ function AppAccess() {
     }
     let cancelled = false;
     void (async () => {
-      const access = await withDeadline<AppAccessCheck>(requireVerifiedAccess(sessionEmail), 25_000, { action: "signin" });
+      const access = await withDeadline<AppAccessCheck>(
+        requireVerifiedAccess(sessionEmail),
+        25_000,
+        { action: "signin" },
+      );
       if (cancelled) return;
       if (access.action === "pass") {
         // Mirror the verdict locally so the app renders as entitled from the
@@ -462,14 +473,18 @@ function AppAccess() {
     return () => {
       cancelled = true;
     };
-    }, [resuming, epochCleared, awaitingActivation]);
+  }, [resuming, epochCleared, awaitingActivation]);
 
   useEffect(() => {
     if (resuming || !app.email || successReturn || choosePlan) return;
     let cancelled = false;
     setCloudStatus(null);
     void (async () => {
-      const status = await withDeadline(resolveCloudAccess(app.email, { fresh: true }), 15_000, null);
+      const status = await withDeadline(
+        resolveCloudAccess(app.email, { fresh: true }),
+        15_000,
+        null,
+      );
       if (cancelled) return;
       setCloudStatus(status);
       // DEACTIVATED — the database says this account was revoked by the owner.
@@ -518,7 +533,19 @@ function AppAccess() {
     // ping-pong with nothing ever happening. The Choose Plan screen owns them.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
-  }, [app.email, successReturn, showLicenseView, busy, choosePlan, payPrompt, mustPay, blockedEmail, codeStage, effectiveStatus, resuming]);
+  }, [
+    app.email,
+    successReturn,
+    showLicenseView,
+    busy,
+    choosePlan,
+    payPrompt,
+    mustPay,
+    blockedEmail,
+    codeStage,
+    effectiveStatus,
+    resuming,
+  ]);
 
   /**
    * THE CHOOSE PLAN GATE — one place decides whether ANY part of the app may
@@ -572,7 +599,8 @@ function AppAccess() {
         user: null,
         verified: false,
       } as Awaited<ReturnType<typeof registerWithEmail>>);
-      if (typeof window !== "undefined") window.localStorage.setItem("eamp.pending-payment-email", clean);
+      if (typeof window !== "undefined")
+        window.localStorage.setItem("eamp.pending-payment-email", clean);
 
       /**
        * STRICT ENTITLEMENT CHECK — the ONE gate in front of everything else.
@@ -631,7 +659,9 @@ function AppAccess() {
       // please tell your mentor to reactivate"). There is no self-service
       // unlock. This is reachable ONLY for a verified paid/admin account.
       try {
-        const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), { boundToOtherDevice: false });
+        const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), {
+          boundToOtherDevice: false,
+        });
         if (binding.boundToOtherDevice) {
           setBlockedEmail(clean);
           setBusy(false);
@@ -694,25 +724,12 @@ function AppAccess() {
         // to the plans and left them with a dead toast. The regex is kept only
         // as a fallback for an older deployment still sending the old text.
         toast.error(codeSent.error ?? "We could not send your code. Please try again.");
-        if (codeSent.notPaid || /has not been activated|not marked as paid/i.test(codeSent.error ?? "")) {
+        if (
+          codeSent.notPaid ||
+          /has not been activated|not marked as paid/i.test(codeSent.error ?? "")
+        ) {
           setChoosePlan(true);
         }
-        return;
-      }
-      /* MAIL THAT CANNOT BE DELIVERED IS NOT "CHECK YOUR INBOX".
-       *
-       * The server refuses to send when the `From:` domain cannot be
-       * authenticated, and this account is a paying customer whose payment is
-       * fine. Showing them a code screen that will never receive a code, or
-       * sending them to the plans page, would be wrong in both cases: they have
-       * paid, and nothing they do on this screen can make the mail arrive.
-       *
-       * So it is named as what it is — a broken mail route with a person who
-       * can fix it by hand — rather than dressed up as anything the customer
-       * could retry.
-       */
-      if (codeSent.senderUnauthenticated) {
-        setMailBroken(true);
         return;
       }
       setCodeValue("");
@@ -811,7 +828,10 @@ function AppAccess() {
     // is never worth an error toast here — it says nothing the customer can
     // act on, and a red banner over a working sign-in reads as a failure.
     try {
-      const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, { ok: false, error: "Device binding timed out" });
+      const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, {
+        ok: false,
+        error: "Device binding timed out",
+      });
       if (!bound.ok && bound.error) console.warn("[app-login] device bind:", bound.error);
     } catch {
       /* a failed bind must never block sign-in */
@@ -883,7 +903,9 @@ function AppAccess() {
         window.location.replace("/app/home");
         return;
       }
-      toast.info("Not activated yet", { description: "We are still waiting on your activation message. Try again in a few minutes." });
+      toast.info("Not activated yet", {
+        description: "We are still waiting on your activation message. Try again in a few minutes.",
+      });
     } finally {
       setCheckingActivation(false);
     }
@@ -930,20 +952,6 @@ function AppAccess() {
     setCodeError("");
   };
 
-  /**
-   * LEAVE THE "EMAIL IS DOWN" SCREEN.
-   *
-   * Also clears the stale code screen underneath, so returning to the form does
-   * not land the customer straight back on a code box for a message that was
-   * never sent.
-   */
-  const resetMailBroken = () => {
-    setMailBroken(false);
-    setCodeStage(null);
-    setCodeValue("");
-    setCodeError("");
-  };
-
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -955,14 +963,24 @@ function AppAccess() {
         // Register FIRST so the users row exists — the cloud proof write
         // inside activateKey (is_paid + device bind) needs that row, and a
         // fresh reinstall has none.
-        try { await registerWithEmail(clean); } catch { /* fail open */ }
+        try {
+          await registerWithEmail(clean);
+        } catch {
+          /* fail open */
+        }
         const signInResult = appSignIn(clean);
-        if (signInResult.error) { toast.error(signInResult.error); return; }
+        if (signInResult.error) {
+          toast.error(signInResult.error);
+          return;
+        }
       }
       // Same tolerant normalisation as activation: trim, uppercase, strip spaces.
       const normalizedKey = key.trim().toUpperCase().replace(/\s+/g, "");
       const result = await activateKey(normalizedKey);
-      if (result.error) { toast.error(result.error); return; }
+      if (result.error) {
+        toast.error(result.error);
+        return;
+      }
       toast.success((result.robot?.name || "Robot") + " activated on this device");
       // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
       window.sessionStorage.setItem("eamp_pending_welcome", "1");
@@ -972,41 +990,66 @@ function AppAccess() {
     }
   };
 
-  return <div className="min-h-screen w-full bg-[#070d10] text-white">
-    <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
-      {resuming ? (
-        <ResumingView />
-      ) : blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      /* THE MAIL ROUTE IS BROKEN, so there is nothing to wait for. Checked
+  return (
+    <div className="min-h-screen w-full bg-[#070d10] text-white">
+      <main className="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 pt-safe pb-safe-xl">
+        {resuming ? (
+          <ResumingView />
+        ) : blockedEmail ? (
+          <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} />
+        ) : /* THE MAIL ROUTE IS BROKEN, so there is nothing to wait for. Checked
          before `codeStage` because the code screen promises an email that is
          never going to arrive, and showing it would be a broken promise. */
-      mailBroken ? (
-        <MailUnavailableView email={activeEmail ?? email} onCancel={resetMailBroken} />
-      ) : codeStage ? (
-        <ActivationCodeView
-          email={codeStage.email}
-          value={codeValue}
-          setValue={setCodeValue}
-          error={codeError}
-          verifying={verifyingCode}
-          resending={resendingCode}
-          onSubmit={submitActivationCode}
-          onResend={resendActivationCode}
-          onCancel={cancelActivationCode}
-        />
-      ) : awaitingActivation && !successReturn && activeEmail ? (
-        <AwaitingActivation email={activeEmail} onRecheck={recheckActivation} checking={checkingActivation} onCancel={leaveWaitingRoom} />
-      ) : showChoosePlan ? (
-        <PlanSelection
-          email={activeEmail}
-          selectedPlan={selectedPlan}
-          onSelectPlan={setSelectedPlan}
-          onCancel={dismissCheckout}
-        />
-      ) :
-      !showLicenseView ? <LoginView email={email} setEmail={setEmail} onSubmit={continueWithEmail} checking={(busy && !redirecting) || sendingCode} redirecting={redirecting} deactivated={deactivated} /> : <LicenseView email={activeEmail} setEmail={setEmail} keyValue={key} setKey={setKey} onSubmit={submitLicense} admin={effectiveStatus === "admin"} paid={effectiveStatus === "paid" || successReturn} unlocking={unlocking} />}
-    </main>
-  </div>;
+        codeStage ? (
+          <ActivationCodeView
+            email={codeStage.email}
+            value={codeValue}
+            setValue={setCodeValue}
+            error={codeError}
+            verifying={verifyingCode}
+            resending={resendingCode}
+            onSubmit={submitActivationCode}
+            onResend={resendActivationCode}
+            onCancel={cancelActivationCode}
+          />
+        ) : awaitingActivation && !successReturn && activeEmail ? (
+          <AwaitingActivation
+            email={activeEmail}
+            onRecheck={recheckActivation}
+            checking={checkingActivation}
+            onCancel={leaveWaitingRoom}
+          />
+        ) : showChoosePlan ? (
+          <PlanSelection
+            email={activeEmail}
+            selectedPlan={selectedPlan}
+            onSelectPlan={setSelectedPlan}
+            onCancel={dismissCheckout}
+          />
+        ) : !showLicenseView ? (
+          <LoginView
+            email={email}
+            setEmail={setEmail}
+            onSubmit={continueWithEmail}
+            checking={(busy && !redirecting) || sendingCode}
+            redirecting={redirecting}
+            deactivated={deactivated}
+          />
+        ) : (
+          <LicenseView
+            email={activeEmail}
+            setEmail={setEmail}
+            keyValue={key}
+            setKey={setKey}
+            onSubmit={submitLicense}
+            admin={effectiveStatus === "admin"}
+            paid={effectiveStatus === "paid" || successReturn}
+            unlocking={unlocking}
+          />
+        )}
+      </main>
+    </div>
+  );
 }
 
 /**
@@ -1023,7 +1066,11 @@ function AppAccess() {
  */
 function ResumingView() {
   return (
-    <div className="-translate-y-8 flex flex-col items-center text-center" role="status" aria-live="polite">
+    <div
+      className="-translate-y-8 flex flex-col items-center text-center"
+      role="status"
+      aria-live="polite"
+    >
       <div className="relative flex size-28 items-center justify-center">
         <span
           className="absolute inset-0 animate-ping rounded-full bg-[#08a8ef]/20"
@@ -1036,10 +1083,7 @@ function ResumingView() {
       </div>
       <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Welcome back</h1>
       <p className="mt-2 text-base text-[#8a9298]">Restoring your session…</p>
-      <span
-        className="mt-10 h-1 w-40 overflow-hidden rounded-full bg-white/10"
-        aria-hidden="true"
-      >
+      <span className="mt-10 h-1 w-40 overflow-hidden rounded-full bg-white/10" aria-hidden="true">
         <span className="block h-full w-1/2 animate-pulse rounded-full bg-[#08a8ef]" />
       </span>
     </div>
@@ -1054,49 +1098,94 @@ function ResumingView() {
  * This applies to every email — clients and admins alike.
  */
 function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => void }) {
-  return <div className="-translate-y-8 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
-    </div>
-    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Account already used</h1>
-    <div role="alert" className="mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left">
-      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950" aria-hidden="true">!</span>
-      <p className="text-sm font-semibold leading-6 text-red-200">
-        Account already used — please tell your mentor to reactivate.
+  return (
+    <div className="-translate-y-8 text-center">
+      <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+        <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+      </div>
+      <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Account already used</h1>
+      <div
+        role="alert"
+        className="mt-5 flex items-start gap-3 rounded-2xl border border-red-400/50 bg-red-500/15 p-4 text-left"
+      >
+        <span
+          className="mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-full bg-red-400 text-[11px] font-black text-red-950"
+          aria-hidden="true"
+        >
+          !
+        </span>
+        <p className="text-sm font-semibold leading-6 text-red-200">
+          Account already used — please tell your mentor to reactivate.
+        </p>
+      </div>
+      <p className="mt-3 text-base leading-7 text-[#8a9298]">
+        <span className="font-semibold text-[#55c7ff]">{email}</span> is already activated on
+        another device. One email works on one device only. Ask your mentor to re-activate your
+        account — they can release your device from their portal in seconds, and your licence,
+        payment and robots stay exactly as they are.
       </p>
+      <div className="mt-10 space-y-4">
+        <button
+          type="button"
+          onClick={onCancel}
+          className="h-14 w-full rounded-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
+        >
+          Use a different email
+        </button>
+      </div>
+      <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
     </div>
-    <p className="mt-3 text-base leading-7 text-[#8a9298]">
-      <span className="font-semibold text-[#55c7ff]">{email}</span> is already activated on another device.
-      One email works on one device only. Ask your mentor to re-activate your account —
-      they can release your device from their portal in seconds, and your licence,
-      payment and robots stay exactly as they are.
-    </p>
-    <div className="mt-10 space-y-4">
-      <button type="button" onClick={onCancel} className="h-14 w-full rounded-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white">
-        Use a different email
-      </button>
-    </div>
-    <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
-  </div>;
+  );
 }
 
-function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivated }: { email: string; setEmail: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; checking: boolean; redirecting: boolean; deactivated?: boolean }) {
-  return <div className="-translate-y-8 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+function LoginView({
+  email,
+  setEmail,
+  onSubmit,
+  checking,
+  redirecting,
+  deactivated,
+}: {
+  email: string;
+  setEmail: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  checking: boolean;
+  redirecting: boolean;
+  deactivated?: boolean;
+}) {
+  return (
+    <div className="-translate-y-8 text-center">
+      <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+        <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+      </div>
+      <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
+      <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
+      {deactivated ? <DeactivatedNotice /> : null}
+      <form className="mt-12 space-y-4" onSubmit={onSubmit}>
+        <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
+          <Mail className="size-6 shrink-0 text-[#aab2b7]" />
+          <input
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="Email"
+            className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={checking || redirecting}
+          className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+        >
+          {redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Proceed"}
+          <ArrowRight className="size-6" />
+        </button>
+      </form>
+      <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
     </div>
-    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
-    <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
-    {deactivated ? <DeactivatedNotice /> : null}
-    <form className="mt-12 space-y-4" onSubmit={onSubmit}>
-      <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
-        <Mail className="size-6 shrink-0 text-[#aab2b7]" />
-        <input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="Email" className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]" />
-      </label>
-      <button type="submit" disabled={checking || redirecting} className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70">{redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Proceed"}<ArrowRight className="size-6" /></button>
-    </form>
-    <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
-  </div>;
+  );
 }
 
 /**
@@ -1119,51 +1208,82 @@ function LoginView({ email, setEmail, onSubmit, checking, redirecting, deactivat
  * instant the ledger row appears, so "check again" below is a reassurance for
  * somebody in a hurry, not the mechanism that unlocks anything.
  */
-function AwaitingActivation({ email, onRecheck, checking, onCancel }: { email: string; onRecheck: () => void; checking: boolean; onCancel: () => void }) {
+function AwaitingActivation({
+  email,
+  onRecheck,
+  checking,
+  onCancel,
+}: {
+  email: string;
+  onRecheck: () => void;
+  checking: boolean;
+  onCancel: () => void;
+}) {
   const whatsappHref = `https://wa.me/27704950612?text=${encodeURIComponent(`Hi EA Migrate, I have just paid and I am waiting for activation. My email is ${email || "my email"}.`)}`;
-  return <div className="-translate-y-8 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
-    </div>
-    <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Payment received</h1>
-    <p className="mt-2 text-base leading-7 text-[#8a9298]">
-      Thanks{email ? <> <span className="font-semibold text-[#55c7ff]">{email}</span></> : null} — your payment is in, and your
-      account is being switched on now.
-    </p>
-    <div role="status" className="mt-6 rounded-2xl border border-[#08a8ef]/45 bg-[#08a8ef]/10 p-5 text-left">
-      <p className="text-base font-bold leading-6 text-[#9fdcff]">Activation is done by hand</p>
-      <p className="mt-1.5 text-sm leading-6 text-[#bcd9e8]/80">
-        Each account is opened by our team after your payment is confirmed, so this step
-        takes a short time rather than being instant. Send us a message to get it moved
-        along — include the email you paid with.
+  return (
+    <div className="-translate-y-8 text-center">
+      <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+        <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+      </div>
+      <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Payment received</h1>
+      <p className="mt-2 text-base leading-7 text-[#8a9298]">
+        Thanks
+        {email ? (
+          <>
+            {" "}
+            <span className="font-semibold text-[#55c7ff]">{email}</span>
+          </>
+        ) : null}{" "}
+        — your payment is in, and your account is being switched on now.
       </p>
+      <div
+        role="status"
+        className="mt-6 rounded-2xl border border-[#08a8ef]/45 bg-[#08a8ef]/10 p-5 text-left"
+      >
+        <p className="text-base font-bold leading-6 text-[#9fdcff]">Activation is done by hand</p>
+        <p className="mt-1.5 text-sm leading-6 text-[#bcd9e8]/80">
+          Each account is opened by our team after your payment is confirmed, so this step takes a
+          short time rather than being instant. Send us a message to get it moved along — include
+          the email you paid with.
+        </p>
+      </div>
+      <a
+        href={whatsappHref}
+        target="_blank"
+        rel="noreferrer"
+        className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#25D366] font-bold text-black transition hover:brightness-110"
+      >
+        Message us on WhatsApp
+      </a>
+      <p className="mt-2 text-sm text-[#8a9298]">
+        {SUPPORT_WHATSAPP} · or email{" "}
+        <a
+          className="font-semibold text-[#55c7ff] underline"
+          href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("Payment received — please activate my account")}&body=${encodeURIComponent(`My email is ${email}. I have paid and I am waiting for activation.`)}`}
+        >
+          {SUPPORT_EMAIL}
+        </a>
+      </p>
+      <button
+        type="button"
+        onClick={onRecheck}
+        disabled={checking}
+        className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 font-semibold transition hover:border-[#08a8ef]/60 hover:text-[#55c7ff] disabled:opacity-60"
+      >
+        {checking ? "Checking…" : "I have contacted support — check again"}
+      </button>
+      <p className="mt-4 text-sm text-[#8a9298]">
+        Leave this screen open — the app opens itself as soon as your account is activated.
+      </p>
+      <button
+        type="button"
+        onClick={onCancel}
+        className="mt-4 text-sm font-semibold text-[#8a9298] underline transition hover:text-[#55c7ff]"
+      >
+        I haven&apos;t paid yet — back to sign in
+      </button>
     </div>
-    <a
-      href={whatsappHref}
-      target="_blank"
-      rel="noreferrer"
-      className="mt-5 flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-[#25D366] font-bold text-black transition hover:brightness-110"
-    >
-      Message us on WhatsApp
-    </a>
-    <p className="mt-2 text-sm text-[#8a9298]">
-      {SUPPORT_WHATSAPP} · or email <a className="font-semibold text-[#55c7ff] underline" href={`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent("Payment received — please activate my account")}&body=${encodeURIComponent(`My email is ${email}. I have paid and I am waiting for activation.`)}`}>{SUPPORT_EMAIL}</a>
-    </p>
-    <button
-      type="button"
-      onClick={onRecheck}
-      disabled={checking}
-      className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 font-semibold transition hover:border-[#08a8ef]/60 hover:text-[#55c7ff] disabled:opacity-60"
-    >
-      {checking ? "Checking…" : "I have contacted support — check again"}
-    </button>
-    <p className="mt-4 text-sm text-[#8a9298]">
-      Leave this screen open — the app opens itself as soon as your account is activated.
-    </p>
-    <button type="button" onClick={onCancel} className="mt-4 text-sm font-semibold text-[#8a9298] underline transition hover:text-[#55c7ff]">
-      I haven&apos;t paid yet — back to sign in
-    </button>
-  </div>;
+  );
 }
 
 /**
@@ -1282,114 +1402,118 @@ function PlanSelection({
     }
   };
 
-  return <div className="-translate-y-4 text-center">
-    <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-      <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
-    </div>
-    <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Choose your plan</h1>
-    <p className="mt-3 text-base leading-7 text-[#8a9298]">
-      This account has no active subscription yet, so the app stays closed.
-      {email ? ` Pay for ${email} below.` : ""}
-    </p>
+  return (
+    <div className="-translate-y-4 text-center">
+      <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
+        <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+      </div>
+      <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Choose your plan</h1>
+      <p className="mt-3 text-base leading-7 text-[#8a9298]">
+        This account has no active subscription yet, so the app stays closed.
+        {email ? ` Pay for ${email} below.` : ""}
+      </p>
 
-    {/* SELECTABLE PLAN CARDS — tap to choose, the active one is marked with
+      {/* SELECTABLE PLAN CARDS — tap to choose, the active one is marked with
         the brand border and a checkmark. Choosing never navigates: it only
         decides what Continue to Payment opens. */}
-    <div className="mt-8 space-y-4 text-left" role="radiogroup" aria-label="Choose your plan">
-      {PLAN_ORDER.map((id) => {
-        const plan = PLANS[id];
-        const active = selectedPlan === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            role="radio"
-            aria-checked={active}
-            onClick={() => onSelectPlan(id)}
-            className={`block w-full rounded-[1.75rem] border p-5 text-left transition-colors ${
-              active
-                ? "border-[#08a8ef] bg-[#08a8ef]/10 shadow-[0_0_30px_rgba(8,168,239,.28)]"
-                : "border-[#202930] bg-[#10161a] shadow-[0_0_28px_rgba(8,168,239,.10)]"
-            }`}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <p className="text-lg font-bold text-white">
-                {plan.title} <span className="text-[#8a9298]">{plan.note}</span>
-              </p>
-              <span
-                className={`flex size-7 shrink-0 items-center justify-center rounded-full border ${
-                  active ? "border-[#08a8ef] bg-[#08a8ef] text-[#061018]" : "border-[#2b3440] text-transparent"
-                }`}
-              >
-                {active ? <Check className="size-4" /> : null}
-              </span>
-            </div>
-            <span
-              className={`mt-2 inline-block rounded-full px-3 py-1 text-[10px] font-black tracking-[0.12em] ${
-                active ? "bg-[#08a8ef] text-[#061018]" : "bg-[#08a8ef]/15 text-[#55c7ff]"
+      <div className="mt-8 space-y-4 text-left" role="radiogroup" aria-label="Choose your plan">
+        {PLAN_ORDER.map((id) => {
+          const plan = PLANS[id];
+          const active = selectedPlan === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="radio"
+              aria-checked={active}
+              onClick={() => onSelectPlan(id)}
+              className={`block w-full rounded-[1.75rem] border p-5 text-left transition-colors ${
+                active
+                  ? "border-[#08a8ef] bg-[#08a8ef]/10 shadow-[0_0_30px_rgba(8,168,239,.28)]"
+                  : "border-[#202930] bg-[#10161a] shadow-[0_0_28px_rgba(8,168,239,.10)]"
               }`}
             >
-              {plan.badge}
-            </span>
-            <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
-          </button>
-        );
-      })}
-    </div>
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-lg font-bold text-white">
+                  {plan.title} <span className="text-[#8a9298]">{plan.note}</span>
+                </p>
+                <span
+                  className={`flex size-7 shrink-0 items-center justify-center rounded-full border ${
+                    active
+                      ? "border-[#08a8ef] bg-[#08a8ef] text-[#061018]"
+                      : "border-[#2b3440] text-transparent"
+                  }`}
+                >
+                  {active ? <Check className="size-4" /> : null}
+                </span>
+              </div>
+              <span
+                className={`mt-2 inline-block rounded-full px-3 py-1 text-[10px] font-black tracking-[0.12em] ${
+                  active ? "bg-[#08a8ef] text-[#061018]" : "bg-[#08a8ef]/15 text-[#55c7ff]"
+                }`}
+              >
+                {plan.badge}
+              </span>
+              <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
+            </button>
+          );
+        })}
+      </div>
 
-    {/* CONTINUE TO PAYMENT — opens the SELECTED plan. On Android the native
+      {/* CONTINUE TO PAYMENT — opens the SELECTED plan. On Android the native
         bridge hands the URL to the system browser; elsewhere a plain
         navigation (and, on iOS standalone, the copy/email fallbacks). */}
-    {standalone ? (
-      <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
-        <p className="text-sm font-semibold text-white">Finish in Safari</p>
-        <p className="mt-2 text-sm leading-6 text-[#8a9298]">
-          Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
-          directly.
-        </p>
+      {standalone ? (
+        <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
+          <p className="text-sm font-semibold text-white">Finish in Safari</p>
+          <p className="mt-2 text-sm leading-6 text-[#8a9298]">
+            Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
+            directly.
+          </p>
+          <button
+            type="button"
+            onClick={() => void copy(PLANS[selectedPlan].url)}
+            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
+          >
+            {copiedUrl === PLANS[selectedPlan].url ? "Link copied" : "Copy checkout link"}
+          </button>
+          <a
+            href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(PLANS[selectedPlan].url)}`}
+            className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
+          >
+            Email me the link
+          </a>
+          <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
+            {PLANS[selectedPlan].url}
+          </p>
+        </div>
+      ) : (
         <button
           type="button"
-          onClick={() => void copy(PLANS[selectedPlan].url)}
-          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
+          onClick={() => openCheckout(PLANS[selectedPlan].url)}
+          className="mt-6 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
         >
-          {copiedUrl === PLANS[selectedPlan].url ? "Link copied" : "Copy checkout link"}
+          Continue to Payment <ArrowRight className="size-6" />
         </button>
-        <a
-          href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(PLANS[selectedPlan].url)}`}
-          className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
-        >
-          Email me the link
-        </a>
-        <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-          {PLANS[selectedPlan].url}
-        </p>
-      </div>
-    ) : (
-      <button
-        type="button"
-        onClick={() => openCheckout(PLANS[selectedPlan].url)}
-        className="mt-6 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
-      >
-        Continue to Payment <ArrowRight className="size-6" />
-      </button>
-    )}
+      )}
 
-    <p className="mt-6 text-xs leading-5 text-[#59646b]">
-      {standalone
-        ? "Tap copy, then open Safari and paste the link — iPhone apps cannot open payment pages directly."
-        : "Already subscribed? Use the exact email you paid with."}
-    </p>
-    {/* ESCAPE HATCH — an account on a slow connection can reach this screen
+      <p className="mt-6 text-xs leading-5 text-[#59646b]">
+        {standalone
+          ? "Tap copy, then open Safari and paste the link — iPhone apps cannot open payment pages directly."
+          : "Already subscribed? Use the exact email you paid with."}
+      </p>
+      {/* ESCAPE HATCH — an account on a slow connection can reach this screen
         without owing anything, and being stuck on a payment page with no way
         out is the worst possible outcome. */}
-    <button
-      type="button"
-      onClick={onCancel}
-      className="mt-4 h-12 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
-    >
-      Back — use a different email
-    </button>
-  </div>;
+      <button
+        type="button"
+        onClick={onCancel}
+        className="mt-4 h-12 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
+      >
+        Back — use a different email
+      </button>
+    </div>
+  );
 }
 
 /**
@@ -1405,74 +1529,6 @@ function PlanSelection({
  * a code they are reading out of an email, it keeps the digits legible on a
  * phone, and it makes a mistyped digit obvious instead of silent.
  */
-/**
- * THE EMAIL ROUTE IS DOWN — and this is a PAID account.
- *
- * The server refuses to send a code when the `From:` domain cannot be
- * authenticated by a receiving server, because a send that is certain not to
- * arrive is worse than an honest failure: it burns the customer's window and
- * then tells them to check an inbox that will stay empty.
- *
- * So this screen does the three things that are actually true:
- *   1. It does NOT say the code was sent. Nothing was.
- *   2. It does NOT send them to pay. They already paid — that is verified
- *      before a code is ever requested.
- *   3. It names the one thing that works: a person who can unlock the account
- *      by hand, and the email address to quote them.
- *
- * "Try again" is deliberately NOT the primary action. Retrying cannot help —
- * the same unverified message will fail the same way — so offering it would
- * invite a customer to sit and wait for a second failure.
- */
-function MailUnavailableView({ email, onCancel }: { email: string; onCancel: () => void }) {
-  const [copied, setCopied] = useState(false);
-  const copyEmail = async () => {
-    try {
-      await navigator.clipboard.writeText(email);
-      setCopied(true);
-    } catch {
-      /* clipboard blocked — the address is on screen to read or type */
-    }
-  };
-  return <div className="-translate-y-4 text-center">
-    <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-amber-400/10 text-amber-300">
-      <MailX className="size-9" />
-    </div>
-    <h1 className="mt-7 text-3xl font-bold">Email is temporarily down</h1>
-    <p className="mt-3 text-sm leading-6 text-[#8a9298]">
-      We could not send your activation code just now. This is a problem with our email sending, not
-      with your account —<span className="font-semibold text-white"> your payment is fine and you are
-      not being asked to pay again.</span>
-    </p>
-
-    <section className="mt-8 rounded-[2rem] border border-amber-300/25 bg-[#10161a] p-6 text-left shadow-[0_0_28px_rgba(245,158,11,.10)]">
-      <p className="text-sm font-semibold text-white">Message support and we will unlock you manually</p>
-      <p className="mt-2 text-sm leading-6 text-[#8a9298]">
-        Send us this email address and we will open your account by hand — you will not need the code.
-      </p>
-      {email ? (
-        <button
-          type="button"
-          onClick={() => void copyEmail()}
-          className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-[#202930] bg-[#070d10] px-4 py-3 text-left"
-        >
-          <span className="truncate text-sm font-semibold text-[#55c7ff]">{email}</span>
-          <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.12em] text-[#8a9298]">
-            {copied ? "Copied" : "Copy"}
-          </span>
-        </button>
-      ) : null}
-    </section>
-
-    <button
-      type="button"
-      onClick={onCancel}
-      className="mt-6 h-11 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
-    >
-      Use a different email
-    </button>
-  </div>;
-}
 
 function ActivationCodeView({
   email,
@@ -1499,78 +1555,167 @@ function ActivationCodeView({
   // Keep focus in the hidden input so typing, pasting and backspace all work
   // while the six boxes are what the customer sees.
   const inputRef = useRef<HTMLInputElement | null>(null);
-  return <div className="-translate-y-4 text-center">
-    <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-[#08a8ef]/10 text-[#55c7ff]">
-      <Mail className="size-9" />
-    </div>
-    <h1 className="mt-7 text-3xl font-bold">Enter your code</h1>
-    <p className="mt-3 text-sm leading-6 text-[#8a9298]">
-      We sent a six-digit code to <span className="font-semibold text-[#55c7ff]">{email}</span>. Enter it to
-      continue to your licence key.
-    </p>
-    <form className="mt-8" onSubmit={onSubmit}>
-      <div className="relative">
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(event) => setValue(event.target.value.replace(/\D/g, "").slice(0, 6))}
-          inputMode="numeric"
-          autoComplete="one-time-code"
-          autoFocus
-          aria-label="Six-digit activation code"
-          className="absolute inset-0 h-full w-full opacity-0"
-        />
-        <div className="pointer-events-none flex justify-between gap-2" aria-hidden="true">
-          {digits.map((digit, index) => (
-            <span
-              key={index}
-              className={`flex h-16 flex-1 items-center justify-center rounded-2xl border text-2xl font-black transition-colors ${
-                error
-                  ? "border-red-400/60 bg-red-500/10 text-red-200"
-                  : index === value.length
-                    ? "border-[#08a8ef] bg-[#08a8ef]/10 text-white"
-                    : "border-[#202930] bg-[#10161a] text-white"
-              }`}
-            >
-              {digit.trim()}
-            </span>
-          ))}
-        </div>
+  return (
+    <div className="-translate-y-4 text-center">
+      <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-[#08a8ef]/10 text-[#55c7ff]">
+        <Mail className="size-9" />
       </div>
-      {error ? (
-        <p role="alert" className="mt-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200">
-          {error}
-        </p>
-      ) : null}
-      <button
-        type="submit"
-        disabled={verifying}
-        className="mt-6 flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
-      >
-        {verifying ? "Checking your code…" : "Continue"}
-        <ArrowRight className="size-6" />
-      </button>
-    </form>
-    <div className="mt-5 space-y-2">
-      <button
-        type="button"
-        onClick={onResend}
-        disabled={resending}
-        className="h-11 w-full text-sm font-semibold text-[#55c7ff] disabled:cursor-wait disabled:opacity-60"
-      >
-        {resending ? "Sending…" : "Send the code again"}
-      </button>
-      <button type="button" onClick={onCancel} className="h-11 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white">
-        Use a different email
-      </button>
+      <h1 className="mt-7 text-3xl font-bold">Enter your code</h1>
+      <p className="mt-3 text-sm leading-6 text-[#8a9298]">
+        We sent a six-digit code to <span className="font-semibold text-[#55c7ff]">{email}</span>.
+        Enter it to continue to your licence key.
+      </p>
+      <form className="mt-8" onSubmit={onSubmit}>
+        <div className="relative">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(event) => setValue(event.target.value.replace(/\D/g, "").slice(0, 6))}
+            inputMode="numeric"
+            autoComplete="one-time-code"
+            autoFocus
+            aria-label="Six-digit activation code"
+            className="absolute inset-0 h-full w-full opacity-0"
+          />
+          <div className="pointer-events-none flex justify-between gap-2" aria-hidden="true">
+            {digits.map((digit, index) => (
+              <span
+                key={index}
+                className={`flex h-16 flex-1 items-center justify-center rounded-2xl border text-2xl font-black transition-colors ${
+                  error
+                    ? "border-red-400/60 bg-red-500/10 text-red-200"
+                    : index === value.length
+                      ? "border-[#08a8ef] bg-[#08a8ef]/10 text-white"
+                      : "border-[#202930] bg-[#10161a] text-white"
+                }`}
+              >
+                {digit.trim()}
+              </span>
+            ))}
+          </div>
+        </div>
+        {error ? (
+          <p
+            role="alert"
+            className="mt-4 rounded-2xl border border-red-400/40 bg-red-500/10 px-4 py-3 text-sm font-semibold text-red-200"
+          >
+            {error}
+          </p>
+        ) : null}
+        <button
+          type="submit"
+          disabled={verifying}
+          className="mt-6 flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+        >
+          {verifying ? "Checking your code…" : "Continue"}
+          <ArrowRight className="size-6" />
+        </button>
+      </form>
+      <div className="mt-5 space-y-2">
+        <button
+          type="button"
+          onClick={onResend}
+          disabled={resending}
+          className="h-11 w-full text-sm font-semibold text-[#55c7ff] disabled:cursor-wait disabled:opacity-60"
+        >
+          {resending ? "Sending…" : "Send the code again"}
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="h-11 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
+        >
+          Use a different email
+        </button>
+      </div>
+      <p className="mt-5 text-xs leading-5 text-[#59646b]">
+        The code stops working after 2 minutes. It can be sent again if it expires.
+      </p>
     </div>
-    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 2 minutes. It can be sent again if it expires.</p>
-  </div>;
+  );
 }
 
-function LicenseView({ email, setEmail, keyValue, setKey, onSubmit, admin, paid, unlocking }: { email: string; setEmail: (value: string) => void; keyValue: string; setKey: (value: string) => void; onSubmit: (event: FormEvent<HTMLFormElement>) => void; admin: boolean; paid: boolean; unlocking: boolean }) {
-  return <div className="-translate-y-4">
-    <div className="text-center"><div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-emerald-400/10 text-emerald-300"><CheckCircle2 className="size-9" /></div><h1 className="mt-7 text-3xl font-bold">Add your licence key</h1><p className="mt-3 text-sm leading-6 text-[#8a9298]">{admin ? "Admin access is active. No payment is required for this email." : paid ? "Payment received. Add the licence key sent to your email." : "Your payment return was received. Add the licence key sent to your email."}</p></div>
-    <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">{email ? <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">{email}</div> : <label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Payment email</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]" placeholder="you@example.com" /></label>}<form onSubmit={onSubmit}><label className="block"><span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">Licence key</span><input autoFocus required value={keyValue} onChange={(event) => setKey(event.target.value.toUpperCase())} placeholder="EMP-XXXXXXXXXXXX" className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]" /></label><button type="submit" disabled={unlocking} className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70">{unlocking ? "Unlocking…" : "Unlock bot"}<ArrowRight className="size-4" /></button></form><p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]"><LockKeyhole className="size-3" /> One email, one activated device</p></section>
-  </div>;
+function LicenseView({
+  email,
+  setEmail,
+  keyValue,
+  setKey,
+  onSubmit,
+  admin,
+  paid,
+  unlocking,
+}: {
+  email: string;
+  setEmail: (value: string) => void;
+  keyValue: string;
+  setKey: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  admin: boolean;
+  paid: boolean;
+  unlocking: boolean;
+}) {
+  return (
+    <div className="-translate-y-4">
+      <div className="text-center">
+        <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-emerald-400/10 text-emerald-300">
+          <CheckCircle2 className="size-9" />
+        </div>
+        <h1 className="mt-7 text-3xl font-bold">Add your licence key</h1>
+        <p className="mt-3 text-sm leading-6 text-[#8a9298]">
+          {admin
+            ? "Admin access is active. No payment is required for this email."
+            : paid
+              ? "Payment received. Add the licence key sent to your email."
+              : "Your payment return was received. Add the licence key sent to your email."}
+        </p>
+      </div>
+      <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">
+        {email ? (
+          <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">
+            {email}
+          </div>
+        ) : (
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">
+              Payment email
+            </span>
+            <input
+              type="email"
+              required
+              value={email}
+              onChange={(event) => setEmail(event.target.value)}
+              className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]"
+              placeholder="you@example.com"
+            />
+          </label>
+        )}
+        <form onSubmit={onSubmit}>
+          <label className="block">
+            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">
+              Licence key
+            </span>
+            <input
+              autoFocus
+              required
+              value={keyValue}
+              onChange={(event) => setKey(event.target.value.toUpperCase())}
+              placeholder="EMP-XXXXXXXXXXXX"
+              className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]"
+            />
+          </label>
+          <button
+            type="submit"
+            disabled={unlocking}
+            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70"
+          >
+            {unlocking ? "Unlocking…" : "Unlock bot"}
+            <ArrowRight className="size-4" />
+          </button>
+        </form>
+        <p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]">
+          <LockKeyhole className="size-3" /> One email, one activated device
+        </p>
+      </section>
+    </div>
+  );
 }

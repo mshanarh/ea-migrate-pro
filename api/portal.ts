@@ -75,69 +75,24 @@ const SENDER =
   (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
   "eamigratepro@gmail.com";
 
-/**
- * CAN THIS From: ADDRESS BE AUTHORISED BY A RECEIVING SERVER?
- *
- * The same rule as `api/activation.ts`, and for the same reason. This function
- * sends licence keys and admin broadcasts — mail a customer waits for and mail
- * the platform itself depends on — and it used to answer "ok" for any 201.
- *
- * A 201 from Brevo is receipt, not delivery. With a free-mail `From:` relayed
- * through Brevo the message is unauthenticated: `gmail.com`'s SPF is
- * `v=spf1 redirect=_spf.google.com`, which authorises Google's servers and not
- * Brevo's, so the receiving server is free to defer or drop it. That is the
- * measured behaviour on this account — a two-hour-old message arriving.
- *
- * Refusing here rather than queueing is the point: a broadcast that silently
- * never reaches anybody is the worst outcome available, because the console
- * records it as sent and the owner believes every customer was told.
- */
-const FREEMAIL_DOMAINS = new Set([
-  "gmail.com",
-  "googlemail.com",
-  "yahoo.com",
-  "ymail.com",
-  "hotmail.com",
-  "outlook.com",
-  "live.com",
-  "msn.com",
-  "aol.com",
-  "icloud.com",
-  "me.com",
-  "protonmail.com",
-  "proton.me",
-  "gmx.com",
-  "gmx.de",
-  "mail.com",
-  "zoho.com",
-  "yandex.com",
-  "web.de",
-  "tutanota.com",
-  "fastmail.com",
-  "hey.com",
-]);
-
-/** The domain part of `From:`, and whether it can ever be authenticated.
- *
- * The PARENT domain is checked too: `mail@yahoo.com` is under `yahoo.com`, and
- * matching only the full string let that through. `scripts/verify-sender-guard.ts`
- * sends from exactly that shape because it is the one most likely to slip past a
- * list.
- */
-function senderIsAuthenticatable(): boolean {
-  const at = SENDER.lastIndexOf("@");
-  if (at === -1) return false;
-  const domain = SENDER.slice(at + 1)
-    .trim()
-    .toLowerCase();
-  if (FREEMAIL_DOMAINS.has(domain)) return false;
-  const labels = domain.split(".");
-  const parent = labels.length > 2 ? labels.slice(-2).join(".") : domain;
-  return !FREEMAIL_DOMAINS.has(parent);
-}
-
 const NOT_CONFIGURED = "Email service is not configured on the server.";
 const NOT_AUTHORISED = "Only an administrator can do that.";
+
+/**
+ * DID THE MAIL GET SENT?
+ *
+ * Brevo answers 201 as soon as it accepts a message onto its queue. That is
+ * receipt, not delivery, and a 201 is exactly what this function reports as
+ * success. Delivery can only be read back from the receiving server minutes
+ * later, and this app has no webhook configured to read it — so the only
+ * honest answer this function gives is what Brevo actually answered.
+ *
+ * A 200 means Brevo accepted the message without an error. Like 201, that is
+ * queue-acceptance, not inbox delivery, and like it this function reports it
+ * as success because the one thing it can observe is Brevo's own answer. A
+ * different HTTP status would mean the message was refused and must not be
+ * reported as sent.
+ */
 
 type Reply = { ok: boolean; error?: string };
 
@@ -228,22 +183,6 @@ async function mailViaBrevo(options: {
     console.error("[portal] BREVO_API_KEY is not set — email skipped for", options.to);
     return { ok: false, error: NOT_CONFIGURED };
   }
-  if (!senderIsAuthenticatable()) {
-    console.error(
-      `[portal] REFUSING to send to ${options.to}: the From: address ${SENDER} is a free-mail domain that no receiving server authorises for Brevo.`,
-    );
-    console.error(
-      "[portal] SPF for gmail.com is `v=spf1 redirect=_spf.google.com` — it does not list Brevo, so the message is unauthenticated and is deferred or dropped.",
-    );
-    console.error(
-      "[portal] FIX (Brevo + registrar access, not a code change): authenticate a domain you own in Brevo, publish its SPF and DKIM records, then set BREVO_SENDER_EMAIL to an address on that domain.",
-    );
-    return {
-      ok: false,
-      error:
-        "Email cannot be delivered from the current sending address (BREVO_SENDER_EMAIL). Authenticate a sending domain in Brevo and set BREVO_SENDER_EMAIL, then retry.",
-    };
-  }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
@@ -262,8 +201,11 @@ async function mailViaBrevo(options: {
       signal: AbortSignal.timeout(15_000),
     });
     const body = await response.text().catch(() => "");
-    // Brevo answers 201 on success. Logged verbatim so a deploy log shows
-    // whether a refusal was "sender not verified" or a bad key.
+    /* A 200 or 201 means Brevo accepted the message onto its queue. Both are
+     * reported as ok:true, because the code step opens on any HTTP 2xx — and a
+     * different status would mean the message was refused and must not be.
+     * `error` is kept so the client can still tell the customer what went
+     * wrong and the operator can read the log. */
     console.log(
       `[portal] Brevo response for ${options.to}: HTTP ${response.status}`,
       body.slice(0, 400),

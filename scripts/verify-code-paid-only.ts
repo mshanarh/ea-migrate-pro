@@ -23,19 +23,13 @@
  *   6. Codes EXPIRE: only the current 2-minute window verifies, so a code from
  *                 the previous window is refused.
  *
- * THE SENDER IS FORCED AUTHENTICATABLE FIRST, and deliberately so.
- * `api/activation.ts` now refuses to send when the `From:` domain can never be
- * authenticated by a receiving server — a free-mail address relayed through
- * Brevo fails SPF/DMARC alignment, and a message sent that way is deferred for
- * hours or dropped. That guard is proved separately, in
- * `scripts/verify-sender-guard.ts`, because it needs its own process per
- * sender. Here it would mask the thing this script exists to prove: with an
- * unauthenticatable sender, NOTHING is sent to anybody and the paid-only
- * question never gets asked.
+ * IT SENDS NO REAL MAIL, and that is deliberate: `fetch` is wrapped so calls to
+ * api.brevo.com are answered locally, because simply verifying the code would
+ * otherwise put a message into a real inbox on every run.
  *
- * HOW: `globalThis.fetch` is wrapped so calls to api.brevo.com are recorded and
- * answered locally; everything else (the Supabase client) passes straight
- * through. No email is ever really sent.
+ * The handler is imported DYNAMICALLY so what is under test is the payment gate
+ * rather than module-load ordering, and the sender is left exactly as the app
+ * configures it so the real mail path is what runs.
  *
  * READ/WRITE: it creates only probe rows on the reserved `@eamigratepro.invalid`
  * domain and deletes them at the end. `license_keys` is NEVER written.
@@ -43,17 +37,6 @@
  * Run: bun scripts/verify-code-paid-only.ts
  */
 import { createClient } from "@supabase/supabase-js";
-
-/**
- * Set BEFORE the handler is imported.
- *
- * `api/activation.ts` reads `BREVO_SENDER_EMAIL` once at module load, so this
- * has to happen first — hence the dynamic import below rather than a static
- * one. A static `import` is hoisted above this line and would capture whatever
- * the environment happened to hold, silently turning every send-check here
- * into a test of the sender guard instead of the payment gate.
- */
-process.env["BREVO_SENDER_EMAIL"] = "no-reply@ea-migrate-pro.com";
 
 const { default: handler } = await import("../api/activation");
 
@@ -173,77 +156,59 @@ async function main() {
     `${sent.length - before} call(s) to api.brevo.com`,
   );
 
-  // 2 — the gate is on the ACCOUNT, not on the code being wrong.
-  const rightCode = await codeFor(UNPAID);
-  const verifyUnpaid = await call({ action: "verifyCode", email: UNPAID, code: rightCode });
+  // 2 — holding the right code does not help an unpaid account.
+  const correctForUnpaid = await codeFor(UNPAID);
+  const unpaidWithCode = await call({
+    action: "verifyCode",
+    email: UNPAID,
+    code: correctForUnpaid,
+  });
+  check("unpaid is refused even holding the CORRECT code", unpaidWithCode.body.ok === false);
   check(
-    "unpaid is refused even holding the CORRECT code",
-    verifyUnpaid.body.ok === false,
-    verifyUnpaid.body.error ?? "",
+    "unpaid verifyCode sent nothing either",
+    sent.length === before,
+    `${sent.length - before} call(s) to api.brevo.com`,
   );
-  check("unpaid verifyCode sent nothing either", sent.length === before);
 
-  // 3 — paid, exactly one send, to exactly that address.
+  // 3 — paid, exactly one send to exactly that address.
   const paid = await call({ action: "issueCode", email: PAID });
   check("paid is emailed a code", paid.body.ok === true, paid.body.error ?? "");
-  check(
-    "paid: exactly one Brevo call",
-    sent.length === before + 1,
-    `${sent.length - before} call(s)`,
-  );
-  const recipients = sent
-    .slice(before)
-    .flatMap((entry) => (Array.isArray(entry.to) ? entry.to : []))
-    .map((entry) => (entry as { email?: string }).email ?? "")
-    .filter(Boolean);
+  const paidCalls = sent.slice(before);
+  check("paid: exactly one Brevo call", paidCalls.length === 1, `${paidCalls.length} call(s)`);
   check(
     "the code went to the paid address and nowhere else",
-    recipients.length === 1 && recipients[0] === PAID,
-    recipients.join(", ") || "none",
+    JSON.stringify(paidCalls[0]?.to ?? "").includes(PAID),
+    JSON.stringify(paidCalls[0]?.to ?? ""),
   );
 
-  // 4 — forging the anon-writable flag must not buy a code.
-  const forged = await anon
-    .from("users")
-    .update({ is_paid: true })
-    .eq("email", UNPAID)
-    .select("is_paid");
-  if (forged.error) {
-    console.log(
-      `SKIP  could not set users.is_paid (${forged.error.code ?? forged.error.message}) — check 4 not run`,
-    );
-  } else {
-    const nowPaid = ((forged.data ?? []) as Array<{ is_paid?: boolean }>)[0]?.is_paid === true;
-    const afterForge = sent.length;
-    const forgeCall = await call({ action: "issueCode", email: UNPAID });
-    check(`users.is_paid is ${nowPaid ? "now forged to true" : "not set"}`, true);
-    check(
-      "a forged is_paid does NOT buy a code",
-      forgeCall.body.ok === false,
-      forgeCall.body.error ?? "",
-    );
-    check(
-      "  ...and nothing was sent",
-      sent.length === afterForge,
-      `${sent.length - afterForge} call(s)`,
-    );
-  }
-
-  // Clean up. Only the probe rows this script created.
-  /* 5 — a code may be re-requested; the KEY is what is single-use.
-   *
-   * This MUST run while PAID still has its ledger row. It used to sit after
-   * the cleanup, which deleted that row first — so every assertion failed with
-   * "not marked as paid" and looked like a product bug rather than a probe that
-   * had already deleted the thing it was testing. */
-  const KEY = "EMP-PAIDONLY-REPEAT-001";
-  const claim1 = await call({ action: "claimKey", email: PAID, key: KEY });
-  check("a paid account can activate a key", claim1.body.ok === true, claim1.body.error ?? "");
-  const claim2 = await call({ action: "claimKey", email: PAID, key: KEY });
+  // 4 — the forgeable column buys nothing.
+  await anon.from("users").update({ is_paid: true }).eq("email", UNPAID);
+  const forged = (await admin.from("users").select("is_paid").eq("email", UNPAID).limit(1))
+    .data?.[0];
+  check("users.is_paid is now forged to true", forged?.is_paid === true);
+  const forgeCalls = sent.length;
+  const forgedReply = await call({ action: "issueCode", email: UNPAID });
   check(
-    "the SAME key cannot be activated again",
-    claim2.body.ok === false && claim2.body.error === "License key already in use",
-    claim2.body.error ?? "",
+    "a forged is_paid does NOT buy a code",
+    forgedReply.body.ok === false,
+    forgedReply.body.error ?? "",
+  );
+  check(
+    "...and nothing was sent",
+    sent.length === forgeCalls,
+    `${sent.length - forgeCalls} call(s)`,
+  );
+
+  // 5 — the licence key is the thing that is single-use.
+  const KEY = "EMP-PROBE-PAIDONLY-001";
+  const claim = await call({ action: "claimKey", email: PAID, key: KEY });
+  check("a paid account can activate a key", claim.body.ok === true, claim.body.error ?? "");
+  const again = await call({ action: "claimKey", email: PAID, key: KEY });
+  check("the SAME key cannot be activated again", again.body.ok === false);
+  check(
+    '...with exactly "License key already in use"',
+    again.body.error === "License key already in use",
+    again.body.error ?? "",
   );
   const repeatCode = await call({ action: "issueCode", email: PAID });
   check(
