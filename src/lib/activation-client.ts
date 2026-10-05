@@ -28,7 +28,19 @@
 import { supabaseConfigured } from "@/lib/supabase";
 
 export type ActivationOutcome =
-  | { status: "ok"; ok: boolean; alreadyInUse?: boolean; notPaid?: boolean; error?: string }
+  | {
+      status: "ok";
+      ok: boolean;
+      alreadyInUse?: boolean;
+      notPaid?: boolean;
+      /** The mail service cannot send mail that reaches anyone, so the code was
+       * not sent. Distinct from `notPaid` and from `offline`: this account IS
+       * paid and the network IS up — the message simply cannot be delivered, so
+       * telling the customer to check their inbox would be advice that cannot
+       * work. The caller must offer a human route instead. */
+      senderUnauthenticated?: boolean;
+      error?: string;
+    }
   | { status: "offline"; error: string };
 
 /** Vercel functions are fast; a slow answer is a dead one, not a slow one. */
@@ -59,7 +71,13 @@ async function post<T>(payload: Record<string, unknown>): Promise<ActivationOutc
     if (!response || !response.ok) return { status: "offline", error: "Activation is unavailable right now." };
     return {
       status: "ok",
-      ...((await response.json()) as { ok: boolean; alreadyInUse?: boolean; notPaid?: boolean; error?: string }),
+      ...((await response.json()) as {
+        ok: boolean;
+        alreadyInUse?: boolean;
+        notPaid?: boolean;
+        senderUnauthenticated?: boolean;
+        error?: string;
+      }),
     };
   } catch {
     if (timer) clearTimeout(timer);

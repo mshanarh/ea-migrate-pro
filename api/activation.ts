@@ -60,7 +60,98 @@ type ApiResponse = {
 const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
 const BREVO_API_KEY = (process.env["BREVO_API_KEY"] ?? "").trim();
-const SENDER = (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() || "eamigratepro@gmail.com";
+const SENDER =
+  (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
+  "eamigratepro@gmail.com";
+
+/**
+ * CAN THIS From: ADDRESS BE AUTHORISED BY A RECEIVING SERVER?
+ *
+ * A 201 from Brevo means the message entered its queue. It does NOT mean any
+ * inbox will take it, and the difference is decided entirely by the domain in
+ * the `From:` line.
+ *
+ * THIS FUNCTION IS WHAT STOPS THE APP REPORTING "SENT" FOR MAIL THAT WILL NEVER
+ * ARRIVE. It previously returned `ok: true` on any 201, so every log and every
+ * screen said "sent" while the customer waited for an email that was never
+ * going to come — and nothing in the product ever said why.
+ *
+ * The rule it applies: a sending domain must be a domain whose DNS publishes an
+ * SPF record authorising the sending service. A @gmail.com `From:` relayed
+ * through Brevo can never satisfy that — `gmail.com`'s SPF is
+ * `v=spf1 redirect=_spf.google.com`, which lists Google's servers and not
+ * Brevo's — so the message is unauthenticated and receiving servers are free to
+ * defer or discard it. That is measured on this account: the owner reported a
+ * two-hour-old message arriving, and a live send behaved the same way.
+ *
+ * It is deliberately a check on the SENDER'S DOMAIN SHAPE, not a DNS lookup.
+ * A serverless function cannot rely on outbound DNS being available, and a
+ * lookup that silently failed open would restore exactly the false "sent" this
+ * replaces. The shape test is deterministic: no free-mail domain can carry a
+ * DKIM record the sender controls, so it can only ever be unauthenticated.
+ */
+const FREEMAIL_DOMAINS = [
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "ymail.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+  "msn.com",
+  "aol.com",
+  "icloud.com",
+  "me.com",
+  "protonmail.com",
+  "proton.me",
+  "gmx.com",
+  "gmx.de",
+  "mail.com",
+  "zoho.com",
+  "yandex.com",
+  "web.de",
+  "tutanota.com",
+  "fastmail.com",
+  "hey.com",
+];
+
+function senderDomain(): string {
+  const at = SENDER.lastIndexOf("@");
+  return at === -1
+    ? ""
+    : SENDER.slice(at + 1)
+        .trim()
+        .toLowerCase();
+}
+
+/** The domain part of `From:`, and whether it can ever be authenticated.
+ *
+ * The PARENT domain is checked as well, and that is not belt-and-braces: a
+ * sender of `mail@yahoo.com` is under `yahoo.com`, and matching only the full
+ * string let that through — a real miss caught by
+ * `scripts/verify-sender-guard.ts`, which sends from a subdomain precisely
+ * because that is the shape most likely to slip past a list.
+ */
+function senderIsAuthenticatable(): boolean {
+  const domain = senderDomain();
+  if (!domain) return false;
+  if (FREEMAIL_DOMAINS.includes(domain)) return false;
+  const labels = domain.split(".");
+  const parent = labels.length > 2 ? labels.slice(-2).join(".") : domain;
+  return !FREEMAIL_DOMAINS.includes(parent);
+}
+
+/**
+ * WHAT TO TELL THE CALLER WHEN THE SENDER CANNOT BE AUTHENTICATED.
+ *
+ * Distinct from every other failure here on purpose. `unavailable` means the
+ * service is down and the account is probably fine; this means the message will
+ * not arrive and retrying changes nothing. A customer must not be told to "try
+ * again" for something that cannot succeed, and support must not have to
+ * discover the cause by reading a log.
+ */
+const SENDER_UNAUTHENTICATED =
+  "We cannot send your code right now. Email is temporarily unavailable — message support on WhatsApp and we will unlock you manually.";
 
 /** Told apart from "not entitled" and "key taken" by the client. */
 const UNAVAILABLE = "Activation is unavailable right now.";
@@ -85,16 +176,33 @@ type Action = "issueCode" | "verifyCode" | "claimKey";
 
 type Reply =
   | { ok: true; alreadyInUse?: boolean }
-  | { ok: false; unavailable?: boolean; alreadyInUse?: boolean; notPaid?: boolean; error: string };
+  | {
+      ok: false;
+      unavailable?: boolean;
+      /** The `From:` address cannot be authenticated by any receiving server, so
+       * the mail will not arrive. The client must NOT read this as "not paid". */
+      senderUnauthenticated?: boolean;
+      alreadyInUse?: boolean;
+      notPaid?: boolean;
+      error: string;
+    };
 
 function db(): SupabaseClient | null {
   if (!SUPABASE_URL || !SERVICE_ROLE) return null;
-  return createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createClient(SUPABASE_URL, SERVICE_ROLE, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 
 async function hmac(secret: string, message: string): Promise<string> {
   const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(message));
   return Array.from(new Uint8Array(sig))
     .map((b) => b.toString(16).padStart(2, "0"))
@@ -136,7 +244,11 @@ function safeEqual(a: string, b: string): boolean {
  * is what the admin believes they did.
  */
 async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean> {
-  const { data, error } = await client.from("paid_emails").select("paid_at").eq("email", email).limit(1);
+  const { data, error } = await client
+    .from("paid_emails")
+    .select("paid_at")
+    .eq("email", email)
+    .limit(1);
   if (error) throw new Error(error.message);
   // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
   // unpaid"), not a payment. It must not pass.
@@ -147,7 +259,7 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * NEVER STORED. A pure function of (secret, email, time window), so there is
  * no row to forge and nothing to clean up.
  *
- * THE WINDOW IS FIVE MINUTES, as the owner asked. See the `WINDOW_MS` note for
+ * THE WINDOW IS TWO MINUTES, as the owner asked. See the `WINDOW_MS` note for
  * why that is only viable once the sender domain is authenticated.
  *
  * History, because it is the reason the warning above matters: delivery on this
@@ -155,7 +267,7 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * two-hour-old message arriving; a live send at 2026-10-05T00:20Z behaved the
  * same way). An earlier build used a 6-hour window purely to survive that lag,
  * and while it worked it was papering over a broken sender rather than fixing
- * it. Five minutes is the correct setting for a working mail path.
+ * it. Two minutes is the correct setting for a working mail path.
  *
  * This does not widen the brute-force surface in any way that matters: the
  * code for a window is a fixed 6-digit value, so the number of guesses needed
@@ -176,23 +288,32 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * times as the holder of that paid inbox likes; what cannot happen twice is
  * activating a key.
  */
-/** 5 MINUTES, and ONLY the current window is accepted.
+/** 2 MINUTES, and ONLY the current window is accepted.
  *
- * The owner asked for codes to expire in five minutes, so that is what this is:
- * `PAST_WINDOWS = 0` means a code stops being accepted the moment its window
- * closes, so nothing lives on for longer than the window itself.
+ * The owner asked for the code to be usable within two minutes of it being sent,
+ * so that is what this is. `PAST_WINDOWS = 0` means a code stops being accepted
+ * the moment its window closes, so nothing lives on for longer than the window
+ * itself.
+ *
+ * THE WINDOW IS EPOCH-BUCKETED, NOT CLOCK-ALIGNED TO A TIMEZONE, and that is
+ * deliberate. `Math.floor(now / WINDOW_MS)` gives the same two-minute period to
+ * every caller in the world, so "two minutes" means two minutes in South
+ * Africa, in Lagos, in London and on a server in `us-east-1` alike. A window
+ * computed from wall-clock hours would be a different length depending on
+ * where the request landed, and a code could expire sooner or later than
+ * advertised.
  *
  * ⚠ THIS ONLY WORKS IF MAIL ARRIVES FAST. Delivery on this account has been
  * observed taking about TWO HOURS, because the sender is a @gmail.com address
  * relayed through Brevo and `gmail.com`'s SPF record does not authorise Brevo.
  * Until that is fixed — authenticate a domain and set BREVO_SENDER_EMAIL — a
- * five-minute code will expire long before the email reaches the inbox, and the
- * symptom will be exactly "no code is ever sent". Five minutes is a sound
+ * two-minute code will expire long before the email reaches the inbox, and the
+ * symptom will be exactly "no code is ever sent". Two minutes is a sound
  * choice the moment the sender is authenticated, because a code only ever
  * proves inbox control and has no reason to linger. It is not a workaround for
  * a slow mail path, and it is not one.
  */
-const WINDOW_MS = 5 * 60 * 1000;
+const WINDOW_MS = 2 * 60 * 1000;
 /** How many PAST windows still verify. 0 = expire with the window, as asked. */
 const PAST_WINDOWS = 0;
 
@@ -223,10 +344,38 @@ async function mailCode(email: string, code: string): Promise<Reply> {
     console.error("[activation] BREVO_API_KEY is not set — code not sent to", email);
     return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
   }
+
+  /* THE SENDER CHECK, BEFORE THE MESSAGE IS BUILT.
+   *
+   * This refuses to send at all when the `From:` domain can never be
+   * authenticated, because a send that is certain not to arrive is worse than
+   * an honest failure: it burns the customer's two-minute window, tells them
+   * the code is on its way, and leaves them locked out with no idea why.
+   *
+   * Nothing is lost by refusing. The paid check has already passed, so this is
+   * a paying customer, and the message they get names the real remedy instead
+   * of "check your inbox" — which would be advice that cannot possibly work.
+   */
+  if (!senderIsAuthenticatable()) {
+    console.error(
+      `[activation] REFUSING to send: the From: address ${SENDER} is a free-mail domain that no receiving server authorises for Brevo.`,
+    );
+    console.error(
+      "[activation] SPF for gmail.com is `v=spf1 redirect=_spf.google.com` — it does not list Brevo, so the message is unauthenticated and gets deferred or dropped.",
+    );
+    console.error(
+      "[activation] FIX (needs Brevo + registrar access, not a code change): authenticate a domain you own in Brevo, publish the SPF and DKIM records it issues, then set BREVO_SENDER_EMAIL to an address on that domain.",
+    );
+    return { ok: false, senderUnauthenticated: true, error: SENDER_UNAUTHENTICATED };
+  }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { accept: "application/json", "api-key": BREVO_API_KEY, "content-type": "application/json" },
+      headers: {
+        accept: "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         sender: { name: "EA Migrate", email: SENDER },
         to: [{ email }],
@@ -237,15 +386,20 @@ async function mailCode(email: string, code: string): Promise<Reply> {
               <h1 style="margin:12px 0 0;font-size:22px;">Your activation code</h1>
               <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Use this code in the app to continue to your licence key.</p>
               <p style="margin:24px 0;font-size:40px;font-weight:bold;letter-spacing:0.3em;color:#fff;text-align:center;">${code}</p>
-              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 5 minutes. If you did not ask to sign in, ignore this email.</p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 2 minutes. If you did not ask to sign in, ignore this email.</p>
             </div></div>`,
-        textContent: `Your EA Migrate activation code is ${code}. It stops working after 5 minutes.`,
+        textContent: `Your EA Migrate activation code is ${code}. It stops working after 2 minutes.`,
       }),
       signal: AbortSignal.timeout(8_000),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      console.error("[activation] Brevo rejected the code email for", email, response.status, body.slice(0, 400));
+      console.error(
+        "[activation] Brevo rejected the code email for",
+        email,
+        response.status,
+        body.slice(0, 400),
+      );
       return { ok: false, error: "We could not send your code. Message support on WhatsApp." };
     }
     /* LOG THE SUCCESS TOO — this is the line that answers "did the code
@@ -261,7 +415,12 @@ async function mailCode(email: string, code: string): Promise<Reply> {
      */
     const sent = (await response.json().catch(() => null)) as { messageId?: unknown } | null;
     const messageId = typeof sent?.messageId === "string" ? sent.messageId : "(none returned)";
-    console.log(`[activation] Brevo accepted the code for ${email}: HTTP ${response.status} messageId=${messageId}`);
+    console.log(
+      `[activation] Brevo QUEUED the code for ${email} (from ${SENDER}): HTTP ${response.status} messageId=${messageId}`,
+    );
+    console.log(
+      "[activation] NOTE: 201 means accepted onto the queue, NOT delivered. A bounce or a deferral appears later, at the receiving server.",
+    );
     return { ok: true };
   } catch (error) {
     console.error("[activation] code email failed for", email, error);
@@ -287,15 +446,22 @@ function parseKeyList(value: unknown): string[] {
 async function holdersOf(client: SupabaseClient, key: string): Promise<string[]> {
   // Keys are EMP-XXXX-XXXX-XXXX / EMP-<12>: letters, digits and dashes only, so
   // there is no LIKE metacharacter to escape.
-  const { data, error } = await client.from("users").select("email, license_key").like("license_key", `%${key}%`);
+  const { data, error } = await client
+    .from("users")
+    .select("email, license_key")
+    .like("license_key", `%${key}%`);
   if (error) throw new Error(error.message);
-  const rows = (Array.isArray(data) ? data : []) as Array<{ email?: string | null; license_key?: string | null }>;
+  const rows = (Array.isArray(data) ? data : []) as Array<{
+    email?: string | null;
+    license_key?: string | null;
+  }>;
   const owners: string[] = [];
   for (const row of rows) {
     const email = (row.email ?? "").trim().toLowerCase();
     // A substring hit is not a match — the LIKE only makes a list in one row
     // readable at all. The exact key must be an element.
-    if (email && parseKeyList(row.license_key).some((entry) => entry.toUpperCase() === key)) owners.push(email);
+    if (email && parseKeyList(row.license_key).some((entry) => entry.toUpperCase() === key))
+      owners.push(email);
   }
   return owners;
 }
@@ -304,7 +470,11 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
   let mine: string[];
   let owners: string[];
   try {
-    const { data, error } = await client.from("users").select("email, license_key").eq("email", email).limit(1);
+    const { data, error } = await client
+      .from("users")
+      .select("email, license_key")
+      .eq("email", email)
+      .limit(1);
     if (error) {
       console.warn("[activation] lock read failed:", error.message);
       return { ok: false, error: "We could not check that licence key. Please try again." };
@@ -312,7 +482,10 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
     mine = parseKeyList(((data ?? []) as Array<{ license_key?: string | null }>)[0]?.license_key);
     owners = await holdersOf(client, key);
   } catch (error) {
-    console.warn("[activation] lock lookup failed:", error instanceof Error ? error.message : error);
+    console.warn(
+      "[activation] lock lookup failed:",
+      error instanceof Error ? error.message : error,
+    );
     return { ok: false, error: "We could not check that licence key. Please try again." };
   }
 
@@ -343,7 +516,10 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
   // is nowhere to put the lock, and claiming otherwise would be a lie.
   if (!Array.isArray(written) || written.length === 0) {
     console.warn("[activation] no users row to lock", email);
-    return { ok: false, error: "We could not activate that licence key. Please sign in again and retry." };
+    return {
+      ok: false,
+      error: "We could not activate that licence key. Please sign in again and retry.",
+    };
   }
 
   try {
@@ -367,9 +543,12 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return;
   }
 
-  const body = (typeof request.body === "string" ? safeParse(request.body) : request.body) as
-    | { action?: Action; email?: string; code?: string; key?: string }
-    | null;
+  const body = (typeof request.body === "string" ? safeParse(request.body) : request.body) as {
+    action?: Action;
+    email?: string;
+    code?: string;
+    key?: string;
+  } | null;
   const action = body?.action;
   if (action !== "issueCode" && action !== "verifyCode" && action !== "claimKey") {
     response.status(400).json({ ok: false, error: "Unknown action" });
@@ -401,13 +580,20 @@ export default async function handler(request: ApiRequest, response: ApiResponse
   try {
     markedPaid = await isMarkedPaid(client, email);
   } catch (error) {
-    console.error("[activation] payment check failed:", error instanceof Error ? error.message : error);
-    response.status(200).json({ ok: false, error: "We could not confirm your account. Please try again." });
+    console.error(
+      "[activation] payment check failed:",
+      error instanceof Error ? error.message : error,
+    );
+    response
+      .status(200)
+      .json({ ok: false, error: "We could not confirm your account. Please try again." });
     return;
   }
   if (!markedPaid) {
     // Logged WITHOUT any code or messageId — there was none, by design.
-    console.warn(`[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`);
+    console.warn(
+      `[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`,
+    );
     // `notPaid` is a MACHINE-READABLE reason, and the client branches on this
     // flag rather than on the sentence. It used to match the error text with a
     // regex, so rewording the message silently broke the app's own routing:
@@ -431,7 +617,9 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     }
     const accepted = await acceptedCodes(email);
     if (!accepted.some((candidate) => safeEqual(candidate, code))) {
-      response.status(200).json({ ok: false, error: "That code is not right. Check your email and try again." });
+      response
+        .status(200)
+        .json({ ok: false, error: "That code is not right. Check your email and try again." });
       return;
     }
     response.status(200).json({ ok: true });

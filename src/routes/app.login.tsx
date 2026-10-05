@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
-import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
+import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail, MailX } from "lucide-react";
 import { toast } from "sonner";
 import { activateKey, appSignIn, appSignOut, getAppState, getDeviceId, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
@@ -367,6 +367,15 @@ function AppAccess() {
   const [verifyingCode, setVerifyingCode] = useState(false);
   /** Put a new code in the inbox for an account that is already mid-flow. */
   const [resendingCode, setResendingCode] = useState(false);
+  /**
+   * THE MAIL ROUTE ITSELF IS BROKEN — the server cannot send a code that any
+   * inbox will accept, because the `From:` domain cannot be authenticated.
+   *
+   * A separate screen from every other failure because the remedy is different:
+   * this account has paid and nothing on this screen can help, so the only
+   * honest offer is a person who can unlock them by hand.
+   */
+  const [mailBroken, setMailBroken] = useState(false);
 
   /**
    * Ask the database who this session is, and send an unpaid one straight to
@@ -690,6 +699,22 @@ function AppAccess() {
         }
         return;
       }
+      /* MAIL THAT CANNOT BE DELIVERED IS NOT "CHECK YOUR INBOX".
+       *
+       * The server refuses to send when the `From:` domain cannot be
+       * authenticated, and this account is a paying customer whose payment is
+       * fine. Showing them a code screen that will never receive a code, or
+       * sending them to the plans page, would be wrong in both cases: they have
+       * paid, and nothing they do on this screen can make the mail arrive.
+       *
+       * So it is named as what it is — a broken mail route with a person who
+       * can fix it by hand — rather than dressed up as anything the customer
+       * could retry.
+       */
+      if (codeSent.senderUnauthenticated) {
+        setMailBroken(true);
+        return;
+      }
       setCodeValue("");
       setCodeError("");
       setCodeStage({ email: clean });
@@ -905,6 +930,20 @@ function AppAccess() {
     setCodeError("");
   };
 
+  /**
+   * LEAVE THE "EMAIL IS DOWN" SCREEN.
+   *
+   * Also clears the stale code screen underneath, so returning to the form does
+   * not land the customer straight back on a code box for a message that was
+   * never sent.
+   */
+  const resetMailBroken = () => {
+    setMailBroken(false);
+    setCodeStage(null);
+    setCodeValue("");
+    setCodeError("");
+  };
+
   const [unlocking, setUnlocking] = useState(false);
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -938,7 +977,12 @@ function AppAccess() {
       {resuming ? (
         <ResumingView />
       ) : blockedEmail ? <AccountUsedView email={blockedEmail} onCancel={dismissBlocked} /> :
-      codeStage ? (
+      /* THE MAIL ROUTE IS BROKEN, so there is nothing to wait for. Checked
+         before `codeStage` because the code screen promises an email that is
+         never going to arrive, and showing it would be a broken promise. */
+      mailBroken ? (
+        <MailUnavailableView email={activeEmail ?? email} onCancel={resetMailBroken} />
+      ) : codeStage ? (
         <ActivationCodeView
           email={codeStage.email}
           value={codeValue}
@@ -1361,6 +1405,75 @@ function PlanSelection({
  * a code they are reading out of an email, it keeps the digits legible on a
  * phone, and it makes a mistyped digit obvious instead of silent.
  */
+/**
+ * THE EMAIL ROUTE IS DOWN — and this is a PAID account.
+ *
+ * The server refuses to send a code when the `From:` domain cannot be
+ * authenticated by a receiving server, because a send that is certain not to
+ * arrive is worse than an honest failure: it burns the customer's window and
+ * then tells them to check an inbox that will stay empty.
+ *
+ * So this screen does the three things that are actually true:
+ *   1. It does NOT say the code was sent. Nothing was.
+ *   2. It does NOT send them to pay. They already paid — that is verified
+ *      before a code is ever requested.
+ *   3. It names the one thing that works: a person who can unlock the account
+ *      by hand, and the email address to quote them.
+ *
+ * "Try again" is deliberately NOT the primary action. Retrying cannot help —
+ * the same unverified message will fail the same way — so offering it would
+ * invite a customer to sit and wait for a second failure.
+ */
+function MailUnavailableView({ email, onCancel }: { email: string; onCancel: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const copyEmail = async () => {
+    try {
+      await navigator.clipboard.writeText(email);
+      setCopied(true);
+    } catch {
+      /* clipboard blocked — the address is on screen to read or type */
+    }
+  };
+  return <div className="-translate-y-4 text-center">
+    <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-amber-400/10 text-amber-300">
+      <MailX className="size-9" />
+    </div>
+    <h1 className="mt-7 text-3xl font-bold">Email is temporarily down</h1>
+    <p className="mt-3 text-sm leading-6 text-[#8a9298]">
+      We could not send your activation code just now. This is a problem with our email sending, not
+      with your account —<span className="font-semibold text-white"> your payment is fine and you are
+      not being asked to pay again.</span>
+    </p>
+
+    <section className="mt-8 rounded-[2rem] border border-amber-300/25 bg-[#10161a] p-6 text-left shadow-[0_0_28px_rgba(245,158,11,.10)]">
+      <p className="text-sm font-semibold text-white">Message support and we will unlock you manually</p>
+      <p className="mt-2 text-sm leading-6 text-[#8a9298]">
+        Send us this email address and we will open your account by hand — you will not need the code.
+      </p>
+      {email ? (
+        <button
+          type="button"
+          onClick={() => void copyEmail()}
+          className="mt-4 flex w-full items-center justify-between gap-3 rounded-2xl border border-[#202930] bg-[#070d10] px-4 py-3 text-left"
+        >
+          <span className="truncate text-sm font-semibold text-[#55c7ff]">{email}</span>
+          <span className="shrink-0 text-[10px] font-black uppercase tracking-[0.12em] text-[#8a9298]">
+            {copied ? "Copied" : "Copy"}
+          </span>
+        </button>
+      ) : null}
+    </section>
+
+    <button
+      type="button"
+      onClick={onCancel}
+      className="mt-6 h-11 w-full text-sm font-semibold text-[#8a9298] transition-colors hover:text-white"
+    >
+      Use a different email
+    </button>
+  </div>;
+}
+
 function ActivationCodeView({
   email,
   value,
@@ -1451,7 +1564,7 @@ function ActivationCodeView({
         Use a different email
       </button>
     </div>
-    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 5 minutes. It can be sent again if it expires.</p>
+    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 2 minutes. It can be sent again if it expires.</p>
   </div>;
 }
 

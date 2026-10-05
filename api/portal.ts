@@ -71,7 +71,70 @@ type Action = "sendEmail" | "deleteMessage";
 const SUPABASE_URL = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
 const SERVICE_ROLE = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
 const BREVO_API_KEY = (process.env["BREVO_API_KEY"] ?? "").trim();
-const SENDER = (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() || "eamigratepro@gmail.com";
+const SENDER =
+  (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim() ||
+  "eamigratepro@gmail.com";
+
+/**
+ * CAN THIS From: ADDRESS BE AUTHORISED BY A RECEIVING SERVER?
+ *
+ * The same rule as `api/activation.ts`, and for the same reason. This function
+ * sends licence keys and admin broadcasts — mail a customer waits for and mail
+ * the platform itself depends on — and it used to answer "ok" for any 201.
+ *
+ * A 201 from Brevo is receipt, not delivery. With a free-mail `From:` relayed
+ * through Brevo the message is unauthenticated: `gmail.com`'s SPF is
+ * `v=spf1 redirect=_spf.google.com`, which authorises Google's servers and not
+ * Brevo's, so the receiving server is free to defer or drop it. That is the
+ * measured behaviour on this account — a two-hour-old message arriving.
+ *
+ * Refusing here rather than queueing is the point: a broadcast that silently
+ * never reaches anybody is the worst outcome available, because the console
+ * records it as sent and the owner believes every customer was told.
+ */
+const FREEMAIL_DOMAINS = new Set([
+  "gmail.com",
+  "googlemail.com",
+  "yahoo.com",
+  "ymail.com",
+  "hotmail.com",
+  "outlook.com",
+  "live.com",
+  "msn.com",
+  "aol.com",
+  "icloud.com",
+  "me.com",
+  "protonmail.com",
+  "proton.me",
+  "gmx.com",
+  "gmx.de",
+  "mail.com",
+  "zoho.com",
+  "yandex.com",
+  "web.de",
+  "tutanota.com",
+  "fastmail.com",
+  "hey.com",
+]);
+
+/** The domain part of `From:`, and whether it can ever be authenticated.
+ *
+ * The PARENT domain is checked too: `mail@yahoo.com` is under `yahoo.com`, and
+ * matching only the full string let that through. `scripts/verify-sender-guard.ts`
+ * sends from exactly that shape because it is the one most likely to slip past a
+ * list.
+ */
+function senderIsAuthenticatable(): boolean {
+  const at = SENDER.lastIndexOf("@");
+  if (at === -1) return false;
+  const domain = SENDER.slice(at + 1)
+    .trim()
+    .toLowerCase();
+  if (FREEMAIL_DOMAINS.has(domain)) return false;
+  const labels = domain.split(".");
+  const parent = labels.length > 2 ? labels.slice(-2).join(".") : domain;
+  return !FREEMAIL_DOMAINS.has(parent);
+}
 
 const NOT_CONFIGURED = "Email service is not configured on the server.";
 const NOT_AUTHORISED = "Only an administrator can do that.";
@@ -80,7 +143,9 @@ type Reply = { ok: boolean; error?: string };
 
 function db(): SupabaseClient | null {
   if (!SUPABASE_URL || !SERVICE_ROLE) return null;
-  return createClient(SUPABASE_URL, SERVICE_ROLE, { auth: { persistSession: false, autoRefreshToken: false } });
+  return createClient(SUPABASE_URL, SERVICE_ROLE, {
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
 }
 
 /**
@@ -129,7 +194,10 @@ async function isAdmin(client: SupabaseClient, email: string): Promise<boolean> 
 
   // 1. The console's own database role.
   const flag = await client.from("users").select("is_admin").eq("email", clean).limit(1);
-  if (!flag.error && ((flag.data ?? []) as Array<{ is_admin?: boolean | null }>).some((r) => r.is_admin === true)) {
+  if (
+    !flag.error &&
+    ((flag.data ?? []) as Array<{ is_admin?: boolean | null }>).some((r) => r.is_admin === true)
+  ) {
     return true;
   }
 
@@ -160,10 +228,30 @@ async function mailViaBrevo(options: {
     console.error("[portal] BREVO_API_KEY is not set — email skipped for", options.to);
     return { ok: false, error: NOT_CONFIGURED };
   }
+  if (!senderIsAuthenticatable()) {
+    console.error(
+      `[portal] REFUSING to send to ${options.to}: the From: address ${SENDER} is a free-mail domain that no receiving server authorises for Brevo.`,
+    );
+    console.error(
+      "[portal] SPF for gmail.com is `v=spf1 redirect=_spf.google.com` — it does not list Brevo, so the message is unauthenticated and is deferred or dropped.",
+    );
+    console.error(
+      "[portal] FIX (Brevo + registrar access, not a code change): authenticate a domain you own in Brevo, publish its SPF and DKIM records, then set BREVO_SENDER_EMAIL to an address on that domain.",
+    );
+    return {
+      ok: false,
+      error:
+        "Email cannot be delivered from the current sending address (BREVO_SENDER_EMAIL). Authenticate a sending domain in Brevo and set BREVO_SENDER_EMAIL, then retry.",
+    };
+  }
   try {
     const response = await fetch("https://api.brevo.com/v3/smtp/email", {
       method: "POST",
-      headers: { accept: "application/json", "api-key": BREVO_API_KEY, "content-type": "application/json" },
+      headers: {
+        accept: "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json",
+      },
       body: JSON.stringify({
         sender: { name: "EA Migrate Team", email: SENDER },
         to: [{ email: options.to }],
@@ -176,7 +264,16 @@ async function mailViaBrevo(options: {
     const body = await response.text().catch(() => "");
     // Brevo answers 201 on success. Logged verbatim so a deploy log shows
     // whether a refusal was "sender not verified" or a bad key.
-    console.log(`[portal] Brevo response for ${options.to}: HTTP ${response.status}`, body.slice(0, 400));
+    console.log(
+      `[portal] Brevo response for ${options.to}: HTTP ${response.status}`,
+      body.slice(0, 400),
+    );
+    /* WORDING MATTERS HERE. `accepted` is what Brevo answered; `delivered` is
+     * something only the receiving server can say, minutes later, and this
+     * function never learns it without a webhook. Logging "sent" for a queued
+     * message is what made a two-hour-old arrival look like an instant one. */
+    if (response.ok)
+      console.log(`[portal] Brevo QUEUED (not yet delivered) the message for ${options.to}`);
     if (!response.ok) {
       let detail = body.slice(0, 200);
       try {
@@ -185,7 +282,10 @@ async function mailViaBrevo(options: {
       } catch {
         /* keep the raw body */
       }
-      return { ok: false, error: `The email service refused the message (${response.status})${detail ? `: ${detail}` : "."}` };
+      return {
+        ok: false,
+        error: `The email service refused the message (${response.status})${detail ? `: ${detail}` : "."}`,
+      };
     }
     return { ok: true };
   } catch (error) {
@@ -203,9 +303,15 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return;
   }
 
-  const body = (typeof request.body === "string" ? safeParse(request.body) : request.body) as
-    | { action?: Action; to?: string; subject?: string; html?: string; text?: string; id?: string; adminEmail?: string }
-    | null;
+  const body = (typeof request.body === "string" ? safeParse(request.body) : request.body) as {
+    action?: Action;
+    to?: string;
+    subject?: string;
+    html?: string;
+    text?: string;
+    id?: string;
+    adminEmail?: string;
+  } | null;
 
   const action = body?.action;
   if (action !== "sendEmail" && action !== "deleteMessage") {
@@ -255,7 +361,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.status(403).json({ ok: false, error: NOT_AUTHORISED });
     return;
   }
-  const { error, count } = await client.from("app_messages").delete({ count: "exact" }).eq("id", id);
+  const { error, count } = await client
+    .from("app_messages")
+    .delete({ count: "exact" })
+    .eq("id", id);
   if (error) {
     console.error("[portal] delete failed:", error.message);
     response.status(200).json({ ok: false, error: error.message });
