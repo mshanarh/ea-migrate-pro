@@ -1451,7 +1451,7 @@ function ActivationCodeView({
         Use a different email
       </button>
     </div>
-    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 60 minutes.</p>
+    <p className="mt-5 text-xs leading-5 text-[#59646b]">The code stops working after 5 minutes. It can be sent again if it expires.</p>
   </div>;
 }
 

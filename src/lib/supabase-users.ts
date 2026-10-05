@@ -143,24 +143,26 @@ export async function registerWithEmail(
   // rights); neither opens the trading app.
   if (!user) return { outcome: "checkout", user: null, verified: false };
   // PAYMENT IS THE ONLY THING THAT OPENS THE APP.
-  //   a ledger row     → the console's "Mark paid" wrote it, or a real licence-key
-  //                      activation did. `paid_emails` is the same table the
-  //                      console's Paid tab reads, so "paid" here means exactly
-  //                      what "Paid" means there.
-  //   a licence key    → the key only exists because a mentor/admin issued it
-  //                      AFTER payment, so it is proof of payment, not
-  //                      permission. Kept deliberately: a client who has paid
-  //                      but not yet activated their key has no ledger row
-  //                      yet, and dropping this would send them back to
-  //                      checkout to pay a second time.
-  //   neither          → checkout, on Android, iOS and the web alike.
+  //   a ledger row     → the console's "Mark paid" wrote it. `paid_emails` is
+  //                      the same table the console's Paid tab reads, so
+  //                      "paid" here means exactly what "Paid" means there.
+  //   nothing else     → checkout, on Android, iOS and the web alike.
+  //
+  // THE LICENCE-KEY GRANT IS GONE, and it was the second way in. It used to
+  // read `license_keys.email`, which is the address HOLDING the key — for a
+  // mentor that is the mentor who ISSUED it to a client. Measured live: 24 key
+  // holders, 20 of them with no ledger row at all, so they are distributors
+  // rather than paying customers. Treating that as payment is what let app
+  // users the owner never marked paid keep opening the app. A paying customer
+  // who has not activated a key is still answered by their ledger row, which
+  // the console's "Mark paid" writes, so nobody has to pay twice to be let in.
+  //
   // `users.is_paid` is deliberately NOT read: it is a mirror column the anon
   // key may write, so it drifts and it can be forged. Mentor approval is
   // deliberately NOT consulted: approving somebody in the mentor portal says
   // nothing about the app, and treating it as permission is what let unpaid
   // people in.
   if (await emailPaidInLedger(address)) return { outcome: "allow", user, verified: true };
-  if (await emailHasLicenseKey(address)) return { outcome: "allow", user, verified: true };
   return { outcome: "checkout", user, verified: false };
 }
 
@@ -276,19 +278,26 @@ export async function emailPaidInLedger(email: string): Promise<boolean> {
 }
 
 /**
- * CLOUD PROOF OF PAYMENT after a real key activation. Three writes, all via
- * the anon key (RLS allows them):
+ * CLOUD PROOF OF A KEY ACTIVATION. TWO writes, both via the anon key:
  *   1. CLAIM the key — an open key (email null) gets the activator's email
- *      written onto the license_keys row. Without this the payment gate's
- *      "license_keys bound to this email" check still missed, users.is_paid
- *      stayed false and the user was bounced to Whop checkout RIGHT AFTER
- *      activating — the "put my key in and it kicked me out" bug.
- *   2. Set users.is_paid = true in the CLOUD (the local markEmailPaid only
- *      wrote localStorage, which a new device or the route guards ignore).
- *   3. BIND the device in the cloud — the sign-in path binds too, but the
- *      License view (which admins and locally-paid users see directly)
- *      used to skip binding completely, which is why admins were never
- *      asked to reactivate after delete + reinstall.
+ *      written onto the license_keys row, so the single-use lock in
+ *      api/activation.ts has an owner to compare against.
+ *   2. BIND the device in the cloud — the sign-in path binds too, but the
+ *      License view used to skip binding completely, which is why admins were
+ *      never asked to reactivate after delete + reinstall.
+ *
+ * IT NO LONGER WRITES PAYMENT, AND THAT IS THE POINT.
+ *
+ * This used to also do `users.is_paid = true` and upsert a `paid_emails` row
+ * with a timestamp. Both are reachable with the PUBLIC anon key (verified live),
+ * so a browser could grant itself the one entitlement the whole app is built
+ * around: hold any activatable licence key, post the two writes, and the ledger
+ * then says the owner marked you paid. "Only people I marked paid can use the
+ * app" is not true while the app can write that table itself.
+ *
+ * Payment is written in exactly one place — the console's "Mark paid"
+ * (setUserPaid in src/lib/admin-store.ts). Activation proves you hold a key; it
+ * does not decide what you paid.
  */
 export async function recordKeyActivationInCloud(
   key: string,
@@ -301,11 +310,11 @@ export async function recordKeyActivationInCloud(
   const cleanKey = key.trim().toUpperCase().replace(/\s+/g, "");
   if (!address || !cleanKey) return { ok: false, error: "Missing email or key." };
   // SERVER-SIDE CLAIM (preferred). The database checks that this key really
-  // exists and is not already owned by somebody else, then records payment
-  // and the device binding in one transaction. This replaced a raw client
-  // write of is_paid, which meant anyone could post is_paid=true for their
-  // own email and grant themselves the app. Falls back to the direct writes
-  // below only when the function has not been installed yet.
+  // exists and is not already owned by somebody else, then records the device
+  // binding in one transaction. This replaced a raw client write of is_paid,
+  // which meant anyone could post is_paid=true for their own email and grant
+  // themselves the app. Falls back to the direct writes below only when the
+  // function has not been installed yet.
   try {
     const { data: claimed, error: claimRpcError } = await dbClient.rpc("claim_license_key", {
       p_key: cleanKey,
@@ -332,29 +341,16 @@ export async function recordKeyActivationInCloud(
   if (claimError && claimError.code !== "42703") {
     console.warn("[key-activation] cloud claim failed:", claimError.message);
   }
-  // 2. Mark the email paid IN THE DATABASE so every future gate check —
-  //    this device, a reinstall, the Re-activate Client page — passes.
-  // 3. Bind THIS device (only when the row is unbound — never steal).
-  // Steps 1–3 touch different columns, so the paid write and the read-before-
-  // bind run IN PARALLEL; the bind update itself only fires when the row was
-  // unbound. Sequential awaits used to stack three round trips on every unlock.
-  // A REAL RE-PAYMENT CLEARS THE REVOCATION MARKER, mirroring what
-  // claim_license_key does on the server. The app gate treats a paid_emails row
-  // with paid_at = null as an explicit "owner marked this account unpaid", and
-  // that marker deliberately outranks is_paid — otherwise "Mark unpaid" would
-  // still be undone by the licence-key fallback. Restoring the timestamp here
-  // is what makes revocation mean "until they pay again" rather than "forever",
-  // so this legacy path must behave exactly like the RPC one.
-  const paidPromise = Promise.all([
-    dbClient.from("users").update({ is_paid: true }).eq("email", address),
-    dbClient.from("paid_emails").upsert({ email: address, paid_at: new Date().toISOString() }, { onConflict: "email" }),
-  ]).then(([result]) => result);
+  // 2. Bind THIS device (only when the row is unbound — never steal).
+  //
+  // NO PAYMENT WRITE HERE — see the doc comment above. This used to write
+  // `users.is_paid = true` and upsert a `paid_emails` row with a timestamp, so
+  // any browser holding an activatable key could grant itself the one
+  // entitlement this app is built around. Only the console's Mark paid
+  // (setUserPaid in src/lib/admin-store.ts) writes payment now, and a real
+  // re-payment clears the revocation marker there, exactly as it must.
   if (deviceId) {
-    const [{ error: paidError }, { data: bound }] = await Promise.all([
-      paidPromise,
-      dbClient.from("users").select("device_id").eq("email", address).maybeSingle(),
-    ]);
-    if (paidError) return { ok: false, error: paidError.message };
+    const { data: bound } = await dbClient.from("users").select("device_id").eq("email", address).maybeSingle();
     const boundDeviceId = (bound as { device_id?: string | null } | null)?.device_id ?? null;
     if (!boundDeviceId) {
       const { error: bindError } = await dbClient
@@ -363,9 +359,6 @@ export async function recordKeyActivationInCloud(
         .eq("email", address);
       if (bindError) console.warn("[key-activation] device bind failed:", bindError.message);
     }
-  } else {
-    const { error: paidError } = await paidPromise;
-    if (paidError) return { ok: false, error: paidError.message };
   }
   return { ok: true };
 }

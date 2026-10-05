@@ -144,9 +144,22 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
 }
 
 /* ── 1. The six-digit code ──────────────────────────────────────────────
- * NEVER STORED. A pure function of (secret, email, 30-minute window), so
- * there is no row to forge and nothing to clean up. The previous window is
- * also accepted, so a code works for at most 60 minutes.
+ * NEVER STORED. A pure function of (secret, email, time window), so there is
+ * no row to forge and nothing to clean up.
+ *
+ * THE WINDOW IS FIVE MINUTES, as the owner asked. See the `WINDOW_MS` note for
+ * why that is only viable once the sender domain is authenticated.
+ *
+ * History, because it is the reason the warning above matters: delivery on this
+ * account has been MEASURED at roughly two hours (the owner reported a
+ * two-hour-old message arriving; a live send at 2026-10-05T00:20Z behaved the
+ * same way). An earlier build used a 6-hour window purely to survive that lag,
+ * and while it worked it was papering over a broken sender rather than fixing
+ * it. Five minutes is the correct setting for a working mail path.
+ *
+ * This does not widen the brute-force surface in any way that matters: the
+ * code for a window is a fixed 6-digit value, so the number of guesses needed
+ * is the same 1,000,000 regardless of how wide the window is.
  *
  * "MARK THE CODE USED SO IT CAN ONLY BE USED ONCE" IS DELIBERATELY NOT DONE
  * HERE, and the reason is worth stating plainly: a code cannot be marked used
@@ -163,7 +176,25 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
  * times as the holder of that paid inbox likes; what cannot happen twice is
  * activating a key.
  */
-const WINDOW_MS = 30 * 60 * 1000;
+/** 5 MINUTES, and ONLY the current window is accepted.
+ *
+ * The owner asked for codes to expire in five minutes, so that is what this is:
+ * `PAST_WINDOWS = 0` means a code stops being accepted the moment its window
+ * closes, so nothing lives on for longer than the window itself.
+ *
+ * ⚠ THIS ONLY WORKS IF MAIL ARRIVES FAST. Delivery on this account has been
+ * observed taking about TWO HOURS, because the sender is a @gmail.com address
+ * relayed through Brevo and `gmail.com`'s SPF record does not authorise Brevo.
+ * Until that is fixed — authenticate a domain and set BREVO_SENDER_EMAIL — a
+ * five-minute code will expire long before the email reaches the inbox, and the
+ * symptom will be exactly "no code is ever sent". Five minutes is a sound
+ * choice the moment the sender is authenticated, because a code only ever
+ * proves inbox control and has no reason to linger. It is not a workaround for
+ * a slow mail path, and it is not one.
+ */
+const WINDOW_MS = 5 * 60 * 1000;
+/** How many PAST windows still verify. 0 = expire with the window, as asked. */
+const PAST_WINDOWS = 0;
 
 /**
  * The code for one 30-minute window: EXACTLY six digits.
@@ -183,7 +214,8 @@ async function codeForWindow(email: string, window: number): Promise<string> {
 
 async function acceptedCodes(email: string): Promise<string[]> {
   const current = Math.floor(Date.now() / WINDOW_MS);
-  return Promise.all([codeForWindow(email, current), codeForWindow(email, current - 1)]);
+  const windows = Array.from({ length: PAST_WINDOWS + 1 }, (_, back) => current - back);
+  return Promise.all(windows.map((window) => codeForWindow(email, window)));
 }
 
 async function mailCode(email: string, code: string): Promise<Reply> {
@@ -205,11 +237,11 @@ async function mailCode(email: string, code: string): Promise<Reply> {
               <h1 style="margin:12px 0 0;font-size:22px;">Your activation code</h1>
               <p style="margin:16px 0 0;font-size:15px;line-height:1.6;color:#C9C9D1;">Use this code in the app to continue to your licence key.</p>
               <p style="margin:24px 0;font-size:40px;font-weight:bold;letter-spacing:0.3em;color:#fff;text-align:center;">${code}</p>
-              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 60 minutes. If you did not ask to sign in, ignore this email.</p>
+              <p style="margin:0;font-size:13px;line-height:1.6;color:#6C6C78;">It stops working after 5 minutes. If you did not ask to sign in, ignore this email.</p>
             </div></div>`,
-        textContent: `Your EA Migrate activation code is ${code}. It expires in 60 minutes.`,
+        textContent: `Your EA Migrate activation code is ${code}. It stops working after 5 minutes.`,
       }),
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(8_000),
     });
     if (!response.ok) {
       const body = await response.text().catch(() => "");

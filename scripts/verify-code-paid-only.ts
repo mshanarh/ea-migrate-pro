@@ -20,6 +20,8 @@
  *   5. A REPEATED request for a code is allowed (a code is not a one-shot
  *                 token), but the licence KEY is still single-use — the rule
  *                 that actually matters is enforced on the key, not the code.
+ *   6. Codes EXPIRE: only the current 5-minute window verifies, so a code from
+ *                 the previous window is refused.
  *
  * HOW: `globalThis.fetch` is wrapped so calls to api.brevo.com are recorded and
  * answered locally; everything else (the Supabase client) passes straight
@@ -101,8 +103,9 @@ async function main() {
   const key = await crypto.subtle.importKey("raw", enc.encode(serviceRole), { name: "HMAC", hash: "SHA-256" }, false, [
     "sign",
   ]);
-  const codeFor = async (email: string) => {
-    const window = Math.floor(Date.now() / (30 * 60 * 1000));
+  const codeFor = async (email: string, back = 0) => {
+    // MUST match api/activation.ts: 5-minute windows, current only.
+    const window = Math.floor(Date.now() / (5 * 60 * 1000)) - back;
     const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`eamp-activation-v1|${email}|${window}`));
     const hex = Array.from(new Uint8Array(sig))
       .map((b) => b.toString(16).padStart(2, "0"))
@@ -191,6 +194,21 @@ async function main() {
     repeatCode.body.ok === true,
     repeatCode.body.error ?? "",
   );
+
+  /* 6 — THE FIVE-MINUTE RULE. Only the CURRENT window is accepted, so a code
+   * from the previous window must be refused. This is the assertion the whole
+   * change rests on: without it, "everything passes" could just mean the check
+   * stopped checking. */
+  const justExpired = await codeFor(PAID, 1);
+  const stale = await call({ action: "verifyCode", email: PAID, code: justExpired });
+  check(
+    "a code from the PREVIOUS 5-minute window is refused",
+    stale.body.ok === false,
+    stale.body.ok ? "a stale code was ACCEPTED — codes are not expiring" : "",
+  );
+  const fresh = await codeFor(PAID, 0);
+  const live = await call({ action: "verifyCode", email: PAID, code: fresh });
+  check("a code from the CURRENT window still verifies", live.body.ok === true, live.body.error ?? "");
 
   // Clean up only what this probe created.
   await admin.from("users").update({ license_key: null }).eq("email", PAID);

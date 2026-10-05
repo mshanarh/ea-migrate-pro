@@ -74,7 +74,8 @@ async function derivedCode(email: string): Promise<string> {
     false,
     ["sign"],
   );
-  const window = Math.floor(Date.now() / (30 * 60 * 1000));
+  // MUST match api/activation.ts: 5-minute windows, current only.
+  const window = Math.floor(Date.now() / (5 * 60 * 1000));
   const sig = await crypto.subtle.sign("HMAC", key, enc.encode(`eamp-activation-v1|${email}|${window}`));
   const digest = Array.from(new Uint8Array(sig))
     .map((b) => b.toString(16).padStart(2, "0"))

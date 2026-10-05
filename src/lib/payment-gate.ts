@@ -7,10 +7,14 @@
  * from SUPABASE (and Whop, server-side) only:
  *
  *   paid    → the console's payment LEDGER (`paid_emails`) holds a row with a
- *             timestamp for this email, OR a license_keys row is bound to the
- *             email (the key only exists because they paid), OR Whop reports an
- *             active membership FOR OUR PRODUCT — and only when WHOP_PRODUCT_ID
- *             is set, since an unscoped query matches any product on Whop
+ *             timestamp for this email, OR Whop reports an active membership FOR
+ *             OUR PRODUCT — and only when WHOP_PRODUCT_ID is set, since an
+ *             unscoped query matches any product on Whop.
+ *             NOTHING ELSE. A licence key bound to the email does NOT open the
+ *             app — see the NO LICENCE-KEY FALLBACK note inside
+ *             computeFromDatabase. The key's holder is the mentor who issued
+ *             it, not a customer, and that fallback is precisely how app users
+ *             the owner never marked paid kept getting in.
  *   revoked → the owner pressed "Mark unpaid" (`paid_emails` row with
  *             `paid_at = null`), or pressed "Reject" for an account that HAD
  *             paid. Both mean something was taken away, so they are never
@@ -130,8 +134,8 @@ const cache = new Map<string, Resolution>();
  *
  * Bump this whenever the access rules change. Nothing in Supabase is touched.
  */
-export const SESSION_VERSION = 3;
-const SESSION_VERSION_KEY = "eamp_session_v3";
+export const SESSION_VERSION = 4;
+const SESSION_VERSION_KEY = "eamp_session_v4";
 
 /**
  * True exactly ONCE per device per version bump. The version is written
@@ -196,24 +200,6 @@ export async function resolveCloudAccess(
     console.warn("[payment-gate] cloud check failed:", error);
     return null;
   }
-}
-
-/** Is any license key bound to this email? Exact match, then case-insensitive. */
-async function emailHasLicenseKeyCloud(clean: string): Promise<boolean> {
-  const { data: license } = await supabase!
-    .from("license_keys")
-    .select("key")
-    .eq("email", clean)
-    .limit(1)
-    .maybeSingle();
-  if (license) return true;
-  const { data: licenseLoose } = await supabase!
-    .from("license_keys")
-    .select("key")
-    .ilike("email", clean)
-    .limit(1)
-    .maybeSingle();
-  return !!licenseLoose;
 }
 
 /**
@@ -366,10 +352,17 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   // rejected account could ever come back, which is the honest thing to offer.
   if (await isRejected(clean)) return "unpaid";
 
-  // A license_keys row bound to this email is payment in practice — the key
-  // only exists because somebody paid for it. Exact match first, then a
-  // case-insensitive fallback.
-  if (await emailHasLicenseKeyCloud(clean)) return "paid";
+  // NO LICENCE-KEY FALLBACK. IT IS GONE, AND THIS IS WHY.
+  //
+  // `license_keys.email` is the address that HOLDS the key, which for a mentor
+  // is the mentor who ISSUED it to their client. Measured live on this database:
+  // 24 key holders, and 20 of them have NO row in the payment ledger — they are
+  // distributors, not customers. Answering "paid" for them is exactly why app
+  // users the owner never marked paid could still open the app. Recount with
+  // `bun scripts/verify-ledger-only-access.ts`, which prints both lists.
+  //
+  // The ledger read above is now the ONLY thing that opens this app, which is
+  // what "paid means the owner marked this email paid" has to mean.
 
   // Whop — the checkout source of truth, verified SERVER-side with the
   // WHOP_API_KEY (never from the browser). DYNAMIC import: supabase.server
