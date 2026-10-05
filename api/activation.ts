@@ -35,6 +35,7 @@
  *   MAILJET_API_KEY             Mailjet public API key
  *   MAILJET_SECRET_KEY          Mailjet private API key
  *   MAILJET_SENDER_EMAIL        the From address; falls back to eamigratepro@gmail.com
+ *   ADMIN_EMAILS                comma-separated; these skip the paid_emails check
  *   SUPABASE_URL                optional; VITE_SUPABASE_URL is used otherwise
  *
  * NOTHING here trusts the caller: entitlement is re-read from the database on
@@ -84,11 +85,43 @@ const NOT_ENTITLED = "This email is not marked as paid. Contact admin.";
  */
 const ALREADY_IN_USE = "License key already in use";
 
+/**
+ * Administrators, from `ADMIN_EMAILS` — a comma-separated list.
+ *
+ * An operator has to be able to sign in and exercise the code step without the
+ * console first having to mark their own inbox as paid, so these addresses skip
+ * the `paid_emails` lookup. Read from the environment rather than hardcoded so
+ * the list can be changed by the owner without a code change, and so this
+ * function never becomes a place where a stale address is baked in.
+ *
+ * An unset variable means NO bypass, not "everyone". An empty allow-list that
+ * defaulted to allow-all would hand every code request in the app to anyone who
+ * asked for one, so the safe reading is the restrictive one.
+ */
+const ADMIN_EMAILS = (process.env["ADMIN_EMAILS"] ?? "")
+  .split(",")
+  .map((address) => address.trim().toLowerCase())
+  .filter(Boolean);
+
 type Action = "issueCode" | "verifyCode" | "claimKey";
 
 type Reply =
   | { ok: true; alreadyInUse?: boolean }
-  | { ok: false; unavailable?: boolean; alreadyInUse?: boolean; notPaid?: boolean; error: string };
+  | {
+      ok: false;
+      unavailable?: boolean;
+      alreadyInUse?: boolean;
+      notPaid?: boolean;
+      /**
+       * MACHINE-READABLE, like `notPaid` above: the client branches on the flag
+       * rather than on the sentence, so rewording the message cannot silently
+       * break the app's own routing.
+       */
+      rateLimited?: boolean;
+      /** Whole minutes until the next code request would be allowed. */
+      retryAfterMinutes?: number;
+      error: string;
+    };
 
 function db(): SupabaseClient | null {
   if (!SUPABASE_URL || !SERVICE_ROLE) return null;
@@ -163,6 +196,202 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
   // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
   // unpaid"), not a payment. It must not pass.
   return ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
+}
+
+/**
+ * "IS THIS AN ADMINISTRATOR?" — the bypass that lets an operator use the code
+ * step without being marked as a paying customer.
+ *
+ * Three signals, in order of cost:
+ *   1. `ADMIN_EMAILS` from the environment — free, no query at all.
+ *   2. `users.is_admin`, the flag the console's own "Make Admin" button writes.
+ *   3. `portal_accounts.data` -> `role === "admin"`, because the console gate
+ *      opens on an account whose ROLE is admin even when that table has no row.
+ *
+ * This mirrors `isAdmin` in api/portal.ts on purpose: a console that opens for
+ * an address must be able to request a code for that same address, or the owner
+ * is locked out of the very screen they use to fix a customer's problem.
+ *
+ * HONEST SCOPE, and it matters: this is a ROLE CHECK, not an authenticated
+ * session — the caller names the address it wants. That is the same trust level
+ * api/portal.ts already operates at, and it is bounded: passing this only skips
+ * the PAYMENT lookup. It does not grant a licence, does not unlock a key, and
+ * does not bypass the rate limit below.
+ *
+ * Any failure here resolves to FALSE. A database hiccup must not hand out an
+ * entitlement nobody actually holds.
+ */
+async function isAdminAccount(client: SupabaseClient, email: string): Promise<boolean> {
+  if (ADMIN_EMAILS.includes(email)) return true;
+  try {
+    const flag = await client.from("users").select("is_admin").eq("email", email).limit(1);
+    if (!flag.error && ((flag.data ?? []) as Array<{ is_admin?: boolean | null }>).some((r) => r.is_admin === true)) {
+      return true;
+    }
+    const portal = await client.from("portal_accounts").select("data").eq("email", email).limit(1);
+    for (const row of (portal.data ?? []) as Array<{ data?: string | null }>) {
+      if (!row.data) continue;
+      try {
+        const parsed = JSON.parse(row.data) as { role?: unknown };
+        if (typeof parsed.role === "string" && parsed.role.toLowerCase() === "admin") return true;
+      } catch {
+        /* a blob that will not parse carries no role */
+      }
+    }
+  } catch (error) {
+    console.warn(
+      "[activation] admin check failed, treating as non-admin:",
+      error instanceof Error ? error.message : error,
+    );
+  }
+  return false;
+}
+
+/* -- Rate limit: 3 code requests per email per 60 minutes ------------- */
+
+/** Requests allowed inside one window. */
+const RATE_LIMIT_MAX = 3;
+/** How long a window lasts. The count resets once this has passed. */
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000;
+/** The exact wording the owner asked for, shown when the 4th request arrives. */
+const RATE_LIMITED = "Max 3 codes requested, wait 60 minutes";
+
+/**
+ * Warned ONCE per process, because a missing table would otherwise print this
+ * on every single code request and bury the real errors in the deploy log.
+ */
+let rateLimitTableMissingWarned = false;
+
+type RateDecision = { allowed: true } | { allowed: false; retryAfterMinutes: number };
+
+/**
+ * Write the limiter's row, and report whether the write actually landed.
+ *
+ * Returns false when the guarded UPDATE matched no row, which is how a lost
+ * update is detected: the count we read is no longer the count in the table, so
+ * somebody else moved it between our read and our write and the caller must
+ * re-read and decide again.
+ *
+ * The guard is what makes the limit hold under two simultaneous requests for
+ * the same inbox. Without it both read `count = 2`, both write 3, and a 4th
+ * request slips through — a limit that can be beaten by pressing the button
+ * twice at once is not a limit.
+ */
+async function writeRateRow(
+  client: SupabaseClient,
+  email: string,
+  values: { count: number; first_request_at?: string; last_request_at?: string },
+  guardCount: number | null,
+): Promise<boolean> {
+  if (guardCount === null) {
+    const inserted = await client.from("email_code_requests").insert({ email, ...values });
+    if (!inserted.error) return true;
+    // 23505 = another request created the row between our read and this write.
+    // Take it over rather than losing the request to a uniqueness error.
+    if (inserted.error.code === "23505") {
+      const taken = await client
+        .from("email_code_requests")
+        .update(values)
+        .eq("email", email)
+        .select("email");
+      return !taken.error && Array.isArray(taken.data) && taken.data.length > 0;
+    }
+    throw new Error(inserted.error.message);
+  }
+  const updated = await client
+    .from("email_code_requests")
+    .update(values)
+    .eq("email", email)
+    .eq("count", guardCount)
+    .select("email");
+  if (updated.error) throw new Error(updated.error.message);
+  return Array.isArray(updated.data) && updated.data.length > 0;
+}
+
+/**
+ * "MAY THIS INBOX HAVE ONE MORE CODE?" — and record that it did.
+ *
+ * One row per email, counted inside a 60-minute window anchored on
+ * `first_request_at`. The 4th request inside a window is refused; once the
+ * window has aged out, the count resets to 1 and the address starts fresh. That
+ * is a rolling window from the FIRST request, not a sliding one — three
+ * requests spread across an hour and a half are still three, which is the
+ * behaviour the owner described.
+ *
+ * WHY A TABLE AND NOT A MAP IN THIS MODULE: this code runs as a stateless
+ * serverless function. An in-memory counter is destroyed by every cold start
+ * and is not shared between concurrent instances, so "3 per hour" would really
+ * mean "3 per cold start" — which on a busy deployment is no limit at all.
+ *
+ * IF THE TABLE IS MISSING, THE REQUEST IS ALLOWED. This deployment has no DDL
+ * path (exec_sql answers PGRST202), so the table cannot be created from here —
+ * it has to be run by hand (supabase/email-code-rate-limit.sql). Failing CLOSED
+ * would mean nobody, including paying customers, can get a code until that
+ * file has been run; failing open keeps the app working and says so loudly in
+ * the log. The limit is therefore OFF until the migration is applied, which is
+ * a real and deliberate trade — it protects Mailjet quota, not the licence.
+ */
+async function checkAndRecordCodeRequest(client: SupabaseClient, email: string): Promise<RateDecision> {
+  const now = Date.now();
+  const nowIso = new Date(now).toISOString();
+
+  // Two attempts: one for the read, one more if a concurrent request beat us to
+  // the write. Beyond that we are in a stampede, not a race.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const { data, error } = await client
+      .from("email_code_requests")
+      .select("count, first_request_at")
+      .eq("email", email)
+      .limit(1);
+
+    if (error) {
+      // PGRST205 / 42P01 = the table has not been created yet.
+      if (error.code === "PGRST205" || error.code === "42P01") {
+        if (!rateLimitTableMissingWarned) {
+          rateLimitTableMissingWarned = true;
+          console.error(
+            "[activation] RATE LIMIT INACTIVE - table email_code_requests does not exist. " +
+              "Run supabase/email-code-rate-limit.sql in the Supabase SQL editor. Allowing the request.",
+          );
+        }
+        return { allowed: true };
+      }
+      throw new Error(error.message);
+    }
+
+    const row = ((data ?? []) as Array<{ count?: number | null; first_request_at?: string | null }>)[0];
+    const startedAt = row?.first_request_at ? Date.parse(row.first_request_at) : Number.NaN;
+    const windowAge = Number.isFinite(startedAt) ? now - startedAt : Number.POSITIVE_INFINITY;
+    const used = Number.isFinite(windowAge) ? Number(row?.count ?? 0) : 0;
+
+    // No row yet, or the window has aged out: this request opens a new one.
+    if (!row || windowAge >= RATE_LIMIT_WINDOW_MS) {
+      const written = await writeRateRow(
+        client,
+        email,
+        { count: 1, first_request_at: nowIso, last_request_at: nowIso },
+        row ? Number(row?.count ?? 0) : null,
+      );
+      if (written) return { allowed: true };
+      continue; // lost update - re-read and decide again
+    }
+
+    if (used >= RATE_LIMIT_MAX) {
+      // Never "0 minutes": a window with 30 seconds left would round to 0 and
+      // tell a customer to try again immediately, which is what got them here.
+      const retryAfterMinutes = Math.max(1, Math.ceil((RATE_LIMIT_WINDOW_MS - windowAge) / 60_000));
+      return { allowed: false, retryAfterMinutes };
+    }
+
+    const written = await writeRateRow(client, email, { count: used + 1, last_request_at: nowIso }, used);
+    if (written) return { allowed: true };
+    // Lost update - re-read and decide again.
+  }
+
+  console.warn(
+    `[activation] rate limit could not be recorded for ${email} after two attempts; allowing the request.`,
+  );
+  return { allowed: true };
 }
 
 /* ── 1. The six-digit code ──────────────────────────────────────────────
@@ -436,35 +665,83 @@ export default async function handler(request: ApiRequest, response: ApiResponse
    * key — is unreachable until `isMarkedPaid` says yes. Nothing reaches
    * `mailCode` for an account the admin has not marked paid, so no code is
    * generated, no email is sent, and no Mailjet message id is logged for them.
+   *
+   * ADMINISTRATORS SKIP THIS, and only this. An operator testing the code step
+   * should not have to mark their own inbox as a paying customer first, and the
+   * console gate already lets them into /admin on the strength of the very same
+   * role signals this reads. It does not grant a licence, unlock a key, or
+   * exempt anyone from the rate limit.
    */
-  let markedPaid: boolean;
-  try {
-    markedPaid = await isMarkedPaid(client, email);
-  } catch (error) {
-    console.error(
-      "[activation] payment check failed:",
-      error instanceof Error ? error.message : error,
-    );
-    response
-      .status(200)
-      .json({ ok: false, error: "We could not confirm your account. Please try again." });
-    return;
-  }
-  if (!markedPaid) {
-    // Logged WITHOUT any code or message id — there was none, by design.
-    console.warn(
-      `[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`,
-    );
-    // `notPaid` is a MACHINE-READABLE reason, and the client branches on this
-    // flag rather than on the sentence. It used to match the error text with a
-    // regex, so rewording the message silently broke the app's own routing:
-    // an unpaid person stopped being sent to the plan page and only saw a
-    // toast. Copy is for people; the flag is for code.
-    response.status(200).json({ ok: false, notPaid: true, error: NOT_ENTITLED });
-    return;
+  const isAdmin = await isAdminAccount(client, email);
+  if (isAdmin) {
+    console.log(`[activation] ${email} is an administrator - skipping the paid_emails check.`);
+  } else {
+    let markedPaid: boolean;
+    try {
+      markedPaid = await isMarkedPaid(client, email);
+    } catch (error) {
+      console.error(
+        "[activation] payment check failed:",
+        error instanceof Error ? error.message : error,
+      );
+      response
+        .status(200)
+        .json({ ok: false, error: "We could not confirm your account. Please try again." });
+      return;
+    }
+    if (!markedPaid) {
+      // Logged WITHOUT any code or message id — there was none, by design.
+      console.warn(
+        `[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`,
+      );
+      // `notPaid` is a MACHINE-READABLE reason, and the client branches on this
+      // flag rather than on the sentence. It used to match the error text with a
+      // regex, so rewording the message silently broke the app's own routing:
+      // an unpaid person stopped being sent to the plan page and only saw a
+      // toast. Copy is for people; the flag is for code.
+      response.status(200).json({ ok: false, notPaid: true, error: NOT_ENTITLED });
+      return;
+    }
   }
 
   if (action === "issueCode") {
+    /* THE RATE LIMIT, and it runs AFTER the paid check on purpose.
+     *
+     * Only someone who would actually have received a code spends a slot, so an
+     * unpaid address hammering "send code" cannot burn the three requests a
+     * paying customer needs — and an unpaid address still gets the honest
+     * "not marked as paid" answer above rather than a rate-limit message that
+     * tells them nothing about what is actually wrong.
+     *
+     * Administrators are NOT exempt: this caps Mailjet spend, and the owner's
+     * own address is the one most likely to be clicked while testing.
+     */
+    let limit: RateDecision;
+    try {
+      limit = await checkAndRecordCodeRequest(client, email);
+    } catch (error) {
+      // A limiter that cannot read its own table must not take the code step
+      // down with it. Say so loudly, then get on with sending the code.
+      console.error(
+        "[activation] rate limit check failed, allowing the request:",
+        error instanceof Error ? error.message : error,
+      );
+      limit = { allowed: true };
+    }
+    if (!limit.allowed) {
+      console.warn(
+        `[activation] rate limited ${email}: ${RATE_LIMIT_MAX} codes already requested in this ` +
+          `60-minute window. No code generated, no email sent. Retry in ~${limit.retryAfterMinutes} min.`,
+      );
+      response.status(200).json({
+        ok: false,
+        rateLimited: true,
+        retryAfterMinutes: limit.retryAfterMinutes,
+        error: RATE_LIMITED,
+      });
+      return;
+    }
+
     const code = (await acceptedCodes(email))[0]!;
     response.status(200).json(await mailCode(email, code));
     return;
