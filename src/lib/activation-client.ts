@@ -28,7 +28,7 @@
 import { supabaseConfigured } from "@/lib/supabase";
 
 export type ActivationOutcome =
-  | { status: "ok"; ok: boolean; alreadyInUse?: boolean; error?: string }
+  | { status: "ok"; ok: boolean; alreadyInUse?: boolean; notPaid?: boolean; error?: string }
   | { status: "offline"; error: string };
 
 /** Vercel functions are fast; a slow answer is a dead one, not a slow one. */
@@ -57,7 +57,10 @@ async function post<T>(payload: Record<string, unknown>): Promise<ActivationOutc
     if (timer) clearTimeout(timer);
     // null = threw, timed out, or was aborted.
     if (!response || !response.ok) return { status: "offline", error: "Activation is unavailable right now." };
-    return { status: "ok", ...((await response.json()) as { ok: boolean; alreadyInUse?: boolean; error?: string }) };
+    return {
+      status: "ok",
+      ...((await response.json()) as { ok: boolean; alreadyInUse?: boolean; notPaid?: boolean; error?: string }),
+    };
   } catch {
     if (timer) clearTimeout(timer);
     return { status: "offline", error: "Activation is unavailable right now." };

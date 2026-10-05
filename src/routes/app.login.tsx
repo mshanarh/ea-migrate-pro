@@ -674,10 +674,20 @@ function AppAccess() {
         return;
       }
       if (!codeSent.ok) {
-        // The endpoint answered. "Not entitled" is the plans screen; anything
-        // else is a send failure that must not look like a payment problem.
+        // The endpoint answered. "Not marked as paid" is the plans screen;
+        // anything else is a send failure that must not look like a payment
+        // problem.
+        //
+        // BRANCH ON THE FLAG, NOT THE SENTENCE. This used to test the error
+        // text with /has not been activated/i, which the new wording
+        // ("This email is not marked as paid. Contact admin.") does not match
+        // — so rewording the message quietly stopped unpaid people being sent
+        // to the plans and left them with a dead toast. The regex is kept only
+        // as a fallback for an older deployment still sending the old text.
         toast.error(codeSent.error ?? "We could not send your code. Please try again.");
-        if (/has not been activated/i.test(codeSent.error ?? "")) setChoosePlan(true);
+        if (codeSent.notPaid || /has not been activated|not marked as paid/i.test(codeSent.error ?? "")) {
+          setChoosePlan(true);
+        }
         return;
       }
       setCodeValue("");

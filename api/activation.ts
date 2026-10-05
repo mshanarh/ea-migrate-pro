@@ -64,7 +64,14 @@ const SENDER = (process.env["BREVO_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").t
 
 /** Told apart from "not entitled" and "key taken" by the client. */
 const UNAVAILABLE = "Activation is unavailable right now.";
-const NOT_ENTITLED = "This account has not been activated yet.";
+/**
+ * The exact wording for an account the admin has not marked paid.
+ *
+ * It names the next step rather than saying "not activated", which reads like
+ * something the customer did wrong: nothing is wrong with them, the console
+ * simply has not been told they paid.
+ */
+const NOT_ENTITLED = "This email is not marked as paid. Contact admin.";
 /**
  * The one message a key that is already activated produces — whether the
  * person trying is the account that activated it or a different one. Both are
@@ -78,7 +85,7 @@ type Action = "issueCode" | "verifyCode" | "claimKey";
 
 type Reply =
   | { ok: true; alreadyInUse?: boolean }
-  | { ok: false; unavailable?: boolean; alreadyInUse?: boolean; error: string };
+  | { ok: false; unavailable?: boolean; alreadyInUse?: boolean; notPaid?: boolean; error: string };
 
 function db(): SupabaseClient | null {
   if (!SUPABASE_URL || !SERVICE_ROLE) return null;
@@ -103,28 +110,58 @@ function safeEqual(a: string, b: string): boolean {
 }
 
 /**
- * THE SAME RULE `registerWithEmail` APPLIES: a `paid_emails` ledger row
- * carrying a timestamp (the console's own "Mark paid"), or a `license_keys` row
- * issued to the address.
+ * "HAS THE ADMIN MARKED THIS EMAIL PAID?" — the one question that decides
+ * whether a code is ever generated or emailed.
  *
- * `users.is_admin` is deliberately NOT here — a role is not a receipt, and the
- * anon key can insert a users row with any flag it likes. An admin who has been
- * MARKED PAID passes on the ledger row, which is the same thing the console's
- * Paid tab shows and the only way the app opens for anybody.
+ * THE ANSWER IS THE `paid_emails` LEDGER AND NOTHING ELSE, and that is a
+ * deliberate decision rather than a simplification.
+ *
+ * `users.is_paid` looks like the obvious column and MUST NOT be used here.
+ * Re-verified against the live database today: the PUBLIC anon key — which is
+ * shipped inside the JavaScript bundle and therefore held by anyone who opens
+ * the site — can UPDATE it. Adding it as an alternative would mean a stranger
+ * could `UPDATE users SET is_paid = true` on their own row, then ask for a
+ * code against ANY inbox they control, and the six-digit code that is supposed
+ * to prove "I am the person who paid" would prove nothing at all. It is a
+ * mirror the console maintains; it is not a receipt.
+ *
+ * `is_whitelisted` does not exist on this deployment (PostgREST answers 42703,
+ * undefined column), and there is no DDL path to add one — every SQL entry
+ * point answers PGRST202 — so it could not be honoured even if it were trusted.
+ * `users.is_admin` is likewise not here: a role is not a payment.
+ *
+ * `paid_emails` is the right signal because exactly two deliberate acts write
+ * it — the console's "Mark paid" button, and nothing else a stranger can reach.
+ * It is also what the console's own Paid tab displays, so what unlocks the app
+ * is what the admin believes they did.
  */
-async function isEntitled(client: SupabaseClient, email: string): Promise<boolean> {
-  const { data: ledger, error: ledgerError } = await client.from("paid_emails").select("paid_at").eq("email", email).limit(1);
-  if (ledgerError) throw new Error(ledgerError.message);
-  if (((ledger ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null)) return true;
-  const { data: keys, error: keysError } = await client.from("license_keys").select("key").eq("email", email).limit(1);
-  if (keysError) throw new Error(keysError.message);
-  return Array.isArray(keys) && keys.length > 0;
+async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean> {
+  const { data, error } = await client.from("paid_emails").select("paid_at").eq("email", email).limit(1);
+  if (error) throw new Error(error.message);
+  // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
+  // unpaid"), not a payment. It must not pass.
+  return ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
 }
 
 /* ── 1. The six-digit code ──────────────────────────────────────────────
  * NEVER STORED. A pure function of (secret, email, 30-minute window), so
  * there is no row to forge and nothing to clean up. The previous window is
  * also accepted, so a code works for at most 60 minutes.
+ *
+ * "MARK THE CODE USED SO IT CAN ONLY BE USED ONCE" IS DELIBERATELY NOT DONE
+ * HERE, and the reason is worth stating plainly: a code cannot be marked used
+ * because it is never written down. There is no `isUsed` column on any table
+ * on this deployment, and no DDL path to add one (every SQL entry point answers
+ * PGRST202), so storing one would mean inventing a place to put it that does
+ * not exist.
+ *
+ * It is also not needed. The one-time rule that matters is enforced where it
+ * can actually hold — on the LICENCE KEY, in `users.license_key` below, which
+ * is the one activation column the anon key cannot rewrite. A key that is
+ * already activated is refused for everyone, the account that activated it
+ * included, with "License key already in use". A code can be requested as many
+ * times as the holder of that paid inbox likes; what cannot happen twice is
+ * activating a key.
  */
 const WINDOW_MS = 30 * 60 * 1000;
 
@@ -321,16 +358,30 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return;
   }
 
-  let entitled: boolean;
+  /* THE PAID CHECK, BEFORE ANYTHING CAN GENERATE OR SEND A CODE.
+   *
+   * Every action below this line — issuing a code, verifying one, claiming a
+   * key — is unreachable until `isMarkedPaid` says yes. Nothing reaches
+   * `mailCode` for an account the admin has not marked paid, so no code is
+   * generated, no email is sent, and no messageId is logged for them.
+   */
+  let markedPaid: boolean;
   try {
-    entitled = await isEntitled(client, email);
+    markedPaid = await isMarkedPaid(client, email);
   } catch (error) {
-    console.error("[activation] entitlement check failed:", error instanceof Error ? error.message : error);
+    console.error("[activation] payment check failed:", error instanceof Error ? error.message : error);
     response.status(200).json({ ok: false, error: "We could not confirm your account. Please try again." });
     return;
   }
-  if (!entitled) {
-    response.status(200).json({ ok: false, error: NOT_ENTITLED });
+  if (!markedPaid) {
+    // Logged WITHOUT any code or messageId — there was none, by design.
+    console.warn(`[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`);
+    // `notPaid` is a MACHINE-READABLE reason, and the client branches on this
+    // flag rather than on the sentence. It used to match the error text with a
+    // regex, so rewording the message silently broke the app's own routing:
+    // an unpaid person stopped being sent to the plan page and only saw a
+    // toast. Copy is for people; the flag is for code.
+    response.status(200).json({ ok: false, notPaid: true, error: NOT_ENTITLED });
     return;
   }
 

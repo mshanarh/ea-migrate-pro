@@ -7,14 +7,19 @@
  * watches the actual outbound call to Brevo.
  *
  * WHAT IT ASSERTS
- *   1. Unpaid  -> refused AND zero Brevo calls. Nothing leaves the server.
+ *   1. Unpaid  -> refused with the exact wording "This email is not marked as
+ *                 paid. Contact admin." AND zero Brevo calls. Nothing leaves
+ *                 the server and no code is generated.
  *   2. Unpaid  -> the code is refused even when it is the CORRECT code, so the
  *                 gate is on the account, not on guessing well.
  *   3. Paid    -> exactly one Brevo call, addressed to that exact address.
  *   4. Forging `users.is_paid` buys nothing. That column is writable by the
- *                 ANON key (verified live), so if it were the entitlement
+ *                 ANON key (re-verified live), so if it were the entitlement
  *                 signal, anyone could mark themselves paid and mail a code to
  *                 an arbitrary inbox. Entitlement must come from the ledger.
+ *   5. A REPEATED request for a code is allowed (a code is not a one-shot
+ *                 token), but the licence KEY is still single-use — the rule
+ *                 that actually matters is enforced on the key, not the code.
  *
  * HOW: `globalThis.fetch` is wrapped so calls to api.brevo.com are recorded and
  * answered locally; everything else (the Supabase client) passes straight
@@ -124,6 +129,11 @@ async function main() {
   const unpaid = await call({ action: "issueCode", email: UNPAID });
   check("unpaid is refused", unpaid.body.ok === false, unpaid.body.error ?? "");
   check(
+    'unpaid is told exactly "This email is not marked as paid. Contact admin."',
+    unpaid.body.error === "This email is not marked as paid. Contact admin.",
+    unpaid.body.error ?? "",
+  );
+  check(
     "unpaid: Brevo was NOT called (nothing was sent)",
     sent.length === before,
     `${sent.length - before} call(s) to api.brevo.com`,
@@ -160,6 +170,30 @@ async function main() {
   }
 
   // Clean up. Only the probe rows this script created.
+  /* 5 — a code may be re-requested; the KEY is what is single-use.
+   *
+   * This MUST run while PAID still has its ledger row. It used to sit after
+   * the cleanup, which deleted that row first — so every assertion failed with
+   * "not marked as paid" and looked like a product bug rather than a probe that
+   * had already deleted the thing it was testing. */
+  const KEY = "EMP-PAIDONLY-REPEAT-001";
+  const claim1 = await call({ action: "claimKey", email: PAID, key: KEY });
+  check("a paid account can activate a key", claim1.body.ok === true, claim1.body.error ?? "");
+  const claim2 = await call({ action: "claimKey", email: PAID, key: KEY });
+  check(
+    "the SAME key cannot be activated again",
+    claim2.body.ok === false && claim2.body.error === "License key already in use",
+    claim2.body.error ?? "",
+  );
+  const repeatCode = await call({ action: "issueCode", email: PAID });
+  check(
+    "a code can still be re-requested (it is not a one-shot token)",
+    repeatCode.body.ok === true,
+    repeatCode.body.error ?? "",
+  );
+
+  // Clean up only what this probe created.
+  await admin.from("users").update({ license_key: null }).eq("email", PAID);
   await admin.from("paid_emails").delete().in("email", PROBES);
   await admin.from("users").delete().in("email", PROBES);
   const left = await admin.from("users").select("email").in("email", PROBES);
