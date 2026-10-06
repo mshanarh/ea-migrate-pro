@@ -6,15 +6,32 @@
  * There is exactly one place that knows how mail leaves this app, so a provider
  * change is a change to one file.
  *
- * WHY A SINGLETON AND NOT FOUR COPIES
- * -----------------------------------
- * The Brevo code it replaced was copy-pasted into four modules with four
- * different sender names, two different timeouts and four different error
- * strings. That is what let the provider drift out of sync with itself. One
- * module, one sender, one timeout, one error vocabulary.
+ * WHY THERE IS NO MAIL SDK IN HERE ANYMORE
+ * ----------------------------------------
+ * This used to call the `node-mailjet` package. It was replaced with a direct
+ * HTTPS call because this file is the shared import of BOTH Vercel serverless
+ * functions, and those functions stopped being able to start at all:
+ *
+ *     GET  https://eamigratepro.vercel.app/api/activation  -> 500
+ *          x-vercel-error: FUNCTION_INVOCATION_FAILED
+ *     POST https://eamigratepro.vercel.app/api/activation  -> 500 (same)
+ *
+ * That is a COLD-START crash, not a handler error: the 500 arrives for a GET
+ * that returns 405 before any line of the handler runs, and /api/portal fails
+ * identically. Both files import nothing at runtime except this module and
+ * `@supabase/supabase-js`, and the handler itself was verified to load and
+ * answer correctly under Node, as both ESM and CJS, with every dependency
+ * bundled. So the shared, load-time-only surface was the SDK: a CommonJS
+ * bundle (axios + json-bigint underneath) pulled into a function that has to
+ * boot from cold on every request.
+ *
+ * A dependency-free `fetch` removes that entire failure mode. It also shrinks
+ * the function bundle by hundreds of kilobytes and makes this module trivially
+ * testable, because the transport is now visible in this file instead of
+ * hidden inside a package that chooses its own HTTP adapter.
  *
  * WHY THE SECRET LIVES HERE AND NOT IN THE BROWSER
- * ------------------------------------------------
+ * -------------------------------------------------
  * `MAILJET_SECRET_KEY` is a full Mailjet API credential: it can read the
  * account's contacts and send as any sender it has verified. This module is
  * imported only by server code (`api/*.ts` serverless functions and
@@ -28,18 +45,13 @@
  * ported.
  *
  * WHAT "OK" MEANS HERE, PRECISELY
- * -------------------------------
+ * ------------------------------
  * Mailjet answers HTTP 200 with `{ Messages: [{ Status: "success" }] }` when it
  * has ACCEPTED a message onto its queue. That is receipt, not delivery.
  * Delivery is decided by the receiving server minutes later, and this app has
  * no webhook configured to read the outcome - so the honest return value is
  * what Mailjet actually answered, and nothing more. Callers must not describe a
  * returned `ok: true` to a user as "your email has arrived".
- *
- * The short activation-code window is calibrated against this: the code is
- * only useful while it is fresh, and a sender address on a domain with no
- * published SPF + DKIM is what stops receiving servers deferring or discarding
- * the message. See the note on MAILJET_SENDER_EMAIL below.
  *
  * A NOTE ON SENDER VERIFICATION
  * -----------------------------
@@ -58,7 +70,6 @@
  * to an address on it, activation codes will arrive at their inbox instead of
  * sitting in a receiving server's quarantine.
  */
-import Mailjet from "node-mailjet";
 
 /** Sent as the human-readable sender name on every message. */
 const FROM_NAME = "EA Migrate Pro";
@@ -74,6 +85,16 @@ const FROM_NAME = "EA Migrate Pro";
 const SENDER = (process.env["MAILJET_SENDER_EMAIL"] ?? "eamigratepro@gmail.com").trim();
 
 const NOT_CONFIGURED = "Email service is not configured on the server.";
+
+/**
+ * Mailjet's Send API, fixed. The only host this app ever talks to for mail.
+ *
+ * `/v3.1/send` is the JSON Messages endpoint that takes the `{ Messages: [...] }`
+ * payload below. It is NOT `/v3.1/smtp/email`, which is the sibling endpoint
+ * for pre-rendered RFC822 mail and answers `404` for this body - verified live
+ * against the real API, which is why it is spelled out here.
+ */
+const SEND_URL = "https://api.mailjet.com/v3.1/send";
 
 /** How long to wait for Mailjet to accept or refuse a message. */
 const TIMEOUT_MS = 10_000;
@@ -109,51 +130,25 @@ export type MailMessage = {
 
 export type MailResult = { ok: true } | { ok: false; error: string };
 
-/**
- * The cached client, plus the credentials it was built from.
- *
- * The fingerprint matters: caching a client built from one set of keys and then
- * reusing it after the environment changes means every later send silently uses
- * the OLD keys. That is harmless in production (the env is fixed for a cold
- * start) but it made the error-reporting check report a 401 for a send that
- * should have succeeded, because an earlier case in the same process had cached
- * a deliberately invalid key. Comparing the fingerprint makes the cache
- * correct rather than merely fast.
- */
-let cached: InstanceType<typeof Mailjet> | null = null;
-let cachedFor = "";
+/** The part of Mailjet's v3.1 answer this app actually reads. */
+type MailjetReply = {
+  Messages?: Array<{ Status?: string; ErrorCode?: string; To?: Array<{ MessageID?: string }> }>;
+};
 
-/**
- * The authenticated client, built once per cold start.
- *
- * Returns null when the credentials are absent so every caller fails LOUDLY
- * with a clear message instead of sending an anonymous request that Mailjet
- * rejects with an opaque 401.
- */
-function client(): InstanceType<typeof Mailjet> | null {
-  const key = (process.env["MAILJET_API_KEY"] ?? "").trim();
-  const secret = (process.env["MAILJET_SECRET_KEY"] ?? "").trim();
-  if (!key || !secret) {
-    // Name WHICH variable is missing. A missing key has to be diagnosable from
-    // a deploy log alone, and "email didn't send" on its own is not.
-    const missing = [!key ? "MAILJET_API_KEY" : "", !secret ? "MAILJET_SECRET_KEY" : ""].filter(Boolean);
-    console.error(`[mail] ${missing.join(" and ")} is not set - email skipped.`);
+/** Parse a response body, treating anything unparseable as "no detail". */
+function parseReply(raw: string): MailjetReply | null {
+  try {
+    return JSON.parse(raw) as MailjetReply;
+  } catch {
     return null;
   }
-  const fingerprint = key + "|" + secret;
-  if (!cached || cachedFor !== fingerprint) {
-    cached = Mailjet.apiConnect(key, secret, {
-      config: { host: "api.mailjet.com", version: "v3.1" },
-      options: { timeout: TIMEOUT_MS },
-    });
-    cachedFor = fingerprint;
-  }
-  return cached;
 }
 
 /** Are the credentials present? Lets callers fail fast with their own wording. */
 export function mailConfigured(): boolean {
-  return client() !== null;
+  return Boolean(
+    (process.env["MAILJET_API_KEY"] ?? "").trim() && (process.env["MAILJET_SECRET_KEY"] ?? "").trim(),
+  );
 }
 
 /** The configured From address, for callers that need to name it to a user. */
@@ -164,125 +159,113 @@ export function mailSender(): string {
 /**
  * Send one message through Mailjet's v3.1 Send API.
  *
- * The payload goes to `.request()`, NOT to `client.post(resource, config)` -
- * `post`'s second argument is request CONFIG, so passing the message there
- * silently transmits an empty `{}` body and every send "succeeds" while
- * delivering nothing.
+ * `fetch` RESOLVES on an HTTP error, so the status check below is the whole
+ * game: a 400 "Sender address not pre-approved" and a 401 "Unauthorized" come
+ * back as a perfectly normal response object. Reading only the resolved body
+ * and calling that success is how a misconfigured sender survives for days,
+ * so the status is checked first and Mailjet's own body is carried into the
+ * error verbatim.
  */
 export async function sendMail(message: MailMessage): Promise<MailResult> {
-  const mailjet = client();
-  if (!mailjet) return { ok: false, error: NOT_CONFIGURED };
+  const key = (process.env["MAILJET_API_KEY"] ?? "").trim();
+  const secret = (process.env["MAILJET_SECRET_KEY"] ?? "").trim();
+  if (!key || !secret) {
+    // Name WHICH variable is missing. A missing key has to be diagnosable from
+    // a deploy log alone, and "email didn't send" on its own is not.
+    const missing = [!key ? "MAILJET_API_KEY" : "", !secret ? "MAILJET_SECRET_KEY" : ""].filter(
+      Boolean,
+    );
+    console.error(`[mail] ${missing.join(" and ")} is not set - email skipped.`);
+    return { ok: false, error: NOT_CONFIGURED };
+  }
 
   const sender = senderFor(message.fromEmail);
   if (!sender) return { ok: false, error: NOT_CONFIGURED };
 
+  let status = 0;
+  let raw = "";
   try {
-    const result = (await mailjet.post("send").request({
-      Messages: [
-        {
-          From: { Email: sender, Name: message.fromName ?? FROM_NAME },
-          To: [{ Email: message.to, ...(message.toName ? { Name: message.toName } : {}) }],
-          Subject: message.subject,
-          HTMLPart: message.html,
-          TextPart: message.text,
-        },
-      ],
-    })) as {
-      body?: unknown;
-      response?: { status?: number; data?: unknown };
-    };
-
-    const body = result?.body;
-    // node-mailjet resolves to `{ response, body }` on success: there is NO
-    // top-level `status`, so the HTTP code has to be read off `response`.
-    const httpCode = typeof result?.response?.status === "number" ? result.response.status : "(no status)";
-    const detail = JSON.stringify(body ?? null).slice(0, 400);
-
-    const first = Array.isArray((body as { Messages?: unknown[] } | undefined)?.Messages)
-      ? ((body as { Messages: unknown[] }).Messages[0] as
-          | { Status?: string; ErrorCode?: string; To?: Array<{ MessageID?: string }> }
-          | undefined)
-      : undefined;
-
-    // -- ACCEPTED ----------------------------------------------------------
-    if (first?.Status === "success") {
-      // "ACCEPTED", never "sent" or "delivered" - see the header note.
-      // Mailjet returns the id PER RECIPIENT, under To[0].MessageID, not at the
-      // message level; reading it from the wrong level logs "(none returned)"
-      // on every successful send and loses the only handle an operator has in
-      // Mailjet's own logs.
-      const messageId = first.To?.[0]?.MessageID ?? "(none returned)";
-      console.log(
-        `[mail] Mailjet ACCEPTED (not yet delivered) for ${message.to} from ${sender}: ` +
-          `HTTP ${httpCode} Status=${first.Status} MessageID=${messageId}`,
-      );
-      return { ok: true };
-    }
-
-    // -- REFUSED AT THE PER-MESSAGE LEVEL ----------------------------------
-    // Mailjet's own words, not ours. A 400 "Sender address not pre-approved" or
-    // a 401 "Unauthorized" has to reach the caller verbatim, because a generic
-    // "could not send" is how a real misconfiguration sits invisible for days.
-    const reason = first?.ErrorCode ?? first?.Status ?? "unknown error";
-    console.error(
-      `[mail] Mailjet refused the message for ${message.to} from ${sender}: ` +
-        `HTTP ${httpCode} Status=${first?.Status ?? "(none returned)"} ` +
-        `MessageID=${first?.To?.[0]?.MessageID ?? "(none returned)"}`,
-      detail,
-    );
-    return {
-      ok: false,
-      error: `Mailjet refused the message (HTTP ${httpCode}): ${reason}. ${detail}`,
-    };
+    const response = await fetch(SEND_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        // Mailjet's v3.1 Send API authenticates with HTTP Basic: the API key is
+        // the username, the secret is the password.
+        authorization: `Basic ${Buffer.from(`${key}:${secret}`).toString("base64")}`,
+      },
+      body: JSON.stringify({
+        Messages: [
+          {
+            From: { Email: sender, Name: message.fromName ?? FROM_NAME },
+            To: [{ Email: message.to, ...(message.toName ? { Name: message.toName } : {}) }],
+            Subject: message.subject,
+            HTMLPart: message.html,
+            TextPart: message.text,
+          },
+        ],
+      }),
+      signal: AbortSignal.timeout(TIMEOUT_MS),
+    });
+    status = response.status;
+    raw = await response.text();
   } catch (error) {
     /*
-     * MAILJET REJECTS NON-2xx BY THROWING, NOT BY RESOLVING.
-     *
-     * This is the single most important branch for debugging: a 401 (bad or
-     * expired key), a 400 (sender not verified) and a 429 (quota) all arrive
-     * here as a thrown Error, so the resolved-response handler above never
-     * runs. An earlier version reported every one of them as "the email service
-     * could not be reached", which is wrong and useless - it hides a 401
-     * behind what reads like a network problem.
-     *
-     * node-mailjet (axios) puts the HTTP status on `error.response.status` and
-     * the parsed body on `error.response.data`.
+     * NO HTTP STATUS AT ALL - a DNS failure, a refused connection, or the
+     * timeout above. This is the only genuinely "unreachable" case, and it is
+     * deliberately worded differently from a refusal so the two are never
+     * confused when reading a deploy log.
      */
-    const thrown = error as {
-      message?: string;
-      status?: number;
-      code?: string;
-      response?: { status?: number; data?: unknown };
-    };
-    const httpStatus =
-      typeof thrown?.response?.status === "number"
-        ? thrown.response.status
-        : typeof thrown?.status === "number"
-          ? thrown.status
-          : undefined;
-    const body = thrown?.response?.data;
-    const detail =
-      body === undefined || body === null
-        ? (thrown?.message ?? String(error)).slice(0, 400)
-        : JSON.stringify(body).slice(0, 400);
-
-    console.error(
-      `[mail] Mailjet request error for ${message.to} from ${sender}: ` +
-        `HTTP ${httpStatus ?? "(no status)"} code=${thrown?.code ?? "(none)"}`,
-      detail,
-    );
-
-    /*
-     * A refusal is not an outage, and the two must not read the same. A status
-     * means Mailjet answered and said no, so name the status and its own
-     * words; without one it is a genuine transport failure.
-     */
+    const detail = (error instanceof Error ? error.message : String(error)).slice(0, 400);
+    console.error(`[mail] Mailjet request error for ${message.to} from ${sender}: ${detail}`);
     return {
       ok: false,
-      error:
-        httpStatus !== undefined
-          ? `Mailjet rejected the send (HTTP ${httpStatus}): ${detail}`
-          : `The email service could not be reached - ${thrown?.message ?? String(error)}.`,
+      error: `The email service could not be reached - ${detail}.`,
     };
   }
+
+  // A non-JSON body is still a real, reportable answer - see `detail` below.
+  const body = parseReply(raw);
+  const detail = raw.slice(0, 400);
+
+  // -- REFUSED AT THE HTTP LEVEL ------------------------------------------
+  // 400 sender not pre-approved, 401 bad key, 429 quota, 5xx on Mailjet's side.
+  // Mailjet's own words, not ours: an operator cannot act on "could not send".
+  if (status < 200 || status >= 300) {
+    console.error(
+      `[mail] Mailjet rejected the send for ${message.to} from ${sender}: HTTP ${status}`,
+      detail,
+    );
+    return { ok: false, error: `Mailjet rejected the send (HTTP ${status}): ${detail}` };
+  }
+
+  // -- ACCEPTED vs REFUSED AT THE PER-MESSAGE LEVEL -----------------------
+  // A 200 only means the API answered; Mailjet reports per-recipient refusals
+  // inside the 200 body, and those are still a failed send.
+  const first = body?.Messages?.[0];
+
+  if (first?.Status === "success") {
+    // "ACCEPTED", never "sent" or "delivered" - see the header note.
+    // Mailjet returns the id PER RECIPIENT, under To[0].MessageID, not at the
+    // message level; reading it from the wrong level logs "(none returned)" on
+    // every successful send and loses the only handle an operator has in
+    // Mailjet's own logs.
+    const messageId = first.To?.[0]?.MessageID ?? "(none returned)";
+    console.log(
+      `[mail] Mailjet ACCEPTED (not yet delivered) for ${message.to} from ${sender}: ` +
+        `HTTP ${status} Status=${first.Status} MessageID=${messageId}`,
+    );
+    return { ok: true };
+  }
+
+  const reason = first?.ErrorCode ?? first?.Status ?? "unknown error";
+  console.error(
+    `[mail] Mailjet refused the message for ${message.to} from ${sender}: ` +
+      `HTTP ${status} Status=${first?.Status ?? "(none returned)"} ` +
+      `MessageID=${first?.To?.[0]?.MessageID ?? "(none returned)"}`,
+    detail,
+  );
+  return {
+    ok: false,
+    error: `Mailjet refused the message (HTTP ${status}): ${reason}. ${detail}`,
+  };
 }

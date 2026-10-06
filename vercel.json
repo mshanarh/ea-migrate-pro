@@ -4,6 +4,11 @@
   "installCommand": "bun install",
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
+  "functions": {
+    "api/*.ts": {
+      "runtime": "nodejs22.x"
+    }
+  },
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }],
   "headers": [
     {

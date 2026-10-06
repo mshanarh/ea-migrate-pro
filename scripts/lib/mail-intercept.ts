@@ -5,20 +5,21 @@
  * ────────────────────────────────────────────
  * The probe scripts used to wrap `globalThis.fetch` and answer any request to
  * `api.brevo.com` locally, which is why they could prove "a code was mailed"
- * without putting a message in a real inbox. That trick BREAKS with Mailjet:
+ * without putting a message in a real inbox. That trick was abandoned because it
+ * silently stopped intercepting: when Mailjet was called through the
+ * `node-mailjet` SDK, the SDK sent through AXIOS, and in a Node runtime axios
+ * selects its **http** adapter rather than its fetch adapter. Verified directly:
+ * with `globalThis.fetch` replaced by a recording stub, a Mailjet send produced
+ * **zero** stub calls and went to the real host instead. The probe then printed
+ * PASS while actually sending mail — worse than no probe at all, because it
+ * would be trusted.
  *
- *   `node-mailjet` sends through AXIOS, and in a Node runtime axios selects its
- *   **http** adapter, not its fetch adapter. Verified directly: with
- *   `globalThis.fetch` replaced by a recording stub, a Mailjet send produced
- *   **zero** stub calls and went to the real host instead.
- *
- * So a fetch stub would silently stop intercepting. The probe would still
- * print PASS while actually sending mail — which is worse than no probe at all,
- * because it would be trusted.
- *
- * This helper replaces the MODULE instead, at the boundary every caller
- * actually uses (`src/lib/mailjet.server.ts`). It is transport-agnostic: it
- * keeps working whatever HTTP client the provider SDK uses internally.
+ * `src/lib/mailjet.server.ts` now calls `fetch` directly (no SDK), so a URL
+ * stub would work again. This helper deliberately still replaces the MODULE, at
+ * the boundary every caller actually uses, because that remains true whatever
+ * the transport below it turns out to be next year — and because a stub that
+ * matches on a URL silently stops matching the moment the provider changes host
+ * or path, with no error anywhere.
  *
  * It also asserts the module can be intercepted at all. If a future refactor
  * bypasses `sendMail`, `assertInterceptable()` fails loudly rather than letting

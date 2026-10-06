@@ -693,9 +693,8 @@ function AppAccess() {
       setRedirecting(false);
       if (codeSent.status === "offline") {
         // NO SERVER TO SEND A CODE FROM. This deployment cannot prove inbox
-        // control, so the code step is skipped entirely rather than faked —
-        // and the account is NOT sent to the plans, because it is paid. The
-        // waiting room is the honest screen: activation is done by hand.
+        // control, and the account is NOT sent to the plans, because it is
+        // paid. Nothing is faked and nothing is opened.
         console.warn("[app-login] no activation endpoint:", codeSent.error);
         // FAIL CLOSED ON THE GATE. This used to hand the account to the waiting
         // room, whose 15-second poll resolves the cloud and sends any PAID
@@ -707,15 +706,32 @@ function AppAccess() {
         // configured), not a way around it, and the plans screen is NOT the right
         // answer either — this account is paid and must never be asked to pay
         // again.
-        toast.error("We could not send your code right now. Please try again in a moment.", {
-          description: "If this keeps happening, message support and we will help you in.",
+        //
+        // THIS MESSAGE USED TO BE A DEAD END, and saying so hid a total
+        // outage. Both serverless functions once failed to boot, answering
+        // `500 x-vercel-error: FUNCTION_INVOCATION_FAILED`, and because every
+        // non-2xx was flattened into `offline` the customer was asked to
+        // "message support" while the operator had no status, no reason and no
+        // way to tell a dead deploy from a mistyped address. `offline` now
+        // means only "no function on this host" (see activation-client.ts), so
+        // naming the deployment here is both accurate and the thing worth fixing.
+        toast.error("We could not send your code right now.", {
+          description:
+            "The activation service is not responding. Please try again in a moment — if it keeps " +
+            "happening, message support and quote “activation service not responding”.",
         });
         return;
       }
       if (!codeSent.ok) {
-        // The endpoint answered. "Not marked as paid" is the plans screen;
-        // anything else is a send failure that must not look like a payment
-        // problem.
+        // The endpoint answered and said no. "Not marked as paid" is the plans
+        // screen; anything else is a send failure that must not look like a
+        // payment problem.
+        //
+        // THE SERVER'S OWN REASON IS THE DESCRIPTION, not a generic sentence.
+        // This is the whole point of the outcome contract above: a 400 from
+        // Mailjet refusing an unverified sender, a 503 from a misconfigured
+        // deployment and a rate limit are three different bugs, and the text
+        // under this toast is the only place the customer can tell them apart.
         //
         // BRANCH ON THE FLAG, NOT THE SENTENCE. This used to test the error
         // text with /has not been activated/i, which the new wording
@@ -723,7 +739,9 @@ function AppAccess() {
         // — so rewording the message quietly stopped unpaid people being sent
         // to the plans and left them with a dead toast. The regex is kept only
         // as a fallback for an older deployment still sending the old text.
-        toast.error(codeSent.error ?? "We could not send your code. Please try again.");
+        toast.error("We could not send your code.", {
+          description: codeSent.error ?? "Please try again in a moment.",
+        });
         if (
           codeSent.notPaid ||
           /has not been activated|not marked as paid/i.test(codeSent.error ?? "")
@@ -925,10 +943,14 @@ function AppAccess() {
     try {
       const result = await requestActivationCode(codeStage.email);
       if (result.status === "offline") {
-        setCodeError("We could not send your code. Please try again in a moment.");
+        setCodeError(
+          "We could not send your code. The activation service is not responding — please try again in a moment.",
+        );
         return;
       }
       if (!result.ok) {
+        // The server's own reason, not a generic retry sentence: see the same
+        // branch in the first sign-in step.
         setCodeError(result.error ?? "We could not send your code. Please try again.");
         return;
       }
