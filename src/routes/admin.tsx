@@ -28,6 +28,7 @@ import {
   setUserApproval,
   setUserLicenseLimit,
   setUserPaid,
+  setAdminActor,
   setUserReactivation,
   type AdminMessage,
   type AdminSnapshot,
@@ -229,6 +230,7 @@ function LoadingBlock({ label }: { label: string }) {
 
 function AdminConsole() {
   const account = useCurrentAccount();
+  if (account?.email) setAdminActor(account.email);
   const navigate = useNavigate();
 
   const [snapshot, setSnapshot] = useState<AdminSnapshot | null>(null);
