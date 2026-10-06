@@ -944,19 +944,44 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
     // STEP 2 — everything else (symbols, video) from the mentor accounts.
     // Narrowed to the accounts that mention this user: reading the whole
     // table is the 27 MB download this replaces.
-    const { data: targeted, error: targetedError } = await client
+    // PROJECTED READ — the old `.or(data.ilike.*email*)` still had to LIKE
+    // -scan every row's full `data` (inline videos) and timed out LIVE
+    // (measured: statement timeout at ~3.7s), and its full-read fallback
+    // timed out too, so STEP2 never delivered anything. Scan only
+    // `data->licenses` (~3s for the whole table), keep rows that mention
+    // this email, then read `data->eas` for THOSE rows alone — the same
+    // two-hop shape activation now uses.
+    const projected = await client
       .from("portal_accounts")
-      .select("email, data")
-      .or(`data.ilike.*${email}*`);
-    let rows = targeted;
-    if (targetedError || !rows) {
-      // The filter is an optimisation, never a requirement: if the server
-      // cannot run it, fall back to the full read rather than lose the sync.
-      console.warn("[app-store] targeted cloud sync failed, reading all accounts", targetedError?.message);
-      const fallback = await client.from("portal_accounts").select("email, data");
-      if (fallback.error || !fallback.data) return picturesApplied;
-      rows = fallback.data;
+      .select("email, data->licenses")
+      .limit(1000);
+    if (projected.error || !projected.data) {
+      console.warn("[app-store] projected cloud sync failed", projected.error?.message);
+      return picturesApplied;
     }
+    const candidateRows: Array<{ email?: string; data: unknown }> = [];
+    for (const candidate of projected.data as Array<{ email?: string; licenses?: unknown }>) {
+      const licenses = Array.isArray(candidate.licenses) ? candidate.licenses : [];
+      const ownRow = (candidate.email ?? "").trim().toLowerCase() === email;
+      const licenseHit = JSON.stringify(licenses).toLowerCase().includes(email);
+      if (!ownRow && !licenseHit) continue;
+      let eas: unknown = undefined;
+      try {
+        const easRead = await client
+          .from("portal_accounts")
+          .select("data->eas")
+          .eq("email", (candidate.email ?? "").trim().toLowerCase())
+          .limit(1);
+        eas = ((easRead.data ?? [])[0] as { eas?: unknown } | undefined)?.eas;
+      } catch {
+        /* licences alone still restore name/symbols for this row */
+      }
+      candidateRows.push({
+        ...(candidate.email !== undefined ? { email: candidate.email } : {}),
+        data: JSON.stringify({ licenses, ...(Array.isArray(eas) ? { eas } : {}) }),
+      });
+    }
+    let rows: Array<{ email?: string; data: unknown }> | null = candidateRows;
     // Stash each distinct cloud video once per sync (IndexedDB behind a tiny
     // ref) — the same EA media would otherwise be re-processed per license.
     const videoCache = new Map<string, Promise<string | undefined>>();
