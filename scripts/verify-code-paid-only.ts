@@ -109,8 +109,8 @@ async function main() {
     ["sign"],
   );
   const codeFor = async (email: string, back = 0) => {
-    // MUST match api/activation.ts: 2-minute windows, current only.
-    const window = Math.floor(Date.now() / (2 * 60 * 1000)) - back;
+    // MUST match api/activation.ts: 5-minute windows, current only.
+    const window = Math.floor(Date.now() / (5 * 60 * 1000)) - back;
     const sig = await crypto.subtle.sign(
       "HMAC",
       key,

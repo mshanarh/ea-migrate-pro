@@ -22,8 +22,8 @@ import {
 } from "lucide-react";
 import { Send } from "lucide-react";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { signOut, useCurrentAccount, type PortalStatus } from "@/lib/auth-store";
-import { isPortalPaused, setPortalPaused } from "@/lib/portal-cloud";
+import { signOut, updateProfile, useCurrentAccount, type PortalStatus } from "@/lib/auth-store";
+import { isPortalPaused, portalCloudConfigured, portalEnsureMentorId, setPortalPaused } from "@/lib/portal-cloud";
 import { mirrorAccount } from "@/routes/dashboard.eas";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; badge?: boolean; mentorOnly?: boolean; adminOnly?: boolean };
@@ -63,6 +63,71 @@ const sections: { label?: string; items: NavItem[] }[] = [
 function BrandMark({ size = "size-9" }: { size?: string }) {
   return (
     <img src="/logo.png" alt="EA Migrate" className={`${size} shrink-0 rounded-full object-contain`} />
+  );
+}
+
+/**
+ * THE MENTOR ID BADGE — the three-digit number this mentor is known by.
+ *
+ * It sits in the sticky header, so it is on EVERY portal page and is the first
+ * thing a mentor sees. The number is what a customer quotes back to support, so
+ * it has to be readable at a glance and copyable by hand: three digits, always
+ * zero-padded, in a monospaced face so "047" cannot be misread as "470".
+ *
+ * IT IS ASSIGNED ON ARRIVAL, NOT AT SIGNUP. Accounts created before mentor IDs
+ * existed have none, and a mentor who signs in on a new device must not have to
+ * wait for a fresh signup to be given their number — so the layout asks the
+ * cloud for one on first sight and shows it as soon as it lands.
+ *
+ * While there is no ID yet, nothing is rendered: a placeholder like "—" beside
+ * "MENTOR ID" would look like an assigned number, and a mentor who quotes an
+ * empty one to a customer is worse off than one who simply has not been shown
+ * it yet.
+ */
+function MentorIdBadge({
+  email,
+  mentorId,
+  accountId,
+}: {
+  email: string;
+  mentorId?: string | undefined;
+  accountId?: string | undefined;
+}) {
+  const [id, setId] = useState<string | undefined>(mentorId);
+
+  // The account arrives from the cloud poll, so the ID can show up after the
+  // first render — adopt it whenever it changes.
+  useEffect(() => {
+    if (mentorId) setId(mentorId);
+  }, [mentorId]);
+
+  useEffect(() => {
+    if (id || !email || !portalCloudConfigured()) return;
+    let cancelled = false;
+    void portalEnsureMentorId(email).then((result) => {
+      if (cancelled || !result.ok || !result.mentorId) return;
+      setId(result.mentorId);
+      // Keep the rest of the portal in step — the sidebar card and the profile
+      // page read the same account, and they should all show the same number.
+      // `updateProfile` takes the ACCOUNT ID, not the email.
+      if (accountId) updateProfile(accountId, { mentorId: result.mentorId });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [email, id, accountId]);
+
+  if (!id) return null;
+  return (
+    <div
+      className="flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2"
+      title="Your unique mentor ID — quote this to support."
+    >
+      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/80">Mentor ID</span>
+      <span className="font-mono text-base leading-none font-black tracking-[0.18em] text-primary tabular-nums">
+        {id}
+      </span>
+    </div>
   );
 }
 
@@ -224,6 +289,13 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-bold">{account?.username ?? "Guest"}</span>
             <span className="block text-xs font-semibold capitalize text-primary">{account?.role ?? "mentor"}</span>
+            {/* The same ID as the header badge, so the desktop sidebar carries
+                it too — this card is where a mentor looks when support asks. */}
+            {account?.mentorId ? (
+              <span className="mt-0.5 block font-mono text-[11px] font-bold tracking-[0.16em] text-primary/90 tabular-nums">
+                ID {account.mentorId}
+              </span>
+            ) : null}
           </span>
           <ChevronRight className="size-4 text-white/40" />
         </Link>
@@ -305,6 +377,8 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* THE MENTOR ID, at the top of the portal on every page. */}
+            {account ? <MentorIdBadge email={account.email} mentorId={account.mentorId} accountId={account.id} /> : null}
             <Link
               to="/dashboard/wallet"
               aria-label="Open wallet"

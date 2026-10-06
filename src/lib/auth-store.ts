@@ -82,6 +82,17 @@ export type Account = {
   licenses: License[];
   eas: ExpertAdvisor[];
   website?: MentorWebsite;
+  /**
+   * THE MENTOR'S UNIQUE THREE-DIGIT ID — shown at the top of their portal and
+   * quoted by support ("your mentor is 047").
+   *
+   * EXACTLY THREE DIGITS, always zero-padded, so it is read aloud and written
+   * down the same way: "047", never "47". `undefined` on an account created
+   * before this existed; `ensureMentorId` assigns one on first sight and never
+   * changes it afterwards, because a mentor's ID is quoted to customers and a
+   * number that moved would send them to the wrong person.
+   */
+  mentorId?: string;
 };
 
 type Store = {

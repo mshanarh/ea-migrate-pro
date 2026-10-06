@@ -24,6 +24,7 @@ import { Route as AppFundamentalsRouteImport } from './routes/app.fundamentals'
 import { Route as AppHomeRouteImport } from './routes/app.home'
 import { Route as AppLoginRouteImport } from './routes/app.login'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
+import { Route as AppNotificationsRouteImport } from './routes/app.notifications'
 import { Route as AppScannerRouteImport } from './routes/app.scanner'
 import { Route as AppSettingsRouteImport } from './routes/app.settings'
 import { Route as AppTradingPairsRouteImport } from './routes/app.trading-pairs'
@@ -113,6 +114,11 @@ const AppLoginRoute = AppLoginRouteImport.update({
 const AppMetatraderRoute = AppMetatraderRouteImport.update({
   id: '/app/metatrader',
   path: '/app/metatrader',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/app/notifications',
+  path: '/app/notifications',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppScannerRoute = AppScannerRouteImport.update({
@@ -206,6 +212,7 @@ export interface FileRoutesByFullPath {
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
@@ -237,6 +244,7 @@ export interface FileRoutesByTo {
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
@@ -270,6 +278,7 @@ export interface FileRoutesById {
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
+  '/app/notifications': typeof AppNotificationsRoute
   '/app/scanner': typeof AppScannerRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/trading-pairs': typeof AppTradingPairsRoute
@@ -304,6 +313,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
+    | '/app/notifications'
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
@@ -335,6 +345,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
+    | '/app/notifications'
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
@@ -367,6 +378,7 @@ export interface FileRouteTypes {
     | '/app/home'
     | '/app/login'
     | '/app/metatrader'
+    | '/app/notifications'
     | '/app/scanner'
     | '/app/settings'
     | '/app/trading-pairs'
@@ -400,6 +412,7 @@ export interface RootRouteChildren {
   AppHomeRoute: typeof AppHomeRoute
   AppLoginRoute: typeof AppLoginRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
   AppScannerRoute: typeof AppScannerRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppTradingPairsRoute: typeof AppTradingPairsRoute
@@ -512,6 +525,13 @@ declare module '@tanstack/react-router' {
       path: '/app/metatrader'
       fullPath: '/app/metatrader'
       preLoaderRoute: typeof AppMetatraderRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/notifications': {
+      id: '/app/notifications'
+      path: '/app/notifications'
+      fullPath: '/app/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/scanner': {
@@ -669,6 +689,7 @@ const rootRouteChildren: RootRouteChildren = {
   AppHomeRoute: AppHomeRoute,
   AppLoginRoute: AppLoginRoute,
   AppMetatraderRoute: AppMetatraderRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
   AppScannerRoute: AppScannerRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppTradingPairsRoute: AppTradingPairsRoute,
