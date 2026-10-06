@@ -6,8 +6,6 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
-import { syncRegister } from "@/lib/account-sync.server";
-import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/signup")({
@@ -75,31 +73,21 @@ function SignUp() {
             // Wait for the cross-device write before leaving the page. The old
             // fire-and-forget call could be interrupted by the redirect in production.
             if (res.account) {
-              // The shared sync is a TanStack server function, and this
-              // deployment does not serve those routes — the request answers
-              // 405 and the client THROWS. That throw used to jump straight to
-              // the catch below, so the direct database write never ran and the
-              // registration existed nowhere but this browser's localStorage:
-              // no console entry, no email, nothing to approve. Isolated here
-              // so a dead server route can never swallow the signup again.
-              try {
-                const synced = await syncRegister({ data: { account: res.account } });
-                if (synced.enabled && !synced.ok) {
-                  console.error("[signup] Shared registration sync failed");
-                }
-              } catch (syncRouteError) {
-                console.warn("[signup] shared sync unavailable, writing directly:", syncRouteError);
-              }
-
-              // The write that actually matters: portal_accounts + the pending
-              // approval row, straight from the browser with the anon key. Run
-              // it whenever the cloud is configured, not only when the server
-              // function reported itself disabled.
-              if (portalCloudConfigured()) {
-                const direct = await portalRegisterAccount(res.account);
-                if (!direct.ok) {
-                  console.error("[signup] Direct cloud registration failed:", direct.error);
-                }
+              // Server-side registration store — independent of the database.
+              const reply = await fetch("/api/register", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  email: res.account.email,
+                  firstName: res.account.firstName,
+                  displayName: res.account.displayName,
+                  username: res.account.username,
+                  whatsapp: res.account.whatsapp,
+                  password: form.password,
+                }),
+              }).catch(() => null);
+              if (!reply || (!reply.ok && reply.status !== 409)) {
+                console.error("[signup] /api/register failed:", reply?.status);
               }
               // Admin alert — "New user registered: <email> - Approve in
               // admin". Also saves the pending approval row. Awaited (bounded)
