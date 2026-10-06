@@ -165,6 +165,11 @@ check(
   ok.ok === true,
   ok.ok ? "" : (ok.error ?? "").slice(0, 100),
 );
+check(
+  "the accepted send hands Mailjet's messageId back to the caller",
+  ok.ok === true && typeof ok.messageId === "string" && ok.messageId.length > 0,
+  ok.ok ? `messageId=${ok.messageId ?? "(missing)"}` : "(send failed, no id to return)",
+);
 
 await admin.from("paid_emails").delete().eq("email", PROBE);
 await admin.from("users").delete().eq("email", PROBE);

@@ -128,11 +128,20 @@ export type MailMessage = {
   fromEmail?: string;
 };
 
-export type MailResult = { ok: true } | { ok: false; error: string };
+/**
+ * WHAT A CALLER GETS BACK.
+ *
+ * On success `messageId` is Mailjet's PER-RECIPIENT id when the API returned
+ * one: it is the handle an operator needs in Mailjet's own logs, and
+ * `POST /api/activation` hands it to the client as `{ ok: true, messageId }`.
+ * It is optional rather than always-present because Mailjet can accept a
+ * message without returning an id, and a missing id must not read as failure.
+ */
+export type MailResult = { ok: true; messageId?: string } | { ok: false; error: string };
 
 /** The part of Mailjet's v3.1 answer this app actually reads. */
 type MailjetReply = {
-  Messages?: Array<{ Status?: string; ErrorCode?: string; To?: Array<{ MessageID?: string }> }>;
+  Messages?: Array<{ Status?: string; ErrorCode?: string; To?: Array<{ MessageID?: string | number }> }>;
 };
 
 /** Parse a response body, treating anything unparseable as "no detail". */
@@ -249,12 +258,19 @@ export async function sendMail(message: MailMessage): Promise<MailResult> {
     // message level; reading it from the wrong level logs "(none returned)" on
     // every successful send and loses the only handle an operator has in
     // Mailjet's own logs.
-    const messageId = first.To?.[0]?.MessageID ?? "(none returned)";
+    const messageId = first.To?.[0]?.MessageID;
     console.log(
       `[mail] Mailjet ACCEPTED (not yet delivered) for ${message.to} from ${sender}: ` +
-        `HTTP ${status} Status=${first.Status} MessageID=${messageId}`,
+        `HTTP ${status} Status=${first.Status} MessageID=${messageId ?? "(none returned)"}`,
     );
-    return { ok: true };
+    // The id travels with the SUCCESS too, not just the log line: whoever just
+    // learned "accepted" can quote Mailjet's own handle without grepping.
+    // Mailjet's JSON actually carries it as a NUMBER, so it is stringified
+    // here — that keeps the response type stable and makes it print exactly
+    // what the log line above prints.
+    return messageId === undefined || messageId === null
+      ? { ok: true }
+      : { ok: true, messageId: String(messageId) };
   }
 
   const reason = first?.ErrorCode ?? first?.Status ?? "unknown error";

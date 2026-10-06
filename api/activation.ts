@@ -149,7 +149,16 @@ const ADMIN_EMAILS = [
 type Action = "issueCode" | "verifyCode" | "claimKey";
 
 type Reply =
-  | { ok: true; alreadyInUse?: boolean }
+  | {
+      ok: true;
+      alreadyInUse?: boolean;
+      /**
+       * Mailjet's per-recipient id, present only when an email was actually
+       * accepted — the contract the operator asked for: `{ ok: true,
+       * messageId }` on success, `{ ok:false, code, detail }` on a crash.
+       */
+      messageId?: string;
+    }
   | {
       ok: false;
       unavailable?: boolean;
@@ -558,7 +567,9 @@ async function mailCode(email: string, code: string): Promise<Reply> {
     // human-readable in the UI, but carry the exact technical failure in.
     return { ok: false, error: result.error ?? "We could not send your code right now. Try again in a minute." };
   }
-  return { ok: true };
+  // Mailjet's id rides along only when there is one; the client ignores the
+  // field today, but support can quote it instead of a timestamp.
+  return result.messageId ? { ok: true, messageId: result.messageId } : { ok: true };
 }
 
 /* ── 2. The single-use licence lock ────────────────────────────────────

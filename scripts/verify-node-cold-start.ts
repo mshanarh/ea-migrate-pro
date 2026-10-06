@@ -131,11 +131,16 @@ check(
 );
 
 const issue = byName.get("ISSUE")!;
-const issueBody = issue.body as { ok?: boolean; error?: string } | null;
+const issueBody = issue.body as { ok?: boolean; error?: string; messageId?: string } | null;
 check(
   "a PAID probe gets a code mailed from a cold Node process",
   issue.statusCode === 200 && issueBody?.ok === true,
   issueBody?.ok === true ? "accepted by Mailjet" : (issueBody?.error ?? "").slice(0, 200),
+);
+check(
+  "the accepted reply carries Mailjet's messageId, as the contract requires",
+  issueBody?.ok === true && typeof issueBody.messageId === "string" && issueBody.messageId.length > 0,
+  `messageId=${issueBody?.messageId ?? "(missing)"}`,
 );
 
 const unpaid = byName.get("UNPAID")!;
