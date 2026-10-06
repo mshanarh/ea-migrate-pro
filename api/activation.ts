@@ -42,7 +42,26 @@
  * every request, so a forged `{ paid: true }` from the browser mails nothing.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { sendMail } from "../src/lib/mailjet.server";
+/**
+ * WHY THIS IMPORT ENDS IN `.js`, AND MUST KEEP DOING SO
+ * ─────────────────────────────────────────────────────
+ * This project's package.json says `"type": "module"`, so Vercel compiles
+ * `/api/*.ts` as NATIVE ESM — and Node's ESM resolver refuses extensionless
+ * relative specifiers. The old `../src/lib/mailjet.server` crashed this
+ * function at COLD START, before one line of the handler ran, so Vercel
+ * answered EVERY request — even a GET that only has to return 405 — with
+ *
+ *     500  x-vercel-error: FUNCTION_INVOCATION_FAILED
+ *
+ * The build stayed green and `tsc` stayed clean throughout, because both of
+ * those happily resolve `./x` to `./x.ts`; only the deployed runtime does not.
+ * `.js` is TypeScript's documented ESM form: it typechecks against
+ * `mailjet.server.ts`, Vercel's Node File Trace resolves it back to the `.ts`
+ * while tracing (it has an explicit rule for exactly this) and ships it as
+ * `mailjet.server.js` in the lambda, and BOTH the ESM and the CJS runtime can
+ * load that. Dropping the extension breaks production again.
+ */
+import { sendMail } from "../src/lib/mailjet.server.js";
 
 /**
  * The Vercel request/response shape, declared locally.
@@ -86,22 +105,46 @@ const NOT_ENTITLED = "This email is not marked as paid. Contact admin.";
 const ALREADY_IN_USE = "License key already in use";
 
 /**
- * Administrators, from `ADMIN_EMAILS` — a comma-separated list.
+ * THE OWNER'S OWN ADDRESSES, hardcoded on purpose.
+ *
+ * These three skip the `paid_emails` lookup even when `ADMIN_EMAILS` is not set
+ * in the deployment environment — which is exactly the state production was in:
+ * the variable only ever existed in `.env.local`, so on Vercel the bypass was
+ * empty and the platform owner could be locked out of their own code step by a
+ * missing environment variable. An owner list that lives in code cannot be
+ * undone by a console nobody remembered to fill in.
+ *
+ * ⚠ KEEP IN SYNC with `OWNER_EMAILS` in `api/portal.ts` / `src/lib/auth-store.ts`.
+ * This grants ONE thing only: skipping the paid check. It does not grant a
+ * licence, unlock a key, or exempt anyone from the rate limit — and the code is
+ * still mailed to the address itself, so it only helps whoever reads that inbox.
+ */
+const OWNER_ADMIN_EMAILS = [
+  "biyasentobeko222@gmail.com",
+  "eamigratepro@gmail.com",
+  "ntobekotraders.official@gmail.com",
+];
+
+/**
+ * Administrators = `ADMIN_EMAILS` (comma-separated, for addresses the owner
+ * adds later without a code change) ∪ `OWNER_ADMIN_EMAILS` above.
  *
  * An operator has to be able to sign in and exercise the code step without the
  * console first having to mark their own inbox as paid, so these addresses skip
- * the `paid_emails` lookup. Read from the environment rather than hardcoded so
- * the list can be changed by the owner without a code change, and so this
- * function never becomes a place where a stale address is baked in.
+ * the `paid_emails` lookup.
  *
- * An unset variable means NO bypass, not "everyone". An empty allow-list that
- * defaulted to allow-all would hand every code request in the app to anyone who
- * asked for one, so the safe reading is the restrictive one.
+ * An unset variable still means NO ENVIRONMENT bypass, not "everyone": the
+ * union only ever adds the owner's three addresses, never everybody.
  */
-const ADMIN_EMAILS = (process.env["ADMIN_EMAILS"] ?? "")
-  .split(",")
-  .map((address) => address.trim().toLowerCase())
-  .filter(Boolean);
+const ADMIN_EMAILS = [
+  ...new Set([
+    ...(process.env["ADMIN_EMAILS"] ?? "")
+      .split(",")
+      .map((address) => address.trim().toLowerCase())
+      .filter(Boolean),
+    ...OWNER_ADMIN_EMAILS,
+  ]),
+];
 
 type Action = "issueCode" | "verifyCode" | "claimKey";
 
@@ -624,7 +667,71 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
   return { ok: true };
 }
 
+/**
+ * THE PUBLIC ENTRYPOINT, AND THE ONE PLACE AN UNCAUGHT CRASH BECOMES AN ANSWER.
+ *
+ * Everything below can throw — a Supabase timeout, a Mailjet response in a
+ * shape nobody expected, a bug in a future edit — and an uncaught throw is what
+ * Vercel turns into `500 FUNCTION_INVOCATION_FAILED`, i.e. the same opaque
+ * error a function that never booted produces. That ambiguity is precisely
+ * what made this outage hard to read, so nothing escapes this wrapper: the
+ * reason is logged with the configuration it depends on, and the caller gets a
+ * JSON body carrying a machine-readable `code` plus the real `detail` instead
+ * of a platform error page the client can only report as "not responding".
+ *
+ * NOTE what this can NOT catch: a module that fails to load never reaches this
+ * function at all. That class of crash is prevented at the import statement
+ * above, not here.
+ */
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
+  try {
+    await runActivation(request, response);
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error);
+    // Best-effort: even READING the request must not be able to throw inside
+    // this handler — a crash here would escape straight back to the platform
+    // and turn a diagnosed failure into the same opaque 500 we are removing.
+    let action = "(none)";
+    let email = "(none)";
+    try {
+      const raw = typeof request?.body === "string" ? safeParse(request.body) : request?.body;
+      const probe = (typeof raw === "object" && raw !== null ? raw : {}) as {
+        action?: unknown;
+        email?: unknown;
+      };
+      if (typeof probe.action === "string") action = probe.action;
+      if (typeof probe.email === "string") email = probe.email;
+    } catch {
+      /* the request itself is unreadable; the two names stay unknown */
+    }
+    // PRESENCE ONLY — never the values: three of these are live secrets. The
+    // paid_emails check has its own logging inside runActivation ("payment
+    // check failed"); what is recorded here is everything that check DEPENDS
+    // on, so "supabaseServiceRolePresent: false" means it never ran at all.
+    console.error("[activation] unhandled error:", detail, {
+      action,
+      email,
+      mailjetApiKeyPresent: Boolean(process.env["MAILJET_API_KEY"]),
+      mailjetSecretKeyPresent: Boolean(process.env["MAILJET_SECRET_KEY"]),
+      supabaseUrlPresent: Boolean(SUPABASE_URL),
+      supabaseServiceRolePresent: Boolean(SERVICE_ROLE),
+      adminEmailsConfigured: ADMIN_EMAILS.length,
+    });
+    try {
+      response.status(500).json({
+        ok: false,
+        code: "ACTIVATION_SERVICE_ERROR",
+        error: "Something went wrong on our side. Please try again in a moment.",
+        detail,
+      });
+    } catch {
+      /* a response was already sent; there is nothing left to say */
+    }
+  }
+}
+
+/** The handler body itself, so the wrapper above can catch whatever it throws. */
+async function runActivation(request: ApiRequest, response: ApiResponse): Promise<void> {
   // Only POST, and only from a browser on this origin — nothing here is
   // reachable by a third-party site reading the response.
   if (request.method !== "POST") {

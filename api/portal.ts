@@ -48,7 +48,17 @@
  *   SUPABASE_SERVICE_ROLE_KEY   the secret, used ONLY to delete
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { sendMail } from "../src/lib/mailjet.server";
+/**
+ * The `.js` extension is LOAD-BEARING — see the long note in
+ * `api/activation.ts`. This project is `"type": "module"`, so Vercel runs
+ * `/api/*.ts` as native ESM, and Node's ESM resolver refuses extensionless
+ * relative specifiers: the old extensionless form crashed this function at
+ * cold start and Vercel answered every call with
+ * `500 x-vercel-error: FUNCTION_INVOCATION_FAILED`. `.js` typechecks against
+ * `mailjet.server.ts`, Node File Trace resolves it while tracing, and the
+ * lambda loads it. Do not drop it.
+ */
+import { sendMail } from "../src/lib/mailjet.server.js";
 
 /**
  * The Vercel request/response shape, declared locally.
