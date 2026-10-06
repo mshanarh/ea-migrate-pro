@@ -10,6 +10,7 @@
  * mentor_approvals, portal_payments).
  */
 import type { Account, ExpertAdvisor, PaymentRecord, PortalStatus } from "@/lib/auth-store";
+import { ensureMentorId, isValidMentorId } from "@/lib/mentor-id";
 
 export type PublicAccount = Omit<Account, "password">;
 export type AdminPatch = {
@@ -260,6 +261,94 @@ export async function portalGetAccount(email: string): Promise<{ enabled: boolea
     return { enabled: true, account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }) };
   } catch {
     return { enabled: true, account: null };
+  }
+}
+
+/**
+ * GIVE THIS ACCOUNT ITS MENTOR ID, AND PERSIST IT.
+ *
+ * This is the `persist` half of `ensureMentorId` (src/lib/mentor-id.ts): that
+ * module owns WHICH number is free, this one owns writing it without losing the
+ * rest of the record.
+ *
+ * THE MERGE IS THE POINT. `portal_accounts.data` IS the mentor's entire account
+ * — licences, EAs, settings, their website. Writing our one field over it would
+ * delete their work, which is the same trap `recordAppUserName` documents. So
+ * the row is read, the blob is parsed, ONE key is added, and the whole record
+ * goes back.
+ *
+ * `existing` IS THE RACE REPORT. After writing, the row is re-read and the ID
+ * it actually holds is returned. Two mentors signing up at the same moment both
+ * pick the same lowest-free number; the one whose write lands second re-reads
+ * and finds the number belongs to the other account, so the caller retries with
+ * a different one. Without this re-read both mentors would keep the same ID —
+ * the uniqueness check would be decoration.
+ *
+ * An account that ALREADY has a valid ID is left completely alone.
+ */
+export async function portalEnsureMentorId(
+  email: string,
+): Promise<{ enabled: boolean; ok: boolean; mentorId: string | null; error?: string }> {
+  const dbClient = await db();
+  if (!dbClient) return { enabled: false, ok: false, mentorId: null };
+  const address = email.trim().toLowerCase();
+  if (!address) return { enabled: true, ok: false, mentorId: null, error: "Missing email" };
+
+  try {
+    const mentorId = await ensureMentorId(address, async (candidate) => {
+      const { data, error } = await dbClient
+        .from("portal_accounts")
+        .select("data")
+        .eq("email", address)
+        .limit(1);
+      if (error) return { ok: false, error: error.message };
+
+      const raw = ((data ?? []) as Array<{ data?: string | null }>)[0]?.data;
+      let blob: Record<string, unknown>;
+      try {
+        blob = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      } catch {
+        // A blob we cannot parse is not one we can safely add a field to and
+        // write back — doing so would replace whatever is actually in there.
+        return { ok: false, error: "Stored account record could not be read" };
+      }
+      if (!raw) return { ok: false, error: "No account record to update" };
+
+      // Never reassign an account that already carries a valid ID.
+      if (isValidMentorId(blob["mentorId"])) {
+        return { ok: true, existing: blob["mentorId"] as string };
+      }
+
+      const { error: writeError } = await dbClient
+        .from("portal_accounts")
+        .update({ data: JSON.stringify({ ...blob, mentorId: candidate }) })
+        .eq("email", address);
+      if (writeError) return { ok: false, error: writeError.message };
+
+      // THE RE-READ. Report what this account actually holds now, which is how
+      // a lost race becomes visible to the retry loop.
+      const { data: after } = await dbClient
+        .from("portal_accounts")
+        .select("data")
+        .eq("email", address)
+        .limit(1);
+      const afterRaw = ((after ?? []) as Array<{ data?: string | null }>)[0]?.data;
+      let held: string | undefined;
+      try {
+        held = afterRaw ? ((JSON.parse(afterRaw) as { mentorId?: unknown }).mentorId as string | undefined) : undefined;
+      } catch {
+        held = undefined;
+      }
+      return { ok: true, existing: held };
+    });
+    return { enabled: true, ok: mentorId !== null, mentorId };
+  } catch (error) {
+    return {
+      enabled: true,
+      ok: false,
+      mentorId: null,
+      error: error instanceof Error ? error.message : "Could not assign a mentor ID",
+    };
   }
 }
 
