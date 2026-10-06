@@ -9,6 +9,7 @@ import {
   type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
+import { PushPermissionBanner } from "@/components/PushPermissionBanner";
 
 import appCss from "../styles.css?url";
 
@@ -249,6 +250,7 @@ function RootComponent() {
       <div style={{ position: "relative", zIndex: 1 }}>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
+        <PushPermissionBanner />
         <Toaster position="top-center" />
       </div>
     </QueryClientProvider>

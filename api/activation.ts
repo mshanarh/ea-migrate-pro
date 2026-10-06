@@ -62,6 +62,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * load that. Dropping the extension breaks production again.
  */
 import { sendMail } from "../src/lib/mailjet.server.js";
+import { getRegistration, storeConfigured } from "./_registry.js";
 
 /**
  * The Vercel request/response shape, declared locally.
@@ -239,6 +240,25 @@ function safeEqual(a: string, b: string): boolean {
  * is what the admin believes they did.
  */
 async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean> {
+  /*
+   * KV FIRST — the admin dashboard's "Mark paid" writes `eamp:registrations`
+   * (api/admin-approve.ts → saveRegistration), so the KV `isPaid` flag IS the
+   * exact same status the admin toggles. When the KV store is configured and
+   * has a record for this email, IT decides — that is the cutover the admin
+   * list runs on. Supabase `paid_emails` below remains only as the fallback
+   * for addresses that predate the migration (see /api/admin-backfill) and
+   * for deployments where KV is not configured at all.
+   */
+  if (storeConfigured()) {
+    try {
+      const record = await getRegistration(email);
+      if (record) return record.isPaid === true && record.paidAt != null;
+      // No KV record yet → fall through to the legacy ledger rather than
+      // locking out a paid customer who simply has not been backfilled.
+    } catch (error) {
+      console.warn("[activation] KV paid lookup failed, using legacy ledger:", error);
+    }
+  }
   const { data, error } = await client
     .from("paid_emails")
     .select("paid_at")

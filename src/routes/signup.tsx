@@ -6,6 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
+import { portalEnsureMentorId } from "@/lib/portal-cloud";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/signup")({
@@ -89,6 +90,12 @@ function SignUp() {
               if (!reply || (!reply.ok && reply.status !== 409)) {
                 console.error("[signup] /api/register failed:", reply?.status);
               }
+              // THE MENTOR ID, assigned at signup rather than on first sight
+              // in the portal. Best effort by design — a failure here must
+              // never lose the signup, and the portal assigns one on arrival.
+              await portalEnsureMentorId(res.account.email).then((id) => {
+                if (!id.ok) console.warn("[signup] mentor ID not assigned yet:", id.error);
+              });
               // Admin alert — "New user registered: <email> - Approve in
               // admin". Also saves the pending approval row. Awaited (bounded)
               // before the redirect so the request cannot be torn down by the
