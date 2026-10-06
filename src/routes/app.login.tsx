@@ -1651,7 +1651,7 @@ function ActivationCodeView({
         </button>
       </div>
       <p className="mt-5 text-xs leading-5 text-[#59646b]">
-        The code stops working after 2 minutes. It can be sent again if it expires.
+        The code stops working after 5 minutes. It can be sent again if it expires.
       </p>
     </div>
   );

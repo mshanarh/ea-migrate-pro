@@ -206,10 +206,25 @@ export async function sendMail(message: MailMessage): Promise<MailResult> {
         Messages: [
           {
             From: { Email: sender, Name: message.fromName ?? FROM_NAME },
+            // REPLY-TO = the same identity as From: a customer who answers the
+            // activation mail reaches the platform mailbox instead of bouncing
+            // off a no-reply, and the header costs nothing in deliverability.
+            // It is ONE {Email,Name} OBJECT — not an array like To, not a bare
+            // string: Mailjet's v3.1 schema types ReplyTo as `emailIn` and
+            // answered HTTP 400 "Type mismatch. Expected type \"emailIn\"."
+            // (ErrorRelatedTo: Messages.ReplyTo) for both `[{...}]` and
+            // `"addr"`. All four shapes were sent to the real API by
+            // `bun scripts/probe-replyto-shape.ts`; only this one returns 200.
+            ReplyTo: { Email: sender, Name: message.fromName ?? FROM_NAME },
             To: [{ Email: message.to, ...(message.toName ? { Name: message.toName } : {}) }],
             Subject: message.subject,
+            // BOTH parts on every message. A TextPart is not optional in
+            // practice: spam filters treat an HTML-only mail as a classic
+            // phishing shape, and this is the difference between "in inbox" and
+            // "in spam" for a bare gmail.com From. A caller that passes no
+            // plain text falls back to the subject rather than sending none.
             HTMLPart: message.html,
-            TextPart: message.text,
+            TextPart: message.text.trim() || message.subject,
           },
         ],
       }),
@@ -235,6 +250,16 @@ export async function sendMail(message: MailMessage): Promise<MailResult> {
   // A non-JSON body is still a real, reportable answer - see `detail` below.
   const body = parseReply(raw);
   const detail = raw.slice(0, 400);
+
+  /*
+   * ONE LINE THAT ANSWERS "did Mailjet even see it, and what id did it give?"
+   * for every send, success or refusal: recipient, HTTP status, Mailjet's
+   * per-recipient MessageID, and the complete response body. The structured
+   * prefix makes it grep-able in a Vercel function log without knowing which
+   * of the more descriptive lines below fired.
+   */
+  const mailjetMessageId = body?.Messages?.[0]?.To?.[0]?.MessageID;
+  console.log("MAILJET_SEND", message.to, status, mailjetMessageId ?? null, raw);
 
   // -- REFUSED AT THE HTTP LEVEL ------------------------------------------
   // 400 sender not pre-approved, 401 bad key, 429 quota, 5xx on Mailjet's side.
