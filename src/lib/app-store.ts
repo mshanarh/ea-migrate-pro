@@ -538,20 +538,25 @@ async function findLicenseInPortalAccounts(
   if (!supabaseConfigured || !supabase) return null;
   const client = supabase;
   try {
-    const { data: rows, error } = await client.from("portal_accounts").select("email, data");
+    // PROJECTED READ — the full `data` column carries the mentors' inline
+    // base64 videos (6 MB+ per row) and a whole-table `select(email, data)`
+    // hits the 8s statement timeout on production (verified live), which is
+    // why activation never saw the picture. `data->licenses` skips the videos
+    // (measured: the whole 167-row table in ~3s); the EA list is read for the
+    // ONE row whose licenses contain this key.
+    const { data: rows, error } = await client
+      .from("portal_accounts")
+      .select("email, data->licenses")
+      .limit(1000);
     if (error) {
       console.warn("[key-activation] portal_accounts scan failed:", error.message);
       return null;
     }
-    for (const row of (rows ?? []) as Array<{ email?: string; data: unknown }>) {
-      let parsed: PortalAccountShape | null = null;
-      try {
-        parsed = typeof row.data === "string" ? (JSON.parse(row.data) as PortalAccountShape) : (row.data as PortalAccountShape);
-      } catch {
-        continue;
-      }
-      if (!parsed) continue;
-      for (const license of parsed.licenses ?? []) {
+    for (const row of (rows ?? []) as Array<{ email?: string; licenses?: unknown }>) {
+      const licenses = Array.isArray(row.licenses)
+        ? (row.licenses as NonNullable<PortalAccountShape["licenses"]>)
+        : [];
+      for (const license of licenses) {
         if (typeof license.key !== "string" || license.key.trim().toUpperCase() !== key) continue;
         const clientEmail = typeof license.clientEmail === "string" ? license.clientEmail.trim().toLowerCase() : "";
         // The key must belong to the activating email: either it was issued
@@ -572,7 +577,20 @@ async function findLicenseInPortalAccounts(
         // licenses issued before the EA list carried ids only name the EA —
         // and a name match is what brings back the picture and the symbols for
         // exactly those keys, which is the whole point of this lookup.
-        const eas = parsed.eas ?? [];
+        // Second, targeted read: ONLY this mentor row's EA list (pictures and
+        // symbols — never the whole table's videos).
+        let eas: NonNullable<PortalAccountShape["eas"]> = [];
+        try {
+          const easRead = await client
+            .from("portal_accounts")
+            .select("data->eas")
+            .eq("email", (row.email ?? "").trim().toLowerCase())
+            .limit(1);
+          const projected = (easRead.data ?? [])[0] as { eas?: unknown } | undefined;
+          if (Array.isArray(projected?.eas)) eas = projected.eas as NonNullable<PortalAccountShape["eas"]>;
+        } catch {
+          /* name/symbols still resolve from the license itself */
+        }
         const licenseName = typeof license.name === "string" ? license.name.trim().toLowerCase() : "";
         const ea =
           eas.find((item) => item.id && item.id === license.eaId)

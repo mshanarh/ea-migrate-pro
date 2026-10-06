@@ -454,12 +454,21 @@ export async function portalRegisterAccount(account: Account): Promise<{ enabled
         const existing = JSON.parse(existingRow.data) as Account;
         const licensesById = new Map(existing.licenses.map((license) => [license.id, license]));
         for (const license of account.licenses) licensesById.set(license.id, license);
+        // EAS ARE UNIONED, NEVER REPLACED. The old merge took `eas` from the
+        // PUSHING device, so any sign-in from a browser with an empty local EA
+        // list silently wiped the cloud's pictures and symbols for every
+        // client — which is exactly how all 167 cloud rows ended up with zero
+        // EAs and zero licenses. A device may add or refresh its own EAs; it
+        // may never delete another device's.
+        const easById = new Map((existing.eas ?? []).map((ea) => [ea.id, ea]));
+        for (const ea of account.eas) easById.set(ea.id, ea);
         merged = {
           ...account,
           email,
           status: existing.status,
           role: existing.role,
           licenseLimit: existing.licenseLimit,
+          eas: Array.from(easById.values()),
           licenses: Array.from(licensesById.values()),
         };
       } catch {
@@ -633,7 +642,10 @@ export async function portalUpsertLicense(
     const merged: Account = { ...account, eas, licenses: Array.from(licensesById.values()) };
     const { error: writeError } = await dbClient
       .from("portal_accounts")
-      .upsert({ email: mentor, data: JSON.stringify(merged) }, { onConflict: "email" });
+      .upsert(
+        { email: mentor, data: JSON.stringify(merged), updated_at: new Date().toISOString() },
+        { onConflict: "email" },
+      );
     if (writeError) return { enabled: true, ok: false, error: writeError.message };
     return { enabled: true, ok: true };
   } catch (error) {
