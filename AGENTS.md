@@ -11,3 +11,5 @@
 
 - Phoenix and Sniper must derive robot names, imagery, running state, and accent color from live app state so user customization remains authoritative.
 - Robot background video is controlled only by a double press on the HOME navigation button; static robot imagery remains visible until then.
+
+- Mentor registrations, approval state, payment flag and licence limits live in the Vercel KV/Upstash store behind /api/register, /api/admin-users and /api/admin-approve (api/_registry.ts); the admin console reads/writes only through these. Why: registrations must not depend on external database tables.
