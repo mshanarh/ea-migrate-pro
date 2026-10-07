@@ -4,7 +4,7 @@ import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customi
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
-import { Sniper, Phoenix } from "@/components/app/SignatureLayouts";
+import { Sniper, Phoenix, Vortex } from "@/components/app/SignatureLayouts";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
@@ -322,10 +322,10 @@ export function ThemeContent(props: ThemeContentProps) {
         image={props.robot?.image || "/logo.png"}
         video={props.robot?.video}
         accent={accentColorValue(color)}
-        showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX"}
+        showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
-        videoWhenActive={theme === "BLUEPRINT EDGE" || theme === "SNIFFER" || theme === "PHOENIX"}
+        videoWhenActive
       />
       <ThemeContentInner {...props} />
     </>
@@ -370,6 +370,9 @@ function ThemeContentInner(props: ThemeContentProps) {
   }
   if (theme === "SNIFFER") {
     return <Sniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "VORTEX 1") {
+    return <Vortex robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "PHOENIX") {
     return <Phoenix robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;

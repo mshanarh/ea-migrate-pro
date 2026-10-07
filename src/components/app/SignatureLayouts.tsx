@@ -1,4 +1,4 @@
-import { BarChart3, DollarSign, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Square, LineChart, BarChart3, DollarSign, Pause, Play, Plus, Trash2 } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { RobotMedia } from "@/components/app/RobotMedia";
 
@@ -103,7 +103,7 @@ function WideRobotCard({ robot, accent, crop = "50% 35%" }: { robot: Robot | und
 /** Sniper matches the connected-robot dashboard reference. */
 export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/70 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:px-5 sm:pt-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/20 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:px-5 sm:pt-7">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[38rem]"
@@ -154,7 +154,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
 /** Phoenix matches the split-control robot-list dashboard reference. */
 export function Phoenix({ robot, accent, onStart, onQuotes, onRemove }: SignatureLayoutProps) {
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/60 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:pt-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/15 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:pt-7">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[43rem]"
@@ -195,6 +195,52 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove }: Signatur
             <WideRobotCard robot={robot} accent={accent} crop="50% 78%" />
           </div>
         </section>
+      </div>
+    </div>
+  );
+}
+/** Vortex 1 — glowing accent card with the live robot portrait, name and controls. */
+export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
+  const running = Boolean(robot?.running);
+  return (
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-10 pt-6 text-white">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-6">
+        <div
+          className="relative flex flex-col items-center rounded-[40px] px-5 pb-10 pt-10"
+          style={{ background: `linear-gradient(160deg, ${accent}e6 0%, ${accent}99 45%, rgba(0,0,0,0.75) 100%)`, boxShadow: `0 0 40px ${accent}aa` }}
+        >
+          <span className="absolute right-6 top-6 size-3.5 rounded-full" style={{ backgroundColor: running ? "#22C55E" : "#FF1744", boxShadow: `0 0 10px ${running ? "#22C55E" : "#FF1744"}` }} />
+          <div className="size-36 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl">
+            <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
+          </div>
+          <h1 className="mt-8 max-w-full break-words text-center text-3xl font-black uppercase leading-none" style={{ textShadow: "0 2px 6px rgba(0,0,0,.6)" }}>
+            {robot?.name ?? "YOUR ROBOT"}
+          </h1>
+          <div className="mt-9 grid w-full grid-cols-3">
+            {[
+              { label: running ? "Stop" : "Start", icon: running ? Pause : Square, onClick: onStart },
+              { label: "Quotes", icon: LineChart, onClick: onQuotes },
+              { label: "Remove", icon: Trash2, onClick: onRemove },
+            ].map(({ label, icon: Icon, onClick }) => (
+              <button key={label} type="button" onClick={onClick} className="flex flex-col items-center gap-2 transition-transform active:scale-95">
+                <Icon className="size-8" fill={Icon === Pause || Icon === Trash2 ? "currentColor" : "none"} />
+                <span className="text-sm font-black uppercase tracking-[0.14em]">{label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+        <button
+          type="button"
+          onClick={onOpenAdd}
+          className="flex min-h-24 items-center gap-5 rounded-full px-8 text-left transition-transform active:scale-[0.98]"
+          style={{ background: `linear-gradient(90deg, ${accent}, ${accent}55)`, boxShadow: `0 0 30px ${accent}88` }}
+        >
+          <span className="flex size-12 items-center justify-center rounded-full bg-white/25"><Plus className="size-6" strokeWidth={3} /></span>
+          <span className="flex flex-col">
+            <span className="text-2xl font-black uppercase">Add Robot</span>
+            <span className="text-sm font-bold uppercase tracking-[0.2em] text-white/85">Host Robot Key</span>
+          </span>
+        </button>
       </div>
     </div>
   );

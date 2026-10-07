@@ -52,6 +52,7 @@ export const INTERFACE_THEMES = [
   { id: "EA CLOUD", name: "EA CLOUD", description: "Green ladder classic" },
   { id: "SNIFFER", name: "Sniper", description: "Connected robot controls" },
   { id: "PHOENIX", name: "Phoenix", description: "Split control robot list" },
+  { id: "VORTEX 1", name: "Vortex 1", description: "Glowing robot card" },
 ] as const;
 
 export const FONT_OPTIONS = [
@@ -92,6 +93,7 @@ export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
   "EA CLOUD": "Inter",
   "SNIFFER": "Orbitron",
   "PHOENIX": "Space Grotesk",
+  "VORTEX 1": "Russo One",
 };
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";

@@ -145,16 +145,12 @@ export function VideoBackdrop({
   if (playing) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-50" loop muted playsInline preload="auto" />
+        <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-95" loop muted playsInline preload="auto" />
         {/* Legibility scrims over the media */}
-        <div className="absolute inset-0 bg-black/45" />
+        <div className="absolute inset-0 bg-black/10" />
         <div
-          className="absolute inset-0"
-          style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
-        />
-        <div
-          className="absolute inset-x-0 bottom-0 h-56"
-          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+          className="absolute inset-x-0 bottom-0 h-40"
+          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55) 85%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
         />
       </div>
     );
