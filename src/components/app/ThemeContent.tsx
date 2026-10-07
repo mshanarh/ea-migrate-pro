@@ -325,7 +325,7 @@ export function ThemeContent(props: ThemeContentProps) {
         showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
-        videoWhenActive={theme === "BLUEPRINT EDGE" || theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
+        videoWhenActive
       />
       <ThemeContentInner {...props} />
     </>
