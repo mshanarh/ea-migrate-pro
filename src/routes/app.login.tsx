@@ -1,3 +1,4 @@
+import { BrandLogo } from "@/components/BrandLogo";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
@@ -1176,33 +1177,33 @@ function LoginView({
   deactivated?: boolean;
 }) {
   return (
-    <div className="-translate-y-8 text-center">
-      <div className="mx-auto flex size-28 items-center justify-center overflow-hidden rounded-full bg-[#08a8ef] shadow-[0_0_34px_rgba(8,168,239,.42)]">
-        <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
+    <div className="-translate-y-4 text-center">
+      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 -z-0 h-[60vh] bg-[linear-gradient(180deg,rgba(8,168,239,.18),transparent)]" />
+      <div className="relative mx-auto flex size-32 items-center justify-center overflow-hidden rounded-[32px] border border-white/10 bg-[#0d1418] p-3 shadow-[0_0_40px_rgba(8,168,239,.35)]">
+        <BrandLogo className="size-full object-contain" />
       </div>
-      <h1 className="mt-8 text-[2.45rem] font-semibold tracking-tight">Login</h1>
-      <p className="mt-2 text-base text-[#8a9298]">Enter your email to continue</p>
+      <p className="relative mt-6 text-xs font-bold tracking-[0.35em] text-[#8a9298] uppercase">EA Migrate</p>
+      <h1 className="relative mt-2 text-[2.45rem] font-bold tracking-tight">Sign in</h1>
+      <p className="relative mt-2 text-base text-[#aab2b7]">Use the email linked to your membership</p>
       {deactivated ? <DeactivatedNotice /> : null}
-      <form className="mt-12 space-y-4" onSubmit={onSubmit}>
-        <label className="flex h-[4.55rem] items-center gap-4 rounded-full border border-[#202930] bg-[#10161a] px-7 text-left shadow-[inset_0_1px_0_rgba(255,255,255,.03)] focus-within:border-[#08a8ef]">
-          <Mail className="size-6 shrink-0 text-[#aab2b7]" />
-          <input
-            type="email"
-            required
-            autoComplete="email"
-            value={email}
-            onChange={(event) => setEmail(event.target.value)}
-            placeholder="Email"
-            className="h-full w-full bg-transparent text-lg text-white outline-none placeholder:text-[#8a9298]"
-          />
-        </label>
+      <form className="relative mt-10 space-y-4 rounded-[28px] border border-white/10 bg-gradient-to-b from-[#121a1f] to-[#0a0f12] p-6 text-left" onSubmit={onSubmit}>
+        <label htmlFor="app-login-email" className="text-xs font-bold tracking-[0.2em] text-[#8a9298] uppercase">Email</label>
+        <input
+          id="app-login-email"
+          type="email"
+          required
+          autoComplete="email"
+          value={email}
+          onChange={(event) => setEmail(event.target.value)}
+          placeholder="you@email.com"
+          className="h-14 w-full rounded-2xl border border-white/10 bg-[#070d10] px-5 text-lg text-white outline-none placeholder:text-[#59646b] focus:border-[#08a8ef]"
+        />
         <button
           type="submit"
           disabled={checking || redirecting}
-          className="flex h-[4.55rem] w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+          className="flex h-14 w-full items-center justify-center rounded-2xl bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
         >
-          {redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Proceed"}
-          <ArrowRight className="size-6" />
+          {redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Continue"}
         </button>
       </form>
       <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
