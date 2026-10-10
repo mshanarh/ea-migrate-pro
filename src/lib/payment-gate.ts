@@ -416,9 +416,16 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // FAIL-CLOSED branch below, never to the local store.
     cloud = null;
   }
-  if (cloud === "admin" || cloud === "paid") {
+  if (cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.
+    markEmailPaid(email);
+    return { action: "pass" };
+  }
+  if (cloud === "admin") {
+    // Legacy admin path — kept only for the owner/admin account that was
+    // already marked paid and still needs to open the app. If admin access
+    // still requires payment in your current setup, treat this like unpaid.
     markEmailPaid(email);
     return { action: "pass" };
   }
