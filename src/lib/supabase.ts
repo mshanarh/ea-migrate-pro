@@ -14,6 +14,15 @@ export type UserRow = {
   created_at: string;
 };
 
+export type HostRobotKey = {
+  key_code: string;
+  ea_id: string | null;
+  mentor_id: string | null;
+  is_used: boolean;
+  used_by_email: string | null;
+  created_at: string;
+};
+
 export type UserSessionRow = {
   id: string;
   email: string;

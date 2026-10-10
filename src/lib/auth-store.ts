@@ -404,6 +404,11 @@ export function useCurrentAccount() {
   return s.accounts.find((a) => a.id === s.currentId) ?? null;
 }
 
+export function useCurrentMentorId() {
+  const account = useCurrentAccount();
+  return account?.mentorId ?? undefined;
+}
+
 export function signIn(email: string, password: string): { error?: string; accountId?: string; role?: Account["role"] } {
   load();
   // Normalise inputs exactly like they are stored at registration.

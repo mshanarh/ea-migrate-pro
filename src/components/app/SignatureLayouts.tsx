@@ -23,10 +23,11 @@ function PoweredBadge({ accent }: { accent: string }) {
   );
 }
 
-function RobotPortrait({ robot, accent }: { robot: Robot | undefined; accent: string }) {
+function RobotPortrait({ robot, accent, size = 44 }: { robot: Robot | undefined; accent: string; size?: number }) {
+  const sizeClass = size === 44 ? "size-44 sm:size-48" : `size-${size}`;
   return (
     <div
-      className="size-44 overflow-hidden rounded-full border-[5px] bg-black sm:size-48"
+      className={`${sizeClass} overflow-hidden rounded-full border-[5px] bg-black sm:size-48`}
       style={{ borderColor: accent, boxShadow: `0 0 34px ${accent}55` }}
     >
       <RobotMedia
@@ -40,7 +41,7 @@ function RobotPortrait({ robot, accent }: { robot: Robot | undefined; accent: st
   );
 }
 
-function RobotHeading({ robot }: { robot: Robot | undefined }) {
+function RobotHeading({ robot, accent }: { robot: Robot | undefined; accent: string }) {
   return (
     <div className="text-center">
       <p className="text-xl font-bold text-white/65">You&apos;re Trading With</p>
@@ -80,14 +81,14 @@ function RoundAction({
   );
 }
 
-function WideRobotCard({ robot, accent, crop = "50% 35%" }: { robot: Robot | undefined; accent: string; crop?: string }) {
+function WideRobotCard({ robot, accent, image, crop = "50% 35%" }: { robot: Robot | undefined; accent: string; image?: string; crop?: string }) {
   return (
     <div
       className="relative h-24 overflow-hidden rounded-full border-2 bg-black"
       style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}66` }}
     >
       <img
-        src={robot?.image || "/logo.png"}
+        src={image ?? robot?.image ?? "/logo.png"}
         alt=""
         className="absolute inset-0 size-full object-cover opacity-85"
         style={{ objectPosition: crop }}
@@ -102,6 +103,8 @@ function WideRobotCard({ robot, accent, crop = "50% 35%" }: { robot: Robot | und
 
 /** Sniper matches the connected-robot dashboard reference. */
 export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
+  const running = Boolean(robot?.running);
+  const image = robot?.image || "/logo.png";
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/20 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:px-5 sm:pt-7">
       <div
@@ -111,7 +114,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
       />
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
         <RobotPortrait robot={robot} accent={accent} />
-        <RobotHeading robot={robot} />
+        <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
 
         <div
@@ -119,7 +122,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
           style={{ borderColor: accent, boxShadow: `0 0 30px ${accent}70` }}
         >
           <RoundAction label="Delete" icon={Trash2} onClick={onRemove} accent={accent} />
-          <RoundAction label={robot?.running ? "Stop" : "Start"} icon={robot?.running ? Pause : Play} onClick={onStart} primary accent={accent} />
+          <RoundAction label={running ? "Stop" : "Start"} icon={running ? Pause : Play} onClick={onStart} primary accent={accent} />
           <RoundAction label="Symbols" icon={BarChart3} onClick={onQuotes} accent={accent} />
         </div>
 
@@ -130,7 +133,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
             style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}66` }}
           >
             <div className="size-14 shrink-0 overflow-hidden rounded-full border-2" style={{ borderColor: accent }}>
-              <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
+              <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
             </div>
             <span className="min-w-0 break-words text-lg font-black uppercase">{robot?.name ?? "YOUR ROBOT"}</span>
           </div>
@@ -152,7 +155,9 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
 }
 
 /** Phoenix matches the split-control robot-list dashboard reference. */
-export function Phoenix({ robot, accent, onStart, onQuotes, onRemove }: SignatureLayoutProps) {
+export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
+  const running = Boolean(robot?.running);
+  const image = robot?.image || "/logo.png";
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/15 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:pt-7">
       <div
@@ -162,7 +167,7 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove }: Signatur
       />
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
         <RobotPortrait robot={robot} accent={accent} />
-        <RobotHeading robot={robot} />
+        <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
 
         <div
@@ -178,21 +183,21 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove }: Signatur
           <button
             type="button"
             onClick={onStart}
-            aria-label={robot?.running ? "Stop robot" : "Start robot"}
+            aria-label={running ? "Stop robot" : "Start robot"}
             className="absolute left-1/2 top-1/2 flex size-28 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-full border-[5px] bg-black transition-transform active:scale-95"
             style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}` }}
           >
-            {robot?.running ? <Pause className="size-11" fill="currentColor" style={{ color: accent }} /> : <Play className="size-11" fill="currentColor" style={{ color: accent }} />}
-            <span className="text-xs font-black" style={{ color: accent }}>{robot?.running ? "Stop" : "Start"}</span>
+            {running ? <Pause className="size-11" fill="currentColor" style={{ color: accent }} /> : <Play className="size-11" fill="currentColor" style={{ color: accent }} />}
+            <span className="text-xs font-black" style={{ color: accent }}>{running ? "Stop" : "Start"}</span>
           </button>
         </div>
 
         <section className="w-full pt-3">
           <h2 className="mb-5 text-2xl font-black">Robots List:</h2>
           <div className="space-y-4">
-            <WideRobotCard robot={robot} accent={accent} crop="50% 18%" />
-            <WideRobotCard robot={robot} accent={accent} crop="50% 46%" />
-            <WideRobotCard robot={robot} accent={accent} crop="50% 78%" />
+            <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 18%" />
+            <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 46%" />
+            <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 78%" />
           </div>
         </section>
       </div>
