@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
-import { AlertTriangle, Check, ChevronDown, Eye, EyeOff, ShieldCheck } from "lucide-react";
+import { AlertTriangle, ChevronDown, ChevronsRight, Clock, Database, Eye, EyeOff, Fingerprint, Lock, RefreshCw, ShieldCheck, User } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, getAppState, leaveForCheckout, useAppState, type MtAccount } from "@/lib/app-store";
@@ -239,6 +239,7 @@ function AppMetatrader() {
     };
     connectMt(account);
     writeMt5Ui({ login: account.loginId, server: account.server, saved: true });
+    try { window.localStorage.setItem("mt5_last_verified", new Date().toLocaleTimeString()); } catch { /* ignore */ }
     const typedPassword = password.trim();
     // Keep the password ON THIS DEVICE ONLY so the scanner can execute trades
     // directly against the bridge from the browser (the deployed app is a
@@ -343,6 +344,7 @@ function AppMetatrader() {
       const marginFree = num("margin_free") ?? num("equity") ?? num("balance");
       const balance = num("balance");
       const equity = num("equity");
+      try { window.localStorage.setItem("mt5_last_verified", new Date().toLocaleTimeString()); } catch { /* ignore */ }
       toast.success(`Connected ✓ — Account ${mt.loginId} · ${mt.server}`);
       if (marginFree === null && balance === null && equity === null) {
         setTestResult(`Connected ✓ — Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
@@ -377,230 +379,88 @@ function AppMetatrader() {
     show: (index: number) => ({ opacity: 1, y: 0, transition: { delay: index * 0.06, duration: 0.45, ease: [0.22, 1, 0.36, 1] as const } }),
   };
 
+  const online = Boolean(mt);
+  const lastVerified = (() => {
+    try { return window.localStorage.getItem("mt5_last_verified"); } catch { return null; }
+  })();
+  const field = "flex h-16 items-center gap-4 rounded-full border border-white/10 bg-black/40 px-6 focus-within:border-white/30";
+
   return (
-    <div className="app-fullscreen relative bg-black text-white">
-      {/* Ambient accent glow — soft "4K" studio light from the top */}
-      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]" style={{ background: `radial-gradient(ellipse 70% 55% at 50% -8%, ${accent}2e, transparent 70%)` }} />
-
+    <div className="app-fullscreen relative bg-[#070d10] text-white">
+      <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]" style={{ background: `radial-gradient(ellipse 70% 55% at 50% -8%, ${accent}22, transparent 70%)` }} />
       <div className="app-scroll-area relative">
-        <main className="mx-auto flex w-full max-w-md flex-col px-5 pt-safe pb-safe-nav">
-          {/* MT5 badge — pill on Android, soft rounded chip on iOS */}
-          <motion.div
-            initial={{ opacity: 0, y: 14 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-            className="flex justify-center"
-          >
-            <span
-              className={`inline-flex h-12 items-center justify-center px-10 text-base font-black tracking-wide text-black ${isIos ? "rounded-2xl" : "rounded-full"}`}
-              style={{ background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 10px 34px ${accent}66` }}
-            >
-              MT5 Account
+        <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 pt-safe pb-safe-nav">
+          <motion.header initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mt-4 flex items-end justify-between gap-3">
+            <div>
+              <p className="text-xs font-bold tracking-[0.35em] text-white/50 uppercase">EA Migrate</p>
+              <h1 className="mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
+            </div>
+            <span className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300" : "border-red-400/50 bg-red-500/15 text-red-300"}`}>
+              <span className={`size-2 rounded-full ${online ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
+              {online ? "ONLINE" : "OFFLINE"}
             </span>
-          </motion.div>
+          </motion.header>
 
-          {/* Logo */}
-          <motion.div
-            initial={{ opacity: 0, scale: 0.85 }}
-            animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.55, delay: 0.05, ease: [0.22, 1, 0.36, 1] }}
-            className="mt-8 flex justify-center"
-          >
-            <Mt5Logo />
-          </motion.div>
-
-          {/* Saved card — always OFFLINE until a trade executes */}
-          {mt ? (
-            <motion.div
-              initial={{ opacity: 0, y: 18 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-              className="plat-card mt-8 border p-5"
-              style={{ borderColor: `${accent}59`, background: `linear-gradient(180deg, ${accent}14, rgba(0,0,0,0.5))` }}
-            >
-              <div className="flex items-center justify-between">
-                <p className="text-[11px] font-bold tracking-[0.28em] uppercase" style={{ color: accent }}>Saved details</p>
-                <span
-                  className={`flex items-center gap-1.5 rounded-full px-3 py-1 text-[10px] font-bold ${
-                    mt.kind === "demo" ? "bg-sky-400/10 text-sky-300" : "bg-white/10 text-white/70"
-                  }`}
-                >
-                  {mt.kind === "demo" ? "DEMO" : "SAVED"}
-                </span>
-              </div>
-              <p className="mt-3 flex items-center gap-2 text-xl font-black">
-                <span className="inline-block size-2.5 rounded-full bg-white/25" aria-hidden="true" />
-                Disconnected / Offline
-              </p>
-              <p className="mt-1 text-sm text-white/60">Account {mt.loginId} · {mt.server}</p>
-              <p className="mt-1 text-xs text-white/40">
-                {mt.accountType}{mt.environment ? ` · region ${mt.environment}` : ""}{mt.kind ? ` · ${mt.kind === "demo" ? "DEMO" : "LIVE"} account` : ""}
-              </p>
-              <p className="mt-3 rounded-2xl border border-white/10 bg-white/[0.04] p-3 text-[12px] leading-relaxed text-white/55">
-                The broker connection opens automatically ONLY while a trade executes, and closes right afterwards. Nothing
-                connects in the background.
-              </p>
-              <div className="mt-4 flex gap-3">
-                <button
-                  type="button"
-                  onClick={() => void checkStatus()}
-                  disabled={testing}
-                  className="plat-pressable plat-control h-11 flex-1 bg-white/[0.05] text-xs font-bold text-emerald-300 disabled:opacity-60"
-                >
-                  {testing ? "TESTING..." : "TEST CONNECTION"}
+          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold tracking-[0.3em] text-white/60 uppercase">MT5 Status</p>
+              {mt && (
+                <button type="button" onClick={() => void checkStatus()} disabled={testing} className="flex items-center gap-1.5 text-sm text-white/60 disabled:opacity-50">
+                  <RefreshCw className={`size-4 ${testing ? "animate-spin" : ""}`} /> {testing ? "testing" : "test"}
                 </button>
-                <button
-                  type="button"
-                  onClick={() => void removeConnection()}
-                  className="plat-pressable plat-control h-11 flex-1 bg-white/[0.05] text-xs font-bold text-white/60 hover:text-red-300"
-                >
-                  REMOVE DETAILS
-                </button>
-              </div>
-              {testResult && (
-                <p className="mt-3 rounded-2xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-[12px] text-emerald-200">
-                  {testResult}
-                </p>
               )}
-            </motion.div>
-          ) : null}
-
-          {/* Form */}
-          <form onSubmit={(event) => void submit(event)} className="mt-8 space-y-5">
-            <motion.div custom={0} variants={stagger} initial="hidden" animate="show">
-              <label className={labelClass} htmlFor="mt5-broker">Broker</label>
-              <div className="mt-2.5">
-                <input
-                  id="mt5-broker"
-                  value={broker}
-                  onChange={(event) => {
-                    clearError();
-                    setBroker(event.target.value);
-                  }}
-                  placeholder="Any broker — e.g. Exness"
-                  aria-label="Broker"
-                  autoComplete="off"
-                  className={fieldClass}
-                  list="mt5-broker-suggestions"
-                />
-                <datalist id="mt5-broker-suggestions">
-                  {POPULAR_BROKERS.map((item) => <option key={item} value={item} />)}
-                </datalist>
+            </div>
+            <div className="mt-4 grid grid-cols-2 gap-3">
+              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><ShieldCheck className="size-3.5" /> Connection</p>
+                <p className={`mt-1 text-lg font-black ${online ? "text-emerald-300" : "text-white/70"}`}>{online ? "Linked" : "Not linked"}</p>
               </div>
-            </motion.div>
-
-            <motion.div custom={1} variants={stagger} initial="hidden" animate="show">
-              <label className={labelClass} htmlFor="mt5-server">Server</label>
-              <div className="mt-2.5">
-                <input
-                  id="mt5-server"
-                  value={server}
-                  onChange={(event) => {
-                    clearError();
-                    setServer(event.target.value);
-                  }}
-                  placeholder={broker ? `e.g. ${BROKER_SERVERS[broker]?.[0] ?? "Exness-MT5Real"}` : "e.g. Exness-MT5Real"}
-                  aria-label="Server"
-                  className={fieldClass}
-                  list="mt5-server-suggestions"
-                />
-                <datalist id="mt5-server-suggestions">
-                  {servers.map((item) => <option key={item} value={item} />)}
-                </datalist>
+              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
+                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><Clock className="size-3.5" /> Last verified</p>
+                <p className="mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
               </div>
-            </motion.div>
-
-            <motion.div custom={2} variants={stagger} initial="hidden" animate="show">
-              <label className={labelClass} htmlFor="mt5-type">Account Type</label>
-              <div className="mt-2.5">
-                <DarkSelect value={accountType} onChange={setAccountType} placeholder="Account type" options={ACCOUNT_TYPES} ariaLabel="Account type" />
+            </div>
+            {mt && (
+              <div className="mt-3 flex items-center justify-between gap-3 rounded-full border border-white/10 bg-black/40 px-5 py-3 text-sm">
+                <span className="truncate text-white/80">{mt.loginId} · {mt.server}</span>
+                <button type="button" onClick={() => void removeConnection()} className="shrink-0 text-xs font-bold text-white/50 hover:text-red-300">REMOVE</button>
               </div>
-            </motion.div>
-
-            <motion.div custom={3} variants={stagger} initial="hidden" animate="show">
-              <label className={labelClass} htmlFor="mt5-login">Login ID</label>
-              <div className="mt-2.5">
-                <input
-                  id="mt5-login"
-                  value={loginId}
-                  onChange={(event) => {
-                    clearError();
-                    setLoginId(event.target.value);
-                  }}
-                  placeholder="Account number"
-                  aria-label="Login ID"
-                  inputMode="numeric"
-                  className={fieldClass}
-                />
+            )}
+            {testResult && <p className="mt-3 rounded-3xl border border-emerald-400/25 bg-emerald-400/10 p-3 text-xs text-emerald-200">{testResult}</p>}
+            {errorMessage && (
+              <div role="alert" className="mt-3 flex items-start gap-3 rounded-3xl border border-red-400/30 bg-red-500/10 p-3">
+                <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-300" />
+                <p className="text-sm text-red-200/90">{errorMessage}</p>
               </div>
-            </motion.div>
+            )}
+          </motion.section>
 
-            <motion.div custom={4} variants={stagger} initial="hidden" animate="show">
-              <label className={labelClass} htmlFor="mt5-password">Password</label>
-              <div className="relative mt-2.5">
-                <input
-                  id="mt5-password"
-                  value={password}
-                  onChange={(event) => {
-                    clearError();
-                    setPassword(event.target.value);
-                  }}
-                  placeholder="••••••••"
-                  aria-label="Password"
-                  type={showPassword ? "text" : "password"}
-                  autoComplete="new-password"
-                  className={`${fieldClass} pr-14`}
-                />
-                <button
-                  type="button"
-                  aria-label={showPassword ? "Hide password" : "Show password"}
-                  onClick={() => setShowPassword((value) => !value)}
-                  className="absolute right-4 top-1/2 -translate-y-1/2 text-white/35 transition-colors hover:text-white/70"
-                >
-                  {showPassword ? <EyeOff className="size-5" /> : <Eye className="size-5" />}
-                </button>
-              </div>
-            </motion.div>
-
-            <motion.div custom={5} variants={stagger} initial="hidden" animate="show" className="pt-1">
-              {errorMessage && (
-                <div
-                  role={keyNotice ? "status" : "alert"}
-                  className={`mb-4 flex items-start gap-3 rounded-2xl border p-4 ${
-                    keyNotice ? "border-amber-400/25 bg-amber-400/10" : "border-red-400/30 bg-red-400/10"
-                  }`}
-                >
-                  {keyNotice ? (
-                    <ShieldCheck className="mt-0.5 size-5 shrink-0 text-amber-300" />
-                  ) : (
-                    <AlertTriangle className="mt-0.5 size-5 shrink-0 text-red-300" />
-                  )}
-                  <p className={`text-sm leading-relaxed ${keyNotice ? "text-amber-200/90" : "text-red-200/90"}`}>{errorMessage}</p>
-                </div>
-              )}
-              <button
-                type="submit"
-                disabled={saving}
-                className={`plat-pressable flex h-16 w-full items-center justify-center gap-2 text-lg font-black text-black disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
-                style={{ background: `linear-gradient(180deg, ${accent}, ${accent}cc)`, boxShadow: `0 14px 44px ${accent}66` }}
-              >
-                {saving ? (
-                  <span className="flex items-center gap-3">
-                    <span className="size-5 animate-spin rounded-full border-[3px] border-black/70 border-t-transparent" />
-                    SAVING...
-                  </span>
-                ) : (
-                  "Save Details"
-                )}
+          <motion.form custom={1} variants={stagger} initial="hidden" animate="show" onSubmit={(event) => void submit(event)} className="space-y-4 rounded-[32px] border border-white/10 bg-white/[0.03] p-5" style={{ boxShadow: `0 0 40px ${accent}14` }}>
+            <label className={field}>
+              <User className="size-5 shrink-0 text-white/60" />
+              <input value={loginId} onChange={(e) => { clearError(); setLoginId(e.target.value); }} placeholder="Account ID" inputMode="numeric" aria-label="Account ID" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
+            </label>
+            <label className={field}>
+              <Lock className="size-5 shrink-0 text-white/60" />
+              <input value={password} onChange={(e) => { clearError(); setPassword(e.target.value); }} placeholder="Password" type={showPassword ? "text" : "password"} autoComplete="new-password" aria-label="Password" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
+              <button type="button" aria-label={showPassword ? "Hide password" : "Show password"} onClick={() => setShowPassword((v) => !v)} className="text-white/60">
+                {showPassword ? <Eye className="size-5" /> : <EyeOff className="size-5" />}
               </button>
-              <p className="mt-3 text-center text-[11px] leading-relaxed text-white/30">
-                Saving does NOT connect to the broker. Your credentials are stored securely on the server and are used only
-                to open a verified connection at the moment a trade executes — the connection closes immediately afterwards.
-                Passwords are never displayed, logged, or stored on this device.
-              </p>
-            </motion.div>
-          </form>
-
+            </label>
+            <label className={field}>
+              <Database className="size-5 shrink-0 text-white/60" />
+              <input value={server} onChange={(e) => { clearError(); setServer(e.target.value); }} placeholder="Broker server only MT5" aria-label="Broker server" list="mt5-server-suggestions" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
+              <datalist id="mt5-server-suggestions">{servers.map((item) => <option key={item} value={item} />)}</datalist>
+            </label>
+            <p className="px-1 text-sm leading-relaxed text-white/50">
+              Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="text-white/80">File → Login to Trade Account</span>.
+            </p>
+            <button type="submit" disabled={saving} className="flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
+              <Fingerprint className="size-7" style={{ color: accent }} />
+              <span>{saving ? "CONNECTING..." : "CONNECT ACCOUNT"}</span>
+              <ChevronsRight className="size-6" style={{ color: accent }} />
+            </button>
+          </motion.form>
         </main>
       </div>
       <FixedBottomNav />
