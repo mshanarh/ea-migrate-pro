@@ -254,17 +254,24 @@ export function paymentStatusForEmail(email: string): PaymentStatus {
   if (isRevokedEmail(clean)) return "unpaid";
   if (isPaymentExemptEmail(clean)) return "admin";
   return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
-}
-
-export function markEmailPaid(email: string) {
+}export function markEmailPaid(email: string) {
   load();
   const clean = cleanEmail(email);
   if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
-  const existing = state.payments.find((payment) => payment.email === clean);
-  if (existing?.paid) return;
+
+  // Mark the local store paid WITHOUT route-guarding it. Callers own the door:
+  // this is called after the database has already said the account is entitled
+  // (finishSignIn, the waiting-room poll, the dashboard's own mark-paid path),
+  // so a stale or missing cloud answer must not re-impose the gate here.
+  if (state.payments.some((payment) => payment.email === clean && payment.paid)) return;
+
   state = {
     ...state,
-    payments: [...state.payments.filter((payment) => payment.email !== clean), { email: clean, paid: true, paidAt: new Date().toISOString() }],
+    payments: [...state.payments.filter((payment) => payment.email !== clean), {
+      email: clean,
+      paid: true,
+      paidAt: new Date().toISOString(),
+    }],
   };
   persist();
 }

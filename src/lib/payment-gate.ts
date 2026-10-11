@@ -189,7 +189,25 @@ export async function resolveCloudAccess(
     // pressing Mark paid, so they get the short TTL like everything else.
     const ttl =
       cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
-    if (Date.now() - cached.at < ttl) return cached.status;
+    if (Date.now() - cached.at < ttl) {
+      // A user only comes back here when the dashboard's poll pushed them
+      // back to the login screen (the waiting room, for example), which
+      // means the cloud flag they last saw was not yet positive. If the
+      // local store now remembers a payment the dashboard itself wrote,
+      // honour it immediately instead of re-questioning the cloud from a
+      // device that is already signed in — that is the instant between
+      // "Mark paid" and the dashboard's next poll where the app could
+      // otherwise bounce them straight back to Whop.
+      if (cached.status !== "paid" && cached.status !== "admin") {
+        const local = paymentStatusForEmail(clean);
+        const pay = local === "paid" ? "paid" : local === "admin" ? "admin" : "unpaid";
+        if (pay === "paid" || pay === "admin") {
+          cache.set(clean, { status: pay, at: Date.now() });
+          return pay;
+        }
+      }
+      return cached.status;
+    }
   }
 
   try {
