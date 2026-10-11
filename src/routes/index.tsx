@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/accordion";
 import { SiteHeader } from "@/components/SiteHeader";
 import { BrokerPromoPopup } from "@/components/BrokerPromoPopup";
+import { MaintenancePopup } from "@/components/MaintenancePopup";
 import { motion } from "framer-motion";
 import heroApp from "/ea-migrate-hero.jpg";
 
@@ -662,6 +663,7 @@ function Home() {
       </footer>
       <LandingChatbot />
       <BrokerPromoPopup />
+      <MaintenancePopup />
     </div>
   );
 }
