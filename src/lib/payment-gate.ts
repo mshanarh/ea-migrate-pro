@@ -4,38 +4,28 @@
  * The old gate trusted localStorage ("payments" array) and the /app?success=true
  * URL parameter — both are trivially forged (devtools edit, typing the URL), which
  * is exactly how a non-paying user unlocked the app. This module decides access
- * from SUPABASE (and Whop, server-side) only:
+ * from UPSTASH KV (the admin console's source of truth) and Whop, server-side:
  *
- *   paid    → the console's payment LEDGER (`paid_emails`) holds a row with a
+ *   paid    → the admin console's registration record in Upstash KV
+ *             (`eamp:registrations` hash) has `isPaid: true` with a `paidAt`
  *             timestamp for this email, OR Whop reports an active membership FOR
  *             OUR PRODUCT — and only when WHOP_PRODUCT_ID is set, since an
  *             unscoped query matches any product on Whop.
  *             NOTHING ELSE. A licence key bound to the email does NOT open the
  *             app — see the NO LICENCE-KEY FALLBACK note inside
- *             computeFromDatabase. The key's holder is the mentor who issued
+ *             computeFromUpstash. The key's holder is the mentor who issued
  *             it, not a customer, and that fallback is precisely how app users
  *             the owner never marked paid kept getting in.
- *   revoked → the owner pressed "Mark unpaid" (`paid_emails` row with
- *             `paid_at = null`), or pressed "Reject" for an account that HAD
- *             paid. Both mean something was taken away, so they are never
- *             answered as "unpaid" — that would hide why they were removed.
- *             A rejected account that NEVER paid is answered `unpaid`, not
- *             `revoked`; see "REJECTED IS NOT THE SAME AS DEACTIVATED".
+ *   revoked → the owner pressed "Mark unpaid" in the admin console (Upstash
+ *             record has `isPaid: false` with `paidAt: null`), or pressed
+ *             "Reject" for an account that HAD paid. Both mean something was
+ *             taken away, so they are never answered as "unpaid" — that would
+ *             hide why they were removed. A rejected account that NEVER paid
+ *             is answered `unpaid`, not `revoked`; see "REJECTED IS NOT THE
+ *             SAME AS DEACTIVATED".
  *   unpaid  → everything else, and every unpaid email is sent to checkout
  *
  * NOTHING BUT PAYMENT OPENS THIS APP — NOT EVEN AN ADMIN.
- *
- * The owner list, `users.is_admin` and `users.is_paid` are all GONE from the
- * grant path. Each one was a way in that had nothing to do with money:
- *   • the owner list answered "admin" before any database call, so every
- *     platform address opened the app forever with no payment record;
- *   • `is_admin` opened the app for anybody an admin had flagged;
- *   • `is_paid` is a MIRROR column the anon key may write, so it could be set
- *     by anything holding the public key.
- * The console shows Paid from the same `paid_emails` ledger this gate reads, so
- * what the owner sees and what the app enforces are now the same table. If you
- * are not on that table, the app does not open — that includes the owner, and
- * that is deliberate.
  *
  * MENTOR APPROVAL IS NOT IN THIS LIST, ON PURPOSE — with ONE exception. Being
  * APPROVED grants nothing (approving somebody in the mentor portal is a portal
@@ -60,37 +50,43 @@
  * accounts the owner has since rejected and none of them ever paid us. Checking
  * the key first answered "paid" for exactly the people who were removed.
  *
- * The distinction is made from the DATABASE, never from what this device
- * remembers.
+ * The distinction is made from UPSTASH KV (the admin console's source of truth),
+ * never from what this device remembers.
  *
  * A tiny in-memory cache (60s) keeps navigation snappy; it never survives a page
- * reload and only caches DATABASE results, so editing localStorage cannot
- * influence the decision. There is NO local fallback: when the database cannot
- * decide (unreachable, error, or unconfigured) the gate FAILS CLOSED and sends
+ * reload and only caches UPSTASH results, so editing localStorage cannot
+ * influence the decision. There is NO local fallback: when Upstash cannot decide
+ * (unreachable, error, or unconfigured) the gate FAILS CLOSED and sends
  * the account to checkout. A local record — including one a device forged or
  * still remembers from a session the owner has since revoked — can never open
  * the app, because it is never consulted.
  */
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
-import { supabase, supabaseConfigured } from "@/lib/supabase";
+import {
+  getRegistration,
+  storeConfigured,
+  getDeviceIdForEmail,
+  setDeviceIdForEmail,
+} from "../../api/_registry";
+import type { Registration } from "../../api/_registry";
 
 /**
  * `revoked` is DELIBERATE and separate from `unpaid`.
  *
  * `unpaid` means "we have no record of payment" — that account still owes
  * money and belongs at checkout. `revoked` means the owner pressed "Mark
- * unpaid" for an account that WAS paid: `paid_emails` carries a row with
- * `paid_at = null` (see isExplicitlyRevoked). That is a decision, not a
- * missing record, so the two must never collapse into one answer — they send
- * the person to completely different screens.
+ * unpaid" for an account that WAS paid: the Upstash record has `isPaid: false`
+ * with `paidAt: null`. That is a decision, not a missing record, so the two
+ * must never collapse into one answer — they send the person to completely
+ * different screens.
  *
  * Until this existed, `deactivate` was inferred on the DEVICE ("does my
  * local store still remember a paid record?"), so the notice only appeared
  * for a session the owner had already let in. Someone who signed in afresh on
  * a new phone after being deactivated had no local record, was answered
  * `unpaid`, and was pushed to Choose Plan instead of being told their account
- * had been deactivated. The answer now comes from the database, where the
+ * had been deactivated. The answer now comes from Upstash KV, where the
  * owner's decision actually lives, so EVERY sign-in of a deactivated account
  * is told so plainly — first phone or tenth.
  */
@@ -123,16 +119,16 @@ const cache = new Map<string, Resolution>();
 
 /**
  * SESSION VERSION — the blunt instrument that forces every cached session on
- * every device to re-check the cloud database exactly once.
+ * every device to re-check the cloud storage exactly once.
  *
  * The gate's in-memory cache only lives for a page load, but a device that has
  * been sitting on the app (an Android WebView, a phone home-screen app, a
  * browser tab left open for days) is holding a session that was granted under
  * the OLD rules. Bumping this number makes each of those sessions invalid on
  * its very next check: the local session is signed out once, the cloud is
- * re-read, and only an account the database still unlocks gets back in.
+ * re-read, and only an account the cloud still unlocks gets back in.
  *
- * Bump this whenever the access rules change. Nothing in Supabase is touched.
+ * Bump this whenever the access rules change. Nothing in Upstash is touched.
  */
 export const SESSION_VERSION = 4;
 const SESSION_VERSION_KEY = "eamp_session_v4";
@@ -178,9 +174,9 @@ export async function resolveCloudAccess(
   // NO OWNER SHORTCUT. This used to answer "admin" before touching the
   // database, which meant a platform address opened the app with no payment
   // record at all — the exact thing "paid only" has to mean. Every email,
-  // owner included, now goes to computeFromDatabase below and is answered by
+  // owner included, now goes to computeFromUpstash below and is answered by
   // the ledger.
-  if (!supabase) return null; // unconfigured — caller decides the fallback
+  if (!storeConfigured()) return null; // unconfigured — caller decides the fallback
 
   const cached = cache.get(clean);
   if (!options?.fresh && cached) {
@@ -193,8 +189,8 @@ export async function resolveCloudAccess(
       // The dashboard may have just marked this email paid from another device.
       // A stale "unpaid"/"revoked" here is the exact bug where a freshly-marked
       // paid account still sees the plan screen, so before returning a refusal
-      // from cache we re-check the local store the dashboard mirrors the moment
-      // a payment lands. If it has gone paid since this cache entry was stored,
+      // from cache we re-check the Upstash record the dashboard writes to.
+      // If it has gone paid since this cache entry was stored,
       // refresh the cache and return the new answer instead of the stale refusal.
       if (cached.status !== "paid" && cached.status !== "admin") {
         const local = paymentStatusForEmail(clean);
@@ -209,34 +205,27 @@ export async function resolveCloudAccess(
   }
 
   try {
-    const status = await computeFromDatabase(clean);
+    const status = await computeFromUpstash(clean);
     cache.set(clean, { status, at: Date.now() });
     return status;
   } catch (error) {
-    console.warn("[payment-gate] cloud check failed:", error);
+    console.warn("[payment-gate] upstash check failed:", error);
     return null;
   }
 }
 
 /**
- * DEVICE-BINDING LIVENESS — true when the cloud has a users row for this
- * email whose device_id no longer matches THIS device. Bindings are only
+ * DEVICE-BINDING LIVENESS — true when the cloud has a registration record for
+ * this email whose device_id no longer matches THIS device. Bindings are only
  * written at a fresh sign-in (and at key activation), so a cleared binding
  * means the session predates the global access reset and must end. The
  * check fails OPEN (network hiccup = no kick) so a flaky connection can
  * never log someone out.
  */
 async function deviceBindingRevoked(email: string): Promise<boolean> {
-  if (!supabase) return false;
+  if (!storeConfigured()) return false;
   try {
-    const { data: row, error } = await supabase
-      .from("users")
-      .select("device_id")
-      .eq("email", email.trim().toLowerCase())
-      .maybeSingle();
-    if (error) return false;
-    if (!row) return false; // no users row — the payment decision handles it
-    const boundDeviceId = (row as { device_id?: string | null } | null)?.device_id ?? null;
+    const boundDeviceId = await getDeviceIdForEmail(email.trim().toLowerCase());
     return boundDeviceId !== getDeviceId();
   } catch {
     return false;
@@ -246,15 +235,16 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
 /**
  * EXPLICIT REVOCATION — has the owner marked this email UNPAID on purpose?
  *
- * `paid_emails` is the console's own payment ledger. `setUserPaid(email,
- * false)` writes a row for the email with `paid_at = null`: the row says "we
- * know this account, and the answer right now is NO". A row with a timestamp
+ * The admin console's registration record in Upstash KV (`eamp:registrations`)
+ * is the console's own payment ledger. `setUserPaid(email, false)` writes
+ * `isPaid: false` with `paidAt: null`: the record says "we know this account,
+ * and the answer right now is NO". A record with `isPaid: true` and a timestamp
  * is a normal payment and says nothing here.
  *
  * WHY THIS MUST BE CHECKED FIRST. Without it, "Mark unpaid" did not actually
- * revoke anybody: `computeFromDatabase` read `users.is_paid`, saw false, and
+ * revoke anybody: `computeFromUpstash` read `isPaid`, saw false, and
  * then fell through to the licence-key check — and because activating a key
- * binds a `license_keys` row to the email, that fallback answered "paid" and
+ * binds a key to the email, that fallback answered "paid" and
  * reopened the app for the very person the owner had just locked out. The
  * console said unpaid; the gate said paid; the customer kept trading.
  *
@@ -270,7 +260,7 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  * REJECTION IS NOT IN HERE, and that is deliberate. A console REJECTION is
  * handled by isRejected below, because whether it means "deactivated" or
  * "never paid" depends on whether the account ever paid — which only
- * computeFromDatabase can answer. It used to be folded in here, which made
+ * computeFromUpstash can answer. It used to be folded in here, which made
  * every rejected account read as deactivated even when nothing had ever been
  * taken from them.
  *
@@ -278,19 +268,12 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  * customers. The other checks still decide in that case.
  */
 async function isExplicitlyRevoked(clean: string): Promise<boolean> {
-  if (!supabase) return false;
+  if (!storeConfigured()) return false;
   try {
-    // `.limit(1)` rather than `.maybeSingle()`: a single-row read ERRORS with
-    // PGRST116 when an earlier cleanup left two rows for one email, and an
-    // error here would fail OPEN and quietly undo the revocation. Reading the
-    // rows and asking "is any of them a marker?" cannot be defeated that way.
-    const { data, error } = await supabase
-      .from("paid_emails")
-      .select("paid_at")
-      .eq("email", clean)
-      .limit(10);
-    if (error || !Array.isArray(data) || data.length === 0) return false;
-    return data.some((row) => (row as { paid_at?: string | null }).paid_at === null);
+    const registration = await getRegistration(clean);
+    if (!registration) return false;
+    // A record with isPaid: false and paidAt: null is an explicit revocation
+    return registration.isPaid === false && registration.paidAt === null;
   } catch {
     return false;
   }
@@ -299,7 +282,7 @@ async function isExplicitlyRevoked(clean: string): Promise<boolean> {
 /**
  * Has the owner REJECTED this account in the admin console?
  *
- * A rejection always closes the app — `computeFromDatabase` returns early on
+ * A rejection always closes the app — `computeFromUpstash` returns early on
  * it so no licence key or Whop membership can reopen the account. What it does
  * NOT decide on its own is WHICH screen the person is sent to: that depends on
  * whether they ever paid (see "REJECTED IS NOT THE SAME AS DEACTIVATED" at the
@@ -312,21 +295,17 @@ async function isExplicitlyRevoked(clean: string): Promise<boolean> {
  * "rejected", or a database hiccup would lock out every paying customer.
  */
 async function isRejected(clean: string): Promise<boolean> {
-  if (!supabase) return false;
+  if (!storeConfigured()) return false;
   try {
-    const { data, error } = await supabase
-      .from("mentor_approvals")
-      .select("status")
-      .eq("email", clean)
-      .limit(1);
-    if (error || !Array.isArray(data)) return false;
-    return data.some((row) => (row as { status?: string | null }).status === "rejected");
+    const registration = await getRegistration(clean);
+    if (!registration) return false;
+    return registration.status === "rejected";
   } catch {
     return false;
   }
 }
 
-async function computeFromDatabase(clean: string): Promise<CloudAccess> {
+async function computeFromUpstash(clean: string): Promise<CloudAccess> {
   // THE OWNER'S EXPLICIT "UNPAID" IS THE FIRST WORD ON IT. See
   // isExplicitlyRevoked — every check after this one is a DERIVED signal, and
   // letting any of them override a deliberate revocation is what made "Mark
@@ -335,20 +314,13 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
 
   // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE. NOT EVEN FOR ADMINS.
   //
-  // `users.is_admin` and `users.is_paid` used to grant access here. Both are
-  // gone:
-  //   • is_admin is a ROLE, not a payment. Reading it meant anybody an admin
-  //     had flagged could open the trading app without paying a cent.
-  //   • is_paid is a MIRROR of the ledger that the anon key is allowed to
-  //     write, so it drifts and it can be set by anything holding the public
-  //     key. The ledger row is the real record; the mirror is not.
-  const { data: ledger } = await supabase!
-    .from("paid_emails")
-    .select("paid_at")
-    .eq("email", clean)
-    .limit(10);
-  const ledgerRows = (Array.isArray(ledger) ? ledger : []) as Array<{ paid_at?: string | null }>;
-  if (ledgerRows.some((row) => row.paid_at != null)) return "paid";
+  // The admin console writes isPaid and paidAt to Upstash KV (`eamp:registrations`
+  // hash). This is the source of truth for payment status — the same place the
+  // admin console reads from to show the PAID badge.
+  const registration = await getRegistration(clean);
+  if (registration && registration.isPaid && registration.paidAt) {
+    return "paid";
+  }
 
   // REJECTION CLOSES THE APP — AND IT IS CHECKED BEFORE THE LICENCE-KEY
   // FALLBACK, WHICH IS THE WHOLE POINT OF IT BEING HERE.
@@ -385,13 +357,13 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
   // reads process.env at module init and registers TanStack server
   // functions — statically importing it into the client graph crashed the
   // Android WebView bundle ("Dashboard didn't load"). Any failure here just
-  // means "no Whop confirmation"; the database still decides.
+  // means "no Whop confirmation"; the Upstash record still decides.
   try {
     const { whopVerifyMembership } = await import("@/lib/supabase.server");
     const whop = await whopVerifyMembership({ data: { email: clean } });
     if (whop.ok && whop.paid) return "paid";
   } catch {
-    /* server functions unavailable in this bundle — DB decision stands */
+    /* server functions unavailable in this bundle — KV decision stands */
   }
 
   return "unpaid";
@@ -400,7 +372,7 @@ async function computeFromDatabase(clean: string): Promise<CloudAccess> {
 /**
  * The gate every /app route guard must await. Fail-closed for cloud-decided
  * unpaid emails; falls back to the legacy local store only when the cloud
- * cannot be reached at all (Supabase unconfigured) so dev never blocks.
+ * cannot be reached at all (Upstash unconfigured) so dev never blocks.
  */
 export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
   // STALE SESSION KICK — runs BEFORE anything else. A session cached under the
@@ -414,7 +386,7 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // closes: if the owner's email is not on the payment ledger, the app does not
   // open for it either. Mark it paid in the console like any other account.
   //
-  // GLOBAL ACCESS RESET — everyone: if the database no longer binds this
+  // GLOBAL ACCESS RESET — everyone: if the cloud no longer binds this
   // device to the email (the reset cleared every binding), the stale session
   // is dead. appSignOut clears it ONCE and the route sends the person to
   // /app/login, where the cloud gate decides who gets back in: unpaid emails
@@ -436,6 +408,14 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.
     markEmailPaid(email);
+    // Bind this device to the email on successful paid access
+    if (storeConfigured()) {
+      try {
+        await setDeviceIdForEmail(email, getDeviceId());
+      } catch {
+        /* device binding is not critical — fail silent */
+      }
+    }
     return { action: "pass" };
   }
   if (cloud === "admin") {
@@ -443,13 +423,21 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // already marked paid and still needs to open the app. If admin access
     // still requires payment in your current setup, treat this like unpaid.
     markEmailPaid(email);
+    // Bind this device to the email on successful admin access
+    if (storeConfigured()) {
+      try {
+        await setDeviceIdForEmail(email, getDeviceId());
+      } catch {
+        /* device binding is not critical — fail silent */
+      }
+    }
     return { action: "pass" };
   }
-  // DEACTIVATED BY THE OWNER. The database holds a revocation marker for this
-  // email (`paid_emails.paid_at = null`) or a console REJECTION
-  // (`mentor_approvals.status = 'rejected'`), which is a decision the owner
-  // made in the console and not a missing payment record. It is answered HERE,
-  // from the cloud, and never from this device's memory: the previous
+  // DEACTIVATED BY THE OWNER. The cloud holds a revocation marker for this
+  // email (Upstash record with `isPaid: false` and `paidAt: null`) or a console
+  // REJECTION (`mentor_approvals.status = 'rejected'`), which is a decision the
+  // owner made in the console and not a missing payment record. It is answered
+  // HERE, from the cloud, and never from this device's memory: the previous
   // `paymentStatusForEmail(email) !== "unpaid"` test could only recognise a
   // session the owner had already let in, so the same person signing in on a
   // new phone was told "choose a plan" for an account that had been taken
@@ -465,7 +453,7 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   if (cloud === "unpaid") {
     // A local PAID record beside an UNPAID cloud answer can still mean the
     // owner flipped the flag before the ledger marker existed (Mark unpaid on
-    // an account whose `paid_emails` row had been cleaned up). Same outcome,
+    // an account whose record had been cleaned up). Same outcome,
     // kept as a second door rather than the only one.
     //
     // ONLY a genuine local "paid" record counts. `paymentStatusForEmail` also
@@ -488,7 +476,7 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   }
   // CLOUD UNDECIDED — FAIL CLOSED. This branch used to hand the decision back
   // to the legacy LOCAL store (`paymentStatusForEmail`), so a stale or forged
-  // local "paid" record opened the app whenever Supabase could not answer: a
+  // local "paid" record opened the app whenever Upstash could not answer: a
   // transient query error was enough. Nothing local may ever grant access, so
   // an undecidable account is treated exactly like an unpaid one and sent to
   // checkout — recoverable if the person really has paid, and a hole closed if
@@ -498,7 +486,7 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
 
 /**
  * Verify a Whop checkout return (?success=true). Returns true ONLY when the
- * database or the server-side Whop check confirms payment. Never trusts the
+ * cloud or the server-side Whop check confirms payment. Never trusts the
  * URL parameter itself, and never consults mentor approval.
  */
 export async function verifyPaymentReturn(email: string): Promise<boolean> {
@@ -510,19 +498,35 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
     const cloud = await resolveCloudAccess(clean, { fresh: true });
     if (cloud === "admin" || cloud === "paid") {
       markEmailPaid(clean);
+      // Bind this device on successful payment verification
+      if (storeConfigured()) {
+        try {
+          await setDeviceIdForEmail(clean, getDeviceId());
+        } catch {
+          /* device binding is not critical — fail silent */
+        }
+      }
       return true;
     }
     if (cloud === "unpaid" || cloud === "revoked") return false;
   } catch {
     /* fall through to the explicit Whop check */
   }
-  // resolveCloudAccess already ran the Whop check inside computeFromDatabase
+  // resolveCloudAccess already ran the Whop check inside computeFromUpstash
   // for the unpaid branch — run it explicitly here for a fresh answer.
   try {
     const { whopVerifyMembership } = await import("@/lib/supabase.server");
     const whop = await whopVerifyMembership({ data: { email: clean } });
     if (whop.ok && whop.paid) {
       markEmailPaid(clean);
+      // Bind this device on successful Whop verification
+      if (storeConfigured()) {
+        try {
+          await setDeviceIdForEmail(clean, getDeviceId());
+        } catch {
+          /* device binding is not critical — fail silent */
+        }
+      }
       return true;
     }
   } catch {

@@ -22,6 +22,8 @@ export type Registration = {
   isPaid: boolean;
   paidAt: string | null;
   licenseLimit: number;
+  /** Device Id this email is bound to (from the app's sign-in flow). Null = not bound. */
+  deviceId?: string | null;
 };
 
 /** What the admin console receives — never the password hash/salt. */
@@ -144,4 +146,38 @@ export async function listRegistrations(): Promise<PublicRegistration[]> {
 export function toPublic(record: Registration): PublicRegistration {
   const { passwordHash: _hash, passwordSalt: _salt, ...rest } = record;
   return rest;
+}
+
+/** Get the device Id bound to this email, or null if not bound. */
+export async function getDeviceIdForEmail(email: string): Promise<string | null> {
+  const registration = await getRegistration(email);
+  return registration?.deviceId ?? null;
+}
+
+/** Bind this email to a device Id in Upstash. */
+export async function setDeviceIdForEmail(email: string, deviceId: string): Promise<void> {
+  const registration = await getRegistration(email);
+  if (registration) {
+    registration.deviceId = deviceId;
+    await saveRegistration(registration);
+  } else {
+    // Create a minimal record for device tracking if none exists
+    const now = new Date().toISOString();
+    await saveRegistration({
+      email,
+      firstName: "",
+      displayName: "",
+      username: "",
+      whatsapp: "",
+      passwordHash: "",
+      passwordSalt: "",
+      createdAt: now,
+      updatedAt: now,
+      status: "pending",
+      isPaid: false,
+      paidAt: null,
+      licenseLimit: 0,
+      deviceId,
+    });
+  }
 }

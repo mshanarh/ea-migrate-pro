@@ -45,6 +45,17 @@ create table if not exists public.mentor_approvals (
   created_at timestamp default now()
 );
 
+-- 5) PAYMENT LEDGER — THE console's paid/unpaid source of truth.
+--    A row with a timestamp = paid. A row with paid_at = null = explicitly
+--    revoked ("Mark unpaid"). No row = never paid.
+--    This is what the admin console's Paid section reads, and what the
+--    app's payment gate (payment-gate.ts) reads to decide access.
+create table if not exists public.paid_emails (
+  email     text primary key,
+  paid_at   timestamp,
+  created_at timestamp default now()
+);
+
 -- 5) PORTAL SYNC TABLES — full account records, payments, MT5 metadata and
 --    EA video backups for the mentor portal (Upstash Redis replacement).
 create table if not exists public.portal_accounts (
@@ -126,6 +137,19 @@ create policy "anon can create own session"
 create policy "anon can read sessions"
   on public.user_sessions for select to anon, authenticated
   using (true);
+
+-- ── Payment ledger (paid_emails) — the console AND the app read this ────
+-- The anon key needs full access so the admin page can list paid users and
+-- the app's payment gate can decide access without a service-role round trip.
+alter table public.paid_emails enable row level security;
+
+create policy "anon can read paid_emails"
+  on public.paid_emails for select to anon, authenticated
+  using (true);
+
+create policy "anon can upsert paid_emails"
+  on public.paid_emails for all to anon, authenticated
+  with check (true);
 
 -- ── Portal sync tables (accounts, approvals, payments, MT5, videos) ────
 -- These are written exclusively through the app's server functions with
