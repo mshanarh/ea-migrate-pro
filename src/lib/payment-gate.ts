@@ -190,18 +190,16 @@ export async function resolveCloudAccess(
     const ttl =
       cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
     if (Date.now() - cached.at < ttl) {
-      // A user only comes back here when the dashboard's poll pushed them
-      // back to the login screen (the waiting room, for example), which
-      // means the cloud flag they last saw was not yet positive. If the
-      // local store now remembers a payment the dashboard itself wrote,
-      // honour it immediately instead of re-questioning the cloud from a
-      // device that is already signed in — that is the instant between
-      // "Mark paid" and the dashboard's next poll where the app could
-      // otherwise bounce them straight back to Whop.
+      // The dashboard may have just marked this email paid from another device.
+      // A stale "unpaid"/"revoked" here is the exact bug where a freshly-marked
+      // paid account still sees the plan screen, so before returning a refusal
+      // from cache we re-check the local store the dashboard mirrors the moment
+      // a payment lands. If it has gone paid since this cache entry was stored,
+      // refresh the cache and return the new answer instead of the stale refusal.
       if (cached.status !== "paid" && cached.status !== "admin") {
         const local = paymentStatusForEmail(clean);
-        const pay = local === "paid" ? "paid" : local === "admin" ? "admin" : "unpaid";
-        if (pay === "paid" || pay === "admin") {
+        if (local === "paid" || local === "admin") {
+          const pay: CloudAccess = local === "admin" ? "admin" : "paid";
           cache.set(clean, { status: pay, at: Date.now() });
           return pay;
         }
