@@ -344,7 +344,9 @@ function AppAccess() {
   // not be reached). Everything below — the license screen, the auto-hop to
   // Whop, the hop into the app — reads this one value, so the first screen
   // can never disagree with the route guard that follows it.
-  const effectiveStatus = cloudStatus ?? sessionPaymentStatus; // A signed-in session that ALREADY has a robot goes to the app. The key
+  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;
+
+  // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
   // including people whose robot was already activated — so opening the app
   // always demanded another key, with no way past it. The home screen has an
@@ -353,7 +355,13 @@ function AppAccess() {
   // A return from checkout still forces the view: that is a deliberate
   // request for the licence-entry screen, not a returning session.
   const returningWithRobot = Boolean(app.email) && app.robots.length > 0;
-  const showLicenseView = !returningWithRobot && (successReturn || effectiveStatus !== "unpaid");
+
+  // The license-entry screen is the passthrough for already-entitled sessions
+  // (paid or admin) that already own a robot. Anything else on this login screen
+  // gets a plan choice or a sign-in form instead.
+  const showLicenseView =
+    !returningWithRobot && (successReturn || cloudStatus === "paid" || cloudStatus === "admin");
+
   // OPENING THE APP WITH AN UNPAID SESSION MUST GO TO WHOP — but ONLY on the
   // DATABASE's word. The local store is a hint that this device has not seen a
   // payment, and treating a hint as a verdict is what sent a customer who had
@@ -370,6 +378,7 @@ function AppAccess() {
    * between "Proceed was pressed on a paid account" and "the code came back
    * right". It is the app's own state rather than a URL flag on purpose: the
    * code is the gate, and a flag anybody could add to the address bar would be
+   * useless against it.
    * exactly the thing the code exists to prevent.
    *
    * `sendingCode` and `verifyingCode` are separate from `busy` because they
@@ -526,8 +535,8 @@ function AppAccess() {
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
     // licence key is activated — so a freshly approved mentor signed in
-    // successfully and then sat on this screen forever, which looks exactly
-    // like a failed sign-in. The home screen has its own "Add robot" state.
+    // successfully and then sat on this screen forever, which looks exactly    // like a failed sign-in. The home screen has its own "Add robot" state.
+    if (cloudStatus === "admin") return;
     if (showLicenseView) return;
     // An UNPAID session must not round-trip through /app/home: that guard
     // decides "unpaid" and sends the person back here, so the two would
@@ -1177,37 +1186,68 @@ function LoginView({
   deactivated?: boolean;
 }) {
   return (
-    <div className="-translate-y-4 text-center">
-      <div aria-hidden className="pointer-events-none fixed inset-x-0 top-0 -z-0 h-[60vh] bg-[linear-gradient(180deg,rgba(8,168,239,.18),transparent)]" />
-      <div className="relative mx-auto flex size-32 items-center justify-center overflow-hidden rounded-[32px] border border-white/10 bg-[#0d1418] p-3 shadow-[0_0_40px_rgba(8,168,239,.35)]">
-        <BrandLogo className="size-full object-contain" />
-      </div>
-      <p className="relative mt-6 text-xs font-bold tracking-[0.35em] text-[#8a9298] uppercase">EA Migrate</p>
-      <h1 className="relative mt-2 text-[2.45rem] font-bold tracking-tight">Sign in</h1>
-      <p className="relative mt-2 text-base text-[#aab2b7]">Use the email linked to your membership</p>
-      {deactivated ? <DeactivatedNotice /> : null}
-      <form className="relative mt-10 space-y-4 rounded-[28px] border border-white/10 bg-gradient-to-b from-[#121a1f] to-[#0a0f12] p-6 text-left" onSubmit={onSubmit}>
-        <label htmlFor="app-login-email" className="text-xs font-bold tracking-[0.2em] text-[#8a9298] uppercase">Email</label>
-        <input
-          id="app-login-email"
-          type="email"
-          required
-          autoComplete="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          placeholder="you@email.com"
-          className="h-14 w-full rounded-2xl border border-white/10 bg-[#070d10] px-5 text-lg text-white outline-none placeholder:text-[#59646b] focus:border-[#08a8ef]"
-        />
-        <button
-          type="submit"
-          disabled={checking || redirecting}
-          className="flex h-14 w-full items-center justify-center rounded-2xl bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+    <>
+      {/*
+        THE SCREEN-WIDE GLOW. It must be a SIBLING of the transformed content
+        wrapper, never its child: a CSS transform makes that element the
+        containing block for position:fixed descendants, so the old glow —
+        `fixed inset-x-0 top-0 h-[60vh]` inside `-translate-y-4` — was pinned
+        to the login CARD instead of the viewport and painted as a teal
+        rectangle floating in black margins. `inset-0` (no fixed height)
+        plus a page-level ancestor lets it fill every screen size edge to
+        edge. `pointer-events-none` keeps taps passing through to the form.
+      */}
+      <div
+        aria-hidden
+        className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(8,168,239,.18),transparent)]"
+      />
+      <div className="relative -translate-y-4 text-center">
+        <div className="relative mx-auto flex size-32 items-center justify-center overflow-hidden rounded-[32px] border border-white/10 bg-[#0d1418] p-3 shadow-[0_0_40px_rgba(8,168,239,.35)]">
+          <BrandLogo className="size-full object-contain" />
+        </div>
+        <p className="relative mt-6 text-xs font-bold tracking-[0.35em] text-[#8a9298] uppercase">
+          EA Migrate
+        </p>
+        <h1 className="relative mt-2 text-[2.45rem] font-bold tracking-tight">Sign in</h1>
+        <p className="relative mt-2 text-base text-[#aab2b7]">
+          Use the email linked to your membership
+        </p>
+        {deactivated ? <DeactivatedNotice /> : null}
+        <form
+          className="relative mt-10 space-y-4 rounded-[28px] border border-white/10 bg-gradient-to-b from-[#121a1f] to-[#0a0f12] p-6 text-left"
+          onSubmit={onSubmit}
         >
-          {redirecting ? "Redirecting to Whop…" : checking ? "Checking your account…" : "Continue"}
-        </button>
-      </form>
-      <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
-    </div>
+          <label
+            htmlFor="app-login-email"
+            className="text-xs font-bold tracking-[0.2em] text-[#8a9298] uppercase"
+          >
+            Email
+          </label>
+          <input
+            id="app-login-email"
+            type="email"
+            required
+            autoComplete="email"
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            placeholder="you@email.com"
+            className="h-14 w-full rounded-2xl border border-white/10 bg-[#070d10] px-5 text-lg text-white outline-none placeholder:text-[#59646b] focus:border-[#08a8ef]"
+          />
+          <button
+            type="submit"
+            disabled={checking || redirecting}
+            className="flex h-14 w-full items-center justify-center rounded-2xl bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] transition-transform active:scale-[.98] disabled:cursor-wait disabled:opacity-70"
+          >
+            {redirecting
+              ? "Redirecting to Whop…"
+              : checking
+                ? "Checking your account…"
+                : "Continue"}
+          </button>
+        </form>
+        <p className="mt-7 text-xs text-[#59646b]">One email can be activated on one device.</p>
+      </div>
+    </>
   );
 }
 
