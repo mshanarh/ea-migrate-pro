@@ -15,39 +15,6 @@
  *
  * The only browser-side access check this module makes.
  */
-async function checkAccessServer(email: string): Promise<{
-  ok: boolean;
-  isPaid: boolean;
-  status: "admin" | "paid" | "revoked" | "rejected" | "unpaid";
-  paidAt?: string;
-}> {
-  try {
-    const reply = await fetch("/api/check-access", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email }),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
-    const payload = (await reply.json().catch(() => ({}))) as {
-      ok?: boolean;
-      isPaid?: boolean;
-      status?: string;
-      paidAt?: string;
-    };
-    if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
-    const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
-    if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
-    return {
-      ok: true,
-      isPaid: Boolean(payload.isPaid),
-      status,
-      paidAt: typeof payload.paidAt === "string" ? payload.paidAt : "",
-    };
-  } catch {
-    return { ok: false, isPaid: false, status: "unpaid" };
-  }
-}
 
 /**
  * FAIL CLOSED. Every runtime failure — an upsert error, a read error, a row
@@ -86,12 +53,11 @@ function clean(email: string) {
 /** Never let a broken registration keep the user off their next step. */
 function db() {
   return supabaseConfigured ? supabase : null;
-}
-
-/**
+}/**
  * The only browser-side access check this module makes.
  */
-async function checkAccessServer(email: string): Promise<{
+
+export async function checkAccessServer(email: string): Promise<{
   ok: boolean;
   isPaid: boolean;
   status: "admin" | "paid" | "revoked" | "rejected" | "unpaid";

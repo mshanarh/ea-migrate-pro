@@ -63,7 +63,8 @@
  */
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
-import { storeConfigured, getDeviceIdForEmail, setDeviceIdForEmail } from "@/lib/supabase-users";
+import { checkAccessServer } from "@/lib/supabase-users";
+import { getDeviceBinding, bindDeviceToEmail } from "@/lib/supabase-users";
 
 /**
  * `revoked` is DELIBERATE and separate from `unpaid`.
@@ -202,7 +203,7 @@ export async function resolveCloudAccess(
     const server = await checkAccessServer(clean);
     if (!server.ok) return null; // endpoint could not decide — caller must fail closed
 
-    const status: CloudAccess = server.status;
+    const status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
     cache.set(clean, { status, at: Date.now() });
     if (status === "admin") return "admin";
     if (status === "paid") return "paid";
@@ -223,10 +224,10 @@ export async function resolveCloudAccess(
  * never log someone out.
  */
 async function deviceBindingRevoked(email: string): Promise<boolean> {
-  if (!storeConfigured()) return false;
   try {
-    const boundDeviceId = await getDeviceIdForEmail(email.trim().toLowerCase());
-    return boundDeviceId !== getDeviceId();
+    const binding = await getDeviceBinding(email.trim().toLowerCase());
+    if (!binding || !binding.deviceId) return false;
+    return binding.deviceId !== getDeviceId();
   } catch {
     return false;
   }
@@ -332,12 +333,10 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // the cloud decision. This is a downstream mirror, never the source.
     markEmailPaid(email);
     // Bind this device to the email on successful paid access
-    if (storeConfigured()) {
-      try {
-        await setDeviceIdForEmail(email, getDeviceId());
-      } catch {
-        /* device binding is not critical — fail silent */
-      }
+    try {
+      await bindDeviceToEmail(email, getDeviceId());
+    } catch {
+      /* device binding is not critical — fail silent */
     }
     return { action: "pass" };
   }
@@ -347,12 +346,10 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // still requires payment in your current setup, treat this like unpaid.
     markEmailPaid(email);
     // Bind this device to the email on successful admin access
-    if (storeConfigured()) {
-      try {
-        await setDeviceIdForEmail(email, getDeviceId());
-      } catch {
-        /* device binding is not critical — fail silent */
-      }
+    try {
+      await bindDeviceToEmail(email, getDeviceId());
+    } catch {
+      /* device binding is not critical — fail silent */
     }
     return { action: "pass" };
   }
@@ -422,12 +419,10 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
     if (cloud === "admin" || cloud === "paid") {
       markEmailPaid(clean);
       // Bind this device on successful payment verification
-      if (storeConfigured()) {
-        try {
-          await setDeviceIdForEmail(clean, getDeviceId());
-        } catch {
-          /* device binding is not critical — fail silent */
-        }
+      try {
+        await bindDeviceToEmail(clean, getDeviceId());
+      } catch {
+        /* device binding is not critical — fail silent */
       }
       return true;
     }
@@ -443,12 +438,10 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
     if (whop.ok && whop.paid) {
       markEmailPaid(clean);
       // Bind this device on successful Whop verification
-      if (storeConfigured()) {
-        try {
-          await setDeviceIdForEmail(clean, getDeviceId());
-        } catch {
-          /* device binding is not critical — fail silent */
-        }
+      try {
+        await bindDeviceToEmail(clean, getDeviceId());
+      } catch {
+        /* device binding is not critical — fail silent */
       }
       return true;
     }
