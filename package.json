@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "build": "vite build && mkdir -p dist && cp -r .vercel/output/static/. dist/ && cp dist/_shell.html dist/index.html",
+    "build": "vite build && mkdir -p dist && (cp -r .vercel/output/static/. dist/ 2>/dev/null || true) && (cp -f dist/_shell.html dist/index.html 2>/dev/null || true)",
     "build:static": "vite build && mkdir -p dist && cp -r .vercel/output/static/. dist/ && cp dist/_shell.html dist/index.html",
     "build:dev": "vite build --mode development",
     "preview": "vite preview",

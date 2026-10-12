@@ -1,6 +1,8 @@
 import { BrandLogo } from "@/components/BrandLogo";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
+import { usePlatform } from "@/lib/platform";
+import { OWNER_EMAILS } from "@/lib/auth-store";
 import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -142,6 +144,7 @@ function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> 
 }
 
 function AppAccess() {
+  const platform = usePlatform();
   const app = useAppState();
   const [email, setEmail] = useState(app.email ?? "");
   const [key, setKey] = useState("");
@@ -331,8 +334,11 @@ function AppAccess() {
   }, [app.email]);
 
   const activeEmail = app.email || email.trim().toLowerCase();
-  // Only a SIGNED-IN session (app.email) may open the license view directly.
-  // The TYPED email must never pre-switch the view: an owner typing their
+  // MOBILE OWNER SKIP — Android and iOS never reach the Choose Plan screen for
+  // ntobekotraders.official@gmail.com, biyasentobeko222@gmail.com and
+  // pablosimpson808@gmail.com. They go straight to /app/home instead of being
+  // asked to pick a subscription on the device they already paid on.
+  // TYPED email must never pre-switch the view: an owner typing their
   // email used to jump straight to the key screen WITHOUT pressing Proceed,
   // which skipped the cloud device-binding check — the exact reason admins
   // were never asked to reactivate after delete + reinstall. A typed email
@@ -497,9 +503,14 @@ function AppAccess() {
       );
       if (cancelled) return;
       setCloudStatus(status);
-      // DEACTIVATED — the database says this account was revoked by the owner.
-      // The notice is shown instead of the plans: offering checkout to somebody
-      // whose account was taken away hides the reason they are locked out.
+      // DEACTIVATED / REJECTED — the database says this account was revoked,
+      // or the console removed it entirely. Both mean something was taken away
+      // and neither has any payment to hand over, so the person is signed out
+      // and shown the deactivation notice: they must not see the Choose Plan
+      // screen, and offering checkout to somebody who has nothing left would
+      // lie about why they are locked out. `resolveCloudAccess` maps a console
+      // REJECTION to the same "revoked" verdict that "Mark unpaid" produces, so
+      // one branch covers both.
       if (status === "revoked") {
         appSignOut();
         setCloudStatus(null);
@@ -571,7 +582,16 @@ function AppAccess() {
    * and it also silently fails in an iOS home-screen app. The screen below
    * offers both plans as real links.
    */
-  const showChoosePlan = choosePlan || payPrompt || mustPay;
+  // The three emails are the first three entries of OWNER_EMAILS in auth-store.ts;
+  // they were already shaded as platform owners/admins through that list. They also
+  // never reach the Choose Plan screen on desktop, so this flag is the only mobile
+  // branch at runtime: on Android or iOS it downgrades a paid owner from the plan
+  // chooser straight into /app/home, and there is no code path that grants the
+  // user the option to see the plan on those platforms.
+  const isMobileOwnerSession =
+    Boolean(app.email && OWNER_EMAILS.slice(0, 3).includes(app.email.toLowerCase())) &&
+    (platform === "android" || platform === "ios");
+  const showChoosePlan = (choosePlan || payPrompt || mustPay) && !isMobileOwnerSession;
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -630,7 +650,9 @@ function AppAccess() {
       if (!registration.verified) {
         if (successReturn) {
           // The URL flag says they returned from checkout — prove it on the
-          // server before granting anything. Unverifiable → Choose Plan.
+          // server before granting anything. A successful verification means
+          // the money is in and the next screen is the activation code, NOT a
+          // second plan choice.
           const verified = await withDeadline(verifyPaymentReturn(clean), left(), false);
           if (verified) return;
         }
@@ -660,6 +682,15 @@ function AppAccess() {
         // on the Plan Selection screen and picks monthly or lifetime.
         setRedirecting(false);
         setChoosePlan(true);
+        return;
+      }
+      // A successful Whop return already put the money in, so the account is
+      // entitled: the next screen is the activation code, not the plans. The
+      // owner turns the account on; the customer does not pay again.
+      if (successReturn) {
+        setSuccessReturn(false);
+        setAwaitingActivation(true);
+        window.history.replaceState({}, "", "/app/login?awaiting=1");
         return;
       }
 
@@ -929,6 +960,12 @@ function AppAccess() {
       const status = await resolveCloudAccess(waitingEmail, { fresh: true });
       if (status === "paid" || status === "admin") {
         window.location.replace("/app/home");
+        return;
+      }
+      if (status === "revoked") {
+        toast.info("Account not available", {
+          description: "This account has been turned off by the team. There is nothing to pay — contact us if you think that is a mistake.",
+        });
         return;
       }
       toast.info("Not activated yet", {
