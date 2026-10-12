@@ -12,14 +12,24 @@
  * build, which is why admin decisions (written to Upstash KV) never reached
  * users: the live /api routes answered with the SPA shell.
  *
- * This catch-all keeps EVERY public URL byte-for-byte identical — the Whop
- * webhook (/api/whop-payment), the MT5 EA's WebRequest target
- * (/api/trade-notify, whitelisted in the traders' terminals), the app's
- * access gate (/api/check-access) and the mentor portal's approval read
- * (/api/mentor-status) all still work unchanged. It only routes each request
- * to the same handler code, which now lives in `api/_handlers/` (underscore
- * directories are never built as functions, so the whole surface counts as
- * ONE deployment function).
+ * HOW THE ROUTING WORKS
+ * ──────────────────────
+ * A rewrite in vercel.json sends every `/api/*` request here as
+ *     /api/gateway?__path=/<original-path>
+ * (the original query string is carried over by Vercel untouched), and this
+ * dispatcher looks up `__path` in ROUTES below. A plain, bracket-free
+ * filename is deliberate: bracketed catch-all names (api/[...slug].ts) are
+ * not reliably recognised as function routes on this deployment, and a
+ * silently unrouted function answers with the SPA shell — the exact symptom
+ * this file exists to end.
+ *
+ * Every public URL stays byte-for-byte identical — the Whop webhook
+ * (/api/whop-payment), the MT5 EA's WebRequest target (/api/trade-notify,
+ * whitelisted in the traders' terminals), the app's access gate
+ * (/api/check-access) and the mentor portal's approval read
+ * (/api/mentor-status). The handler code lives in `api/_handlers/`
+ * (underscore directories are never built as functions), so the whole API
+ * surface counts as ONE deployment function.
  *
  * Adding a new endpoint: put the handler in `api/_handlers/<name>.ts` and add
  * one line to ROUTES below. Never add a new top-level file in `api/` — that
@@ -66,8 +76,16 @@ const ROUTES: Record<string, () => Promise<HandlerModule>> = {
 };
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
-  const path = (request.url ?? "").split("?", 2)[0] ?? "";
-  const slug = path.replace(/^\/api\/?/, "").replace(/\/+$/, "");
+  const url = request.url ?? "";
+  const search = url.split("?", 2)[1] ?? "";
+  const forwarded = new URLSearchParams(search).get("__path");
+  // The rewrite passes the ORIGINAL path in `__path`; the fallback keeps the
+  // dispatcher working when the function is reached directly (e.g. in dev).
+  const path = forwarded ?? url.split("?", 2)[0] ?? "";
+  const slug = path
+    .replace(/^\/api\/?/, "")
+    .replace(/^\/+/, "")
+    .replace(/\/+$/, "");
   const load = ROUTES[slug];
   if (!load) {
     response.status(404).json({ ok: false, error: "Unknown API route" });
