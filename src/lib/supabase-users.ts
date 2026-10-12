@@ -94,10 +94,16 @@ export async function checkAccessServer(email: string): Promise<{
 /**
  * Registration gate. FAIL CLOSED on every runtime error: a failed upsert, a
  * failed read or a missing row all answer "checkout", because none of them is
- * proof that this email paid. Only a positive signal lets somebody through: a
- * `paid_emails` LEDGER row carrying a timestamp (the console's own Paid list),
- * or a license_keys row issued for that address (a key only exists because
- * somebody paid for it). Neither `is_paid`, nor `is_admin`, nor an email in
+ * proof that this email paid.
+ *
+ * The FIRST question is asked of the server (POST /api/check-access), which
+ * decides from the SAME Upstash KV record the admin console writes through
+ * ("Mark paid" → `eamp:registrations`), with the `paid_emails` ledger as its
+ * fallback. A positive server answer is final: the browser must not re-check
+ * a second store and veto it — that veto is what sent freshly-marked-paid
+ * accounts back to the plan page. When the server cannot decide, the browser
+ * falls back to the `paid_emails` LEDGER row carrying a timestamp (the
+ * console's own Paid list). Neither `is_paid`, nor `is_admin`, nor an email in
  * OWNER_EMAILS opens this app — a role is not a receipt, and only a payment
  * record is.
  */
@@ -162,17 +168,17 @@ export async function registerWithEmail(
       user = (fetched as UserRow | null) ?? null;
     }
 
-    // Nothing else opens the app, so the positive ledger proof is enough for
-    // now. The real enforcement still lives in requireVerifiedAccess.
-    if (!user) return { outcome: "allow", user: null, verified: true };
-
-    // The app still validates against the ledger, and nothing else opens the
-    // app, so the positive ledger proof is enough for now.
-    if (await emailPaidInLedger(address)) {
-      return { outcome: "allow", user, verified: true };
-    }
-    // Fall through to the full ledger check — not allowed.
-    return { outcome: "checkout", user, verified: false };
+    // THE SERVER'S ANSWER IS THE DECISION — IT IS THE SAME KV WRITE THE ADMIN
+    // MADE. /api/check-access read the Upstash registration record the
+    // console's "Mark paid" writes (and the Supabase payment ledger as its
+    // fallback) before answering "paid", so nothing more is required here.
+    // The second browser-side ledger check that used to sit here could only
+    // VETO that answer when the best-effort Supabase mirror row was missing
+    // (the mirror needs the service-role key and is allowed to fail) — which
+    // is exactly how an account the admin had just marked paid kept landing
+    // back on the plan page. Nothing else opens the app; the real enforcement
+    // still lives in requireVerifiedAccess, which asks the same server.
+    return { outcome: "allow", user, verified: true };
   }
 
   // 1. Upsert — an existing row is NOT modified (admin/paid flags stay).

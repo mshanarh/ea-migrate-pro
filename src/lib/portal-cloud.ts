@@ -8,6 +8,18 @@
  * writes the server functions did, straight from the browser, against the
  * same tables the schema grants full anon access (portal_accounts,
  * mentor_approvals, portal_payments).
+ *
+ * APPROVAL EXCEPTION — THE ONE READ THAT NO LONGER GOES TO SUPABASE.
+ * Approvals are decided by the admin console, which writes them to the
+ * Upstash registration store through /api/admin-approve (see AGENTS.md:
+ * registrations, approval state, payment flags and licence limits live in
+ * the Vercel KV/Upstash store). The portal therefore reads the approval
+ * through /api/mentor-status — the SAME KV record — and only falls back to
+ * the legacy `mentor_approvals` table when KV holds nothing for the email.
+ * Reading the table as the primary source is the bug that kept approved
+ * mentors seeing "pending": nothing writes `approved` to it any more, and
+ * the dashboard poll kept writing that stale "pending" back over the real
+ * decision on every tick.
  */
 import type { Account, ExpertAdvisor, PaymentRecord, PortalStatus } from "@/lib/auth-store";
 import { ensureMentorId, isValidMentorId } from "@/lib/mentor-id";
@@ -78,6 +90,99 @@ async function db(): Promise<Client | null> {
   return client;
 }
 
+/** What /api/mentor-status answers — the Upstash registration record's public shape. */
+type KvMentorStatus = {
+  ok: boolean;
+  status: PortalStatus | null;
+  licenseLimit?: number;
+  firstName?: string;
+  displayName?: string;
+  username?: string;
+};
+
+/**
+ * THE ADMIN CONSOLE'S OWN STORE, read through its own endpoint.
+ *
+ * Every approval decision (Approve / Reject / Reset), every "Mark paid" and
+ * every licence limit is written to the Upstash registration record via
+ * /api/admin-approve — that is the store AGENTS.md defines as authoritative.
+ * This reads the SAME record through /api/mentor-status, so the portal can no
+ * longer answer from a source the admin never writes to.
+ *
+ * The three answers are deliberately distinct:
+ *   ok:true  + status set   → KV holds the record; this IS the decision.
+ *   ok:true  + status null  → KV is healthy but holds nothing for this email;
+ *                             the caller may fall back to the legacy table.
+ *   ok:false                → KV could not be consulted. NEVER read as
+ *                             "pending" — an unreachable store must not
+ *                             overwrite a real approval with a stale one.
+ */
+async function kvMentorStatus(address: string): Promise<KvMentorStatus> {
+  try {
+    const reply = await fetch("/api/mentor-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: address }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!reply.ok) return { ok: false, status: null };
+    const payload = (await reply.json().catch(() => null)) as {
+      ok?: boolean;
+      found?: boolean;
+      status?: string;
+      licenseLimit?: number;
+      firstName?: string;
+      displayName?: string;
+      username?: string;
+    } | null;
+    if (!payload || payload.ok !== true) return { ok: false, status: null };
+    if (!payload.found) return { ok: true, status: null };
+    const status =
+      payload.status === "pending" || payload.status === "approved" || payload.status === "rejected"
+        ? payload.status
+        : null;
+    // Built field-by-field: the project compiles with exactOptionalPropertyTypes,
+    // so an explicit `undefined` must never be assigned to an optional property.
+    const result: KvMentorStatus = { ok: true, status };
+    if (Number.isFinite(payload.licenseLimit)) result.licenseLimit = Number(payload.licenseLimit);
+    if (typeof payload.firstName === "string") result.firstName = payload.firstName;
+    if (typeof payload.displayName === "string") result.displayName = payload.displayName;
+    if (typeof payload.username === "string") result.username = payload.username;
+    return result;
+  } catch {
+    return { ok: false, status: null };
+  }
+}
+
+/**
+ * KV-FIRST APPROVAL READ, with the Supabase `mentor_approvals` table demoted
+ * to a FALLBACK for emails KV does not hold.
+ *
+ * Reading the table as the primary source is the exact bug: the console writes
+ * decisions to Upstash, nothing writes `approved` to the table any more, so an
+ * approved mentor signed in to "pending" and the dashboard poll kept writing
+ * that stale "pending" back over the real decision every five seconds.
+ */
+async function mentorApprovalStatus(
+  dbClient: Client,
+  address: string,
+): Promise<{ status: PortalStatus | null; kv: KvMentorStatus }> {
+  const kv = await kvMentorStatus(address);
+  if (kv.status) return { status: kv.status, kv };
+  // KV could not decide (no record, or unreachable) → legacy table read as
+  // the fallback only, never the primary source.
+  const { data, error } = await dbClient
+    .from("mentor_approvals")
+    .select("status")
+    .eq("email", address)
+    .maybeSingle();
+  if (error || !data || typeof (data as { status?: string }).status !== "string") {
+    return { status: null, kv };
+  }
+  const status = (data as { status: string }).status as PortalStatus;
+  return { status: status === "pending" || status === "approved" || status === "rejected" ? status : null, kv };
+}
+
 function toPublic(account: Account): PublicAccount {
   const { password: _password, ...rest } = account;
   return rest;
@@ -119,9 +224,10 @@ async function listApprovals(): Promise<Map<string, PortalStatus>> {
  * elsewhere was told "wrong email or password" no matter what they typed.
  *
  * This reads the same account row and compares the password the same way, and
- * — critically — returns the status from mentor_approvals, so someone the
- * admin approved gets their APPROVED portal rather than the stale "pending"
- * frozen inside the stored account.
+ * — critically — returns the status held in the ADMIN'S OWN Upstash record
+ * (with the legacy mentor_approvals table as fallback), so someone the admin
+ * approved gets their APPROVED portal rather than the stale "pending" frozen
+ * inside the stored account or the never-updated table.
  */
 export async function portalSignIn(email: string, password: string): Promise<{
   enabled: boolean;
@@ -134,15 +240,11 @@ export async function portalSignIn(email: string, password: string): Promise<{
   const address = email.trim().toLowerCase();
   if (!address) return { enabled: true, ok: false, error: "Enter your email address." };
 
-  const { data: approvalRow } = await dbClient
-    .from("mentor_approvals")
-    .select("status")
-    .eq("email", address)
-    .maybeSingle();
-  const approval =
-    approvalRow && typeof (approvalRow as { status?: string }).status === "string"
-      ? ((approvalRow as { status: string }).status as PortalStatus)
-      : null;
+  // APPROVAL COMES FROM UPSTASH — the store the admin console writes through
+  // (/api/admin-approve). The Supabase mentor_approvals table is only a
+  // fallback for records KV does not hold; trusting it as the primary source
+  // is what kept approved mentors seeing "pending".
+  const { status: approval, kv } = await mentorApprovalStatus(dbClient, address);
 
   const { data: row, error } = await dbClient
     .from("portal_accounts")
@@ -161,7 +263,14 @@ export async function portalSignIn(email: string, password: string): Promise<{
       return {
         enabled: true,
         ok: true,
-        account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }),
+        account: toPublic({
+          ...parsed,
+          email: address,
+          status: approval ?? parsed.status,
+          // A licence limit the admin granted lives in the KV record too; it
+          // wins only when actually set, so a legacy blob value survives.
+          licenseLimit: kv.licenseLimit && kv.licenseLimit > 0 ? kv.licenseLimit : parsed.licenseLimit,
+        }),
       };
     } catch {
       /* corrupted row — fall through to the approval-only path below */
@@ -172,21 +281,21 @@ export async function portalSignIn(email: string, password: string): Promise<{
   // signup. Admit them on the password being typed and carry the real approval
   // status, otherwise an approved mentor is locked out by their own history.
   if (approval) {
-    const username = address.split("@")[0] ?? address;
+    const username = kv.username || address.split("@")[0] || address;
     return {
       enabled: true,
       ok: true,
       account: toPublic({
         id: "approval-" + address,
         email: address,
-        firstName: "",
-        displayName: username,
+        firstName: kv.firstName ?? "",
+        displayName: kv.displayName || username,
         username,
         whatsapp: "",
         role: "mentor",
         status: approval,
         createdAt: "",
-        licenseLimit: 0,
+        licenseLimit: kv.licenseLimit ?? 0,
         licenses: [],
         eas: [],
         password: "",
@@ -203,16 +312,11 @@ export async function portalGetAccount(email: string): Promise<{ enabled: boolea
   const address = email.trim().toLowerCase();
   if (!address) return { enabled: true, account: null };
   try {
-    // ONE targeted approval read, not the whole table.
-    const { data: approvalRow, error: approvalError } = await dbClient
-      .from("mentor_approvals")
-      .select("status")
-      .eq("email", address)
-      .maybeSingle();
-    const approval =
-      !approvalError && approvalRow && typeof (approvalRow as { status?: string }).status === "string"
-        ? ((approvalRow as { status: string }).status as PortalStatus)
-        : null;
+    // UPSTASH FIRST — the console writes decisions there; mentor_approvals is
+    // a fallback only. A stale "pending" from the legacy table must never
+    // overwrite the real decision the admin made (this poll used to do exactly
+    // that, every five seconds).
+    const { status: approval, kv } = await mentorApprovalStatus(dbClient, address);
 
     const { data: row, error } = await dbClient
       .from("portal_accounts")
@@ -231,19 +335,20 @@ export async function portalGetAccount(email: string): Promise<{ enabled: boolea
     // record built from the APPROVAL — the authoritative source.
     if (!raw) {
       if (!approval) return { enabled: true, account: null };
+      const username = kv.username || address.split("@")[0] || address;
       return {
         enabled: true,
         account: toPublic({
           id: "approval-" + address,
           email: address,
-          firstName: "",
-          displayName: address.split("@")[0] ?? address,
-          username: address.split("@")[0] ?? address,
+          firstName: kv.firstName ?? "",
+          displayName: kv.displayName || username,
+          username,
           whatsapp: "",
           role: "mentor",
           status: approval,
           createdAt: "",
-          licenseLimit: 0,
+          licenseLimit: kv.licenseLimit ?? 0,
           licenses: [],
           eas: [],
           // No cloud copy of the account exists, so the local password stays the
@@ -254,11 +359,22 @@ export async function portalGetAccount(email: string): Promise<{ enabled: boolea
     }
 
     const parsed = JSON.parse(raw) as Account;
-    // The APPROVAL always wins over the status frozen inside the account blob.
-    // The admin console writes mentor_approvals; it never rewrites this JSON,
-    // so trusting the blob left every approved mentor reading "pending"
+    // The APPROVAL always wins over the status frozen inside the account blob,
+    // and the approval itself comes from Upstash (mentorApprovalStatus). The
+    // admin console writes the KV registration record; it never rewrites this
+    // JSON, so trusting the blob left every approved mentor reading "pending"
     // forever on their own dashboard.
-    return { enabled: true, account: toPublic({ ...parsed, email: address, status: approval ?? parsed.status }) };
+    return {
+      enabled: true,
+      account: toPublic({
+        ...parsed,
+        email: address,
+        status: approval ?? parsed.status,
+        // A licence limit the admin granted lives in the KV record too; it
+        // wins only when actually set, so a legacy blob value survives.
+        licenseLimit: kv.licenseLimit && kv.licenseLimit > 0 ? kv.licenseLimit : parsed.licenseLimit,
+      }),
+    };
   } catch {
     return { enabled: true, account: null };
   }
