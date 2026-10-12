@@ -58,7 +58,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * `mailjet.server.ts`, Node File Trace resolves it while tracing, and the
  * lambda loads it. Do not drop it.
  */
-import { sendMail } from "../src/lib/mailjet.server.js";
+import { sendMail } from "../../src/lib/mailjet.server.js";
 
 /**
  * The Vercel request/response shape, declared locally.

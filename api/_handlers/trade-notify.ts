@@ -13,7 +13,7 @@
  * A push failure never fails the webhook — the trade row is the record.
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { fcmConfigured, sendPush } from "../src/lib/fcm.server.js";
+import { fcmConfigured, sendPush } from "../../src/lib/fcm.server.js";
 
 type ApiRequest = { method?: string; body?: unknown };
 type ApiResponse = {

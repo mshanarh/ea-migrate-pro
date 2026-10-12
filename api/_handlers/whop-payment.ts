@@ -264,7 +264,7 @@ function markSeen(id: string): void {
 // platform mail. It keeps the recipient, subject, and body in the same brand
 // shell as the other transactional emails, but it is a NEW notification so it
 // does not reuse or touch the existing registration/approval/license flows.
-import { sendMail, type MailMessage } from "../src/lib/mailjet.server.js";
+import { sendMail, type MailMessage } from "../../src/lib/mailjet.server.js";
 
 type PaymentNotificationInput = {
   to: string;

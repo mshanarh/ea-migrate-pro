@@ -61,7 +61,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
  * `mailjet.server.js` in the lambda, and BOTH the ESM and the CJS runtime can
  * load that. Dropping the extension breaks production again.
  */
-import { sendMail } from "../src/lib/mailjet.server.js";
+import { sendMail } from "../../src/lib/mailjet.server.js";
 import { getRegistration, storeConfigured } from "./_registry.js";
 
 /**
