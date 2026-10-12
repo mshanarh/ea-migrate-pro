@@ -63,13 +63,7 @@
  */
 import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
-import {
-  getRegistration,
-  storeConfigured,
-  getDeviceIdForEmail,
-  setDeviceIdForEmail,
-} from "../../api/_registry";
-import type { Registration } from "../../api/_registry";
+import { storeConfigured, getDeviceIdForEmail, setDeviceIdForEmail } from "@/lib/supabase-users";
 
 /**
  * `revoked` is DELIBERATE and separate from `unpaid`.
@@ -176,8 +170,8 @@ export async function resolveCloudAccess(
   // record at all — the exact thing "paid only" has to mean. Every email,
   // owner included, now goes to computeFromUpstash below and is answered by
   // the ledger.
-  if (!storeConfigured()) return null; // unconfigured — caller decides the fallback
-
+  // The browser never imports the KV client: this endpoint answers with the
+  // real server-side verdict, and the browser only reads one JSON shape.
   const cached = cache.get(clean);
   if (!options?.fresh && cached) {
     // Only a POSITIVE answer is worth holding for a minute. "unpaid" and
@@ -205,11 +199,17 @@ export async function resolveCloudAccess(
   }
 
   try {
-    const status = await computeFromUpstash(clean);
+    const server = await checkAccessServer(clean);
+    if (!server.ok) return null; // endpoint could not decide — caller must fail closed
+
+    const status: CloudAccess = server.status;
     cache.set(clean, { status, at: Date.now() });
-    return status;
+    if (status === "admin") return "admin";
+    if (status === "paid") return "paid";
+    if (status === "revoked") return "revoked";
+    return "unpaid";
   } catch (error) {
-    console.warn("[payment-gate] upstash check failed:", error);
+    console.warn("[payment-gate] access check failed:", error);
     return null;
   }
 }
@@ -267,106 +267,29 @@ async function deviceBindingRevoked(email: string): Promise<boolean> {
  * Fails OPEN on a read error: an unreachable ledger must not lock out paying
  * customers. The other checks still decide in that case.
  */
-async function isExplicitlyRevoked(clean: string): Promise<boolean> {
-  if (!storeConfigured()) return false;
-  try {
-    const registration = await getRegistration(clean);
-    if (!registration) return false;
-    // A record with isPaid: false and paidAt: null is an explicit revocation
-    return registration.isPaid === false && registration.paidAt === null;
-  } catch {
-    return false;
-  }
+async function isExplicitlyRevoked(_clean: string): Promise<boolean> {
+  // Revocation is now decided server-side via /api/check-access, which is the
+  // same authority the browser uses. Do not re-import the KV client here.
+  return false;
 }
 
 /**
  * Has the owner REJECTED this account in the admin console?
  *
- * A rejection always closes the app — `computeFromUpstash` returns early on
- * it so no licence key or Whop membership can reopen the account. What it does
- * NOT decide on its own is WHICH screen the person is sent to: that depends on
- * whether they ever paid (see "REJECTED IS NOT THE SAME AS DEACTIVATED" at the
- * top of this file).
- *
- * This is the only thing this module reads from `mentor_approvals`. "approved"
- * is never consulted and still grants nothing.
- *
- * Fails OPEN on a read error: an unreadable table must not be read as
- * "rejected", or a database hiccup would lock out every paying customer.
+ * Rejection is now decided server-side via /api/check-access. This helper is
+ * kept only so existing call sites still compile; the real work lives in the
+ * server endpoint.
  */
-async function isRejected(clean: string): Promise<boolean> {
-  if (!storeConfigured()) return false;
-  try {
-    const registration = await getRegistration(clean);
-    if (!registration) return false;
-    return registration.status === "rejected";
-  } catch {
-    return false;
-  }
+async function isRejected(_clean: string): Promise<boolean> {
+  return false;
 }
 
 async function computeFromUpstash(clean: string): Promise<CloudAccess> {
-  // THE OWNER'S EXPLICIT "UNPAID" IS THE FIRST WORD ON IT. See
-  // isExplicitlyRevoked — every check after this one is a DERIVED signal, and
-  // letting any of them override a deliberate revocation is what made "Mark
-  // unpaid" a button that did nothing.
-  if (await isExplicitlyRevoked(clean)) return "revoked";
-
-  // THE APP OPENS FOR PAID ACCOUNTS. THAT IS THE WHOLE RULE. NOT EVEN FOR ADMINS.
-  //
-  // The admin console writes isPaid and paidAt to Upstash KV (`eamp:registrations`
-  // hash). This is the source of truth for payment status — the same place the
-  // admin console reads from to show the PAID badge.
-  const registration = await getRegistration(clean);
-  if (registration && registration.isPaid && registration.paidAt) {
-    return "paid";
-  }
-
-  // REJECTION CLOSES THE APP — AND IT IS CHECKED BEFORE THE LICENCE-KEY
-  // FALLBACK, WHICH IS THE WHOLE POINT OF IT BEING HERE.
-  //
-  // `license_keys.email` is the address that HOLDS the key, which for a mentor
-  // is the mentor who ISSUED it. Of the 22 key holders on this database, 13 are
-  // accounts the owner has since REJECTED and not one of them is on the payment
-  // ledger — they are mentors holding keys they issued to clients, not customers
-  // who paid us. So "holds a licence key" is NOT evidence that this address ever
-  // bought anything, and checking it first answered "paid" for exactly the
-  // people the owner had removed.
-  //
-  // Answering `unpaid` (the plans) rather than `revoked` is deliberate: none of
-  // them were ever on the ledger, so nothing was taken away from them, and
-  // "your portal has been deactivated" on a first-ever sign-in — with no way off
-  // that screen — is simply untrue. The plans are the only route by which a
-  // rejected account could ever come back, which is the honest thing to offer.
-  if (await isRejected(clean)) return "unpaid";
-
-  // NO LICENCE-KEY FALLBACK. IT IS GONE, AND THIS IS WHY.
-  //
-  // `license_keys.email` is the address that HOLDS the key, which for a mentor
-  // is the mentor who ISSUED it to their client. Measured live on this database:
-  // 24 key holders, and 20 of them have NO row in the payment ledger — they are
-  // distributors, not customers. Answering "paid" for them is exactly why app
-  // users the owner never marked paid could still open the app. Recount with
-  // `bun scripts/verify-ledger-only-access.ts`, which prints both lists.
-  //
-  // The ledger read above is now the ONLY thing that opens this app, which is
-  // what "paid means the owner marked this email paid" has to mean.
-
-  // Whop — the checkout source of truth, verified SERVER-side with the
-  // WHOP_API_KEY (never from the browser). DYNAMIC import: supabase.server
-  // reads process.env at module init and registers TanStack server
-  // functions — statically importing it into the client graph crashed the
-  // Android WebView bundle ("Dashboard didn't load"). Any failure here just
-  // means "no Whop confirmation"; the Upstash record still decides.
-  try {
-    const { whopVerifyMembership } = await import("@/lib/supabase.server");
-    const whop = await whopVerifyMembership({ data: { email: clean } });
-    if (whop.ok && whop.paid) return "paid";
-  } catch {
-    /* server functions unavailable in this bundle — KV decision stands */
-  }
-
-  return "unpaid";
+  // This function is no longer the access authority itself. The browser runs the
+  // same endpoint as the server (POST /api/check-access), so there is no browser
+  // import of the KV client and no reliance on browser-side `process.env`.
+  // If the endpoint cannot decide, fail closed — see resolveCloudAccess.
+  throw new Error("computeFromUpstash is no longer called directly; use checkAccessServer");
 }
 
 /**

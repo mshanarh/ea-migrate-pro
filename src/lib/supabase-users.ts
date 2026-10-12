@@ -13,6 +13,43 @@
  * to the mentor portal signup (src/routes/signup.tsx) and has no bearing on
  * whether somebody may use the app.
  *
+ * The only browser-side access check this module makes.
+ */
+async function checkAccessServer(email: string): Promise<{
+  ok: boolean;
+  isPaid: boolean;
+  status: "admin" | "paid" | "revoked" | "rejected" | "unpaid";
+  paidAt?: string;
+}> {
+  try {
+    const reply = await fetch("/api/check-access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
+    const payload = (await reply.json().catch(() => ({}))) as {
+      ok?: boolean;
+      isPaid?: boolean;
+      status?: string;
+      paidAt?: string;
+    };
+    if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
+    const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
+    if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
+    return {
+      ok: true,
+      isPaid: Boolean(payload.isPaid),
+      status,
+      paidAt: typeof payload.paidAt === "string" ? payload.paidAt : "",
+    };
+  } catch {
+    return { ok: false, isPaid: false, status: "unpaid" };
+  }
+}
+
+/**
  * FAIL CLOSED. Every runtime failure — an upsert error, a read error, a row
  * that does not exist — now returns "checkout" rather than "allow". An error
  * is not evidence that somebody paid, and the previous fail-open behaviour
@@ -52,6 +89,43 @@ function db() {
 }
 
 /**
+ * The only browser-side access check this module makes.
+ */
+async function checkAccessServer(email: string): Promise<{
+  ok: boolean;
+  isPaid: boolean;
+  status: "admin" | "paid" | "revoked" | "rejected" | "unpaid";
+  paidAt?: string;
+}> {
+  try {
+    const reply = await fetch("/api/check-access", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
+    const payload = (await reply.json().catch(() => ({}))) as {
+      ok?: boolean;
+      isPaid?: boolean;
+      status?: string;
+      paidAt?: string;
+    };
+    if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
+    const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
+    if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
+    return {
+      ok: true,
+      isPaid: Boolean(payload.isPaid),
+      status,
+      paidAt: typeof payload.paidAt === "string" ? payload.paidAt : "",
+    };
+  } catch {
+    return { ok: false, isPaid: false, status: "unpaid" };
+  }
+}
+
+/**
  * Registration gate. FAIL CLOSED on every runtime error: a failed upsert, a
  * failed read or a missing row all answer "checkout", because none of them is
  * proof that this email paid. Only a positive signal lets somebody through: a
@@ -73,7 +147,66 @@ export async function registerWithEmail(
   // read as "this account is fine". This only affects a build with no
   // VITE_SUPABASE_URL, which is not attacker-controllable.
   if (!dbClient) {
+    const access = await checkAccessServer(address);
+    if (access.ok && access.isPaid) {
+      return { outcome: "allow", user: null, verified: true };
+    }
     return { outcome: "checkout", user: null, verified: false, error: "supabase-not-configured" };
+  }
+
+  // PAID FIRST. A paying customer must never land on the plan page because the
+  // browser could not import the old KV client. Ask the server, which already
+  // owns the decision, and let the address through if the ledger says paid.
+  const access = await checkAccessServer(address);
+  if (access.ok && access.isPaid) {
+    // Keep a row for the app later — bindDeviceToEmail at sign-in wants it.
+    const { data: inserted, error: upsertError } = await dbClient
+      .from("users")
+      .upsert({ email: address }, { onConflict: "email", ignoreDuplicates: true })
+      .select("id, email, is_paid, is_admin, created_at")
+      .maybeSingle();
+
+    if (upsertError) {
+      console.warn("[supabase] user upsert failed:", upsertError.code, upsertError.message);
+    }
+
+    // Session row — best-effort. Some deployments lack the license_key
+    // column; retry without it so the session still records.
+    const { error: sessionError } = await dbClient.from("user_sessions").insert({
+      email: address,
+      ...(licenseKey ? { license_key: licenseKey } : {}),
+    });
+    if (sessionError?.code === "42703") {
+      const { error: retryError } = await dbClient.from("user_sessions").insert({ email: address });
+      if (retryError) console.warn("[supabase] session insert failed:", retryError.message);
+    } else if (sessionError) {
+      console.warn("[supabase] session insert failed:", sessionError.message);
+    }
+
+    // Re-read the row (covers "insert raced, upsert ignored" — the select
+    // after ignoreDuplicates can be null when the row already existed).
+    let user = inserted as UserRow | null;
+    if (!user) {
+      const { data: fetched, error: fetchError } = await dbClient
+        .from("users")
+        .select("id, email, is_paid, is_admin, created_at")
+        .eq("email", address)
+        .maybeSingle();
+      if (fetchError) console.warn("[supabase] user read failed:", fetchError.code, fetchError.message);
+      user = (fetched as UserRow | null) ?? null;
+    }
+
+    // Nothing else opens the app, so the positive ledger proof is enough for
+    // now. The real enforcement still lives in requireVerifiedAccess.
+    if (!user) return { outcome: "allow", user: null, verified: true };
+
+    // The app still validates against the ledger, and nothing else opens the
+    // app, so the positive ledger proof is enough for now.
+    if (await emailPaidInLedger(address)) {
+      return { outcome: "allow", user, verified: true };
+    }
+    // Fall through to the full ledger check — not allowed.
+    return { outcome: "checkout", user, verified: false };
   }
 
   // 1. Upsert — an existing row is NOT modified (admin/paid flags stay).
