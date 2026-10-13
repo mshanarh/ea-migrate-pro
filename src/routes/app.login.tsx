@@ -3,7 +3,7 @@ import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { usePlatform } from "@/lib/platform";
 import { OWNER_EMAILS } from "@/lib/auth-store";
-import { ArrowRight, Check, CheckCircle2, LockKeyhole, Mail } from "lucide-react";
+import { ArrowRight, Check, LockKeyhole, Mail } from "lucide-react";
 import { toast } from "sonner";
 import {
   activateKey,
@@ -29,6 +29,7 @@ import {
 } from "@/lib/payment-gate";
 import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
 import { checkActivationCode, requestActivationCode } from "@/lib/activation-client";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 /**
  * Query flags that mean "this page was DELIBERATELY sent here" — a route guard
@@ -1824,6 +1825,69 @@ function ActivationCodeView({
   );
 }
 
+/**
+ * THE KEY SHAPE THE GENERATOR ACTUALLY ISSUES — EMP-XXXX-XXXX-XXXX.
+ * The field advertises this one, so the placeholder always describes the ACTIVE
+ * format. (The 12-character `EMP-XXXXXXXXXXXX` shape is still accepted by
+ * `activateKey` for keys issued before it changed, but it is not what this
+ * screen tells anyone to expect.)
+ */
+const KEY_PLACEHOLDER = "EMP-XXXX-XXXX-XXXX";
+
+/**
+ * WHICH LABEL COLOUR AN ACCENT-FILLED CONTROL NEEDS.
+ *
+ * The accent list runs from near-black blues (`#0066FF`) to pure white
+ * (`#FFFFFF`), so no single label colour is readable across it — the old screen
+ * dodged the problem by hardcoding a dark label against its own hardcoded blue.
+ *
+ * This picks black or white by actual WCAG contrast ratio: the accent's sRGB
+ * luminance is linearised and the ratio against each candidate is compared.
+ * A plain "is it a light colour?" threshold gets the mid-tones wrong — copper
+ * (`#B87333`) and algohost amber (`#F97316`) both read as "light" yet are far
+ * more legible with a near-black label (7.5:1 vs 2.8:1 on the amber). Derived
+ * from the live accent; nothing here is a colour copied from a design.
+ */
+function readableOn(accent: string): string {
+  const hex = accent.trim().replace(/^#/, "");
+  const full = hex.length === 3 ? hex.split("").map((part) => part + part).join("") : hex;
+  const linear = (slice: string): number | null => {
+    const value = Number.parseInt(slice, 16);
+    if (!Number.isFinite(value)) return null;
+    const ratio = value / 255;
+    // The sRGB → linear curve WCAG contrast is defined on.
+    return ratio <= 0.04045 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
+  };
+  const red = linear(full.slice(0, 2));
+  const green = linear(full.slice(2, 4));
+  const blue = linear(full.slice(4, 6));
+  if (red === null || green === null || blue === null) return "#ffffff";
+  const luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+  const againstBlack = (luminance + 0.05) / 0.05;
+  const againstWhite = 1.05 / (luminance + 0.05);
+  return againstBlack > againstWhite ? "#05070a" : "#ffffff";
+}
+
+/**
+ * THE ROBOT ACTIVATION SCREEN.
+ *
+ * A single focused panel: the platform's logo over a halo drawn in the live
+ * accent colour, the "Activate robot" headline, one ROBOT KEY field and one
+ * button. Rebuilt from the layout the owner asked for, with two rules kept:
+ *
+ *   1. EVERY COLOUR IS DERIVED. The rings, the glow, the field's focus border,
+ *      the button fill and the email chip all read the accent from
+ *      `useCustomization()` — the user's own pick in Settings → Customization.
+ *      There is no palette baked into this file and no image used as artwork,
+ *      so the screen follows the app instead of fighting it.
+ *   2. THE LOGO IS THE PLATFORM'S. `<BrandLogo>` renders whatever logo the
+ *      platform is configured with (a custom upload, else the built-in
+ *      mascot), which is the same mark every other surface shows.
+ *
+ * The key field itself is unchanged in behaviour: uppercase, the live
+ * EMP-XXXX-XXXX-XXXX shape, validated by `activateKey` before this screen ever
+ * mattered.
+ */
 function LicenseView({
   email,
   setEmail,
@@ -1843,66 +1907,104 @@ function LicenseView({
   paid: boolean;
   unlocking: boolean;
 }) {
+  const platform = usePlatform();
+  const { color } = useCustomization();
+  const accent = accentColorValue(color);
+  const onAccent = readableOn(accent);
+  const isIos = platform === "ios";
+  const [focused, setFocused] = useState(false);
+  const fieldShape = isIos ? "rounded-[16px]" : "rounded-[12px]";
+
   return (
     <div className="-translate-y-4">
-      <div className="text-center">
-        <div className="mx-auto flex size-20 items-center justify-center rounded-3xl bg-emerald-400/10 text-emerald-300">
-          <CheckCircle2 className="size-9" />
+      {/* HERO — the platform logo over an accent halo built from CSS rings, not
+          an image, so it recolours with the accent and nothing is baked in. */}
+      {/* The halo is sized to the box on purpose: an oversized ring would push
+          past the top of the screen on a phone and read as a clipped graphic. */}
+      <div className="relative mx-auto flex h-[176px] w-full max-w-[300px] items-center justify-center">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center" aria-hidden="true">
+          <span className="absolute size-[168px] rounded-full border" style={{ borderColor: `${accent}1a` }} />
+          <span className="absolute size-[126px] rounded-full border" style={{ borderColor: `${accent}29` }} />
+          <span
+            className="absolute size-[92px] rounded-full"
+            style={{ background: `radial-gradient(circle, ${accent}33 0%, transparent 72%)` }}
+          />
         </div>
-        <h1 className="mt-7 text-3xl font-bold">Add your licence key</h1>
-        <p className="mt-3 text-sm leading-6 text-[#8a9298]">
+        <BrandLogo
+          className="relative size-[96px] object-contain"
+          style={{ filter: `drop-shadow(0 0 22px ${accent}73)` }}
+        />
+      </div>
+
+      <div className="text-center">
+        <p className="text-[11px] font-bold uppercase tracking-[0.44em] text-white/35">EA Migrate</p>
+        <h1 className="mt-3 text-[34px] font-black leading-none tracking-tight text-white">Activate robot</h1>
+        <p className="mx-auto mt-3 max-w-[19rem] text-[13px] leading-5 text-white/50">
           {admin
-            ? "Admin access is active. No payment is required for this email."
+            ? "Admin access is active — add the robot key to continue."
             : paid
-              ? "Payment received. Add the licence key sent to your email."
-              : "Your payment return was received. Add the licence key sent to your email."}
+              ? "Enter the license key from your mentor."
+              : "Your payment return was received. Enter the license key from your mentor."}
         </p>
       </div>
-      <section className="mt-8 rounded-[2rem] border border-[#202930] bg-[#10161a] p-6 shadow-[0_0_28px_rgba(8,168,239,.12)]">
+
+      <section
+        className={`mt-7 border border-white/10 bg-white/[0.035] p-5 ${isIos ? "rounded-[26px]" : "rounded-[20px]"}`}
+        style={{ boxShadow: `0 26px 64px -28px ${accent}80` }}
+      >
         {email ? (
-          <div className="mb-5 rounded-full border border-[#08a8ef]/40 bg-[#08a8ef]/10 px-4 py-3 text-center text-sm font-semibold text-[#55c7ff]">
+          <div
+            className="mb-5 truncate rounded-full border px-4 py-2.5 text-center text-[13px] font-semibold text-white/75"
+            style={{ borderColor: `${accent}40`, background: `${accent}14` }}
+          >
             {email}
           </div>
         ) : (
-          <label className="block">
-            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">
-              Payment email
-            </span>
+          <label className="mb-5 block">
+            <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/40">Payment email</span>
             <input
               type="email"
               required
               value={email}
               onChange={(event) => setEmail(event.target.value)}
-              className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 text-sm outline-none focus:border-[#08a8ef]"
+              className={`mt-2 h-[54px] w-full border border-white/10 bg-black/40 px-4 text-[15px] text-white outline-none placeholder:text-white/25 ${fieldShape}`}
               placeholder="you@example.com"
             />
           </label>
         )}
         <form onSubmit={onSubmit}>
           <label className="block">
-            <span className="text-xs font-bold uppercase tracking-[0.14em] text-[#8a9298]">
-              Licence key
-            </span>
+            <span className="text-[10px] font-bold uppercase tracking-[0.22em] text-white/40">Robot key</span>
             <input
               autoFocus
               required
               value={keyValue}
               onChange={(event) => setKey(event.target.value.toUpperCase())}
-              placeholder="EMP-XXXXXXXXXXXX"
-              className="mt-2 h-14 w-full rounded-2xl border border-[#202930] bg-[#070d10] px-4 font-mono text-sm tracking-[0.15em] outline-none focus:border-[#08a8ef]"
+              onFocus={() => setFocused(true)}
+              onBlur={() => setFocused(false)}
+              placeholder={KEY_PLACEHOLDER}
+              spellCheck={false}
+              autoComplete="off"
+              autoCapitalize="characters"
+              aria-label="Robot key"
+              className={`mt-2 h-[58px] w-full border bg-black/40 px-4 font-mono text-[15px] tracking-[0.16em] text-white outline-none transition-colors placeholder:text-white/25 ${fieldShape}`}
+              style={{
+                borderColor: focused ? accent : "rgba(255,255,255,0.10)",
+                boxShadow: focused ? `0 0 0 3px ${accent}26` : "none",
+              }}
             />
           </label>
           <button
             type="submit"
             disabled={unlocking}
-            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-sm font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] disabled:cursor-wait disabled:opacity-70"
+            className="mt-4 flex h-[58px] w-full items-center justify-center gap-2 rounded-full text-[16px] font-black tracking-wide transition-transform active:scale-[.99] disabled:cursor-wait disabled:opacity-70"
+            style={{ background: accent, color: onAccent, boxShadow: `0 14px 36px -14px ${accent}e6` }}
           >
-            {unlocking ? "Unlocking…" : "Unlock bot"}
-            <ArrowRight className="size-4" />
+            {unlocking ? "Activating…" : "Activate"}
           </button>
         </form>
-        <p className="mt-5 flex items-center justify-center gap-2 text-xs text-[#69757c]">
-          <LockKeyhole className="size-3" /> One email, one activated device
+        <p className="mt-5 flex items-center justify-center gap-2 text-[11px] text-white/35">
+          <LockKeyhole className="size-3" style={{ color: accent }} /> One email, one activated device
         </p>
       </section>
     </div>
