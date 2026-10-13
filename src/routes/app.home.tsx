@@ -226,6 +226,9 @@ function AppHome() {
   }, []);
 
   const [access, setAccess] = useState<"checking" | "ok">("checking");
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
+  const [toastSymbol, setToastSymbol] = useState("");
   useEffect(() => {
     let cancelled = false;
     let running = false;
@@ -474,5 +477,18 @@ function AppHome() {
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
     </div>
+  );
+}
+
+      {/* TradeExecutionToast mounted at the bottom */}
+      <TradeExecutionToast
+        isOpen={toastOpen}
+        onClose={() => setToastOpen(false)}
+        botName={robot?.name ?? "EA"}
+        totalTrades={toastTrades}
+        mode="auto"
+        symbol={toastSymbol}
+      />
+    </div >
   );
 }
