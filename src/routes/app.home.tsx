@@ -319,6 +319,8 @@ function AppHome() {
     setToastTrades(totalTrades);
     setToastSymbol(pairs[0]?.symbol ?? "");
     setToastOpen(true);
+    
+    console.log("[START DEBUG] Auto-trade starting for:", symbol, "trades:", totalTrades, "pairs:", pairs.map(p => ({sym: p.symbol, trades: p.maxTrades})));
 
     let opened = 0;
     let blocked = 0;
