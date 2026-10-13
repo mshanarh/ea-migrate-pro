@@ -11,7 +11,8 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
 import { paymentStatusForEmail } from "@/lib/auth-store";
@@ -302,10 +303,7 @@ function AppHome() {
     setModalOpen(false);
   };
 
-  /**
-   * AUTO-TRADE with SAFETY CHECKS
-   * Uses the new resolveTradeDirection which returns NO_TRADE on weak/missing data
-   */
+  /** Auto-Trade with safety checks using the new API */
   const runConfiguredPairs = async (target: Robot) => {
     const pairs = target.pairs ?? [];
     if (pairs.length === 0) {
@@ -351,8 +349,8 @@ function AppHome() {
           symbol: analysis.symbol,
           lotSize: Number(pair.lotSize) || 0.01,
           maxTrades: trades,
-          eaName: target.name, // Preserved exactly (e.g., "sniper killer ea v2+")
-          paperTrading: true, // Set to false for live trading
+          eaName: target.name,
+          paperTrading: true,
           onTradeExecute: (trade, index, total) => {
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
@@ -393,9 +391,7 @@ function AppHome() {
       toast.success(
         `${target.name} opened ${opened} ${opened === 1 ? "trade" : "trades"} on MT5`,
         blocked > 0 || refused > 0
-          ? {
-              description: `${blocked} blocked, ${refused} refused — see bot log for details.`,
-            }
+          ? { description: `${blocked} blocked, ${refused} refused — see bot log for details.` }
           : undefined,
       );
     } else if (blocked > 0) {
@@ -463,16 +459,9 @@ function AppHome() {
             onStart={() => void handleStart()}
             onQuotes={handleQuotes}
             onRemove={handleRemove}
-            onOpenScanner={() => {
-              window.location.assign("/app/scanner");
-            }}
-            onOpenSymbols={() => {
-              window.location.assign("/app/metatrader");
-            }}
-            onSelectRobot={(id) => {
-              setActiveRobot(id);
-              toast.success("Robot selected");
-            }}
+            onOpenScanner={() => { window.location.assign("/app/scanner"); }}
+            onOpenSymbols={() => { window.location.assign("/app/metatrader"); }}
+            onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
           />
         </main>
