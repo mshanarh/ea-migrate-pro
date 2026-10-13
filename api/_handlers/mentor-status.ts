@@ -70,6 +70,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       found: true,
       status: pub.status,
       licenseLimit: pub.licenseLimit,
+      // True only when the admin pressed "Save limit" — see `licenseLimitSet`
+      // in _registry.ts. Without it a caller cannot tell "the admin allowed no
+      // keys" apart from "nobody has chosen a number yet".
+      licenseLimitSet: pub.licenseLimitSet === true,
       firstName: pub.firstName,
       displayName: pub.displayName,
       username: pub.username,

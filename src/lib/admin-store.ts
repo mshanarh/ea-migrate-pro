@@ -38,6 +38,7 @@
  */
 
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { countLicensesInKv } from "@/lib/license-cloud";
 
 export type ApprovalStatus = "pending" | "approved" | "rejected";
 
@@ -523,9 +524,54 @@ export async function getApprovalForEmail(
  * rule instead of locking the account out of key creation entirely.
  * This is the number the key-creation paths enforce.
  */
+/**
+ * THE ADMIN'S OWN KV RECORD, read through /api/mentor-status.
+ *
+ * The console's "Maximum license keys" saves to the Upstash registration
+ * record (/api/admin-approve → `licenseLimit`), so reading that before the
+ * legacy Supabase `app_settings` row keeps the two in step — and keeps the cap
+ * readable while that database is over its egress cap, which is when the old
+ * read returned null and every account silently fell back to the default
+ * allowance.
+ *
+ * `found: false` (a healthy store with no record) deliberately falls through to
+ * the legacy row, and so does a record whose limit was never CHOSEN — the
+ * `licenseLimitSet` flag is what tells "the admin allowed no keys" apart from
+ * "nobody has set a number yet". Reading `licenseLimit: 0`, which every record
+ * this store creates carries by default, as a cap would lock every freshly
+ * approved mentor out of key creation.
+ */
+async function kvLicenseLimit(email: string): Promise<number | null> {
+  try {
+    const reply = await fetch("/api/mentor-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email }),
+      signal: AbortSignal.timeout(10_000),
+    });
+    if (!reply.ok) return null;
+    const payload = (await reply.json().catch(() => null)) as {
+      ok?: boolean;
+      found?: boolean;
+      licenseLimit?: number;
+      licenseLimitSet?: boolean;
+    } | null;
+    if (!payload || payload.ok !== true || !payload.found) return null;
+    if (payload.licenseLimitSet !== true) return null;
+    const limit = Number(payload.licenseLimit);
+    return Number.isFinite(limit) && limit >= 0 ? Math.floor(limit) : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function getLicenseCapForEmail(email: string): Promise<number | null> {
   const clean = email.trim().toLowerCase();
-  if (!supabase || !clean) return null;
+  if (!clean) return null;
+  // KV FIRST — the console's own store (see kvLicenseLimit).
+  const kvLimit = await kvLicenseLimit(clean);
+  if (kvLimit !== null) return kvLimit;
+  if (!supabase) return null;
   try {
     const { data, error } = await supabase
       .from("app_settings")
@@ -554,7 +600,19 @@ export async function getLicenseCapForEmail(email: string): Promise<number | nul
  */
 export async function countKeysForEmail(email: string): Promise<number> {
   const clean = email.trim().toLowerCase();
-  if (!supabase || !clean) return 0;
+  if (!clean) return 0;
+  /**
+   * UPSTASH KV FIRST — THAT IS WHERE KEYS ARE ISSUED NOW.
+   *
+   * `license_keys` only ever saw keys that managed to reach Supabase, so after
+   * the store moved (see src/lib/license-cloud.ts) this count kept reading 0
+   * and the admin's cap could never be reached. /api/licenses counts the
+   * records the Generate License screen actually wrote, and the legacy table is
+   * only consulted when the KV store cannot answer.
+   */
+  const kv = await countLicensesInKv(clean);
+  if (kv.enabled && kv.ok) return kv.count;
+  if (!supabase) return 0;
   try {
     const { data, error } = await supabase
       .from("license_keys")

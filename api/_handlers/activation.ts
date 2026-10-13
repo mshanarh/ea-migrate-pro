@@ -631,6 +631,38 @@ async function holdersOf(client: SupabaseClient, key: string): Promise<string[]>
 }
 
 async function claimKey(client: SupabaseClient, key: string, email: string): Promise<Reply> {
+  /*
+   * THE LOCK MOVED TO UPSTASH KV — SAME RULE, A STORE THAT STAYS UP.
+   *
+   * This used to be decided ONLY by `users.license_key`. Once the Supabase
+   * project hit its egress cap every call answered `exceed_egress_quota`, so
+   * the read failed, this function answered "We could not check that licence
+   * key", and NOBODY could activate ANY key — including keys that were valid.
+   *
+   * The lock is now atomic in Redis (`SET … NX`), through the SAME
+   * implementation the /api/licenses endpoint uses (`claimLicenceKeyForEmail`)
+   * so the two surfaces can never disagree about who holds a key. The Supabase
+   * path below is kept only for a deployment with no KV configured, where it
+   * is still the better answer than refusing every activation.
+   *
+   * A REFUSAL FROM KV IS FINAL: `alreadyInUse` is returned as-is, because a key
+   * that is taken must not become claimable by falling through to a second
+   * store. Only an UNREACHABLE KV falls through.
+   */
+  if (storeConfigured()) {
+    try {
+      const { claimLicenceKeyForEmail } = await import("./licenses.js");
+      const outcome = await claimLicenceKeyForEmail(key, email);
+      if (outcome.ok) return { ok: true };
+      return { ok: false, alreadyInUse: true, error: outcome.error ?? ALREADY_IN_USE };
+    } catch (error) {
+      console.warn(
+        "[activation] KV key claim unavailable, using the users.license_key lock:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+
   let mine: string[];
   let owners: string[];
   try {

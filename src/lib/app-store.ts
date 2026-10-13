@@ -4,6 +4,7 @@ import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
 import { ALREADY_IN_USE, claimKeyWithoutServer } from "@/lib/license-lock";
 import { claimLicenseKeyFor } from "@/lib/activation-client";
+import { lookupLicenseInKv } from "@/lib/license-cloud";
 
 /** Same checkout the app login redirects unpaid users to. */
 export const WHOP_CHECKOUT_URL =
@@ -394,6 +395,75 @@ export function appSignOut() {
 }
 
 /**
+ * ── THE PENDING LICENCE STEP ─────────────────────────────────────────────
+ *
+ * "I passed the code step with a paid email, the app asked for my licence key,
+ * and then it threw me back to the first page." That is what these three
+ * functions exist to stop.
+ *
+ * The licence form was pure in-memory state: it lived in `LicenseView`'s
+ * parent component, so the moment the app was reopened — or the route simply
+ * re-evaluated — the person was dropped on the email form again with no way
+ * back except remembering to sign in and hope. On a phone (the Android/ios
+ * wrapper, and a home-screen PWA) the app is closed and reopened constantly, so
+ * this happened on every launch.
+ *
+ * The flag below records the ONE fact that must survive: this account has
+ * proved its inbox and its payment, and has not yet entered a licence key.
+ * While it is set, /app/login renders the licence form and NOTHING routes the
+ * person away from it — see the guard in `src/routes/app.login.tsx`, plus the
+ * redirects in `app.index.tsx` and `app.home.tsx`.
+ *
+ * It is NOT a permission: it grants nothing, and every route guard still
+ * verifies against the cloud. It is cleared the moment a key activates (or the
+ * person signs out / starts over), and it is gone when the app's data is
+ * cleared — which is exactly the lifetime the person asked for: "it must stay
+ * on that until I put a key, not unless I delete the app".
+ */
+const PENDING_LICENSE_KEY = "eamp.pending-license";
+
+/** Remember that this account still owes a licence key. */
+export function markPendingLicense(email: string): void {
+  if (typeof window === "undefined") return;
+  const clean = email.trim().toLowerCase();
+  if (!clean) return;
+  try {
+    window.localStorage.setItem(PENDING_LICENSE_KEY, clean);
+  } catch {
+    /* private mode — the licence form is still reachable by signing in again */
+  }
+}
+
+/** The email that still owes a licence key, or null. */
+export function getPendingLicense(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const value = window.localStorage.getItem(PENDING_LICENSE_KEY);
+    return value && value.trim() ? value.trim().toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The key is in (or the person chose to start over) — stop holding the form. */
+export function clearPendingLicense(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(PENDING_LICENSE_KEY);
+  } catch {
+    /* nothing to clear */
+  }
+}
+
+/** True when this account must still enter a licence key before the app opens. */
+export function hasPendingLicense(email: string | null | undefined): boolean {
+  const pending = getPendingLicense();
+  if (!pending) return false;
+  const clean = (email ?? "").trim().toLowerCase();
+  return !clean || clean === pending;
+}
+
+/**
  * Cloud license lookup — real users receive their key by EMAIL, which saves
  * it to Supabase `license_keys` (mentor portal + admin issuance). The mentor's
  * local store is only checked as a fallback for mentors activating on their
@@ -403,6 +473,40 @@ async function findLicenseInCloud(
   key: string,
   email: string,
 ): Promise<{ error?: string; license?: { eaName?: string; expiry?: string }; ea?: Partial<Robot> } | null> {
+  /**
+   * UPSTASH KV FIRST — THE STORE KEYS ARE ISSUED INTO.
+   *
+   * The mentor's Generate License screen writes the key (its owner, its client,
+   * its EA name, expiry, symbols and picture) into /api/licenses, which is
+   * backed by KV. Resolving it from the SAME store is what makes a freshly
+   * generated key activate: the Supabase tables this function used to read are
+   * the ones that answer `exceed_egress_quota`, and a paid customer entering a
+   * real key was told "That license key was not found".
+   *
+   * `found: false` is NOT a refusal — keys issued BEFORE this store existed
+   * live only in Supabase, so it falls through to the legacy lookup below. A
+   * key that is explicitly somebody else's (`wrongEmail`) IS final.
+   */
+  const kv = await lookupLicenseInKv(key, email);
+  if (kv.enabled) {
+    if (kv.wrongEmail) return { error: "That license key belongs to a different email." };
+    if (kv.found && kv.license) {
+      const record = kv.license;
+      const eaName = record.eaName || undefined;
+      return {
+        license: {
+          ...(eaName ? { eaName } : {}),
+          ...(record.expiry ? { expiry: record.expiry } : {}),
+        },
+        ea: {
+          ...(record.eaId ? { eaId: record.eaId } : {}),
+          ...(eaName ? { name: eaName } : {}),
+          symbols: record.symbols ?? [],
+          ...(record.image ? { image: record.image } : {}),
+        },
+      };
+    }
+  }
   // (shape mirrors findSavedLicenseForEmail's success contract)
   // SHARED client — building a fresh one per activation (dynamic import +
   // createClient) added seconds to every unlock before the first query ran.

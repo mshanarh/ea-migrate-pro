@@ -83,6 +83,12 @@ export default async function handler(request: ApiRequest, response: ApiResponse
       record.paidAt = record.isPaid ? now : null;
     } else if (action === "limit") {
       record.licenseLimit = Math.max(0, Math.min(9999, Math.floor(Number(body["limit"]) || 0)));
+      // MARKED AS DELIBERATE — this is the console's "Save limit" button, so the
+      // number (0 included) is the admin's decision and is enforced as one. A
+      // record that merely EXISTS has licenseLimit 0 by default, and reading
+      // that as a cap is what would block a freshly approved mentor from ever
+      // creating a key. See `licenseLimitSet` in _registry.ts.
+      record.licenseLimitSet = true;
     }
 
     await saveRegistration(record);

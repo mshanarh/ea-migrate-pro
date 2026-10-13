@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
 import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
+import { issueLicenseKeyInKv, removeLicenseKeyInKv } from "@/lib/license-cloud";
 import { inlineVideoForCloud } from "@/lib/media-store";
 import { sendPortalEmail } from "@/lib/send-email";
 
@@ -169,26 +170,54 @@ function Licenses() {
       setFormError(result2.error);
       return;
     }
-    // Push the new key to the CLOUD portal record immediately — a key that
-    // lives only in this device's localStorage is invisible to the app
-    // ("That license key was not found" for the owner's own email).
+    // PUBLISH THE KEY SO THE APP CAN FIND IT — a key that lives only in this
+    // device's localStorage is invisible to the app ("That license key was not
+    // found" for the owner's own email).
+    //
+    // UPSTASH KV IS THE PRIMARY STORE NOW (see src/lib/license-cloud.ts). The
+    // Supabase portal record used to be the only destination, and once that
+    // project passed its egress cap every key was reported as "NOT saved to the
+    // cloud" while remaining unusable on the phone. KV holds the key, its
+    // owner, its client and its EA details, and it is the same store the app
+    // resolves the key from — so a successful write here is a key that works.
+    // The Supabase mirror is still attempted, but ONLY when KV could not answer
+    // (no store configured / unreachable), so nothing regresses on a deployment
+    // without KV and no failure message can be raised over a key that IS saved.
     const created = result2.license;
     if (created) {
-      // Carry the EA PICTURE (and video) with the key into the cloud record —
-      // this is how the client's phone gets the robot's real image even when
-      // the full account mirror has not run there yet.
-      void inlineVideoForCloud(selectedEa.video)
-        .then((video) =>
-          portalUpsertLicense(account.email, created, {
-            ...(selectedEa.image ? { image: selectedEa.image } : {}),
-            ...(video ? { video } : {}),
-          }),
-        )
-        .then((push) => {
+      void (async () => {
+        const kv = await issueLicenseKeyInKv({
+          key: created.key,
+          mentorEmail: account.email,
+          clientEmail: created.clientEmail ?? "",
+          clientName: created.name ?? keyName.trim(),
+          eaName: selectedEa.name,
+          eaId: selectedEa.id,
+          expiry,
+          // The EA's symbols travel with the key so the robot this activates
+          // gets its real Quotes list even though nothing read Supabase.
+          ...(selectedEa.symbols?.length ? { symbols: selectedEa.symbols } : {}),
+          ...(selectedEa.image ? { image: selectedEa.image } : {}),
+        });
+        if (kv.enabled) {
+          if (kv.ok) return;
+          toast.error(
+            `The key was NOT saved to the cloud: ${kv.error ?? "unknown error"}. It may not activate on the app until this succeeds.`,
+          );
+          return;
+        }
+        // No KV here — carry the EA PICTURE (and video) into the legacy cloud
+        // record, which is how the client's phone gets the robot's real image
+        // even when the full account mirror has not run there yet.
+        const video = await inlineVideoForCloud(selectedEa.video);
+        const push = await portalUpsertLicense(account.email, created, {
+          ...(selectedEa.image ? { image: selectedEa.image } : {}),
+          ...(video ? { video } : {}),
+        });
         if (push.enabled && !push.ok) {
           toast.error(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
         }
-      });
+      })();
     }
     // Email the key immediately — awaited so "Emailed to client" is real.
     // The license_approved flow also saves the key into the Supabase
@@ -255,15 +284,21 @@ function Licenses() {
     }
     setArmedDelete(null);
     removeLicense(account.id, licenseId);
-    // Delete BOTH copies: the mentor's cloud portal record (or the key
-    // resurrects on restore) and the license_keys row the app activates
-    // against. Best-effort per target with clear failure messages.
-    const [record, row] = await Promise.allSettled([portalRemoveLicense(account.email, licenseId), portalDeleteLicenseKey(key)]);
+    // Delete EVERY copy, or the key resurrects: the KV store the app resolves
+    // from, the mentor's cloud portal record, and the legacy license_keys row.
+    // Best-effort per target with clear failure messages.
+    const [kv, record, row] = await Promise.allSettled([
+      removeLicenseKeyInKv(key),
+      portalRemoveLicense(account.email, licenseId),
+      portalDeleteLicenseKey(key),
+    ]);
+    const kvOk = kv.status === "fulfilled" && (!kv.value.enabled || kv.value.ok);
     const recordOk = record.status === "fulfilled" && (!record.value.enabled || record.value.ok);
     const rowOk = row.status === "fulfilled" && (!row.value.enabled || row.value.ok);
+    if (!kvOk) toast.error(`Licence store delete failed: ${kv.status === "fulfilled" ? kv.value.error ?? "unknown error" : "network error"} — the key may still activate.`);
     if (!recordOk) toast.error(`Cloud record delete failed: ${record.status === "fulfilled" ? record.value.error : "network error"} — the key may come back on restore.`);
     if (!rowOk) toast.error(`Cloud key delete failed: ${row.status === "fulfilled" ? row.value.error : "network error"} — the key may still activate.`);
-    if (recordOk && rowOk) toast.success("License key deleted everywhere");
+    if (kvOk && recordOk && rowOk) toast.success("License key deleted everywhere");
   };
 
   const copyKey = async () => {

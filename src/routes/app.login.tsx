@@ -9,9 +9,12 @@ import {
   activateKey,
   appSignIn,
   appSignOut,
+  clearPendingLicense,
   getAppState,
   getDeviceId,
+  hasPendingLicense,
   leaveForCheckout,
+  markPendingLicense,
   useAppState,
 } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
@@ -36,8 +39,10 @@ import { checkActivationCode, requestActivationCode } from "@/lib/activation-cli
  *   ?deactivated=1 — an admin pressed "Set unpaid"; there is a notice to read
  *   ?success=true  — straight back from Whop checkout, awaiting verification
  *   ?reset=1       — the explicit "start over" escape hatch
+ *   ?license=1     — the account proved its code and still owes a licence key;
+ *                    this screen holds the form instead of hopping into the app
  */
-const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset", "awaiting"]);
+const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset", "awaiting", "license"]);
 
 /**
  * Support contact shown wherever the customer has to finish something by hand.
@@ -231,7 +236,25 @@ function AppAccess() {
    * sign-in typed on this very screen — that flow stays on the form until its
    * own handler finishes.
    */
-  const [resuming, setResuming] = useState<boolean>(() => Boolean(getAppState().email));
+  /**
+   * A LICENCE KEY IS STILL OWED (see `hasPendingLicense` in app-store.ts).
+   *
+   * Set the moment the code step succeeds for an account that has no robot
+   * yet, and cleared only when a key activates (or the session is signed out).
+   * While it is true this screen shows the licence form and the resume
+   * handshake does NOT run — the handshake would answer "pass", which is what
+   * walked a paid customer out of this form and, on the next launch, back onto
+   * the email form. That round trip is the bug being fixed.
+   */
+  const [licensePending, setLicensePending] = useState<boolean>(() =>
+    hasPendingLicense(getAppState().email),
+  );
+  // A SAVED SESSION IS RESUMED ONLY WHEN NO LICENCE KEY IS OWED — otherwise
+  // the first paint is already the licence form and there is no ResumingView
+  // flash to sit through.
+  const [resuming, setResuming] = useState<boolean>(
+    () => Boolean(getAppState().email) && !hasPendingLicense(getAppState().email),
+  );
   // NOTE: there is deliberately no "waiting for approval" card here any more.
   // Mentor approval is a PORTAL decision; typing an email into the app is a
   // payment attempt, so the only two outcomes are "you are paid, welcome" and
@@ -290,6 +313,22 @@ function AppAccess() {
     const params = new URLSearchParams(window.location.search);
     setPayPrompt(params.get("pay") === "1");
     setDeactivated(params.get("deactivated") === "1");
+    // Re-read the owed-key flag every render: a deep link from /app/home or
+    // /app carries ?license=1, and the flag itself survives the app closing.
+    //
+    // IT BELONGS TO ONE ACCOUNT. If a DIFFERENT email is the signed-in session
+    // now, the flag is stale — the licence form is for an account that owes a
+    // key, and showing it to somebody who signed in afresh would skip their
+    // email step entirely. `hasPendingLicense` is the comparison.
+    const session = getAppState().email;
+    if (session && !hasPendingLicense(session)) {
+      clearPendingLicense();
+      setLicensePending(false);
+      return;
+    }
+    setLicensePending(
+      (current) => current || hasPendingLicense(session) || params.get("license") === "1",
+    );
   });
 
   useEffect(() => {
@@ -365,8 +404,19 @@ function AppAccess() {
   // The license-entry screen is the passthrough for already-entitled sessions
   // (paid or admin) that already own a robot. Anything else on this login screen
   // gets a plan choice or a sign-in form instead.
+  /**
+   * THE LICENCE FORM OWNS A PENDING SESSION.
+   *
+   * `licensePending` is checked FIRST and needs only an email: this account has
+   * already passed the code step, so it must see the key form even while the
+   * cloud is still answering. Everything else keeps its old rule. Nothing here
+   * redirects, and the auto-hop effect below returns on `showLicenseView`, so
+   * there is no path from this screen back to the email form short of signing
+   * out or clearing the app's data.
+   */
   const showLicenseView =
-    !returningWithRobot && (successReturn || cloudStatus === "paid" || cloudStatus === "admin");
+    (licensePending && Boolean(app.email)) ||
+    (!returningWithRobot && (successReturn || cloudStatus === "paid" || cloudStatus === "admin"));
 
   // OPENING THE APP WITH AN UNPAID SESSION MUST GO TO WHOP — but ONLY on the
   // DATABASE's word. The local store is a hint that this device has not seen a
@@ -449,6 +499,20 @@ function AppAccess() {
       setResuming(false);
       return;
     }
+    /**
+     * THE OWED LICENCE KEY OWNS THIS SESSION TOO.
+     *
+     * Running the handshake here would answer "pass" (the account IS paid) and
+     * `window.location.replace("/app/home")` would carry the person out of the
+     * licence form — and /app/home's guard then sends them to the login page,
+     * which is the "it went back to the first page" report. The flag is only
+     * cleared by a successful activation, so this screen simply stays put.
+     */
+    if (hasPendingLicense(sessionEmail)) {
+      setLicensePending(true);
+      setResuming(false);
+      return;
+    }
     let cancelled = false;
     void (async () => {
       const access = await withDeadline<AppAccessCheck>(
@@ -467,6 +531,11 @@ function AppAccess() {
       }
       if (access.action === "deactivate") {
         appSignOut();
+        // A revoked account does not owe a licence key — drop the flag or this
+        // screen would keep showing the key form to an account the owner has
+        // already switched off.
+        clearPendingLicense();
+        setLicensePending(false);
         setCloudStatus(null);
         window.history.replaceState({}, "", "/app/login?deactivated=1");
         setDeactivated(true);
@@ -513,6 +582,8 @@ function AppAccess() {
       // one branch covers both.
       if (status === "revoked") {
         appSignOut();
+        clearPendingLicense();
+        setLicensePending(false);
         setCloudStatus(null);
         setChoosePlan(false);
         setPayPrompt(false);
@@ -843,10 +914,24 @@ function AppAccess() {
       // would be dropped back onto the login form looking like a failed
       // sign-in.
       if (getAppState().robots.length > 0) {
+        clearPendingLicense();
+        setLicensePending(false);
         setCodeStage(null);
         window.location.replace("/app/home");
         return;
       }
+      /**
+       * REMEMBER THAT A LICENCE KEY IS OWED — this is what makes the form stay.
+       *
+       * The code step has proved the inbox and the database has proved the
+       * payment, so the ONLY thing left is the key. Without this line the form
+       * is pure component state: reopen the app (or let the route re-evaluate)
+       * and the person is back on the email form with nothing to click. The flag
+       * lives in localStorage, so it survives the app being closed and is gone
+       * only when a key activates or the app's data is cleared.
+       */
+      markPendingLicense(codeStage.email);
+      setLicensePending(true);
       setCodeStage(null);
     } finally {
       setVerifyingCode(false);
@@ -1051,6 +1136,10 @@ function AppAccess() {
         return;
       }
       toast.success((result.robot?.name || "Robot") + " activated on this device");
+      // THE KEY IS IN — the licence step is no longer owed, so nothing sends
+      // this account back to the form on the next launch.
+      clearPendingLicense();
+      setLicensePending(false);
       // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
       window.sessionStorage.setItem("eamp_pending_welcome", "1");
       window.location.replace("/app/home");

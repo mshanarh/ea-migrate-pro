@@ -22,6 +22,18 @@ export type Registration = {
   isPaid: boolean;
   paidAt: string | null;
   licenseLimit: number;
+  /**
+   * TRUE ONLY WHEN THE ADMIN PRESSED "Save limit".
+   *
+   * `licenseLimit: 0` is the default of every record this store creates (an
+   * approval, a payment change, a future device bind), so it cannot be read as
+   * "the admin allowed zero keys" — that would lock every freshly approved
+   * mentor out of key creation, which is the dead end the dashboard explicitly
+   * falls back to 2000 keys to avoid. The limit counts only when this flag says
+   * the number was chosen on purpose ("Save limit" with 0 IS a deliberate
+   * block, and it is honoured).
+   */
+  licenseLimitSet?: boolean;
   /** Device Id this email is bound to (from the app's sign-in flow). Null = not bound. */
   deviceId?: string | null;
 };
@@ -180,4 +192,22 @@ export async function setDeviceIdForEmail(email: string, deviceId: string): Prom
       deviceId,
     });
   }
+}
+
+/**
+ * THE RAW REDIS COMMAND RUNNER, for the OTHER KV-backed stores in /api.
+ *
+ * Every record that used to live in a Supabase table now lives here instead:
+ * registrations + approval + payment + licence limit already do (see the file
+ * header), and the ISSUED LICENCE KEYS joined them so key generation and key
+ * activation stop depending on a database that answers "exceed_egress_quota".
+ * `api/_handlers/licenses.ts` uses this.
+ *
+ * Exported rather than duplicated on purpose: the URL/token pair, the 10s
+ * timeout and the error shape are the parts that must never drift between
+ * stores — a second copy is how one store silently keeps talking to an old
+ * endpoint after the credentials are rotated.
+ */
+export function kvCommand(command: (string | number)[]): Promise<unknown> {
+  return kv(command);
 }

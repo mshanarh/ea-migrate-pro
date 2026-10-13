@@ -12,7 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import { activateKey, appSignOut, getAppState, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
 import { paymentStatusForEmail } from "@/lib/auth-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
@@ -24,6 +24,23 @@ export const Route = createFileRoute("/app/home")({
   ssr: false,
   beforeLoad: async () => {
     const email = getAppState().email;
+    /**
+     * AN OWED LICENCE KEY SENDS THIS SESSION TO THE LICENCE FORM, NOT HERE.
+     *
+     * A paid account that has passed the code step but has not entered a key
+     * has nothing to control on this screen — the old behaviour was the
+     * ping-pong the customer complained about: this guard has no robot to show,
+     * so the app fell back to the login screen, which (before the owed-key flag
+     * existed) was the EMAIL FORM again. Handing them back to /app/login with
+     * the licence step intact is the whole point: it must stay on the key form
+     * "until I put a key".
+     *
+     * Only applies while there is genuinely no activated robot, so an account
+     * with a working robot is never dragged back to the form by a stale flag.
+     */
+    if (email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
+      throw redirect({ href: "/app/login?license=1" });
+    }
     // STRICT DATABASE CHECK FIRST — an explicit `resolveCloudAccess` pass in
     // the route guard itself, not just inside the gate helper. "unpaid" here
     // is a HARD STOP: the session is ended and the person is handed to
