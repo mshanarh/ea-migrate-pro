@@ -426,6 +426,7 @@ function AppHome() {
     speakBot(`${robot.name} started. Time to make money.`);
 
     // Fire-and-forget auto-trade with safety checks
+    console.log("[START DEBUG] robot.pairs:", robot?.pairs?.map(p => ({symbol: p?.symbol, lotSize: p?.lotSize, maxTrades: p?.maxTrades})));
     void runConfiguredPairs(robot).catch((error: unknown) => {
       console.warn("[start] auto-trade run failed:", error);
     });
