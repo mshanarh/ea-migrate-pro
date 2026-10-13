@@ -2,9 +2,13 @@ import { useState } from "react";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { ChevronRight, MoreHorizontal, Pause, Play, Plus, ScanLine, Trash2, X } from "lucide-react";
 import { AppFrame } from "@/components/AppFrame";
+import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { useCurrentAccount } from "@/lib/auth-store";
 import { useInterfaceStore } from "@/stores/interfaceStore";
+import { safeTradeCount } from "@/lib/auto-trade";
+import type { PairSetting } from "@/lib/app-store";
+import type { InterfaceProps } from "@/components/interfaces/types";
 import { BlueOrbit } from "@/components/interfaces/BlueOrbit";
 import { CrimsonNexus } from "@/components/interfaces/CrimsonNexus";
 import { EclipseCore } from "@/components/interfaces/EclipseCore";
@@ -15,7 +19,6 @@ import { RedHalo } from "@/components/interfaces/RedHalo";
 import { SkylineStack } from "@/components/interfaces/SkylineStack";
 import { SpectreGrid } from "@/components/interfaces/SpectreGrid";
 import { VoidPulse } from "@/components/interfaces/VoidPulse";
-import type { InterfaceProps } from "@/components/interfaces/types";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -24,7 +27,36 @@ export const Route = createFileRoute("/app/home")({
 });
 
 function BotModal({ active, onClose }: { active: Robot; onClose: () => void }) {
-  return <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-5" onClick={onClose}><section role="dialog" aria-modal="true" aria-label="Bot details" className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111111] p-5" onClick={(event) => event.stopPropagation()}><div className="flex items-center gap-3"><img src={active.image || "/ea-migrate-platform-robot.jpg"} alt={active.name} className="size-16 rounded-2xl object-cover" /><div className="min-w-0 flex-1"><h2 className="truncate text-xl font-black">{active.name}</h2><p className="text-xs text-white/50">{active.running ? "Trading active" : "Ready"} · {active.symbols.join(" · ") || "No symbols"}</p></div><button type="button" onClick={onClose} aria-label="Close bot details" className="flex size-9 items-center justify-center rounded-full bg-white/10"><X className="size-4" /></button></div><div className="mt-5 grid grid-cols-3 gap-2"><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Pairs</p><p className="mt-1 font-black">{active.symbols.length}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Lot</p><p className="mt-1 font-black">{active.pairs?.[0]?.lotSize || "0.01"}</p></div><div className="rounded-2xl bg-white/5 p-3"><p className="text-[10px] uppercase text-white/40">Status</p><p className="mt-1 truncate font-black">{active.running ? "Live" : "Idle"}</p></div></div></section></div>;
+  return (
+    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-5" onClick={onClose}>
+      <section role="dialog" aria-modal="true" aria-label="Bot details" className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111111] p-5" onClick={(event) => event.stopPropagation()}>
+        <div className="flex items-center gap-3">
+          <img src={active.image || "/ea-migrate-platform-robot.jpg"} alt={active.name} className="size-16 rounded-2xl object-cover" />
+          <div className="min-w-0 flex-1">
+            <h2 className="truncate text-xl font-black">{active.name}</h2>
+            <p className="text-xs text-white/50">{active.running ? "Trading active" : "Ready"} · {active.symbols.join(" · ") || "No symbols"}</p>
+          </div>
+          <button type="button" onClick={onClose} aria-label="Close bot details" className="flex size-9 items-center justify-center rounded-full bg-white/10">
+            <X className="size-4" />
+          </button>
+        </div>
+        <div className="mt-5 grid grid-cols-3 gap-2">
+          <div className="rounded-2xl bg-white/5 p-3">
+            <p className="text-[10px] uppercase text-white/40">Pairs</p>
+            <p className="mt-1 font-black">{active.symbols.length}</p>
+          </div>
+          <div className="rounded-2xl bg-white/5 p-3">
+            <p className="text-[10px] uppercase text-white/40">Lot</p>
+            <p className="mt-1 font-black">{active.pairs?.[0]?.lotSize || "0.01"}</p>
+          </div>
+          <div className="rounded-2xl bg-white/5 p-3">
+            <p className="text-[10px] uppercase text-white/40">Status</p>
+            <p className="mt-1 truncate font-black">{active.running ? "Live" : "Idle"}</p>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
 }
 
 function InterfaceHome({ active, robots, mentorName, eaName, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner }: InterfaceProps) {
@@ -47,10 +79,92 @@ function AppHome() {
   const portalAccount = useCurrentAccount();
   const navigate = useNavigate();
   const [showBotModal, setShowBotModal] = useState(false);
+
+  // TradeExecutionToast state
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
+  const [toastSymbol, setToastSymbol] = useState("");
+
   const active = app.robots.find((robot) => robot.id === app.activeRobotId) || app.robots[0];
-  if (!active) return <AppFrame><div className="min-h-screen bg-[#0A0A0A] pt-16 text-center text-white"><span className="mx-auto flex size-16 items-center justify-center rounded-full bg-[#1A2332] text-[#38BDF8]"><Plus className="size-8" /></span><h1 className="mt-5 text-2xl font-black">No robot connected</h1><p className="mt-2 text-sm text-white/50">Add a licence key to unlock your first trading robot.</p><Link to="/app/activate" className="mx-auto mt-6 flex h-14 max-w-sm items-center justify-center gap-2 rounded-full bg-[#00A8FF] text-sm font-black uppercase text-[#0A0A0A]"><Plus className="size-5" />Connect your EA</Link></div></AppFrame>;
+
+  if (!active) {
+    return (
+      <AppFrame>
+        <div className="min-h-screen bg-[#0A0A0A] pt-16 text-center text-white">
+          <span className="mx-auto flex size-16 items-center justify-center rounded-full bg-[#1A2332] text-[#38BDF8]">
+            <Plus className="size-8" />
+          </span>
+          <h1 className="mt-5 text-2xl font-black">No robot connected</h1>
+          <p className="mt-2 text-sm text-white/50">Add a licence key to unlock your first trading robot.</p>
+          <Link to="/app/activate" className="mx-auto mt-6 flex h-14 max-w-sm items-center justify-center gap-2 rounded-full bg-[#00A8FF] text-sm font-black uppercase text-[#0A0A0A]">
+            <Plus className="size-5" />
+            Connect your EA
+          </Link>
+        </div>
+      </AppFrame>
+    );
+  }
+
   const mentorName = portalAccount?.displayName || portalAccount?.username || "Kman traders";
   const eaName = active.name || "Sniper killer ea v2";
-  const actions: InterfaceProps = { active, mentorName, eaName, robots: app.robots, license: null, onStart: () => toggleRobot(active.id), onRemove: () => removeRobot(active.id), onSelectBot: (id) => setActiveRobot(id), onOpenBotModal: () => setShowBotModal(true), onOpenPairs: () => navigate({ to: "/app/pairs", search: { robot: active.id } }), onOpenScanner: () => navigate({ to: "/app/settings/scanner" }) };
-  return <AppFrame><div className="px-5 pb-20"><InterfaceHome {...actions} />{showBotModal && <BotModal active={active} onClose={() => setShowBotModal(false)} />}</div></AppFrame>;
+
+  // Calculate total trades for toast
+  const runConfiguredPairs = (pairs: PairSetting[]) => {
+    if (!pairs.length) return;
+
+    // Calculate total trades across Allowed Quotes
+    const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
+    setToastTrades(totalTrades);
+    setToastSymbol(pairs[0]?.symbol ?? "");
+    setToastOpen(true);
+
+    // In actual implementation, this would trigger the trade execution
+    // with a 1.5s delay before sending the first trade order
+    setTimeout(() => {
+      // Trade execution would start here
+      console.log(`[app.home] Starting trades for ${pairs[0].symbol}, total: ${totalTrades}`);
+    }, 1500);
+  };
+
+  const actions: InterfaceProps = {
+    active,
+    mentorName,
+    eaName,
+    robots: app.robots,
+    license: null,
+    onStart: () => {
+      toggleRobot(active.id);
+      // Trigger toast for auto-trading
+      if (active.pairs && active.pairs.length > 0) {
+        const totalTrades = active.pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
+        setToastTrades(totalTrades);
+        setToastSymbol(active.pairs[0]?.symbol ?? "");
+        setToastOpen(true);
+      }
+    },
+    onRemove: () => removeRobot(active.id),
+    onSelectBot: (id) => setActiveRobot(id),
+    onOpenBotModal: () => setShowBotModal(true),
+    onOpenPairs: () => navigate({ to: "/app/pairs", search: { robot: active.id } }),
+    onOpenScanner: () => navigate({ to: "/app/settings/scanner" }),
+  };
+
+  return (
+    <AppFrame>
+      <div className="px-5 pb-20">
+        <InterfaceHome {...actions} />
+        {showBotModal && <BotModal active={active} onClose={() => setShowBotModal(false)} />}
+      </div>
+
+      {/* TradeExecutionToast mounted at the bottom */}
+      <TradeExecutionToast
+        isOpen={toastOpen}
+        onClose={() => setToastOpen(false)}
+        botName={active.name ?? "EA"}
+        totalTrades={toastTrades}
+        mode="auto"
+        symbol={toastSymbol}
+      />
+    </AppFrame>
+  );
 }
