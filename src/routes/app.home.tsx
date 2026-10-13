@@ -11,7 +11,7 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { DraggableBotPopup } from "@components/app/DraggableBotPopup";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
 import { paymentStatusForEmail } from "@/lib/auth-store";
