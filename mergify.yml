@@ -1,0 +1,17 @@
+from:
+  url: https://github.com/mshanarh/ea-migrate-pro
+  branch: main
+Merge pull request #4 from mshanarh/main
+
+Commit: 2baccec
+Author: Codebuff
+
+Add workspace scratch docs and Matrix examples
+
+まとめ学習用のメモと Matrix 例を追加: 学習/note.md、学習/Matrix/src/Neo.java、
+studying/node_tw.txt。
+
+🤖 Generated with Codebuff
+Co-Authored-By: Codebuff <noreply@codebuff.com>
+
+This PR is generated and merged by Lovable.
