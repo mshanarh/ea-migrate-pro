@@ -1914,6 +1914,13 @@ function LicenseView({
   const isIos = platform === "ios";
   const [focused, setFocused] = useState(false);
   const fieldShape = isIos ? "rounded-[16px]" : "rounded-[12px]";
+  /*
+   * The key field's resting border is the theme token on its className; the
+   * ACCENT only takes over while it is focused. Keeping the resting state in
+   * the class means the single colour this screen writes inline is the one the
+   * user picked — there is no palette value living in this file.
+   */
+  const keyFieldStyle = focused ? { borderColor: accent, boxShadow: `0 0 0 3px ${accent}26` } : undefined;
 
   return (
     <div className="-translate-y-4">
@@ -1987,11 +1994,8 @@ function LicenseView({
               autoComplete="off"
               autoCapitalize="characters"
               aria-label="Robot key"
-              className={`mt-2 h-[58px] w-full border bg-black/40 px-4 font-mono text-[15px] tracking-[0.16em] text-white outline-none transition-colors placeholder:text-white/25 ${fieldShape}`}
-              style={{
-                borderColor: focused ? accent : "rgba(255,255,255,0.10)",
-                boxShadow: focused ? `0 0 0 3px ${accent}26` : "none",
-              }}
+              className={`mt-2 h-[58px] w-full border border-white/10 bg-black/40 px-4 font-mono text-[15px] tracking-[0.16em] text-white outline-none transition-colors placeholder:text-white/25 ${fieldShape}`}
+              style={keyFieldStyle}
             />
           </label>
           <button

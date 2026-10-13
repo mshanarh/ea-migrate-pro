@@ -37,6 +37,7 @@ function readableOn(accent: string): string {
     const value = Number.parseInt(slice, 16);
     if (!Number.isFinite(value)) return null;
     const ratio = value / 255;
+    // The sRGB → linear curve WCAG contrast is defined on.
     return ratio <= 0.04045 ? ratio / 12.92 : ((ratio + 0.055) / 1.055) ** 2.4;
   };
   const red = linear(full.slice(0, 2));
