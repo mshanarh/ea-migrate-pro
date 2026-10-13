@@ -279,3 +279,104 @@ export function validateAnalysisForExecution(analysis: AnalysisResult): {
 
   return { valid: true };
 }
+
+// ============================================================================
+// Scanner Integration - analyzeMarket for ChartScanner component
+// ============================================================================
+
+export interface ScannerAnalysis {
+  symbol: string;
+  signal: "BUY" | "SELL";
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  riskReward: string;
+  confidence: number;
+  strength: "WAIT" | "WEAK" | "MODERATE" | "STRONG";
+  executionReady: boolean;
+  dataSource: string;
+  livePrice: number;
+  lastCandle: {
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+  } | null;
+  candleCount: number;
+  timeframe: string;
+  readouts: Array<{ label: string; value: string; bullish?: boolean | null }>;
+  reasons: string[];
+  dataStatus: "ok" | "no-data";
+}
+
+export interface AnalyzeMarketRequest {
+  symbol: string;
+  timeframe: string;
+}
+
+export interface AnalyzeMarketResult {
+  ok: boolean;
+  analysis?: ScannerAnalysis;
+  message?: string;
+}
+
+/**
+ * Analyze market for scanner - uses the same safety logic as auto-trade
+ * but returns the scanner-specific format expected by ChartScanner component
+ */
+export async function analyzeMarket(request: AnalyzeMarketRequest): Promise<AnalyzeMarketResult> {
+  const { symbol, timeframe } = request;
+
+  try {
+    // Use the same resolveTradeDirection as auto-trade for consistency
+    const analysis = await resolveTradeDirection(symbol, {
+      requireExecutionReady: true,
+      rejectProxyData: true,
+    });
+
+    if (analysis.direction.type === "NO_TRADE") {
+      return {
+        ok: false,
+        message: analysis.direction.reason,
+      };
+    }
+
+    const direction = analysis.direction as { type: "BUY" | "SELL"; entry: number; sl: number; tp: number };
+
+    // Build scanner-specific analysis
+    const scannerAnalysis: ScannerAnalysis = {
+      symbol: analysis.symbol,
+      signal: direction.type,
+      entry: direction.entry,
+      stopLoss: direction.sl,
+      takeProfit: direction.tp,
+      riskReward: "1:2",
+      confidence: analysis.strength === "strong" ? 80 : 40,
+      strength: analysis.strength === "strong" ? "STRONG" : analysis.strength === "weak" ? "WEAK" : "MODERATE",
+      executionReady: analysis.executionReady,
+      dataSource: analysis.source === "mt5_broker" ? "MT5 Broker" : "Estimated",
+      livePrice: direction.type === "BUY" ? direction.entry : direction.entry,
+      lastCandle: null,
+      candleCount: 0,
+      timeframe: "1h",
+      readouts: [
+        { label: "RSI 15m", value: analysis.rsi15m?.toFixed(1) ?? "—" },
+        { label: "RSI 1h", value: analysis.rsi1h?.toFixed(1) ?? "—" },
+        { label: "Momentum 15m", value: analysis.momentum15m?.toFixed(2) ?? "—" },
+        { label: "Momentum 1h", value: analysis.momentum1h?.toFixed(2) ?? "—" },
+      ],
+      reasons: [analysis.reason],
+      dataStatus: "ok",
+    };
+
+    return {
+      ok: true,
+      analysis: scannerAnalysis,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      message: error instanceof Error ? error.message : "Analysis failed",
+    };
+  }
+}

@@ -5,7 +5,7 @@ import { ArrowRight, Check, ChevronRight, ImagePlus, RotateCcw } from "lucide-re
 import { toast } from "sonner";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { usePlatform } from "@/lib/platform";
