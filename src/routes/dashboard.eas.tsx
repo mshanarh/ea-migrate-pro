@@ -1,20 +1,86 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute } from "@tanstack/react-router";
-import { Code2, ImageIcon, Plus, Trash2, Video, X } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { Bot, ImageIcon, Lock, Pencil, Plus, Trash2, Video, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
-import { createEaRecord, setEAs, useCurrentAccount, type ExpertAdvisor } from "@/lib/auth-store";
+import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type ExpertAdvisor } from "@/lib/auth-store";
+import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
+import { syncRegister } from "@/lib/account-sync.server";
+import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
+
+/**
+ * Mirrors the account (EAs + video refs) to the cloud so every device — and
+ * the APP's key activation — sees the same EAs. syncRegister is a server
+ * function that 404s on the static Vercel build, which left the cloud
+ * record with licenses but ZERO EAs (no picture to show). The browser-direct
+ * portalRegisterAccount (anon key, same merge rules) is the fallback that
+ * actually lands the EAs in production.
+ */
+export async function mirrorAccount(account: Account) {
+  // Videos live in IndexedDB on THIS device — a bare `idb-video:` ref means
+  // nothing on another device, which is exactly why the robot picture arrived
+  // everywhere while the video never played. Inline each EA's video as a
+  // size-capped data URL so the cloud record carries playable media.
+  let travelable = account;
+  try {
+    travelable = {
+      ...account,
+      eas: await Promise.all(
+        account.eas.map(async (ea) => {
+          if (!ea.video) return ea;
+          const video = await inlineVideoForCloud(ea.video);
+          return { ...ea, ...(video ? { video } : { video: undefined }) };
+        }),
+      ),
+    };
+  } catch {
+    /* fall back to the raw refs — the mirror still carries the picture */
+  }
+  try {
+    await syncRegister({ data: { account: travelable } });
+  } catch {
+    /* server functions unavailable on static hosting */
+  }
+  if (portalCloudConfigured()) {
+    const direct = await portalRegisterAccount(travelable);
+    if (!direct.ok && direct.error) console.warn("[eas] cloud mirror failed:", direct.error);
+  }
+}
 
 export const Route = createFileRoute("/dashboard/eas")({ ssr: false, component: ManageEAs });
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
-const MAX_VIDEO_BYTES = 3 * 1024 * 1024;
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Resolves a video reference (IndexedDB ref or plain URL) to something a
+ * <video> element can play. Data URLs and http URLs pass straight through.
+ */
+function VideoPreview({ src, className }: { src: string; className?: string }) {
+  const [playable, setPlayable] = useState<string>();
+  useEffect(() => {
+    let url: string | undefined;
+    setPlayable(undefined);
+    loadVideoUrl(src)
+      .then((resolved) => {
+        url = resolved ?? undefined;
+        setPlayable(resolved ?? src);
+      })
+      .catch(() => setPlayable(src));
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [src, setPlayable]);
+  if (!playable) return null;
+  return <video src={playable} className={className} controls autoPlay loop muted playsInline />;
+}
 
 function readAsDataUrl(file: File, maxBytes: number) {
   return new Promise<string>((resolve, reject) => {
     if (file.size > maxBytes) {
-      reject(new Error("That file is too large for this browser prototype."));
+      reject(new Error(`That file is too large — maximum ${Math.round(maxBytes / (1024 * 1024))} MB.`));
       return;
     }
     const reader = new FileReader();
@@ -24,59 +90,266 @@ function readAsDataUrl(file: File, maxBytes: number) {
   });
 }
 
+/**
+ * Compresses a picked EA picture to a small JPEG (max 512px). A raw phone
+ * photo is up to 5 MB ≈ 6.8 MB of base64 — that blows the client's
+ * localStorage quota, so the picture never reached the app. A ~60 KB JPEG
+ * travels through the cloud portal row and every device reliably.
+ */
+async function compressEaImage(file: File): Promise<string> {
+  const raw = await readAsDataUrl(file, MAX_IMAGE_BYTES);
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("decode failed"));
+      img.src = raw;
+    });
+    const scale = Math.min(1, 512 / Math.max(img.width, img.height));
+    if (scale >= 1 && raw.length <= 300_000) return raw; // already small
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(img.width * scale));
+    canvas.height = Math.max(1, Math.round(img.height * scale));
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return raw;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    const encoded = canvas.toDataURL("image/jpeg", 0.82);
+    return encoded.startsWith("data:image/") && encoded.length < raw.length ? encoded : raw;
+  } catch {
+    return raw;
+  }
+}
+
+const labelClass = "text-sm font-bold text-white/80";
+const fieldClass = "mt-2 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base outline-none placeholder:text-white/35 focus:border-primary/60";
+
 function ManageEAs() {
   const account = useCurrentAccount();
-  const [open, setOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editingEa, setEditingEa] = useState<ExpertAdvisor | null>(null);
   if (!account) return null;
   const eas = account.eas;
+  const tierLabel = account.role === "admin" ? "Admin" : "Tier 1";
 
   return (
     <div>
-      <p className="text-xs font-bold tracking-[0.22em] text-primary uppercase">Workspace</p>
-      <h1 className="mt-1 text-3xl font-bold">Expert Advisors</h1>
-      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">Create and save your EA profile with its briefing, symbols, picture/logo, and optional robot video. These owner assets are never shown in the admin console.</p>
-      <Button size="lg" className="mt-6 h-12 rounded-full" onClick={() => setOpen(true)}><Plus className="size-4" /> Create EA</Button>
-      <h2 className="mt-8 text-lg font-semibold">Your EAs <span className="text-muted-foreground">({eas.length})</span></h2>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+          <h1 className="text-4xl font-black tracking-tight">Manage EAs</h1>
+          <p className="mt-2 max-w-md text-base text-white/60">Create and manage your Expert Advisors</p>
+          <p className="mt-1 text-sm font-bold text-primary">{tierLabel} — {eas.length} EA{eas.length === 1 ? "" : "s"} created</p>
+        </div>
+        <Button
+          size="lg"
+          className="h-14 rounded-2xl bg-gradient-to-b from-[#38bdf8] to-[#0284c7] px-7 text-base font-black text-white shadow-[0_0_40px_rgba(0,168,255,0.3)] transition-transform active:scale-[0.98]"
+          onClick={() => setCreateOpen(true)}
+        >
+          <Plus className="size-5" /> Create EA
+        </Button>
+      </div>
+
       {eas.length === 0 ? (
-        <div className="panel mt-4 flex flex-col items-center gap-3 p-12 text-center"><span className="flex size-14 items-center justify-center rounded-full bg-primary/12"><Code2 className="size-6 text-primary" /></span><p className="font-semibold">No EAs yet</p><p className="max-w-sm text-sm text-muted-foreground">Create a profile with a codename, briefing, symbols, picture/logo, and optional video.</p></div>
+        <div className="mt-8 flex flex-col items-center gap-3 rounded-3xl border border-white/10 bg-white/[0.03] p-14 text-center">
+          <Bot className="size-14 text-white/25" />
+          <p className="text-lg text-white/55">No EAs created yet. Click "Create EA" to get started.</p>
+        </div>
       ) : (
-        <ul className="mt-4 space-y-3">{eas.map((ea) => <li key={ea.id} className="panel flex items-center justify-between gap-4 p-5"><div className="flex min-w-0 items-center gap-3">{ea.image ? <img src={ea.image} alt="" className="size-14 rounded-2xl object-cover" /> : <span className="flex size-14 items-center justify-center rounded-2xl bg-primary/10"><Code2 className="size-5 text-primary" /></span>}<div className="min-w-0"><p className="font-semibold">{ea.name}</p><p className="truncate text-xs text-muted-foreground">{ea.symbols?.join(", ") || "No symbols"}</p><p className="text-xs text-muted-foreground">{ea.video ? "Logo and video saved" : "Logo saved · No video"}</p></div></div><Button variant="ghost" size="icon" aria-label={"Delete " + ea.name} onClick={() => setEAs(account.id, eas.filter((item) => item.id !== ea.id))}><Trash2 className="size-4" /></Button></li>)}</ul>
+        <ul className="mt-8 grid gap-4 sm:grid-cols-2">
+          <AnimatePresence initial={false}>
+            {eas.map((ea) => (
+              <motion.li
+                key={ea.id}
+                layout
+                initial={{ opacity: 0, y: 16 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.94 }}
+                transition={{ duration: 0.3, ease: "easeOut" }}
+                whileHover={{ y: -3 }}
+                className="panel group relative flex items-center gap-4 overflow-hidden p-5"
+              >
+                <span aria-hidden className="pointer-events-none absolute inset-x-0 -top-px h-px bg-gradient-to-r from-transparent via-primary/50 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
+                {ea.image ? <img src={ea.image} alt="" className="size-14 shrink-0 rounded-2xl object-cover" /> : <span className="flex size-14 shrink-0 items-center justify-center rounded-2xl bg-primary/10"><Bot className="size-5 text-primary" /></span>}
+                <div className="min-w-0 flex-1">
+                  <p className="truncate font-bold">{ea.name}</p>
+                  <p className="truncate text-xs text-muted-foreground">{ea.symbols?.join(", ") || "No symbols"}</p>
+                  <VideoStateLine ea={ea} />
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  <button type="button" aria-label={"Edit " + ea.name} onClick={() => setEditingEa(ea)} className="flex size-10 items-center justify-center rounded-full bg-primary/10 text-primary transition-colors hover:bg-primary/20">
+                    <Pencil className="size-4" />
+                  </button>
+                  <button type="button" aria-label={"Delete " + ea.name} onClick={() => { if (ea.video) void deleteVideoBlob(ea.video); setEAs(account.id, eas.filter((item) => item.id !== ea.id)); toast.success(ea.name + " removed"); }} className="flex size-10 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-red-400/10 hover:text-red-300">
+                    <Trash2 className="size-4" />
+                  </button>
+                </div>
+              </motion.li>
+            ))}
+          </AnimatePresence>
+        </ul>
       )}
-      <CreateEaDialog open={open} onOpenChange={setOpen} onCreate={(ea) => { setEAs(account.id, [...eas, ea]); toast.success(ea.name + " saved privately"); }} />
+      <CreateEaDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={(ea) => { setEAs(account.id, [...eas, ea]); mirrorAccount({ ...account, eas: [...eas, ea] }); toast.success(ea.name + " saved privately"); }} />
+      <EditEaDialog ea={editingEa} onClose={() => setEditingEa(null)} onSave={(patch) => { if (!editingEa) return; renameEa(account.id, editingEa.id, patch); const updatedEas = eas.map((item) => item.id === editingEa.id ? { ...item, ...patch } : item); mirrorAccount({ ...account, eas: updatedEas }); toast.success("EA updated"); }} />
     </div>
   );
+}
+
+/**
+ * Per-EA video state line. When the local blob was evicted but a cloud backup
+ * exists, loadVideoUrl transparently restores it — so the truthful state is
+ * "Video saved" (restoring, then verified) rather than scaring the mentor into
+ * re-uploading a video they never deleted.
+ */
+function VideoStateLine({ ea }: { ea: ExpertAdvisor }) {
+  const [state, setState] = useState(ea.video ? "Video saved" : "Logo saved · No video");
+  useEffect(() => {
+    if (!ea.video) {
+      setState("Logo saved · No video");
+      return;
+    }
+    setState("Video saved");
+    let cancelled = false;
+    loadVideoUrl(ea.video)
+      .then((resolved) => {
+        if (resolved) {
+          URL.revokeObjectURL(resolved);
+        } else if (!cancelled) {
+          setState("Video saved · tap Edit to restore");
+        }
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [ea.video]);
+  return <p className="text-xs text-muted-foreground">{state}</p>;
+}
+
+function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage, video, setVideo }: {
+  briefing: string;
+  setBriefing: (value: string) => void;
+  symbols: string[];
+  setSymbols: (update: (current: string[]) => string[]) => void;
+  image: string | undefined;
+  setImage: (value: string | undefined) => void;
+  video: string | undefined;
+  setVideo: (value: string | undefined) => void;
+}) {
+  const [symbol, setSymbol] = useState("");
+  const [error, setError] = useState("");
+  const chooseFile = (file: File | undefined, kind: "image" | "video") => {
+    if (!file) return;
+    setError("");
+    if (kind === "image") {
+      compressEaImage(file)
+        .then(setImage)
+        .catch((reason: Error) => setError(reason.message));
+      return;
+    }
+    // Videos go to IndexedDB as real blobs — a 50MB video would otherwise be a
+    // ~67MB base64 string that blows the localStorage quota on save.
+    if (file.size > MAX_VIDEO_BYTES) {
+      setError("That file is too large — maximum 50 MB.");
+      return;
+    }
+    setError("Saving video…");
+    saveVideoBlob(file)
+      .then((ref) => {
+        setVideo(ref);
+        setError("");
+      })
+      .catch(() => setError("Could not store that video — try again."));
+  };
+  const addSymbol = () => {
+    const clean = symbol.trim();
+    // Case-insensitive dedupe — XAUUSD and xauusd are the same symbol — but
+    // the symbol DISPLAYS exactly as the mentor typed it.
+    if (!clean || symbols.some((existing) => existing.toUpperCase() === clean.toUpperCase())) return;
+    setSymbols((current) => [...current, clean]);
+    setSymbol("");
+  };
+
+  return <>
+    <div><p className={labelClass}>Briefing</p><textarea value={briefing} onChange={(event) => setBriefing(event.target.value)} placeholder="Operational profile of this EA" rows={3} className={fieldClass + " resize-none py-4"} /></div>
+    <div><p className={labelClass}>EA Image</p>
+      <div className="mt-2 flex items-center gap-3">
+        <span className="flex size-20 shrink-0 items-center justify-center overflow-hidden rounded-2xl border border-dashed border-white/20 text-white/40">{image ? <img src={image} alt="" className="size-full object-cover" /> : <ImageIcon className="size-6" />}</span>
+        <label className="flex h-14 flex-1 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><ImageIcon className="size-4" /> {image ? "Replace Image" : "Upload Image"}<input type="file" accept="image/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "image")} /></label>
+      </div>
+    </div>
+    <div><p className={labelClass}>EA Video / GIF <span className="text-sm font-bold text-primary">Unlocked</span></p>
+      <div className="mt-2 rounded-2xl border border-dashed border-white/20 bg-white/[0.02] p-4 text-center text-sm text-white/40">{video ? <VideoPreview src={video} className="mx-auto max-h-32 rounded-xl" /> : "No video"}</div>
+      <label className="mt-3 flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><Video className="size-4" /> {video ? "Replace Video / GIF" : "Upload Video / GIF"}<input type="file" accept="video/*,image/gif" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label>
+      <p className="mt-2 text-xs text-white/40">Any video type · Max 50 MB. MP4 / WebM / MOV / GIF all work.</p>
+    </div>
+    <div><p className={labelClass}>Symbols</p>
+      <div className="mt-2 flex gap-3">
+        <input value={symbol} onChange={(event) => setSymbol(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSymbol(); } }} placeholder="e.g. XAUUSD" className={fieldClass + " h-14 flex-1"} />
+        <button type="button" onClick={addSymbol} className="h-14 rounded-2xl bg-primary px-7 text-base font-black text-primary-foreground">Add</button>
+      </div>
+      {symbols.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{symbols.map((item) => <button type="button" key={item} onClick={() => setSymbols((current) => current.filter((value) => value !== item))} className="flex items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary">{item}<X className="size-3" /></button>)}</div>}
+    </div>
+    {error && <p className="text-sm text-destructive">{error}</p>}
+  </>;
 }
 
 function CreateEaDialog({ open, onOpenChange, onCreate }: { open: boolean; onOpenChange: (value: boolean) => void; onCreate: (ea: ExpertAdvisor) => void }) {
   const [name, setName] = useState("");
   const [briefing, setBriefing] = useState("");
-  const [symbol, setSymbol] = useState("");
   const [symbols, setSymbols] = useState<string[]>([]);
   const [image, setImage] = useState<string>();
   const [video, setVideo] = useState<string>();
-  const [imageName, setImageName] = useState("");
-  const [videoName, setVideoName] = useState("");
   const [error, setError] = useState("");
 
-  const label = "text-xs font-bold tracking-[0.18em] text-muted-foreground uppercase";
-  const field = "mt-2 w-full rounded-2xl border border-border/60 bg-background/60 px-5 text-sm outline-none focus:border-primary/60";
-  const reset = () => { setName(""); setBriefing(""); setSymbol(""); setSymbols([]); setImage(undefined); setVideo(undefined); setImageName(""); setVideoName(""); setError(""); };
-  const chooseFile = (file: File | undefined, kind: "image" | "video") => {
-    if (!file) return;
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
     setError("");
-    readAsDataUrl(file, kind === "image" ? MAX_IMAGE_BYTES : MAX_VIDEO_BYTES).then((data) => { if (kind === "image") { setImage(data); setImageName(file.name); } else { setVideo(data); setVideoName(file.name); } }).catch((reason: Error) => setError(reason.message));
+    if (!name.trim()) { setError("Enter a codename for your EA."); return; }
+    if (!image) { setError("Choose a picture/logo before saving."); return; }
+    onCreate({ ...createEaRecord(name), briefing: briefing.trim(), symbols, image, video });
+    setName(""); setBriefing(""); setSymbols([]); setImage(undefined); setVideo(undefined);
+    onOpenChange(false);
   };
-  const addSymbol = () => { const clean = symbol.trim().toUpperCase(); if (!clean || symbols.includes(clean)) return; setSymbols((current) => [...current, clean]); setSymbol(""); };
 
-  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border-border/60 bg-card p-6 sm:max-w-md"><div className="flex items-start"><div className="flex-1"><div className="flex items-center gap-3"><img src="/botlogic-mascot.jpg?v=2" alt="EA Migrate Pro" className="size-12 rounded-2xl object-cover" /><DialogTitle className="text-xl font-bold">Create Expert Advisor</DialogTitle></div><p className="mt-2 text-sm text-muted-foreground">Save the profile that your clients will see in the app.</p></div><button type="button" onClick={() => onOpenChange(false)} aria-label="Close" className="text-muted-foreground"><X className="size-5" /></button></div>
-    <form className="mt-6 space-y-5" onSubmit={(event) => { event.preventDefault(); setError(""); if (!name.trim()) { setError("Enter a codename for your EA."); return; } if (!image) { setError("Choose a picture/logo before deploying."); return; } onCreate({ ...createEaRecord(name), briefing: briefing.trim(), symbols, image, video }); reset(); onOpenChange(false); }}>
-      <label className="block"><span className={label}>Codename</span><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. SPECTER_V9" className={field + " h-14"} /></label>
-      <label className="block"><span className={label}>Briefing</span><textarea value={briefing} onChange={(event) => setBriefing(event.target.value)} placeholder="Operational profile of this unit" rows={4} className={field + " resize-none py-4"} /></label>
-      <div><p className={label}>Symbols</p><div className="mt-2 flex gap-3"><input value={symbol} onChange={(event) => setSymbol(event.target.value.toUpperCase())} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); addSymbol(); } }} placeholder="e.g. XAUUSD" className="h-14 flex-1 rounded-2xl border border-border/60 bg-background/60 px-5 text-sm outline-none focus:border-primary/60" /><button type="button" onClick={addSymbol} className="h-14 rounded-2xl bg-secondary px-6 text-sm font-bold">Add</button></div>{symbols.length > 0 && <div className="mt-3 flex flex-wrap gap-2">{symbols.map((item) => <button type="button" key={item} onClick={() => setSymbols((current) => current.filter((value) => value !== item))} className="flex items-center gap-2 rounded-full border border-primary/50 bg-primary/10 px-4 py-1.5 text-xs font-semibold text-primary">{item}<X className="size-3" /></button>)}</div>}</div>
-      <div><p className={label}>Image</p><label className="mt-2 flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 text-sm text-muted-foreground"><ImageIcon className="size-6" />{imageName || "Click to upload image (max 5MB)"}<input type="file" accept="image/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "image")} /></label></div>
-      <div><p className={label}>Robot Video — Optional; shown in the app instead of the image</p><label className="mt-2 flex h-36 cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border border-dashed border-border/70 text-sm text-muted-foreground"><Video className="size-6" />{videoName || "Click to upload video (optional, max 3MB)"}<input type="file" accept="video/*" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label></div>
-      {error && <p className="text-sm text-destructive">{error}</p>}
-      <button type="submit" className="h-14 w-full rounded-2xl bg-primary text-base font-bold text-primary-foreground glow-ring">Deploy</button>
+  return <Dialog open={open} onOpenChange={onOpenChange}><DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border-white/10 bg-[#141414] p-6 sm:max-w-md">
+    <div className="flex items-start justify-between"><DialogTitle className="text-2xl font-black">New Expert Advisor</DialogTitle><button type="button" onClick={() => onOpenChange(false)} aria-label="Close" className="text-white/50 hover:text-white"><X className="size-5" /></button></div>
+    <form className="mt-6 space-y-5" onSubmit={submit}>
+      <div><p className={labelClass}>EA Name</p><input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder="e.g. Gold Scalper Pro" className={fieldClass + " h-14"} /></div>
+      <EaFields briefing={briefing} setBriefing={setBriefing} symbols={symbols} setSymbols={setSymbols} image={image} setImage={setImage} video={video} setVideo={setVideo} />
+      <button type="submit" className="h-14 w-full rounded-2xl bg-gradient-to-b from-[#38bdf8] to-[#0284c7] text-base font-black text-white shadow-[0_0_40px_rgba(0,168,255,0.3)] transition-transform active:scale-[0.99]">Save EA</button>
     </form>
   </DialogContent></Dialog>;
+}
+
+function EditEaDialog({ ea, onClose, onSave }: { ea: ExpertAdvisor | null; onClose: () => void; onSave: (patch: { briefing?: string; symbols?: string[]; image?: string; video?: string }) => void }) {
+  return <Dialog open={Boolean(ea)} onOpenChange={(open) => !open && onClose()}>
+    <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border-white/10 bg-[#141414] p-6 sm:max-w-md">
+      {ea && <EditEaForm key={ea.id} ea={ea} onClose={onClose} onSave={onSave} />}
+    </DialogContent>
+  </Dialog>;
+}
+
+function EditEaForm({ ea, onClose, onSave }: { ea: ExpertAdvisor; onClose: () => void; onSave: (patch: { briefing?: string; symbols?: string[]; image?: string; video?: string }) => void }) {
+  const [briefing, setBriefing] = useState(ea.briefing ?? "");
+  const [symbols, setSymbols] = useState<string[]>(ea.symbols ?? []);
+  const [image, setImage] = useState<string | undefined>(ea.image);
+  const [video, setVideo] = useState<string | undefined>(ea.video);
+
+  return <>
+    <div className="flex items-start justify-between">
+      <DialogTitle className="text-2xl font-black">Edit EA</DialogTitle>
+      <button type="button" onClick={onClose} aria-label="Close" className="text-white/50 hover:text-white"><X className="size-5" /></button>
+    </div>
+    <form className="mt-6 space-y-5" onSubmit={(event) => { event.preventDefault(); if (ea.video && video && ea.video !== video) void deleteVideoBlob(ea.video); onSave({ briefing: briefing.trim(), symbols, ...(image ? { image } : {}), ...(video ? { video } : {}) }); onClose(); }}>
+      <div>
+        <p className={labelClass}>EA Name</p>
+        <div className="mt-2 flex h-14 items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-5">
+          <span className="truncate font-semibold text-white/80">{ea.name}</span>
+          <span className="flex shrink-0 items-center gap-1.5 rounded-full bg-white/5 px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-white/45"><Lock className="size-3" /> Locked</span>
+        </div>
+        <p className="mt-1.5 text-xs text-white/40">The EA name is permanent — clients activate licences against it.</p>
+      </div>
+      <EaFields briefing={briefing} setBriefing={setBriefing} symbols={symbols} setSymbols={setSymbols} image={image} setImage={setImage} video={video} setVideo={setVideo} />
+      <button type="submit" className="h-14 w-full rounded-2xl bg-gradient-to-b from-[#38bdf8] to-[#0284c7] text-base font-black text-white shadow-[0_0_40px_rgba(0,168,255,0.3)] transition-transform active:scale-[0.99]">Save Changes</button>
+    </form>
+  </>;
 }

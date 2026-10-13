@@ -10,8 +10,8 @@ export const Route = createFileRoute("/mentor/$slug")({
   ssr: false,
   head: () => ({
     meta: [
-      { title: "Trading Bot Website — EA Migrate Pro" },
-      { name: "description", content: "A mentor trading bot sales page powered by EA Migrate Pro." },
+      { title: "Trading Bot Website — EA Migrate" },
+      { name: "description", content: "A mentor trading bot sales page powered by EA Migrate." },
     ],
   }),
   component: PublicMentorWebsite,
@@ -67,7 +67,7 @@ function WebsitePage({ website }: { website: MentorWebsite }) {
       {results.length > 0 && <section className="mx-auto mt-6 max-w-3xl rounded-[2rem] border border-white/10 bg-black/30 p-6 backdrop-blur-xl sm:p-8"><h2 className="text-lg font-bold">Client results</h2><div className="mt-5 grid gap-3 sm:grid-cols-2">{results.map((image, index) => <img key={image.slice(-20) + index} src={image} alt="Client result" className="aspect-video w-full rounded-2xl object-cover" />)}</div></section>}
       <section id="buy" className="mx-auto mt-6 max-w-3xl rounded-[2rem] border border-white/10 bg-black/35 p-6 backdrop-blur-xl sm:p-8"><h2 className="text-lg font-bold">Choose your version</h2><div className="mt-5 grid gap-3 sm:grid-cols-3">{website.androidPrice && website.androidLink && <BuyButton href={website.androidLink} icon={<Smartphone className="size-5" />} label="Android" price={website.currency + " " + website.androidPrice} accent={theme.accent} />}{hasIos && <BuyButton href={website.iosLink} icon={<Apple className="size-5" />} label="iOS" price={website.currency + " " + website.iosPrice} accent={theme.accent} />}{hasPc && <BuyButton href={website.pcLink} icon={<Monitor className="size-5" />} label="PC" price={website.currency + " " + website.pcPrice} accent={theme.accent} />}</div></section>
       <div className="mx-auto mt-8 flex max-w-3xl items-center justify-between gap-4 rounded-2xl border border-white/10 bg-black/30 p-4 backdrop-blur"><p className="text-xs text-white/50">Trade responsibly. Past results do not guarantee future performance.</p>{whatsapp && <a href={"https://wa.me/" + whatsapp} target="_blank" rel="noreferrer" className="flex shrink-0 items-center gap-2 rounded-full px-4 py-2 text-sm font-bold text-white" style={{ backgroundColor: "#20d866", boxShadow: "0 0 24px rgba(32,216,102,.35)" }}><MessageCircle className="size-4 fill-white" /> WhatsApp</a>}</div>
-      <p className="pt-8 text-center text-xs text-white/35">Powered by EA Migrate Pro</p>
+      <p className="pt-8 text-center text-xs text-white/35">Powered by EA Migrate</p>
     </div>
   </main>;
 }

@@ -6,21 +6,27 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { AuthShell, Field } from "@/components/AuthShell";
-import { resetPassword, signIn, useStore } from "@/lib/auth-store";
+import {
+  resetPassword,
+  signIn,
+  useStore,
+} from "@/lib/auth-store";
+import { syncSendPasswordChangedEmail } from "@/lib/account-sync.server";
+import { portalSignIn } from "@/lib/portal-cloud";
 
 export const Route = createFileRoute("/signin")({
   head: () => ({
     meta: [
-      { title: "Mentor Sign In — EA Migrate Pro" },
+      { title: "Mentor Sign In — EA Migrate" },
       {
         name: "description",
         content:
-          "Sign in to EA Migrate Pro to manage your Expert Advisors, licences and hosted MT4/MT5 sessions.",
+          "Sign in to EA Migrate to manage your Expert Advisors, licences and hosted MT4/MT5 sessions.",
       },
-      { property: "og:title", content: "Mentor Sign In — EA Migrate Pro" },
+      { property: "og:title", content: "Mentor Sign In — EA Migrate" },
       {
         property: "og:description",
-        content: "Access your EA Migrate Pro dashboard, licences and hosted terminals.",
+        content: "Access your EA Migrate dashboard, licences and hosted terminals.",
       },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -33,6 +39,7 @@ function SignIn() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const [resetOpen, setResetOpen] = useState(false);
   const [resetEmail, setResetEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -53,15 +60,70 @@ function SignIn() {
     <AuthShell active="signin">
       <form
         className="mt-8 space-y-6"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (busy) return;
           setError("");
-          const res = signIn(email, password);
-          if (res.error) return setError(res.error);
-          const account = store.accounts.find(
-            (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
-          );
-          navigate({ to: res.role === "admin" || account?.role === "admin" ? "/admin" : "/dashboard" });
+          setBusy(true);
+          // Marked welcome in a storage-safe way — blocked sessionStorage
+          // (private mode) must never crash the sign-in itself.
+          const markWelcome = () => {
+            try {
+              sessionStorage.setItem("eamp_pending_welcome", "1");
+            } catch {
+              /* storage blocked — the welcome banner just won't show */
+            }
+          };
+          try {
+            const res = signIn(email, password);
+            if (res.error) {
+              // Not on this device? Verify against the shared cloud store so
+              // users can sign in from any phone/browser. A failed/unreachable
+              // cloud check falls through to the local error — it must NEVER
+              // leave the button looking dead.
+              //
+              // This reads the database directly. The previous check called
+              // syncSignIn, a server function this deployment does not serve:
+              // it returned the SPA shell, so signing in from a new phone
+              // always reported "wrong email or password".
+              let cloud: Awaited<ReturnType<typeof portalSignIn>> | null = null;
+              try {
+                cloud = await portalSignIn(email.trim(), password);
+              } catch (cloudError) {
+                console.error("[sign-in] cloud check failed:", cloudError);
+                cloud = null;
+              }
+              if (cloud && cloud.enabled && cloud.ok && cloud.account) {
+                // Seed this device with the cloud account and sign in locally.
+                const { adoptCloudPassword, ensureLocalAccount, hydrateFromCloud, setCurrentAccount } = await import("@/lib/auth-store");
+                // The stored account can be missing (signup write failed), so
+                // make sure a local record EXISTS before merging into it —
+                // hydrateFromCloud only updates accounts it already knows.
+                ensureLocalAccount(cloud.account);
+                hydrateFromCloud([cloud.account]);
+                adoptCloudPassword(email.trim(), password);
+                setCurrentAccount(email.trim());
+                markWelcome();
+                // EVERYONE lands on the mentor portal — admins reach the
+                // admin console from its sidebar link inside the portal.
+                navigate({ to: "/dashboard" });
+                return;
+              }
+              setError(cloud?.error ?? res.error);
+              return;
+            }
+            const account = store.accounts.find(
+              (a) => a.email.toLowerCase() === email.trim().toLowerCase(),
+            );
+            markWelcome();
+            // Same rule for local accounts: mentor portal for everyone.
+            navigate({ to: "/dashboard" });
+          } catch (submitError) {
+            console.error("[sign-in] unexpected failure:", submitError);
+            setError("Sign in hit an unexpected error. Check your connection and try again.");
+          } finally {
+            setBusy(false);
+          }
         }}
       >
         <Field label="Email address">
@@ -97,14 +159,20 @@ function SignIn() {
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
-          <LogIn className="size-5" /> Sign in
+        <Button type="submit" size="lg" disabled={busy} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          {busy ? (
+            <span className="flex items-center gap-3">
+              <span className="size-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              Signing in…
+            </span>
+          ) : (
+            <>
+              <LogIn className="size-5" /> Sign in
+            </>
+          )}
         </Button>
 
         <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-          <Link to="/admin" className="hover:text-primary">
-            Admin login
-          </Link>
           <Link to="/" className="hover:text-primary">
             Back home
           </Link>
@@ -140,6 +208,10 @@ function SignIn() {
                 setResetError(result.error);
                 return;
               }
+              // Fire-and-forget confirmation (never block the reset on SMTP).
+              void syncSendPasswordChangedEmail({
+                data: { toEmail: resetEmail.trim() },
+              }).catch(() => undefined);
               setEmail(resetEmail.trim());
               setPassword("");
               setResetOpen(false);

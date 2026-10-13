@@ -1,13 +1,40 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "@tanstack/react-router";
-import { Menu, ChevronDown, Smartphone, Apple } from "lucide-react";
+import { Menu, ChevronDown, Smartphone, Apple, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+
+const LIGHT_KEY = "ea_migrate_light";
 
 export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [apkOpen, setApkOpen] = useState(false);
+  const [light, setLight] = useState(false);
   const navigate = useNavigate();
+
+  // Restore the visitor's choice (the toggle is opt-in — dark stays default).
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(LIGHT_KEY) === "1") {
+        document.documentElement.classList.add("light-mode");
+        setLight(true);
+      }
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  const toggleLight = () => {
+    const next = !light;
+    setLight(next);
+    document.documentElement.classList.toggle("light-mode", next);
+    try {
+      if (next) window.localStorage.setItem(LIGHT_KEY, "1");
+      else window.localStorage.removeItem(LIGHT_KEY);
+    } catch {
+      /* ignore */
+    }
+  };
 
   const close = () => setOpen(false);
   const openIosApp = () => {
@@ -17,19 +44,29 @@ export function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-5">
-        <Link to="/" className="group flex items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
+      <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
+        <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
           <img
-            src="/ea-migrate-platform-robot.jpg"
-            alt="EA Migrate Pro"
-            className="logo-animate size-10 object-contain transition-transform duration-200 ease-out group-hover:translate-x-1"
+            src="/logo.png"
+            alt="EA Migrate"
+            className="logo-spin size-12 min-w-[40px] shrink-0 rounded-full border border-border/60 object-cover"
           />
-          <span className="text-base font-bold tracking-tight uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
-            EA <span className="text-primary">Migrate</span> Pro
+          <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
+            EA <span className="text-primary">Migrate</span>
           </span>
         </Link>
 
-        <Sheet open={open} onOpenChange={setOpen}>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            aria-label={light ? "Switch to dark mode" : "Switch to light mode"}
+            onClick={toggleLight}
+            className="plat-pressable flex size-11 items-center justify-center rounded-xl border border-border/70 bg-card/60 text-muted-foreground transition-colors hover:text-primary"
+          >
+            {light ? <Moon className="size-5" /> : <Sun className="size-5" />}
+          </button>
+
+          <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
             <button
               aria-label="Open menu"
@@ -95,7 +132,8 @@ export function SiteHeader() {
               </a>
             </div>
           </SheetContent>
-        </Sheet>
+          </Sheet>
+        </div>
       </div>
     </header>
   );

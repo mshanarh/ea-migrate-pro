@@ -82,6 +82,17 @@ export type Account = {
   licenses: License[];
   eas: ExpertAdvisor[];
   website?: MentorWebsite;
+  /**
+   * THE MENTOR'S UNIQUE THREE-DIGIT ID — shown at the top of their portal and
+   * quoted by support ("your mentor is 047").
+   *
+   * EXACTLY THREE DIGITS, always zero-padded, so it is read aloud and written
+   * down the same way: "047", never "47". `undefined` on an account created
+   * before this existed; `ensureMentorId` assigns one on first sight and never
+   * changes it afterwards, because a mentor's ID is quoted to customers and a
+   * number that moved would send them to the wrong person.
+   */
+  mentorId?: string;
 };
 
 type Store = {
@@ -104,7 +115,7 @@ const seedAdmin: Account = {
   role: "admin",
   status: "approved",
   createdAt: new Date().toISOString(),
-  licenseLimit: 0,
+   licenseLimit: 2000,
   licenses: [],
   eas: [],
 };
@@ -120,21 +131,116 @@ const seedMentor: Account = {
   role: "mentor",
   status: "pending",
   createdAt: new Date().toISOString(),
-  licenseLimit: 0,
+   licenseLimit: 2000,
   licenses: [],
   eas: [],
 };
 
-const OWNER_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail", "lwethunkandi3@gmail.com"];
+/* ------------------------------------------------------------------ */
+/* GLOBAL AUTH EPOCH — the complete session wipe                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * BUMP THIS TO LOG EVERYONE OUT, EVERYWHERE, INCLUDING ADMINS.
+ *
+ * Each device remembers the epoch it last saw under localStorage
+ * `app_epoch`. When a build ships a HIGHER value, the device wipes BOTH
+ * storage buckets (localStorage + sessionStorage) once and the app reloads
+ * from the very first page. Nobody is exempt: platform owners and admins are
+ * signed out exactly like everyone else, and the app session store, the
+ * mentor-portal sign-in pointer and every cached flag die with the wipe.
+ *
+ * What this does NOT touch: the Supabase database. Users, payments, licences,
+ * approvals and device bindings all live in the cloud and are re-read on the
+ * next sign-in — so an admin can restore their own access immediately by
+ * signing in again, and the mentor portal repopulates itself from the cloud.
+ *
+ * Web and Android share this code path (the Android wrapper loads the same
+ * bundle), so one bump covers both at once.
+ */
+export const AUTH_EPOCH = "v5_activation_code_20261004";
+
+/** localStorage key that records the epoch this device has already applied. */
+export const AUTH_EPOCH_KEY = "app_epoch";
+
+/**
+ * Apply the epoch wipe if this device has not seen it yet.
+ *
+ * Returns true when a wipe actually ran (so the caller can send the visitor
+ * back to the first page). Safe to call on every boot: after the first run
+ * the stamp matches and this is a single localStorage read.
+ *
+ * `clear()` before `setItem()` is deliberate — the stamp must be written
+ * AFTER the buckets are emptied, or the wipe would erase its own record and
+ * run again on every load (an endless logout loop).
+ */
+export function enforceAuthEpoch(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    if (window.localStorage.getItem(AUTH_EPOCH_KEY) === AUTH_EPOCH) return false;
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+    window.localStorage.setItem(AUTH_EPOCH_KEY, AUTH_EPOCH);
+    return true;
+  } catch {
+    // Storage blocked (private mode, a hardened WebView): nothing to wipe and
+    // nothing to stamp. The cloud gate still keeps unpaid accounts out.
+    return false;
+  }
+}
+
+/**
+ * Platform owner accounts — admins by definition, on every device.
+ *
+ * `eamigratepro@gmail.com` WAS on this list and has been removed. That is the
+ * public SUPPORT mailbox printed on /support (SUPPORT_EMAIL in support.tsx) —
+ * the address customers write to. It is not a customer and not a buyer: it must
+ * not be marked paid and must not open the trading app. It lives in
+ * REVOKED_PAYMENT_EMAILS below instead, which says exactly that.
+ */
+export const OWNER_EMAILS = [
+  "biyasentobeko222@gmail.com",
+  "biyasentobeko222@gmail",
+  "admin@eamigrate.pro",
+  "lwethunkandi3@gmail.com",
+  "ntobekotraders.official@gmail.com",
+];
+
+/**
+ * Emails forced to the normal-mentor role EVERYWHERE (server responses and
+ * every device's local store), no matter what any record says. The platform
+ * owner strips admin status from an email by adding it here.
+ */
+export const MENTOR_ONLY_EMAILS = ["ntobekotraders.official@gmail.com"];
 
 export const PAYMENT_EXEMPT_EMAILS = [
-  "lwethunkandi3@gmail.com",
   "biyasentobeko222@gmail",
   "biyasentobeko222@gmail.com",
+  // Restored platform owner — same admin exemption as the owner list.
+  "lwethunkandi3@gmail.com",
 ];
+
+/**
+ * Emails that must ALWAYS go through payment, even when a device still holds a
+ * stale paid/admin record for them. An address here is answered "unpaid" no
+ * matter what the local store remembers, and it can never be marked paid by a
+ * list — the only thing that pays an account is a row in the payment ledger.
+ *
+ * `eamigratepro@gmail.com` — the public SUPPORT mailbox printed on /support.
+ * Customers write to it; it does not buy anything, so it must not open the
+ * trading app. It used to sit in OWNER_EMAILS, which is the list this whole
+ * codebase once treated as "paid and may open anything"; being removed from
+ * there and added here is what actually locks it out rather than merely
+ * demoting it.
+ */
+export const REVOKED_PAYMENT_EMAILS: string[] = ["eamigratepro@gmail.com"];
 
 function cleanEmail(email: string) {
   return email.trim().toLowerCase();
+}
+
+function isRevokedEmail(email: string) {
+  return REVOKED_PAYMENT_EMAILS.includes(cleanEmail(email));
 }
 
 export function isPaymentExemptEmail(email: string) {
@@ -144,19 +250,28 @@ export function isPaymentExemptEmail(email: string) {
 export function paymentStatusForEmail(email: string): PaymentStatus {
   load();
   const clean = cleanEmail(email);
+  // Revoked emails always require payment — stale records cannot help them.
+  if (isRevokedEmail(clean)) return "unpaid";
   if (isPaymentExemptEmail(clean)) return "admin";
   return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
-}
-
-export function markEmailPaid(email: string) {
+}export function markEmailPaid(email: string) {
   load();
   const clean = cleanEmail(email);
-  if (!clean || isPaymentExemptEmail(clean)) return;
-  const existing = state.payments.find((payment) => payment.email === clean);
-  if (existing?.paid) return;
+  if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
+
+  // Mark the local store paid WITHOUT route-guarding it. Callers own the door:
+  // this is called after the database has already said the account is entitled
+  // (finishSignIn, the waiting-room poll, the dashboard's own mark-paid path),
+  // so a stale or missing cloud answer must not re-impose the gate here.
+  if (state.payments.some((payment) => payment.email === clean && payment.paid)) return;
+
   state = {
     ...state,
-    payments: [...state.payments.filter((payment) => payment.email !== clean), { email: clean, paid: true, paidAt: new Date().toISOString() }],
+    payments: [...state.payments.filter((payment) => payment.email !== clean), {
+      email: clean,
+      paid: true,
+      paidAt: new Date().toISOString(),
+    }],
   };
   persist();
 }
@@ -164,7 +279,7 @@ export function markEmailPaid(email: string) {
 export function setEmailPaymentStatus(email: string, paid: boolean) {
   load();
   const clean = cleanEmail(email);
-  if (!clean || isPaymentExemptEmail(clean)) return;
+  if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
   const rest = state.payments.filter((payment) => payment.email !== clean);
   state = {
     ...state,
@@ -183,7 +298,7 @@ export function bindEmailToDevice(email: string, deviceId: string): { error?: st
   const clean = cleanEmail(email);
   const existing = state.deviceBindings.find((binding) => binding.email === clean);
   if (existing && existing.deviceId !== deviceId) {
-    return { error: "Email already in use on another device." };
+    return { error: "Account already used — this email is linked to another device. One email, one device." };
   }
   if (!existing) {
     state = { ...state, deviceBindings: [...state.deviceBindings, { email: clean, deviceId, boundAt: new Date().toISOString() }] };
@@ -228,7 +343,10 @@ function normalise(store: Store): Store {
       licenses: Array.isArray(a.licenses) ? a.licenses : [],
       eas: (Array.isArray(a.eas) ? a.eas : []).map((ea) => ({ id: ea.id, name: ea.name, eaNameHash: ea.eaNameHash || hashEaName(ea.name), briefing: ea.briefing, symbols: ea.symbols, createdAt: ea.createdAt, ...(ea.image ? { image: ea.image } : {}), ...(ea.video ? { video: ea.video } : {}) })),
     };
-    return OWNER_EMAILS.includes(a.email.trim().toLowerCase())
+    const email = a.email.trim().toLowerCase();
+    if (REVOKED_PAYMENT_EMAILS.includes(email) || MENTOR_ONLY_EMAILS.includes(email))
+      return { ...account, role: "mentor" as const };
+    return OWNER_EMAILS.includes(email)
       ? { ...account, role: "admin" as const, status: "approved" as const }
       : account;
   });
@@ -260,7 +378,13 @@ function load() {
 
 function persist() {
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(KEY, JSON.stringify(state));
+    // A blocked/evicted storage must never crash the click that made the
+    // change — in-memory state still wins for this session.
+    try {
+      window.localStorage.setItem(KEY, JSON.stringify(state));
+    } catch {
+      /* ignore */
+    }
   }
   listeners.forEach((l) => l());
 }
@@ -287,11 +411,23 @@ export function useCurrentAccount() {
   return s.accounts.find((a) => a.id === s.currentId) ?? null;
 }
 
+export function useCurrentMentorId() {
+  const account = useCurrentAccount();
+  return account?.mentorId ?? undefined;
+}
+
 export function signIn(email: string, password: string): { error?: string; accountId?: string; role?: Account["role"] } {
   load();
+  // Normalise inputs exactly like they are stored at registration.
   const cleanEmail = email.trim().toLowerCase();
+  const cleanPass = password.trim();
+  console.log("[sign-in] Trying login:", cleanEmail);
   const account = state.accounts.find((a) => a.email.toLowerCase() === cleanEmail);
-  if (!account || account.password !== password) return { error: "Wrong email or password." };
+  if (!account || account.password !== cleanPass) {
+    console.log("[sign-in] Login error: wrong email or password for", cleanEmail);
+    return { error: "Wrong email or password. Check the email you registered with and try again." };
+  }
+  console.log("[sign-in] Login success:", account.id);
   state = { ...state, currentId: account.id };
   persist();
   return { accountId: account.id, role: account.role };
@@ -307,33 +443,163 @@ export function resetPassword(email: string, password: string): { error?: string
   return {};
 }
 
+/**
+ * Merge cloud-verified accounts into this device's local store (passwords are
+ * already stripped by the server layer). Used by the cross-device sign-in
+ * fallback so a user can sign in on a new phone/browser.
+ */
+export function hydrateFromCloud(accounts: Array<Omit<Account, "password">>) {
+  load();
+  let changed = false;
+  const existing = new Map(state.accounts.map((account) => [account.email.toLowerCase(), account]));
+  for (const cloud of accounts) {
+    const key = cloud.email.toLowerCase();
+    const known = existing.get(key);
+    if (known) {
+      // Keep the local password (it IS the real password locally) AND the local
+      // EAs: locally created/edited EAs carry the mentor's latest videos, while
+      // the cloud copy can be stale (saved once at registration). Merging keeps
+      // every EA that exists on either side, local fields winning per EA.
+      const mergedEas = mergeEas(known.eas, cloud.eas);
+      const easChanged = mergedEas.length !== known.eas.length || mergedEas.some((ea, index) => ea !== known.eas[index]);
+      // Status reconciliation: a cloud "pending" must NEVER overwrite an admin
+      // decision (approved/rejected) held locally. This exact clobber made
+      // approved users reappear as pending after the admin re-logged in when
+      // the approval's cloud write had failed. Any other cloud status
+      // (approved/rejected) propagates across devices as the shared truth.
+      const status =
+        cloud.status === "pending" && known.status !== "pending" ? known.status : cloud.status;
+      // Admin-set license data must survive the poll too: the previous spread
+      // let a stale cloud copy overwrite a locally saved license limit and
+      // resurrect removed keys, so "save" appeared to undo itself.
+      const licensesById = new Map(known.licenses.map((license) => [license.id, license]));
+      let licensesChanged = false;
+      for (const license of cloud.licenses) {
+        if (!licensesById.has(license.id)) {
+          licensesById.set(license.id, license);
+          licensesChanged = true;
+        }
+      }
+      const licenseLimit = known.licenseLimit > 0 ? known.licenseLimit : cloud.licenseLimit;
+      existing.set(key, {
+        ...known,
+        ...cloud,
+        // The owner is ALWAYS an admin locally — a stale cloud copy must never
+        // demote them (this is what made owner sign-ins land on a pending
+        // mentor portal instead of the admin console).
+        role: OWNER_EMAILS.includes(cloud.email.toLowerCase()) ? "admin" : cloud.role,
+        status,
+        password: known.password,
+        eas: mergedEas,
+        licenseLimit,
+        licenses: Array.from(licensesById.values()),
+      });
+      if (
+        easChanged ||
+        mergedEas.length !== cloud.eas.length ||
+        status !== known.status ||
+        licensesChanged ||
+        licenseLimit !== known.licenseLimit
+      )
+        changed = true;
+    } else if (cloud.role === "admin") {
+      // Admin records DO hydrate now: the platform owner can sign in on any
+      // device directly into the admin console. normalise() re-asserts the
+      // owner's admin role, and a removed admin cannot be reintroduced by
+      // this path because the server layer strips them before returning.
+      existing.set(key, { ...cloud, password: "" } as Account);
+      changed = true;
+    } else {
+      existing.set(key, { ...cloud, password: "" } as Account);
+      changed = true;
+    }
+  }
+  if (!changed) return;
+  state = normalise({ ...state, accounts: Array.from(existing.values()) });
+  persist();
+}
+
+/** Union merge keyed by EA id — local records win per-EA, cloud-only EAs added. */
+function mergeEas(local: ExpertAdvisor[], cloud: ExpertAdvisor[]): ExpertAdvisor[] {
+  const byId = new Map(cloud.map((ea) => [ea.id, ea]));
+  for (const ea of local) byId.set(ea.id, ea);
+  return Array.from(byId.values());
+}
+
+/** Marks an account as the signed-in user (used by the cloud sign-in fallback). */
+export function setCurrentAccount(email: string) {
+  load();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === email.trim().toLowerCase());
+  if (!account) return;
+  state = { ...state, currentId: account.id };
+  persist();
+}
+
 export function signOut() {
   load();
   state = { ...state, currentId: null };
   persist();
 }
 
+/**
+ * After a successful CLOUD sign-in, adopt the just-verified password into
+ * this device's local record. Without this, a device holding a stale
+ * password fails local sign-in first on every visit and always needs the
+ * cloud fallback (the record even kept a dead password after the account
+ * was healed in the shared store).
+ */
+/**
+ * Make sure a local account record EXISTS for this cloud account before it is
+ * merged in. hydrateFromCloud only updates addresses it already holds, so a
+ * mentor signing in on a fresh phone — whose signup account write had failed,
+ * leaving only an approval row — had nothing to merge into and stayed signed
+ * out. Creates a skeleton from the cloud record when the device has none.
+ */
+export function ensureLocalAccount(cloud: Omit<Account, "password">): void {
+  load();
+  const key = cloud.email.trim().toLowerCase();
+  if (!key) return;
+  if (state.accounts.some((a) => a.email.toLowerCase() === key)) return;
+  state = normalise({
+    ...state,
+    accounts: [...state.accounts, { ...cloud, password: "" }],
+  });
+  persist();
+}
+
+export function adoptCloudPassword(email: string, password: string) {
+  load();
+  const clean = email.trim().toLowerCase();
+  const account = state.accounts.find((a) => a.email.toLowerCase() === clean);
+  if (!account || account.password === password) return;
+  update(account.id, (a) => ({ ...a, password }));
+}
+
 export function register(
   data: Omit<Account, "id" | "role" | "status" | "createdAt" | "licenseLimit" | "licenses" | "eas" | "website">,
-): { error?: string } {
+): { error?: string; account?: Account } {
   load();
-  if (state.accounts.some((a) => a.email.toLowerCase() === data.email.trim().toLowerCase())) {
+  const email = data.email.trim().toLowerCase();
+  if (state.accounts.some((a) => a.email.toLowerCase() === email)) {
     return { error: "That email is already registered." };
   }
+  // Platform owners are admins the moment they sign up — no pending gate,
+  // no admin approval loop, on any device.
+  const isOwner = OWNER_EMAILS.includes(email);
   const account: Account = {
     ...data,
-    email: data.email.trim().toLowerCase(),
+    email,
     id: "m-" + Date.now(),
-    role: "mentor",
-    status: "pending",
+    role: isOwner ? "admin" : "mentor",
+    status: isOwner ? "approved" : "pending",
     createdAt: new Date().toISOString(),
-    licenseLimit: 0,
+    licenseLimit: isOwner ? 2000 : 0,
     licenses: [],
     eas: [],
   };
   state = normalise({ ...state, accounts: [...state.accounts, account], currentId: account.id });
   persist();
-  return {};
+  return { account };
 }
 
 function update(id: string, fn: (a: Account) => Account) {
@@ -349,43 +615,75 @@ export function setStatus(id: string, status: PortalStatus) {
   update(id, (a) => ({ ...a, status }));
 }
 
-export function addLicense(
+export async function addLicense(
   id: string,
   plan: string,
   key: string,
   details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
-): { error?: string } {
+  /** The admin panel issues keys by its own authority — limit does not block it. */
+  opts: { bypassLimit?: boolean } = {},
+): Promise<{ error?: string; license?: License }> {
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
   if (!details.eaId) return { error: "Choose an Expert Advisor." };
-  if (account.licenseLimit <= 0) {
-    return { error: "The admin has not set a license limit for this account yet." };
-  }
-  if (account.licenses.length >= account.licenseLimit) {
-    return { error: "This account has reached its license limit." };
+  if (!opts.bypassLimit) {
+    // Enforce the cap against the LIVE database value (app_settings
+    // limit:<email>), not the local account snapshot — the local
+    // licenseLimit field is only a cache and can be 0 while the DB has
+    // 800, which would wrongly block key creation.
+    try {
+      const { getLicenseCapForEmail, countKeysForEmail } = await import(
+        "@/lib/admin-store"
+      );
+      const cap = await getLicenseCapForEmail(account.email);
+      if (cap !== null) {
+        const used = await countKeysForEmail(account.email);
+        if (used >= cap) {
+          return {
+            error:
+              cap === 0
+                ? "The admin has not allowed you any license keys yet."
+                : `You have used all ${cap} of your license keys. Ask your
+                   administrator to raise your limit.`,
+          };
+        }
+      }
+    } catch {
+      /* never block key creation on a limit lookup failure */
+    }
   }
   const linkedEa = account.eas.find((ea) => ea.id === details.eaId);
   const robotName = linkedEa?.name.trim() || details.expertAdvisor?.trim() || details.name?.trim() || "Private EA";
 
-  update(id, (a) => ({
+  const license: License = {
+    id: "l-" + Date.now(),
+    key,
+    plan,
+    issuedAt: new Date().toISOString(),
+    active: true,
+    ...details,
+    robotName,
+    expertAdvisor: robotName,
+    eaId: details.eaId,
+    eaNameHash: details.eaNameHash,
+    expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "1 Week": 7, "1 Month": 30, "3 Months": 90, "6 Months": 180, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
+  };
+
+  await update(id, (a) => ({
     ...a,
-    licenses: [
-      ...a.licenses,
-      {
-        id: "l-" + Date.now(),
-        key,
-        plan,
-        issuedAt: new Date().toISOString(),
-        active: true,
-        ...details,
-        robotName,
-        expertAdvisor: robotName,
-        eaId: details.eaId,
-        eaNameHash: details.eaNameHash,
-        expiresAt: details.expiry && details.expiry !== "Lifetime" ? new Date(Date.now() + ({ "3 Days": 3, "3 Months": 90, "6 Months": 180, "9 Months": 270, "1 Year": 365 }[details.expiry] ?? 0) * 86400000).toISOString() : undefined,
-      },
-    ],
+    licenses: [...a.licenses, license],
+  }));
+  return { license };
+}
+
+export function renameEa(accountId: string, eaId: string, patch: { briefing?: string; symbols?: string[]; image?: string; video?: string }): { error?: string } {
+  load();
+  const account = state.accounts.find((a) => a.id === accountId);
+  if (!account) return { error: "Mentor account not found." };
+  update(accountId, (a) => ({
+    ...a,
+    eas: a.eas.map((ea) => ea.id === eaId ? { ...ea, ...patch } : ea),
   }));
   return {};
 }
@@ -416,13 +714,18 @@ export function removeLicense(accountId: string, licenseId: string) {
   }));
 }
 
+/** EMP-prefixed key — EMP-XXXX-XXXX-XXXX (three random groups). */
 export function generateKey() {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  let suffix = "";
-  for (let index = 0; index < 12; index += 1) {
-    suffix += alphabet[Math.floor(Math.random() * alphabet.length)];
+  const groups: string[] = ["EMP"];
+  for (let group = 0; group < 3; group += 1) {
+    let chunk = "";
+    for (let index = 0; index < 4; index += 1) {
+      chunk += alphabet[Math.floor(Math.random() * alphabet.length)];
+    }
+    groups.push(chunk);
   }
-  return "EMP-" + suffix;
+  return groups.join("-");
 }
 
 export function validateLicense(key: string, eaId: string, clientEmail?: string): { valid: boolean; error?: string; license?: License } {

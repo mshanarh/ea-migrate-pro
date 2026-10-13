@@ -12,29 +12,34 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as DashboardRouteImport } from './routes/dashboard'
+import { Route as MigrateRouteImport } from './routes/migrate'
+import { Route as NewsRouteImport } from './routes/news'
 import { Route as SigninRouteImport } from './routes/signin'
 import { Route as SignupRouteImport } from './routes/signup'
 import { Route as SupportRouteImport } from './routes/support'
 import { Route as AppIndexRouteImport } from './routes/app.index'
 import { Route as AppActivateRouteImport } from './routes/app.activate'
+import { Route as AppAdminRouteImport } from './routes/app.admin'
+import { Route as AppFundamentalsRouteImport } from './routes/app.fundamentals'
 import { Route as AppHomeRouteImport } from './routes/app.home'
+import { Route as AppLoginRouteImport } from './routes/app.login'
 import { Route as AppMetatraderRouteImport } from './routes/app.metatrader'
-import { Route as AppPairsRouteImport } from './routes/app.pairs'
+import { Route as AppNotificationsRouteImport } from './routes/app.notifications'
+import { Route as AppScannerRouteImport } from './routes/app.scanner'
+import { Route as AppSettingsRouteImport } from './routes/app.settings'
+import { Route as AppTradingPairsRouteImport } from './routes/app.trading-pairs'
 import { Route as DashboardIndexRouteImport } from './routes/dashboard.index'
+import { Route as DashboardBroadcastRouteImport } from './routes/dashboard.broadcast'
 import { Route as DashboardEasRouteImport } from './routes/dashboard.eas'
 import { Route as DashboardLicensesRouteImport } from './routes/dashboard.licenses'
+import { Route as DashboardPairsRouteImport } from './routes/dashboard.pairs'
 import { Route as DashboardProfileRouteImport } from './routes/dashboard.profile'
+import { Route as DashboardReactivateRouteImport } from './routes/dashboard.reactivate'
 import { Route as DashboardSignalsRouteImport } from './routes/dashboard.signals'
 import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
 import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website'
 import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
-import { Route as AppSettingsIndexRouteImport } from './routes/app.settings.index'
-import { Route as AppSettingsBackgroundRouteImport } from './routes/app.settings.background'
-import { Route as AppSettingsColorRouteImport } from './routes/app.settings.color'
-import { Route as AppSettingsFontRouteImport } from './routes/app.settings.font'
-import { Route as AppSettingsInterfaceRouteImport } from './routes/app.settings.interface'
-import { Route as AppSettingsScannerRouteImport } from './routes/app.settings.scanner'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -49,6 +54,16 @@ const AdminRoute = AdminRouteImport.update({
 const DashboardRoute = DashboardRouteImport.update({
   id: '/dashboard',
   path: '/dashboard',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MigrateRoute = MigrateRouteImport.update({
+  id: '/migrate',
+  path: '/migrate',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewsRoute = NewsRouteImport.update({
+  id: '/news',
+  path: '/news',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SigninRoute = SigninRouteImport.update({
@@ -76,9 +91,24 @@ const AppActivateRoute = AppActivateRouteImport.update({
   path: '/app/activate',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppAdminRoute = AppAdminRouteImport.update({
+  id: '/app/admin',
+  path: '/app/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppFundamentalsRoute = AppFundamentalsRouteImport.update({
+  id: '/app/fundamentals',
+  path: '/app/fundamentals',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppHomeRoute = AppHomeRouteImport.update({
   id: '/app/home',
   path: '/app/home',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppLoginRoute = AppLoginRouteImport.update({
+  id: '/app/login',
+  path: '/app/login',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AppMetatraderRoute = AppMetatraderRouteImport.update({
@@ -86,14 +116,34 @@ const AppMetatraderRoute = AppMetatraderRouteImport.update({
   path: '/app/metatrader',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppPairsRoute = AppPairsRouteImport.update({
-  id: '/app/pairs',
-  path: '/app/pairs',
+const AppNotificationsRoute = AppNotificationsRouteImport.update({
+  id: '/app/notifications',
+  path: '/app/notifications',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppScannerRoute = AppScannerRouteImport.update({
+  id: '/app/scanner',
+  path: '/app/scanner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/app/settings',
+  path: '/app/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AppTradingPairsRoute = AppTradingPairsRouteImport.update({
+  id: '/app/trading-pairs',
+  path: '/app/trading-pairs',
   getParentRoute: () => rootRouteImport,
 } as any)
 const DashboardIndexRoute = DashboardIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardBroadcastRoute = DashboardBroadcastRouteImport.update({
+  id: '/broadcast',
+  path: '/broadcast',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardEasRoute = DashboardEasRouteImport.update({
@@ -106,9 +156,19 @@ const DashboardLicensesRoute = DashboardLicensesRouteImport.update({
   path: '/licenses',
   getParentRoute: () => DashboardRoute,
 } as any)
+const DashboardPairsRoute = DashboardPairsRouteImport.update({
+  id: '/pairs',
+  path: '/pairs',
+  getParentRoute: () => DashboardRoute,
+} as any)
 const DashboardProfileRoute = DashboardProfileRouteImport.update({
   id: '/profile',
   path: '/profile',
+  getParentRoute: () => DashboardRoute,
+} as any)
+const DashboardReactivateRoute = DashboardReactivateRouteImport.update({
+  id: '/reactivate',
+  path: '/reactivate',
   getParentRoute: () => DashboardRoute,
 } as any)
 const DashboardSignalsRoute = DashboardSignalsRouteImport.update({
@@ -136,51 +196,32 @@ const MentorSlugRoute = MentorSlugRouteImport.update({
   path: '/mentor/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
-const AppSettingsIndexRoute = AppSettingsIndexRouteImport.update({
-  id: '/app/settings/',
-  path: '/app/settings/',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppSettingsBackgroundRoute = AppSettingsBackgroundRouteImport.update({
-  id: '/app/settings/background',
-  path: '/app/settings/background',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppSettingsColorRoute = AppSettingsColorRouteImport.update({
-  id: '/app/settings/color',
-  path: '/app/settings/color',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppSettingsFontRoute = AppSettingsFontRouteImport.update({
-  id: '/app/settings/font',
-  path: '/app/settings/font',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppSettingsInterfaceRoute = AppSettingsInterfaceRouteImport.update({
-  id: '/app/settings/interface',
-  path: '/app/settings/interface',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const AppSettingsScannerRoute = AppSettingsScannerRouteImport.update({
-  id: '/app/settings/scanner',
-  path: '/app/settings/scanner',
-  getParentRoute: () => rootRouteImport,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
+  '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
-  '/app/pairs': typeof AppPairsRoute
+  '/app/notifications': typeof AppNotificationsRoute
+  '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -188,26 +229,31 @@ export interface FileRoutesByFullPath {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
-  '/app/settings/background': typeof AppSettingsBackgroundRoute
-  '/app/settings/color': typeof AppSettingsColorRoute
-  '/app/settings/font': typeof AppSettingsFontRoute
-  '/app/settings/interface': typeof AppSettingsInterfaceRoute
-  '/app/settings/scanner': typeof AppSettingsScannerRoute
-  '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
+  '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
-  '/app/pairs': typeof AppPairsRoute
+  '/app/notifications': typeof AppNotificationsRoute
+  '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -215,28 +261,33 @@ export interface FileRoutesByTo {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app': typeof AppIndexRoute
   '/dashboard': typeof DashboardIndexRoute
-  '/app/settings/background': typeof AppSettingsBackgroundRoute
-  '/app/settings/color': typeof AppSettingsColorRoute
-  '/app/settings/font': typeof AppSettingsFontRoute
-  '/app/settings/interface': typeof AppSettingsInterfaceRoute
-  '/app/settings/scanner': typeof AppSettingsScannerRoute
-  '/app/settings': typeof AppSettingsIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
+  '/migrate': typeof MigrateRoute
+  '/news': typeof NewsRoute
   '/signin': typeof SigninRoute
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
+  '/app/admin': typeof AppAdminRoute
+  '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
+  '/app/login': typeof AppLoginRoute
   '/app/metatrader': typeof AppMetatraderRoute
-  '/app/pairs': typeof AppPairsRoute
+  '/app/notifications': typeof AppNotificationsRoute
+  '/app/scanner': typeof AppScannerRoute
+  '/app/settings': typeof AppSettingsRoute
+  '/app/trading-pairs': typeof AppTradingPairsRoute
+  '/dashboard/broadcast': typeof DashboardBroadcastRoute
   '/dashboard/eas': typeof DashboardEasRoute
   '/dashboard/licenses': typeof DashboardLicensesRoute
+  '/dashboard/pairs': typeof DashboardPairsRoute
   '/dashboard/profile': typeof DashboardProfileRoute
+  '/dashboard/reactivate': typeof DashboardReactivateRoute
   '/dashboard/signals': typeof DashboardSignalsRoute
   '/dashboard/stats': typeof DashboardStatsRoute
   '/dashboard/wallet': typeof DashboardWalletRoute
@@ -244,12 +295,6 @@ export interface FileRoutesById {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
-  '/app/settings/background': typeof AppSettingsBackgroundRoute
-  '/app/settings/color': typeof AppSettingsColorRoute
-  '/app/settings/font': typeof AppSettingsFontRoute
-  '/app/settings/interface': typeof AppSettingsInterfaceRoute
-  '/app/settings/scanner': typeof AppSettingsScannerRoute
-  '/app/settings/': typeof AppSettingsIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -257,16 +302,27 @@ export interface FileRouteTypes {
     | '/'
     | '/admin'
     | '/dashboard'
+    | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
-    | '/app/pairs'
+    | '/app/notifications'
+    | '/app/scanner'
+    | '/app/settings'
+    | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -274,26 +330,31 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
-    | '/app/settings/background'
-    | '/app/settings/color'
-    | '/app/settings/font'
-    | '/app/settings/interface'
-    | '/app/settings/scanner'
-    | '/app/settings/'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
     | '/admin'
+    | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
-    | '/app/pairs'
+    | '/app/notifications'
+    | '/app/scanner'
+    | '/app/settings'
+    | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -301,27 +362,32 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app'
     | '/dashboard'
-    | '/app/settings/background'
-    | '/app/settings/color'
-    | '/app/settings/font'
-    | '/app/settings/interface'
-    | '/app/settings/scanner'
-    | '/app/settings'
   id:
     | '__root__'
     | '/'
     | '/admin'
     | '/dashboard'
+    | '/migrate'
+    | '/news'
     | '/signin'
     | '/signup'
     | '/support'
     | '/app/activate'
+    | '/app/admin'
+    | '/app/fundamentals'
     | '/app/home'
+    | '/app/login'
     | '/app/metatrader'
-    | '/app/pairs'
+    | '/app/notifications'
+    | '/app/scanner'
+    | '/app/settings'
+    | '/app/trading-pairs'
+    | '/dashboard/broadcast'
     | '/dashboard/eas'
     | '/dashboard/licenses'
+    | '/dashboard/pairs'
     | '/dashboard/profile'
+    | '/dashboard/reactivate'
     | '/dashboard/signals'
     | '/dashboard/stats'
     | '/dashboard/wallet'
@@ -329,33 +395,29 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
-    | '/app/settings/background'
-    | '/app/settings/color'
-    | '/app/settings/font'
-    | '/app/settings/interface'
-    | '/app/settings/scanner'
-    | '/app/settings/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   DashboardRoute: typeof DashboardRouteWithChildren
+  MigrateRoute: typeof MigrateRoute
+  NewsRoute: typeof NewsRoute
   SigninRoute: typeof SigninRoute
   SignupRoute: typeof SignupRoute
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
+  AppAdminRoute: typeof AppAdminRoute
+  AppFundamentalsRoute: typeof AppFundamentalsRoute
   AppHomeRoute: typeof AppHomeRoute
+  AppLoginRoute: typeof AppLoginRoute
   AppMetatraderRoute: typeof AppMetatraderRoute
-  AppPairsRoute: typeof AppPairsRoute
+  AppNotificationsRoute: typeof AppNotificationsRoute
+  AppScannerRoute: typeof AppScannerRoute
+  AppSettingsRoute: typeof AppSettingsRoute
+  AppTradingPairsRoute: typeof AppTradingPairsRoute
   MentorSlugRoute: typeof MentorSlugRoute
   AppIndexRoute: typeof AppIndexRoute
-  AppSettingsBackgroundRoute: typeof AppSettingsBackgroundRoute
-  AppSettingsColorRoute: typeof AppSettingsColorRoute
-  AppSettingsFontRoute: typeof AppSettingsFontRoute
-  AppSettingsInterfaceRoute: typeof AppSettingsInterfaceRoute
-  AppSettingsScannerRoute: typeof AppSettingsScannerRoute
-  AppSettingsIndexRoute: typeof AppSettingsIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -379,6 +441,20 @@ declare module '@tanstack/react-router' {
       path: '/dashboard'
       fullPath: '/dashboard'
       preLoaderRoute: typeof DashboardRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/migrate': {
+      id: '/migrate'
+      path: '/migrate'
+      fullPath: '/migrate'
+      preLoaderRoute: typeof MigrateRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/news': {
+      id: '/news'
+      path: '/news'
+      fullPath: '/news'
+      preLoaderRoute: typeof NewsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/signin': {
@@ -416,11 +492,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppActivateRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/admin': {
+      id: '/app/admin'
+      path: '/app/admin'
+      fullPath: '/app/admin'
+      preLoaderRoute: typeof AppAdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/fundamentals': {
+      id: '/app/fundamentals'
+      path: '/app/fundamentals'
+      fullPath: '/app/fundamentals'
+      preLoaderRoute: typeof AppFundamentalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/app/home': {
       id: '/app/home'
       path: '/app/home'
       fullPath: '/app/home'
       preLoaderRoute: typeof AppHomeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/login': {
+      id: '/app/login'
+      path: '/app/login'
+      fullPath: '/app/login'
+      preLoaderRoute: typeof AppLoginRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/app/metatrader': {
@@ -430,11 +527,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppMetatraderRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/pairs': {
-      id: '/app/pairs'
-      path: '/app/pairs'
-      fullPath: '/app/pairs'
-      preLoaderRoute: typeof AppPairsRouteImport
+    '/app/notifications': {
+      id: '/app/notifications'
+      path: '/app/notifications'
+      fullPath: '/app/notifications'
+      preLoaderRoute: typeof AppNotificationsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/scanner': {
+      id: '/app/scanner'
+      path: '/app/scanner'
+      fullPath: '/app/scanner'
+      preLoaderRoute: typeof AppScannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/app/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/app/trading-pairs': {
+      id: '/app/trading-pairs'
+      path: '/app/trading-pairs'
+      fullPath: '/app/trading-pairs'
+      preLoaderRoute: typeof AppTradingPairsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/dashboard/': {
@@ -442,6 +560,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/dashboard/'
       preLoaderRoute: typeof DashboardIndexRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/broadcast': {
+      id: '/dashboard/broadcast'
+      path: '/broadcast'
+      fullPath: '/dashboard/broadcast'
+      preLoaderRoute: typeof DashboardBroadcastRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/eas': {
@@ -458,11 +583,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof DashboardLicensesRouteImport
       parentRoute: typeof DashboardRoute
     }
+    '/dashboard/pairs': {
+      id: '/dashboard/pairs'
+      path: '/pairs'
+      fullPath: '/dashboard/pairs'
+      preLoaderRoute: typeof DashboardPairsRouteImport
+      parentRoute: typeof DashboardRoute
+    }
     '/dashboard/profile': {
       id: '/dashboard/profile'
       path: '/profile'
       fullPath: '/dashboard/profile'
       preLoaderRoute: typeof DashboardProfileRouteImport
+      parentRoute: typeof DashboardRoute
+    }
+    '/dashboard/reactivate': {
+      id: '/dashboard/reactivate'
+      path: '/reactivate'
+      fullPath: '/dashboard/reactivate'
+      preLoaderRoute: typeof DashboardReactivateRouteImport
       parentRoute: typeof DashboardRoute
     }
     '/dashboard/signals': {
@@ -500,55 +639,16 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MentorSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/app/settings/': {
-      id: '/app/settings/'
-      path: '/app/settings'
-      fullPath: '/app/settings/'
-      preLoaderRoute: typeof AppSettingsIndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/settings/background': {
-      id: '/app/settings/background'
-      path: '/app/settings/background'
-      fullPath: '/app/settings/background'
-      preLoaderRoute: typeof AppSettingsBackgroundRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/settings/color': {
-      id: '/app/settings/color'
-      path: '/app/settings/color'
-      fullPath: '/app/settings/color'
-      preLoaderRoute: typeof AppSettingsColorRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/settings/font': {
-      id: '/app/settings/font'
-      path: '/app/settings/font'
-      fullPath: '/app/settings/font'
-      preLoaderRoute: typeof AppSettingsFontRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/settings/interface': {
-      id: '/app/settings/interface'
-      path: '/app/settings/interface'
-      fullPath: '/app/settings/interface'
-      preLoaderRoute: typeof AppSettingsInterfaceRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/app/settings/scanner': {
-      id: '/app/settings/scanner'
-      path: '/app/settings/scanner'
-      fullPath: '/app/settings/scanner'
-      preLoaderRoute: typeof AppSettingsScannerRouteImport
-      parentRoute: typeof rootRouteImport
-    }
   }
 }
 
 interface DashboardRouteChildren {
+  DashboardBroadcastRoute: typeof DashboardBroadcastRoute
   DashboardEasRoute: typeof DashboardEasRoute
   DashboardLicensesRoute: typeof DashboardLicensesRoute
+  DashboardPairsRoute: typeof DashboardPairsRoute
   DashboardProfileRoute: typeof DashboardProfileRoute
+  DashboardReactivateRoute: typeof DashboardReactivateRoute
   DashboardSignalsRoute: typeof DashboardSignalsRoute
   DashboardStatsRoute: typeof DashboardStatsRoute
   DashboardWalletRoute: typeof DashboardWalletRoute
@@ -557,9 +657,12 @@ interface DashboardRouteChildren {
 }
 
 const DashboardRouteChildren: DashboardRouteChildren = {
+  DashboardBroadcastRoute: DashboardBroadcastRoute,
   DashboardEasRoute: DashboardEasRoute,
   DashboardLicensesRoute: DashboardLicensesRoute,
+  DashboardPairsRoute: DashboardPairsRoute,
   DashboardProfileRoute: DashboardProfileRoute,
+  DashboardReactivateRoute: DashboardReactivateRoute,
   DashboardSignalsRoute: DashboardSignalsRoute,
   DashboardStatsRoute: DashboardStatsRoute,
   DashboardWalletRoute: DashboardWalletRoute,
@@ -575,21 +678,23 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   DashboardRoute: DashboardRouteWithChildren,
+  MigrateRoute: MigrateRoute,
+  NewsRoute: NewsRoute,
   SigninRoute: SigninRoute,
   SignupRoute: SignupRoute,
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
+  AppAdminRoute: AppAdminRoute,
+  AppFundamentalsRoute: AppFundamentalsRoute,
   AppHomeRoute: AppHomeRoute,
+  AppLoginRoute: AppLoginRoute,
   AppMetatraderRoute: AppMetatraderRoute,
-  AppPairsRoute: AppPairsRoute,
+  AppNotificationsRoute: AppNotificationsRoute,
+  AppScannerRoute: AppScannerRoute,
+  AppSettingsRoute: AppSettingsRoute,
+  AppTradingPairsRoute: AppTradingPairsRoute,
   MentorSlugRoute: MentorSlugRoute,
   AppIndexRoute: AppIndexRoute,
-  AppSettingsBackgroundRoute: AppSettingsBackgroundRoute,
-  AppSettingsColorRoute: AppSettingsColorRoute,
-  AppSettingsFontRoute: AppSettingsFontRoute,
-  AppSettingsInterfaceRoute: AppSettingsInterfaceRoute,
-  AppSettingsScannerRoute: AppSettingsScannerRoute,
-  AppSettingsIndexRoute: AppSettingsIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

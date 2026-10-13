@@ -6,17 +6,19 @@ import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
 import { AuthShell, Field } from "@/components/AuthShell";
 import { register } from "@/lib/auth-store";
+import { portalEnsureMentorId } from "@/lib/portal-cloud";
+import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/signup")({
   head: () => ({
     meta: [
-      { title: "Create your mentor portal — EA Migrate Pro" },
+      { title: "Create your mentor portal — EA Migrate" },
       {
         name: "description",
         content:
-          "Register a mentor portal on EA Migrate Pro to build, licence and host custom MT4/MT5 Expert Advisors.",
+          "Register a mentor portal on EA Migrate to build, licence and host custom MT4/MT5 Expert Advisors.",
       },
-      { property: "og:title", content: "Create your mentor portal — EA Migrate Pro" },
+      { property: "og:title", content: "Create your mentor portal — EA Migrate" },
       {
         property: "og:description",
         content: "Register a mentor portal and start issuing Expert Advisor licences.",
@@ -43,6 +45,7 @@ function SignUp() {
   });
   const [agree, setAgree] = useState(false);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
 
   const set = (k: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -51,10 +54,12 @@ function SignUp() {
     <AuthShell active="signup">
       <form
         className="mt-8 space-y-5"
-        onSubmit={(e) => {
+        onSubmit={async (e) => {
           e.preventDefault();
+          if (saving) return;
           if (form.password !== form.confirm) return setError("Passwords do not match.");
           if (!agree) return setError("Please accept the terms to continue.");
+          setError("");
           const res = register({
             firstName: form.firstName,
             displayName: form.displayName,
@@ -64,7 +69,57 @@ function SignUp() {
             whatsapp: form.whatsapp,
           });
           if (res.error) return setError(res.error);
-          navigate({ to: "/dashboard" });
+          setSaving(true);
+          try {
+            // Wait for the cross-device write before leaving the page. The old
+            // fire-and-forget call could be interrupted by the redirect in production.
+            if (res.account) {
+              // Server-side registration store — independent of the database.
+              const reply = await fetch("/api/register", {
+                method: "POST",
+                headers: { "content-type": "application/json" },
+                body: JSON.stringify({
+                  email: res.account.email,
+                  firstName: res.account.firstName,
+                  displayName: res.account.displayName,
+                  username: res.account.username,
+                  whatsapp: res.account.whatsapp,
+                  password: form.password,
+                }),
+              }).catch(() => null);
+              if (!reply || (!reply.ok && reply.status !== 409)) {
+                console.error("[signup] /api/register failed:", reply?.status);
+              }
+              // THE MENTOR ID, assigned at signup rather than on first sight
+              // in the portal. Best effort by design — a failure here must
+              // never lose the signup, and the portal assigns one on arrival.
+              await portalEnsureMentorId(res.account.email).then((id) => {
+                if (!id.ok) console.warn("[signup] mentor ID not assigned yet:", id.error);
+              });
+              // Admin alert — "New user registered: <email> - Approve in
+              // admin". Also saves the pending approval row. Awaited (bounded)
+              // before the redirect so the request cannot be torn down by the
+              // navigation — fire-and-forget here was why registrations went
+              // unannounced.
+              await Promise.race([
+                sendPortalEmail({
+                  data: {
+                    type: "new_registration",
+                    email: res.account.email,
+                    firstName: res.account.firstName,
+                    displayName: res.account.displayName,
+                  },
+                }).catch((emailError) => console.error("[signup] registration email failed:", emailError)),
+                new Promise((resolve) => setTimeout(resolve, 8000)),
+              ]);
+            }
+            navigate({ to: "/dashboard" });
+          } catch (syncError) {
+            console.error("[signup] Shared registration sync unavailable", syncError);
+            navigate({ to: "/dashboard" });
+          } finally {
+            setSaving(false);
+          }
         }}
       >
         <Field label="First name">
@@ -99,8 +154,8 @@ function SignUp() {
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
-          <UserPlus className="size-5" /> Create account
+        <Button type="submit" size="lg" disabled={saving} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+          <UserPlus className="size-5" /> {saving ? "Saving account..." : "Create account"}
         </Button>
 
         <p className="text-center text-sm text-muted-foreground">

@@ -1,0 +1,386 @@
+import { useCallback, useEffect, useState } from "react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
+import { toast } from "sonner";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
+import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
+import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { OWNER_EMAILS } from "@/lib/auth-store";
+import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
+import { supabaseConfigured } from "@/lib/supabase";
+import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin, adminSetUserPaid } from "@/lib/supabase.server";
+import type { UserRow } from "@/lib/supabase";
+
+/**
+ * Run a server function, falling back to the direct anon-key call when the
+ * server side is unreachable — production builds this app as a STATIC Vite
+ * site where TanStack Start server functions do not exist (the fetch 404s
+ * and throws). The anon fallbacks keep the admin page fully working there.
+ */
+async function withAnonFallback<T>(serverCall: () => Promise<T>, anonCall: () => Promise<T>): Promise<T> {
+  try {
+    return await serverCall();
+  } catch {
+    return anonCall();
+  }
+}
+
+export const Route = createFileRoute("/app/admin")({
+  ssr: false,
+  beforeLoad: async () => {
+    // Same gates as the rest of the app, cloud-verified: no email →
+    // /app/login; an unpaid one → the checkout card on that page. An
+    // external URL is not a valid router location, so the hop to Whop is
+    // done by the login page itself.
+    const access = await requireVerifiedAccess(getAppState().email);
+    if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid) — the gate signed the session
+    // out; hand them the first page with the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+    if (access.action === "pay") {
+      leaveForCheckout();
+      throw redirect({ href: "/app/login?pay=1" });
+    }
+  },
+  head: () => ({
+    meta: [
+      { title: "Admin — EA Migrate" },
+      { name: "description", content: "Approve users and manage admins from the Supabase user table." },
+    ],
+  }),
+  component: AppAdmin,
+});
+
+function formatDate(value: string) {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function AppAdmin() {
+  const app = useAppState();
+  const [users, setUsers] = useState<UserRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [busyEmail, setBusyEmail] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
+  // Same last line of defence as the dashboard: the user list is the most
+  // sensitive screen in the app and nothing on it may paint before the cloud
+  // confirms this session is allowed through.
+  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
+      try {
+        result = await requireVerifiedAccess(app.email);
+      } catch {
+        result = { action: "pay" };
+      }
+      if (cancelled) return;
+      if (result.action === "pass") {
+        setAccess("ok");
+        return;
+      }
+      // DEACTIVATED — this session's own account was set to unpaid. The gate
+      // already signed it out; land it on the first page with the notice.
+      if (result.action === "deactivate") {
+        window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      if (result.action === "pay") {
+        leaveForCheckout();
+        window.location.replace("/app/login?pay=1");
+        return;
+      }
+      window.location.replace("/app/login");
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email]);
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    const result = await withAnonFallback(
+      () => adminListUsers(),
+      async () => {
+        const anon = await listUsersAnon();
+        return { enabled: supabaseConfigured, users: anon.users, ...(anon.error ? { error: anon.error } : {}) };
+      },
+    );
+    if (result.enabled && !result.error) {
+      setUsers(result.users);
+      setError(null);
+    } else {
+      setError(result.error ?? "Could not load users");
+    }
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const boot = async () => {
+      if (!supabaseConfigured) {
+        setLoading(false);
+        return;
+      }
+      // UI-level admin check: only admins see the controls. PLATFORM OWNERS
+      // are admins BEFORE the database is consulted (the same rule
+      // registerWithEmail applies) — their raw users row can lag (is_admin
+      // false on a row created before the flag existed), which used to wall
+      // the owner off this page so registered users never showed up.
+      const me = app.email ? await getUserByEmail(app.email) : null;
+      const owner = OWNER_EMAILS.includes((app.email ?? "").trim().toLowerCase());
+      if (!cancelled) setIsAdmin(Boolean(me?.is_admin) || owner);
+      await refresh();
+    };
+    void boot();
+    return () => {
+      cancelled = true;
+    };
+  }, [app.email, refresh]);
+
+  /**
+ * Patch one row on screen after a confirmed write.
+ *
+ * Both toggles used to end with `await refresh()`, so the button came back the
+ * instant the database committed but the row kept showing the OLD flag until
+ * the whole list came back — which reads as a slow button. The value is known,
+ * so paint it directly; the refresh below is only for external changes.
+ */
+  const patchUser = useCallback((email: string, patch: Partial<UserRow>) => {
+    const target = email.trim().toLowerCase();
+    setUsers((current) =>
+      current.map((user) => (user.email.trim().toLowerCase() === target ? { ...user, ...patch } : user)),
+    );
+  }, []);
+
+  const setPaid = async (user: UserRow, value: boolean) => {
+    setBusyEmail(user.email);
+    const result = await withAnonFallback(
+      () => adminSetUserPaid({ data: { email: user.email, value } }),
+      () => setUserFlagAnon(user.email, { is_paid: value }),
+    );
+    setBusyEmail(null);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not update user");
+      return;
+    }
+    toast.success(value ? `${user.email} approved` : `${user.email} set to unpaid`);
+    patchUser(user.email, { is_paid: value });
+    // DEACTIVATING THIS SESSION'S OWN EMAIL — the signed-in account just
+    // lost its access, so kick it out to the first page right away (other
+    // people's sessions are thrown out by the access gate on their own
+    // device the next time it checks).
+    if (!value && user.email.trim().toLowerCase() === (app.email ?? "").trim().toLowerCase()) {
+      appSignOut();
+      window.location.replace("/app/login?deactivated=1");
+    }
+  };
+
+  const setAdmin = async (user: UserRow, value: boolean) => {
+    setBusyEmail(user.email);
+    const result = await withAnonFallback(
+      () => adminSetUserAdmin({ data: { email: user.email, value } }),
+      () => setUserFlagAnon(user.email, { is_admin: value }),
+    );
+    setBusyEmail(null);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not update user");
+      return;
+    }
+    toast.success(value ? `${user.email} is now an admin` : `Admin removed from ${user.email}`);
+    patchUser(user.email, { is_admin: value });
+  };
+
+  if (access !== "ok") {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 pt-safe pb-safe-base text-white">
+        <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+        <p className="text-sm font-semibold text-white/60">Checking your access…</p>
+      </div>
+    );
+  }
+
+  if (!supabaseConfigured) {
+    return (
+      <Panel title="Supabase is not connected">
+        <p className="text-sm leading-6 text-white/60">
+          Add <Key>VITE_SUPABASE_URL</Key> and <Key>VITE_SUPABASE_ANON_KEY</Key> in Settings → Environment,
+          plus <Key>SUPABASE_SERVICE_ROLE_KEY</Key> for the approve / make-admin buttons, then run the SQL in{" "}
+          <span className="font-mono text-white/80">supabase/schema.sql</span>.
+        </p>
+      </Panel>
+    );
+  }
+
+  if (isAdmin === false) {
+    return (
+      <Panel title="Admins only">
+        <p className="text-sm leading-6 text-white/60">
+          The signed-in email is not an admin in the Supabase <span className="font-mono">users</span> table.
+          Ask an existing admin to press “Make Admin” for your email.
+        </p>
+        <OwnerBootstrap
+          email={app.email}
+          onClaimed={() => {
+            setIsAdmin(true);
+            void refresh();
+          }}
+        />
+      </Panel>
+    );
+  }
+
+  return (
+    <>
+      <div className="mx-auto w-full max-w-3xl px-4 py-10">
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.22em] text-primary">Supabase</p>
+          <h1 className="mt-1 text-3xl font-bold">Registered users</h1>
+          <p className="mt-2 text-sm text-muted-foreground">
+            Everyone who entered their email at <span className="font-mono">/app/login</span> — approve payment
+            or grant admin, straight from the database.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => void refresh()}
+          className="h-11 shrink-0 rounded-full border border-primary/40 bg-primary/10 px-5 text-sm font-bold text-primary transition-colors hover:bg-primary/20"
+        >
+          Refresh
+        </button>
+      </div>
+
+      {error && (
+        <div className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
+          {error}
+        </div>
+      )}
+
+      {loading ? (
+        <p className="mt-8 text-sm text-white/50">Loading users…</p>
+      ) : users.length === 0 ? (
+        <p className="mt-8 text-sm text-white/50">No registered users yet.</p>
+      ) : (
+        <ul className="mt-6 space-y-3">
+          {users.map((user) => (
+            <li
+              key={user.id}
+              className="panel flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between"
+            >
+              <div className="min-w-0">
+                <p className="truncate font-semibold">{user.email}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  Registered {formatDate(user.created_at)} ·{" "}
+                  <span className={user.is_paid ? "font-semibold text-emerald-300" : "font-semibold text-amber-300"}>
+                    {user.is_paid ? "Paid" : "Unpaid"}
+                  </span>{" "}
+                  ·{" "}
+                  <span className={user.is_admin ? "font-semibold text-primary" : ""}>
+                    {user.is_admin ? "Admin" : "User"}
+                  </span>
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-wrap gap-2">
+                {user.is_paid ? (
+                  <AdminButton icon={<UserX className="size-4" />} label="Set unpaid" busy={busyEmail === user.email} onClick={() => void setPaid(user, false)} />
+                ) : (
+                  <AdminButton icon={<UserCheck className="size-4" />} label="Approve" primary busy={busyEmail === user.email} onClick={() => void setPaid(user, true)} />
+                )}
+                {user.is_admin ? (
+                  <AdminButton icon={<ShieldOff className="size-4" />} label="Remove admin" busy={busyEmail === user.email} onClick={() => void setAdmin(user, false)} />
+                ) : (
+                  <AdminButton icon={<ShieldCheck className="size-4" />} label="Make Admin" busy={busyEmail === user.email} onClick={() => void setAdmin(user, true)} />
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      </div>
+      <DraggableBotPopup />
+    </>
+  );
+}
+
+/**
+ * One-click bootstrap for the platform owner while the users table has no
+ * admin. Invisible for everyone else; refuses once any admin exists.
+ */
+function OwnerBootstrap({ email, onClaimed }: { email: string | null; onClaimed: () => void }) {
+  const [busy, setBusy] = useState(false);
+  if (!email) return null;
+  const claim = async () => {
+    setBusy(true);
+    const result = await withAnonFallback(
+      () => adminClaimFirstAdmin({ data: { email } }),
+      async () => {
+        if (!OWNER_EMAILS.includes(email.toLowerCase())) return { ok: false, error: "Only the platform owner can bootstrap the first admin" };
+        if ((await countAdminsAnon()) > 0) return { ok: false, error: "An admin already exists" };
+        return setUserFlagAnon(email, { is_admin: true });
+      },
+    );
+    setBusy(false);
+    if (!result.ok) {
+      toast.error(result.error ?? "Could not claim admin");
+      return;
+    }
+    toast.success("You are now the first admin.");
+    onClaimed();
+  };
+  return (
+    <button
+      type="button"
+      onClick={() => void claim()}
+      disabled={busy}
+      className="mt-5 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-6 text-sm font-bold text-primary-foreground transition-transform hover:scale-[1.02] disabled:cursor-wait disabled:opacity-60"
+    >
+      <ShieldCheck className="size-4" /> {busy ? "Claiming…" : "I am the platform owner — make me the first admin"}
+    </button>
+  );
+}
+
+function Panel({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="mx-auto max-w-lg px-4 py-16 text-center">
+      <span className="mx-auto flex size-14 items-center justify-center rounded-full bg-primary/12 glow-ring">
+        <Check className="size-7 text-primary" />
+      </span>
+      <h1 className="mt-5 text-2xl font-bold">{title}</h1>
+      <div className="mt-3">{children}</div>
+    </div>
+  );
+}
+
+function Key({ children }: { children: React.ReactNode }) {
+  return <span className="rounded bg-white/10 px-1.5 py-0.5 font-mono text-[12px] text-white/85">{children}</span>;
+}
+
+function AdminButton({
+  icon,
+  label,
+  onClick,
+  busy,
+  primary,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+  busy?: boolean;
+  primary?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={busy}
+      className={`flex h-10 items-center gap-2 rounded-full px-4 text-sm font-bold transition-colors disabled:cursor-wait disabled:opacity-60 ${
+        primary ? "bg-primary text-primary-foreground hover:bg-primary/90" : "border border-white/15 text-white/75 hover:border-white/35 hover:text-white"
+      }`}
+    >
+      {icon} {busy ? "Saving…" : label}
+    </button>
+  );
+}

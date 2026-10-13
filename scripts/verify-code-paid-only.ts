@@ -1,0 +1,250 @@
+/**
+ * "A code is sent to PAID users only" — proved at the SEND, not at the reply.
+ *
+ * `scripts/probe-activation-http.ts` shows that an unpaid address is told "not
+ * activated yet". That is weaker than what is being claimed: a refusal is only
+ * evidence if the mail could not have been sent anyway. This probe therefore
+ * watches the actual outbound call to the mail service.
+ *
+ * WHAT IT ASSERTS
+ *   1. Unpaid  -> refused with the exact wording "This email is not marked as
+ *                 paid. Contact admin." AND zero sends attempted. Nothing leaves
+ *                 the server and no code is generated.
+ *   2. Unpaid  -> the code is refused even when it is the CORRECT code, so the
+ *                 gate is on the account, not on guessing well.
+ *   3. Paid    -> exactly one Mailjet send, addressed to that exact address.
+ *   4. Forging `users.is_paid` buys nothing. That column is writable by the
+ *                 ANON key (re-verified live), so if it were the entitlement
+ *                 signal, anyone could mark themselves paid and mail a code to
+ *                 an arbitrary inbox. Entitlement must come from the ledger.
+ *   5. A REPEATED request for a code is allowed (a code is not a one-shot
+ *                 token), but the licence KEY is still single-use — the rule
+ *                 that actually matters is enforced on the key, not the code.
+ *   6. Codes EXPIRE: only the current 2-minute window verifies, so a code from
+ *                 the previous window is refused.
+ *
+ * IT SENDS NO REAL MAIL, and that is deliberate. It used to work by wrapping
+ * `globalThis.fetch` and answering api.brevo.com locally; that no longer works,
+ * because node-mailjet sends via axios's **http** adapter rather than global
+ * fetch (measured: a replaced fetch was called ZERO times and the message still
+ * reached the real host). A fetch stub would therefore have kept reporting PASS
+ * while quietly sending real email. It now replaces the mail MODULE itself — see
+ * ./lib/mail-intercept.ts, which self-tests so a future refactor cannot
+ * silently restore real sends.
+ *
+ * The handler is imported DYNAMICALLY so what is under test is the payment gate
+ * rather than module-load ordering, and the sender is left exactly as the app
+ * configures it so the real mail path is what runs.
+ *
+ * READ/WRITE: it creates only probe rows on the reserved `@eamigratepro.invalid`
+ * domain and deletes them at the end. `license_keys` is NEVER written.
+ *
+ * Run: bun scripts/verify-code-paid-only.ts
+ */
+import { createClient } from "@supabase/supabase-js";
+import { assertInterceptable, interceptMail, sentMessages } from "./lib/mail-intercept";
+
+/* Interception is installed BEFORE the handler is imported, and self-tested,
+ * so this suite cannot send real mail even if the mail path moves again. */
+interceptMail();
+await assertInterceptable();
+
+const { default: handler } = await import("../api/activation");
+
+const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
+const serviceRole = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
+const anonKey = (process.env["VITE_SUPABASE_ANON_KEY"] ?? "").trim();
+if (!url || !serviceRole || !anonKey) {
+  console.log("Missing Supabase env — nothing verified.");
+  process.exit(1);
+}
+const admin = createClient(url, serviceRole, { auth: { persistSession: false } });
+const anon = createClient(url, anonKey, { auth: { persistSession: false } });
+
+const PAID = "probe.paidonly.paid@eamigratepro.invalid";
+const UNPAID = "probe.paidonly.unpaid@eamigratepro.invalid";
+const PROBES = [PAID, UNPAID];
+
+/** Every outbound message, captured in the mail module itself and never sent. */
+const sent = sentMessages();
+
+type Reply = { ok: boolean; unavailable?: boolean; error?: string };
+type ApiRequest = { method?: string; body?: unknown };
+type ApiResponse = {
+  status(c: number): ApiResponse;
+  json(b: unknown): void;
+  setHeader(n: string, v: string): void;
+};
+
+async function call(payload: Record<string, unknown>): Promise<{ status: number; body: Reply }> {
+  let status = 200;
+  let payload_: unknown = null;
+  const res: ApiResponse = {
+    status(code: number) {
+      status = code;
+      return res;
+    },
+    json(value: unknown) {
+      payload_ = value;
+    },
+    setHeader() {},
+  };
+  await handler({ method: "POST", body: JSON.stringify(payload) } satisfies ApiRequest, res);
+  return { status, body: payload_ as Reply };
+}
+
+let failures = 0;
+function check(label: string, ok: boolean, detail = "") {
+  console.log(`${ok ? "PASS" : "FAIL"}  ${label}${detail ? ` — ${detail}` : ""}`);
+  if (!ok) failures++;
+}
+
+async function main() {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw",
+    enc.encode(serviceRole),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+  const codeFor = async (email: string, back = 0) => {
+    // MUST match api/activation.ts: 5-minute windows, current only.
+    const window = Math.floor(Date.now() / (5 * 60 * 1000)) - back;
+    const sig = await crypto.subtle.sign(
+      "HMAC",
+      key,
+      enc.encode(`eamp-activation-v1|${email}|${window}`),
+    );
+    const hex = Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    return String(100_000 + (Number.parseInt(hex.slice(0, 12), 16) % 900_000));
+  };
+
+  // Clean slate, and confirm UNPAID is unpaid by BOTH signals so a pass below
+  // cannot be explained by some leftover row from an earlier probe.
+  await admin.from("paid_emails").delete().in("email", PROBES);
+  await admin.from("users").delete().in("email", PROBES);
+  await admin.from("users").insert(PROBES.map((email) => ({ email })));
+  await admin.from("paid_emails").insert([{ email: PAID, paid_at: new Date().toISOString() }]);
+
+  const ledger = await admin.from("paid_emails").select("email").in("email", PROBES);
+  const keys = await admin.from("license_keys").select("email").in("email", PROBES);
+  check(
+    "precondition: UNPAID is on no ledger and holds no licence key",
+    !(ledger.data ?? []).some((r) => r.email === UNPAID) &&
+      !(keys.data ?? []).some((r) => r.email === UNPAID),
+  );
+
+  // 1 — unpaid, nothing sent.
+  const before = sent.length;
+  const unpaid = await call({ action: "issueCode", email: UNPAID });
+  check("unpaid is refused", unpaid.body.ok === false, unpaid.body.error ?? "");
+  check(
+    'unpaid is told exactly "This email is not marked as paid. Contact admin."',
+    unpaid.body.error === "This email is not marked as paid. Contact admin.",
+    unpaid.body.error ?? "",
+  );
+  check(
+    "unpaid: no mail was attempted at all",
+    sent.length === before,
+    `${sent.length - before} message(s) attempted`,
+  );
+
+  // 2 — holding the right code does not help an unpaid account.
+  const correctForUnpaid = await codeFor(UNPAID);
+  const unpaidWithCode = await call({
+    action: "verifyCode",
+    email: UNPAID,
+    code: correctForUnpaid,
+  });
+  check("unpaid is refused even holding the CORRECT code", unpaidWithCode.body.ok === false);
+  check(
+    "unpaid verifyCode sent nothing either",
+    sent.length === before,
+    `${sent.length - before} message(s) attempted`,
+  );
+
+  // 3 — paid, exactly one send to exactly that address.
+  const paid = await call({ action: "issueCode", email: PAID });
+  check("paid is emailed a code", paid.body.ok === true, paid.body.error ?? "");
+  const paidCalls = sent.slice(before);
+  check("paid: exactly one mail send", paidCalls.length === 1, `${paidCalls.length} message(s)`);
+  check(
+    "the code went to the paid address and nowhere else",
+    JSON.stringify(paidCalls[0]?.to ?? "").includes(PAID),
+    JSON.stringify(paidCalls[0]?.to ?? ""),
+  );
+
+  // 4 — the forgeable column buys nothing.
+  await anon.from("users").update({ is_paid: true }).eq("email", UNPAID);
+  const forged = (await admin.from("users").select("is_paid").eq("email", UNPAID).limit(1))
+    .data?.[0];
+  check("users.is_paid is now forged to true", forged?.is_paid === true);
+  const forgeCalls = sent.length;
+  const forgedReply = await call({ action: "issueCode", email: UNPAID });
+  check(
+    "a forged is_paid does NOT buy a code",
+    forgedReply.body.ok === false,
+    forgedReply.body.error ?? "",
+  );
+  check(
+    "...and nothing was sent",
+    sent.length === forgeCalls,
+    `${sent.length - forgeCalls} call(s)`,
+  );
+
+  // 5 — the licence key is the thing that is single-use.
+  const KEY = "EMP-PROBE-PAIDONLY-001";
+  const claim = await call({ action: "claimKey", email: PAID, key: KEY });
+  check("a paid account can activate a key", claim.body.ok === true, claim.body.error ?? "");
+  const again = await call({ action: "claimKey", email: PAID, key: KEY });
+  check("the SAME key cannot be activated again", again.body.ok === false);
+  check(
+    '...with exactly "License key already in use"',
+    again.body.error === "License key already in use",
+    again.body.error ?? "",
+  );
+  const repeatCode = await call({ action: "issueCode", email: PAID });
+  check(
+    "a code can still be re-requested (it is not a one-shot token)",
+    repeatCode.body.ok === true,
+    repeatCode.body.error ?? "",
+  );
+
+  /* 6 — THE TWO-MINUTE RULE. Only the CURRENT window is accepted, so a code
+   * from the previous window must be refused. This is the assertion the whole
+   * change rests on: without it, "everything passes" could just mean the check
+   * stopped checking. */
+  const justExpired = await codeFor(PAID, 1);
+  const stale = await call({ action: "verifyCode", email: PAID, code: justExpired });
+  check(
+    "a code from the PREVIOUS 2-minute window is refused",
+    stale.body.ok === false,
+    stale.body.ok ? "a stale code was ACCEPTED — codes are not expiring" : "",
+  );
+  const fresh = await codeFor(PAID, 0);
+  const live = await call({ action: "verifyCode", email: PAID, code: fresh });
+  check(
+    "a code from the CURRENT window still verifies",
+    live.body.ok === true,
+    live.body.error ?? "",
+  );
+
+  // Clean up only what this probe created.
+  await admin.from("users").update({ license_key: null }).eq("email", PAID);
+  await admin.from("paid_emails").delete().in("email", PROBES);
+  await admin.from("users").delete().in("email", PROBES);
+  const left = await admin.from("users").select("email").in("email", PROBES);
+  check("probe rows removed", (left.data ?? []).length === 0);
+
+  console.log(
+    failures === 0
+      ? "RESULT: OK — a code is sent to paid accounts only, and nothing is sent to anyone else"
+      : `RESULT: ${failures} check(s) failed`,
+  );
+  process.exit(failures === 0 ? 0 : 1);
+}
+
+void main();

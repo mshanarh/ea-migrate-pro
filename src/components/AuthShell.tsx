@@ -24,15 +24,18 @@ export function AuthShell({
     <div className="min-h-screen bg-[#0A0A0A] text-white hero-glow">
       <main className="mx-auto w-full max-w-md px-5 pt-12 pb-16">
         <div className="flex flex-col items-center text-center">
-          <Link to="/" className="flex size-16 items-center justify-center rounded-2xl border border-[#38BDF8]/20 bg-[#1A2332] shadow-[0_0_24px_rgb(0_168_255_/_0.2)]">
+          <Link
+            to="/"
+            className="flex size-20 items-center justify-center rounded-full border border-[#38BDF8]/25 bg-white/5 p-2 shadow-[0_0_36px_rgb(0_168_255_/_0.28)] transition-transform duration-300 hover:scale-105"
+          >
             <img
-              src="/ea-migrate-platform-robot.jpg"
-              alt="EA Migrate Pro"
-              className="size-16 object-contain"
+              src="/logo.png"
+              alt="EA Migrate"
+              className="size-full object-contain"
             />
           </Link>
-          <h1 className="mt-5 text-4xl font-bold tracking-tight text-white">
-            EA <span className="text-[#38BDF8]">Migrate</span> Pro
+          <h1 className="mt-6 text-4xl font-bold tracking-tight text-white">
+            EA <span className="text-[#38BDF8]">Migrate</span>
           </h1>
           <p className="mt-2 text-xs font-semibold tracking-[0.28em] text-[#38BDF8]/80 uppercase">
             Premium MQL bot management

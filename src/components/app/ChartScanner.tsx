@@ -1,0 +1,1206 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Waves } from "lucide-react";
+import { analyzeMarket, type ScannerAnalysis } from "@/lib/market-scanner-core";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { toast } from "sonner";
+import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
+import { usePlatform } from "@/lib/platform";
+import { clearTradeHistory, useTradeHistory } from "@/lib/trade-history";
+
+type ScannerTimeframe = "5m" | "15m" | "30m" | "1h" | "4h" | "1d";
+
+const SCANNER_TIMEFRAMES: ScannerTimeframe[] = ["5m", "15m", "30m", "1h", "4h", "1d"];
+
+/** Every timeframe a trader can attach a chart screenshot for. */
+const TIMEFRAME_CHARTS_PLACEHOLDER: Record<ScannerTimeframe, string | null> = {
+  "5m": null,
+  "15m": null,
+  "30m": null,
+  "1h": null,
+  "4h": null,
+  "1d": null,
+};
+
+/**
+ * Scanner lifecycle states (per product spec):
+ *  loading  — waiting for market data
+ *  no-data  — broker data unavailable
+ *  ready    — valid setup with Entry/SL/TP (the scanner ALWAYS returns BUY or SELL)
+ *  executing— order is being submitted
+ *  executed — order successfully placed
+ *  error    — backend/broker error
+ */
+export type ScannerPhase = "idle" | "loading" | "no-data" | "ready" | "executing" | "executed" | "error";
+
+export type ExecutionPlan = {
+  symbol: string;
+  lot: string;
+  trades: number;
+  direction: "BUY" | "SELL";
+  entry: string;
+  stopLoss: string;
+  takeProfit: string;
+  riskReward: string;
+  confidence: number;
+  /** WAIT blocks execution entirely — the engine refuses low-quality setups. */
+  strength: "WAIT" | "WEAK" | "MODERATE" | "STRONG";
+  executionReady: boolean;
+  /** True when levels come from the estimated-price fallback — the broker
+   *  rejects SL/TP computed from them (they sit on a simulated price scale),
+   *  so execution goes at market without stops. */
+  estimated: boolean;
+};
+
+export type ExecutionOutcome = {
+  ok: boolean;
+  /** Broker order ticket / position id when available. */
+  orderId?: string;
+  /** Filled price when the broker echoes it. */
+  executionPrice?: number;
+  /** "x/y trades executed" style summary, or the real broker/backend error. */
+  message: string;
+};
+
+type Props = {
+  /** Symbols the mentor attached to this bot (EA creation on the mentor portal). */
+  symbols: string[];
+  /** Per-symbol lot/max trades saved on the robot (falls back to sensible defaults). */
+  pairs?: { symbol: string; lotSize: string; maxTrades: string; direction?: "BOTH" | "BUY" | "SELL" }[];
+  /** Accent color hex, applied to buttons, bullets and highlights. */
+  accent: string;
+  /** Remaining scans today (out of 5). Infinity for unlimited admins. */
+  scansLeft: number;
+  /** Called when the user taps Scan — registers the daily scan. Return false to block (limit reached). */
+  onScanStart: () => boolean;
+  /**
+   * Fires the REAL trade through the server-side MT5 integration.
+   * onProgress streams live status ("broker connection opening…") while the
+   * order is in flight; the Promise resolves with the broker's actual outcome.
+   */
+  onExecute: (
+    plan: ExecutionPlan,
+    onProgress: (message: string) => void,
+  ) => Promise<ExecutionOutcome>;
+};
+
+const SCAN_STEPS = [
+  "Connecting to the live MT5 quote...",
+  "Loading recent candles...",
+  "Measuring EMA trend structure...",
+  "Checking RSI momentum...",
+  "Calculating ATR volatility and swing levels...",
+  "Building entry, stop-loss and take-profit...",
+];
+
+// Phone screenshots run 2–8 MB — the old 5 MB cap rejected them with the
+// "screenshots error" before anything displayed. 12 MB covers every device;
+// big files are recompressed to a max 1600px-wide data URL below.
+const MAX_CHART_BYTES = 12 * 1024 * 1024;
+const MAX_CHART_DIMENSION = 1600;
+
+const DETECTED_TIMEFRAMES: Record<string, ScannerTimeframe> = {
+  // MT5 period codes (XAUUSD,H1.png / BTCUSD_M15_2026.png) in both orders.
+  m1: "5m", "1m": "5m", "1min": "5m", "1minute": "5m",
+  m5: "5m", "5m": "5m", "5min": "5m", "5minute": "5m",
+  m15: "15m", "15m": "15m", "15min": "15m", "15minute": "15m",
+  m30: "30m", "30m": "30m", "30min": "30m", "30minute": "30m",
+  h1: "1h", "1h": "1h", "1hr": "1h", "1hour": "1h", hourly: "1h",
+  h2: "1h",
+  h4: "4h", "4h": "4h", "4hr": "4h", "4hour": "4h",
+  h8: "4h", h12: "4h",
+  d1: "1d", "1d": "1d", "1day": "1d", daily: "1d",
+  w1: "1d", "1w": "1d", "1week": "1d", weekly: "1d",
+  mn1: "1d", mn: "1d", "1mo": "1d", monthly: "1d",
+};
+
+/**
+ * Reads the timeframe out of the screenshot's FILENAME. MT5 saves chart
+ * pictures as "SYMBOL,PERIOD.png" (XAUUSD,H4.png) or "SYMBOL_PERIOD_date"
+ * (BTCUSD_M15_2026.png), and phones produce names like "15m chart.png" —
+ * both token orders (H1 and 1H, M15 and 15M) are matched, so the scan runs
+ * on the chart that was ACTUALLY uploaded instead of silently falling back
+ * to H1 (that mismatch is what caused trades against the analyzed chart).
+ * Falls back to 1h only when the name carries no timeframe hint at all.
+ */
+function detectTimeframe(file: File): ScannerTimeframe {
+  const raw = (file.name || "").toLowerCase().replace(/\.[a-z0-9]+$/, "");
+  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean);
+  for (const token of tokens) {
+    const hit = DETECTED_TIMEFRAMES[token];
+    if (hit) return hit;
+  }
+  // Separated pairs the tokenizer splits: "4 hour", "15 min", "1 h".
+  for (let index = 0; index < tokens.length - 1; index += 1) {
+    const number = tokens[index] ?? "";
+    const unit = (tokens[index + 1] ?? "").replace(/s$/, "");
+    const hit = DETECTED_TIMEFRAMES[`${number}${unit}`];
+    if (hit) return hit;
+  }
+  return "1h";
+}
+
+function fmtPrice(value: number): string {
+  const magnitude = Math.abs(value);
+  return value.toFixed(magnitude >= 1000 ? 2 : magnitude >= 10 ? 3 : 5);
+}
+
+function fmtSignalLevel(value: number): string {
+  return value > 0 ? fmtPrice(value) : "—";
+}
+
+const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
+  BUY: "#22c55e",
+  SELL: "#ef4444",
+};
+
+/** Derives the visible scanner phase from the analysis + execution state. */
+function phaseOf(
+  scanning: boolean,
+  analysis: ScannerAnalysis | null,
+  analysisError: string,
+  executing: boolean,
+  executionError: string,
+): Exclude<ScannerPhase, "idle" | "executing" | "executed"> | ScannerPhase {
+  if (executing) return "executing";
+  if (executionError) return "error";
+  if (scanning) return "loading";
+  if (analysisError) return "error";
+  if (!analysis) return "idle";
+  // No NO TRADE state: the server always returns BUY or SELL. The only
+  // non-ready outcome is genuinely unavailable broker data.
+  return analysis.dataStatus === "no-data" ? "no-data" : "ready";
+}
+
+const PHASE_META: Record<
+  Exclude<ScannerPhase, "idle">,
+  { label: string; color: string; hint: string }
+> = {
+  loading: { label: "LOADING", color: "#facc15", hint: "Reading live broker data..." },
+  "no-data": { label: "NO DATA", color: "#f87171", hint: "Broker data unavailable for this symbol." },
+  ready: { label: "READY TO EXECUTE", color: "#22c55e", hint: "Signal with Entry, Stop-Loss and Take-Profit." },
+  executing: { label: "EXECUTING", color: "#facc15", hint: "Sending the order through the secure server link..." },
+  executed: { label: "EXECUTED", color: "#22c55e", hint: "Order placed with the broker." },
+  error: { label: "ERROR", color: "#f87171", hint: "The provider reported a problem — details below." },
+};
+
+export default function ChartScanner({
+  symbols,
+  pairs = [],
+  accent,
+  scansLeft,
+  onScanStart,
+  onExecute,
+}: Props) {
+  const platform = usePlatform();
+  const isIos = platform === "ios";
+  const cardRadius = isIos ? "rounded-[20px]" : "rounded-[24px]";
+  const symbolRadius = isIos ? "rounded-2xl" : "rounded-full";
+  const [symbol, setSymbol] = useState("");
+  const [timeframe, setTimeframe] = useState<ScannerTimeframe>("1h");
+  const [trades, setTrades] = useState(5);
+  const [lot, setLot] = useState("0.01");
+  const [scanning, setScanning] = useState(false);
+  const [step, setStep] = useState(0);
+  const [analysis, setAnalysis] = useState<ScannerAnalysis | null>(null);
+  const [analysisError, setAnalysisError] = useState("");
+  // LIVE QUOTES sheet — the same EA symbols, real-time prices.
+  const [quotesOpen, setQuotesOpen] = useState(false);
+  // ── Per-timeframe screenshot library: each timeframe of the selected symbol
+  // can hold its own chart screenshot (attach several files at once — each is
+  // auto-assigned by the timeframe detected in its filename, e.g.
+  // "XAUUSD_15m.png"; files without a detectable timeframe land on the
+  // currently selected one). Switching timeframe swaps the displayed chart.
+  const [timeframeCharts, setTimeframeCharts] = useState<Record<ScannerTimeframe, string | null>>(TIMEFRAME_CHARTS_PLACEHOLDER);
+  const [chartError, setChartError] = useState("");
+  const [dragging, setDragging] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Recent-trades viewer (RECENT TRADES button in the header).
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const history = useTradeHistory();
+
+  // ── Execution state ────────────────────────────────────────────────
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [executing, setExecuting] = useState(false);
+  const [executed, setExecuted] = useState(false);
+  const [execError, setExecError] = useState("");
+  const [execResult, setExecResult] = useState<ExecutionOutcome | null>(null);
+  const [execProgress, setExecProgress] = useState("");
+  /** Visible lifecycle: Offline → Connecting → Connected → Executing → done → Disconnected. */
+  const [execStage, setExecStage] = useState<
+    "OFFLINE" | "CONNECTING" | "CONNECTED" | "EXECUTING" | "EXECUTED" | "DISCONNECTED"
+  >("OFFLINE");
+
+  /** Paints the status chain with the current stage highlighted. */
+  const statusChain = [
+    { label: "OFFLINE", at: 0 },
+    { label: "CONNECTING", at: 1 },
+    { label: "CONNECTED", at: 2 },
+    { label: "EXECUTING", at: 3 },
+    { label: "EXECUTED", at: 4 },
+    { label: "DISCONNECTED", at: 5 },
+  ] as const;
+
+  const hasSymbols = symbols.length > 0;
+  const lotValid = Number(lot) > 0;
+  // Scanning is ACCOUNT-INDEPENDENT: public market data powers the analysis,
+  // so no MT5/MetaApi account is required to scan any symbol.
+  const scanLocked = !symbol || !lotValid || trades < 1;
+  const lockReason = !symbol
+    ? "Add a symbol to your EA"
+    : !lotValid
+      ? "Set a lot size"
+      : "";
+
+  const resetResult = () => {
+    setExecuted(false);
+    setExecError("");
+    setExecResult(null);
+    setExecProgress("");
+    setExecStage("OFFLINE");
+  };
+
+  // Preselect the first mentor symbol and its saved lot/trades once known.
+  useEffect(() => {
+    if (symbols.length === 0 || symbol) return;
+    const first = symbols[0];
+    if (!first) return;
+    setSymbol(first);
+    const saved = pairs.find((pair) => pair.symbol === first);
+    setLot(saved?.lotSize || "0.01");
+    const savedTrades = Number(saved?.maxTrades ?? 0);
+    setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [symbols]);
+
+  /**
+   * Reads the file straight to a JPEG data URL (max-1600px, quality 0.85).
+   * ANDROID GALLERY PHOTOS: the file is read with FileReader FIRST (data URLs
+   * decode in every WebView, unlike object URLs created from content://
+   * picks); the canvas only DOWNSCALES, and any decode/encode failure just
+   * resolves with the raw data URL so the picture ALWAYS shows.
+   */
+  const compressImage = (file: File): Promise<string> =>
+    new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = String(reader.result);
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const scale = Math.min(1, MAX_CHART_DIMENSION / Math.max(img.width, img.height));
+            const canvas = document.createElement("canvas");
+            canvas.width = Math.max(1, Math.round(img.width * scale));
+            canvas.height = Math.max(1, Math.round(img.height * scale));
+            const ctx = canvas.getContext("2d");
+            if (!ctx) {
+              resolve(result);
+              return;
+            }
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            // A failed canvas encode on Android returns "data:," — keep the
+            // raw data URL instead of storing a dead image.
+            const encoded = canvas.toDataURL("image/jpeg", 0.85);
+            resolve(encoded.startsWith("data:image/") && encoded.length >= 1024 ? encoded : result);
+          } catch {
+            resolve(result);
+          }
+        };
+        img.onerror = () => resolve(result);
+        img.src = result;
+      };
+      reader.onerror = () => resolve("");
+      reader.readAsDataURL(file);
+    });
+
+  const pickCharts = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    setChartError("");
+    let assigned = 0;
+    const errors: string[] = [];
+    // Every selected file is routed to its OWN timeframe slot (detected from
+    // the filename); undetectable files land on the current timeframe.
+    Array.from(files).forEach((file) => {
+      // ANDROID GALLERY PHOTOS: the picker frequently sends an EMPTY file.type
+      // (content:// URIs carry no MIME) — accept by MIME, empty type (the
+      // decoder decides), or a known image extension; refuse the rest.
+      const isImage =
+        file.type.startsWith("image/") ||
+        file.type === "" ||
+        /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i.test(file.name);
+      if (!isImage) {
+        errors.push(`${file.name}: only image files can be attached.`);
+        return;
+      }
+      if (file.size > MAX_CHART_BYTES) {
+        errors.push(`${file.name}: too large (max 12 MB).`);
+        return;
+      }
+      const slot = detectTimeframe(file);
+      assigned += 1;
+      compressImage(file)
+        .then((dataUrl) => {
+          if (!dataUrl) {
+            errors.push(`${file.name || "That file"}: could not be read.`);
+            return;
+          }
+          // The newest upload switches the view — the trader sees exactly
+          // what they just attached, and its auto-detected timeframe drives
+          // the next scan.
+          setTimeframeCharts((prev) => ({ ...prev, [slot]: dataUrl }));
+          setTimeframe(slot);
+          setAnalysis(null);
+          setAnalysisError("");
+        })
+        .catch(() => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            setTimeframeCharts((prev) => ({ ...prev, [slot]: String(reader.result) }));
+            setTimeframe(slot);
+            setAnalysis(null);
+            setAnalysisError("");
+          };
+          reader.readAsDataURL(file);
+        });
+    });
+    if (assigned > 0) resetResult();
+    if (errors.length > 0) setChartError(errors.join(" "));
+  };
+
+  const chartSrc = timeframeCharts[timeframe];
+  const attachedTimeframes = SCANNER_TIMEFRAMES.filter((tf) => timeframeCharts[tf] !== null);
+
+  const runScan = useCallback(async () => {
+    if (scanning) return;
+    // One of the 5 daily scans is consumed here — the route blocks when out of scans.
+    if (!onScanStart()) return;
+    setScanning(true);
+    setStep(0);
+    setAnalysis(null);
+    setAnalysisError("");
+    resetResult();
+    // Narrated steps advance while the real analysis runs. The result shows as
+    // soon as the live analysis responds — no artificial delay.
+    let index = 0;
+    const interval = window.setInterval(() => {
+      index += 1;
+      setStep(Math.min(index, SCAN_STEPS.length - 1));
+    }, 650);
+    try {
+      const result = await analyzeMarket({
+        symbol,
+        timeframe,
+      });
+      if (!result.ok) {
+        setAnalysisError(result.message);
+      } else {
+        setAnalysis(result.analysis);
+      }
+    } catch {
+      setAnalysisError("Could not run the chart analysis. Check your connection and try again.");
+    } finally {
+      window.clearInterval(interval);
+      setScanning(false);
+    }
+  }, [symbol, timeframe, onScanStart, scanning]);
+
+  const startScan = () => {
+    if (scanning || scanLocked) return;
+    void runScan();
+  };
+
+  const selectSymbol = (item: string) => {
+    if (item === symbol) return;
+    setSymbol(item);
+    const saved = pairs.find((pair) => pair.symbol === item);
+    setLot(saved?.lotSize || "0.01");
+    const savedTrades = Number(saved?.maxTrades ?? 0);
+    setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
+    // Screenshots belong to the symbol they were taken on — a new symbol
+    // starts with an empty per-timeframe library (never show chart X on Y).
+    setTimeframeCharts(TIMEFRAME_CHARTS_PLACEHOLDER);
+    setAnalysis(null);
+    setAnalysisError("");
+    resetResult();
+  };
+
+  // EXECUTE pressed → open the confirmation popup with the full plan.
+  const openConfirm = () => {
+    if (!analysis || analysis.dataStatus === "no-data" || executing) return;
+    resetResult();
+    setConfirmOpen(true);
+  };
+
+  // Confirmed → fire the real order through the server-side integration.
+  const confirmExecute = useCallback(async () => {
+    if (!analysis || executing) return;
+    // Pair type filter (Quotes page): BUY ONLY / SELL ONLY pairs refuse
+    // setups on the other side of the market.
+    const pairDirection = pairs.find((pair) => pair.symbol === analysis.symbol)?.direction ?? "BOTH";
+    if (pairDirection !== "BOTH" && analysis.signal !== pairDirection) {
+      setConfirmOpen(false);
+      setExecError(
+        `This pair is ${pairDirection === "BUY" ? "BUY ONLY" : "SELL ONLY"} — the scan found a ${analysis.signal} setup. Change the pair type on the Quotes page.`,
+      );
+      return;
+    }
+    setConfirmOpen(false);
+    setExecuting(true);
+    setExecuted(false);
+    setExecError("");
+    setExecResult(null);
+    setExecProgress("Connecting to broker...");
+    setExecStage("CONNECTING");
+    try {
+      const outcome = await onExecute(
+        {
+          symbol: analysis.symbol,
+          lot,
+          trades,
+          direction: analysis.signal as "BUY" | "SELL",
+          entry: fmtPrice(analysis.entry),
+          stopLoss: fmtPrice(analysis.stopLoss),
+          takeProfit: fmtPrice(analysis.takeProfit),
+          riskReward: analysis.riskReward,
+          confidence: analysis.confidence,
+          strength: analysis.strength,
+          executionReady: analysis.executionReady,
+          estimated: analysis.dataSource.startsWith("Estimated"),
+        },
+        (message) => {
+          setExecProgress(message);
+          // Derive the visible chain stage from the real progress stream.
+          if (/connecting/i.test(message)) setExecStage("CONNECTING");
+          else if (/verified|connected/i.test(message)) setExecStage("CONNECTED");
+          else if (/executing|order/i.test(message)) setExecStage("EXECUTING");
+          else if (/disconnect/i.test(message)) setExecStage("DISCONNECTED");
+        },
+      );
+      if (outcome.ok) {
+        setExecResult(outcome);
+        setExecuted(true);
+        setExecStage("EXECUTED");
+      } else {
+        // The order did NOT go through — the chain must reflect that the
+        // connection opened, was verified and then closed, never that the
+        // trade was executed.
+        setExecError(outcome.message);
+        setExecStage("DISCONNECTED");
+      }
+      // The server closed the temporary connection — reflect it, then rest offline.
+      window.setTimeout(() => setExecStage((stage) => (stage === "EXECUTED" ? "DISCONNECTED" : stage)), 1600);
+    } catch {
+      setExecError("Could not reach the execution service. Check your connection and try again.");
+      setExecStage("DISCONNECTED");
+    } finally {
+      setExecuting(false);
+      setExecProgress("");
+    }
+  }, [analysis, executing, lot, onExecute, pairs, trades]);
+
+  const phase = phaseOf(scanning, analysis, analysisError, executing, execError);
+
+  return (
+    <div className="mx-auto flex w-full max-w-5xl flex-col pt-safe pb-safe-nav" style={{ backgroundColor: "#090c10" }}>
+      {/* Header — title, scans-left badge */}
+      <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-2 sm:px-6">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="size-2 rounded-full" style={{ background: "#22c55e" }} />
+            <span className="text-[10px] font-bold tracking-[0.2em] text-white/40">
+              MARKET FEED LIVE
+            </span>
+          </div>
+          <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
+          <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
+            Public market data builds executable trade plans with entry, stop-loss and take-profit. Execute sends the order to your saved MT5 account.
+          </p>
+        </div>
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          <span
+            data-testid="text-scans-remaining"
+            className="rounded-[var(--plat-radius-control)] border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
+          >
+            {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
+          </span>
+          {/* RECENT TRADES — press to review everything that executed. */}
+          <button
+            type="button"
+            onClick={() => setHistoryOpen(true)}
+            data-testid="button-recent-trades"
+            className="flex items-center gap-1.5 rounded-[var(--plat-radius-control)] border px-3 py-2 text-[11px] font-black tracking-wide transition-colors"
+            style={{ borderColor: `${accent}66`, color: accent, background: `${accent}12` }}
+          >
+            <svg viewBox="0 0 24 24" className="size-4" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+              <path d="M3 12h4l3-8 4 16 3-8h4" />
+            </svg>
+            RECENT TRADES
+          </button>
+        </div>
+      </div>
+
+      {/* Recent trades dialog — full execution log, newest first. */}
+      <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
+        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0f13] p-5 text-white sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black tracking-tight">Recent trades</DialogTitle>
+            <DialogDescription className="text-sm text-white/50">
+              Every execution fired from this device, newest first.
+            </DialogDescription>
+          </DialogHeader>
+          {history.length === 0 ? (
+            <p className="py-6 text-center text-sm text-white/40">
+              No trades yet — scan a symbol and press Execute.
+            </p>
+          ) : (
+            <ul className="mt-2 space-y-2">
+              {history.map((trade) => (
+                <li
+                  key={trade.id}
+                  className="rounded-2xl border border-white/8 bg-white/[0.03] p-3"
+                  style={{ borderLeft: `3px solid ${trade.ok ? "#22c55e" : "#f87171"}` }}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span
+                        className="rounded-md px-1.5 py-0.5 text-[10px] font-black"
+                        style={{
+                          background: trade.direction === "BUY" ? "rgba(34,197,94,0.15)" : "rgba(239,68,68,0.15)",
+                          color: trade.direction === "BUY" ? "#4ade80" : "#f87171",
+                        }}
+                      >
+                        {trade.direction}
+                      </span>
+                      <span className="truncate text-sm font-bold">{trade.symbol}</span>
+                      <span className="text-[11px] text-white/40">{trade.lot} lot × {trade.trades}</span>
+                    </span>
+                    <span
+                      className="shrink-0 text-[10px] font-black uppercase"
+                      style={{ color: trade.ok ? "#4ade80" : "#f87171" }}
+                    >
+                      {trade.filled}
+                    </span>
+                  </div>
+                  <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-white/40">
+                    <span className="truncate">{trade.detail}</span>
+                    <span className="shrink-0">{new Date(trade.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>
+                  </div>
+                </li>
+              ))}
+            </ul>
+          )}
+          {history.length > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                clearTradeHistory();
+                toast.success("Trade history cleared");
+              }}
+              className="mt-3 h-11 w-full rounded-full border border-white/10 text-[12px] font-bold text-white/50 hover:text-white/80"
+            >
+              Clear history
+            </button>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* SCANNER STATE banner */}
+      {phase !== "idle" && (
+        <div
+          data-testid="banner-scanner-state"
+          className="plat-card mx-3 flex items-center justify-between border px-4 py-3 sm:mx-6"
+          style={{ borderColor: `${PHASE_META[phase].color}55`, backgroundColor: `${PHASE_META[phase].color}0f` }}
+        >
+          <span className="flex items-center gap-2">
+            <span className="size-2 animate-pulse rounded-full" style={{ background: PHASE_META[phase].color }} />
+            <span className="text-[12px] font-black tracking-[0.18em]" style={{ color: PHASE_META[phase].color }}>
+              {PHASE_META[phase].label}
+            </span>
+          </span>
+          <span className="text-right text-[11px] text-white/50">{PHASE_META[phase].hint}</span>
+        </div>
+      )}
+
+      {/* Optional screenshot — the signal is calculated from MT5 market data. */}
+      <div
+        className={`relative mx-3 mt-3 min-h-[220px] overflow-hidden border-2 border-dashed sm:mx-6 sm:min-h-[280px] ${isIos ? "rounded-[20px]" : "rounded-[26px]"}`}
+        style={{ borderColor: dragging ? accent : "#4a2029", backgroundColor: "#120b10" }}
+        onDragOver={(event) => {
+          event.preventDefault();
+          setDragging(true);
+        }}
+        onDragLeave={() => setDragging(false)}
+        onDrop={(event) => {
+          event.preventDefault();
+          setDragging(false);
+          pickCharts(event.dataTransfer.files);
+        }}
+      >
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          multiple
+          className="hidden"
+          onChange={(event) => {
+            pickCharts(event.target.files);
+            event.target.value = "";
+          }}
+        />
+        {!chartSrc ? (
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative z-10 flex min-h-[260px] w-full flex-col items-center justify-center gap-3 px-6 text-center"
+          >
+            <span
+              className="flex size-[68px] items-center justify-center rounded-full border text-white/85"
+              style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}33` }}
+            >
+              <svg viewBox="0 0 24 24" className="size-9" fill="none" stroke="currentColor" strokeWidth="2.2" aria-hidden="true">
+                <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
+              </svg>
+            </span>
+            <span className="text-[18px] font-black text-white">Attach chart screenshots</span>
+            <span className="text-[13px] text-white/45">The timeframe is detected automatically from the screenshot</span>
+          </button>
+        ) : (
+          <img src={chartSrc} alt={`Chart on ${timeframe}`} className="absolute inset-0 size-full object-cover" />
+        )}
+        <div
+          className="pointer-events-none absolute inset-0 opacity-30"
+          style={{
+            backgroundImage:
+              "linear-gradient(rgba(255,35,63,0.16) 1px, transparent 1px), linear-gradient(90deg, rgba(255,35,63,0.16) 1px, transparent 1px)",
+            backgroundSize: "38px 38px",
+          }}
+        />
+        {scanning && (
+          <div
+            className="absolute inset-x-0 top-1/2 z-10 h-[2px] animate-[scanMove_2s_ease-in-out_infinite]"
+            style={{ background: accent, boxShadow: `0 0 15px ${accent}` }}
+          />
+        )}
+        {chartSrc && !scanning && (
+          <button
+            type="button"
+            aria-label={`Remove the ${timeframe} chart`}
+            onClick={() => {
+              setTimeframeCharts((prev) => ({ ...prev, [timeframe]: null }));
+              setAnalysis(null);
+              setAnalysisError("");
+              resetResult();
+            }}
+            className="absolute right-3 top-3 z-20 flex size-9 items-center justify-center rounded-full bg-black/65 text-white backdrop-blur transition-colors hover:bg-black/85"
+          >
+            ✕
+          </button>
+        )}
+        {chartError && (
+          <p className="absolute bottom-3 left-1/2 z-20 -translate-x-1/2 text-center text-[12px] text-red-300">{chartError}</p>
+        )}
+      </div>
+
+      {!analysis || analysis.dataStatus === "no-data" ? (
+        <>
+          {/* Upload row — hidden while scanning */}
+          {!scanning && (
+            <div className="mx-3 mt-3">
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                className="plat-pressable flex h-12 w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
+                style={{ borderRadius: "var(--plat-radius-control)" }}
+              >
+                {chartSrc ? "Add / replace screenshot" : "Attach chart screenshot"}
+              </button>
+              {attachedTimeframes.length > 0 && (
+                <p className="mt-2 text-[12px] text-white/45">
+                  Attached: {attachedTimeframes.map((tf) => tf.toUpperCase()).join(" · ")}
+                </p>
+              )}
+              {chartError && <p className="mt-2 text-[12px] text-red-400">{chartError}</p>}
+            </div>
+          )}
+
+          {/* Narrated analysis steps */}
+          {scanning && (
+            <div className="mt-4 space-y-2 px-6 sm:px-8">
+              {SCAN_STEPS.slice(0, step + 1).map((text, index) => (
+                <div key={index} className="flex gap-2 text-[13px] text-white/70">
+                  <span className="mt-1.5 size-2 shrink-0 rounded-full" style={{ background: accent }} />
+                  {text}
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Error from the analysis (key missing / rejected / account problems) */}
+          {analysisError && !scanning && (
+            <div className="mx-3 mt-3 rounded-[24px] border border-red-500/25 bg-red-500/[0.06] p-4 sm:mx-6">
+              <p className="text-[13px] font-bold text-red-300">Configuration / data error</p>
+              <p className="mt-1 text-[12px] leading-relaxed text-white/60">{analysisError}</p>
+            </div>
+          )}
+
+          {/* NO-DATA panel — analysis completed but no broker/public data */}
+          {analysis && !scanning && analysis.dataStatus === "no-data" && (
+            <div className="mx-3 mt-3 rounded-[24px] border border-white/10 bg-[#151a20] p-4 sm:mx-6">
+              <p className="text-[13px] font-bold text-white/80">No market data for {analysis.symbol}</p>
+              {analysis.reasons.map((reason, index) => (
+                <p key={index} className="mt-2 flex gap-2 text-[12px] leading-relaxed text-white/50">
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: accent }} aria-hidden="true" />
+                  <span>{reason}</span>
+                </p>
+              ))}
+            </div>
+          )}
+
+          {/* SYMBOL — exactly the mentor's EA symbols; the user picks one.
+              LIVE QUOTES toggle: the same EA symbols with real-time prices. */}
+          <div className={`mx-3 mt-4 border border-white/8 bg-[#151a20] p-4 sm:mx-6 ${cardRadius}`}>
+            <div className="mb-3 flex items-center justify-between">
+              <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
+              <button
+                type="button"
+                onClick={() => setQuotesOpen(true)}
+                className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[10px] font-black tracking-widest transition-opacity hover:opacity-80"
+                style={{ background: `${accent}22`, color: accent }}
+              >
+                <Waves className="size-3.5" /> LIVE QUOTES
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {symbols.map((item) => (
+                <button
+                  key={item}
+                  type="button"
+                  onClick={() => selectSymbol(item)}
+                  className={`px-5 py-2.5 text-[13px] font-bold transition-colors ${symbolRadius}`}
+                  style={
+                    symbol === item
+                      ? { background: accent, color: "#fff" }
+                      : { background: "#222", color: "rgba(255,255,255,0.5)" }
+                  }
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+            {!hasSymbols && (
+              <p className="mt-3 text-[12px] font-semibold text-white/45">
+                No symbols on this EA yet — your mentor adds them on the portal when creating the EA. Until then scanning
+                is locked.
+              </p>
+            )}
+            {/* Timeframe is AUTO-DETECTED from the uploaded screenshot's
+                filename (…15m… / …1h… / …4h…) — no manual picker. */}
+            <p className="mt-3 text-[11px] text-white/35">
+              Timeframe auto-detected from the screenshot — analyzing{" "}
+              <span className="font-bold text-white/70">{timeframe.toUpperCase()}</span>
+            </p>
+          </div>
+
+          {/* Trades + lot size */}
+          <div className={`mx-3 mt-3 divide-y divide-white/5 border border-white/8 bg-[#151a20] sm:mx-6 ${cardRadius}`}>
+            <div className="flex items-center justify-between p-4">
+              <div>
+                <p className="font-bold text-white">Trades</p>
+                <p className="text-[11px] text-white/30">Max 20 per scan · set before scanning</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  aria-label="Fewer trades"
+                  onClick={() => setTrades((value) => Math.max(1, value - 1))}
+                  className="size-10 rounded-full bg-[#222] text-white"
+                >
+                  −
+                </button>
+                <span className="w-6 text-center font-bold text-white">{trades}</span>
+                <button
+                  type="button"
+                  aria-label="More trades"
+                  onClick={() => setTrades((value) => Math.min(20, value + 1))}
+                  className="size-10 rounded-full text-white"
+                  style={{ background: accent }}
+                >
+                  +
+                </button>
+              </div>
+            </div>
+            <div className="flex items-center justify-between p-4">
+              <div>
+                <p className="font-bold text-white">Lot size</p>
+                <p className="text-[11px] text-white/30">Volume per trade</p>
+              </div>
+              <input
+                value={lot}
+                onChange={(event) => setLot(event.target.value)}
+                inputMode="decimal"
+                aria-label="Lot size"
+                className="h-[42px] w-[110px] rounded-full border border-white/10 bg-[#222] text-center text-white outline-none focus:border-white/30"
+              />
+            </div>
+          </div>
+
+          {/* Scan button — locked until symbol + account + trade settings are set */}
+          <button
+            type="button"
+            onClick={startScan}
+            disabled={scanning || scanLocked}
+            data-testid="button-run-scan"
+            className={`plat-pressable mx-3 mt-4 flex h-[56px] items-center justify-center gap-2 font-bold text-white disabled:opacity-60 sm:mx-6 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
+            style={{ background: accent, boxShadow: scanLocked ? "none" : `0 0 20px ${accent}66` }}
+          >
+            <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
+          </button>
+          {scanLocked && !scanning && lockReason && (
+            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">Scanning locked · {lockReason}</p>
+          )}
+        </>
+      ) : (
+        /* ---------- RESULT VIEW ---------- */
+        <div className="mx-3 mt-3 space-y-3 sm:mx-6">
+          {/* LIVE MARKET DATA — real broker values only */}
+          <div className={`border border-white/8 bg-[#151a20] p-4 ${cardRadius}`}>
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] text-white/35">
+                <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
+                LIVE MARKET DATA
+              </p>
+              <span
+                className="rounded-full px-3 py-1 text-[10px] font-bold"
+                style={{
+                  border: `1px solid ${analysis.executionReady ? "#22c55e66" : "#9ca3af55"}`,
+                  color: analysis.executionReady ? "#4ade80" : "#9ca3af",
+                }}
+              >
+                {analysis.executionReady ? "LIVE QUOTE" : "CONDITIONAL · NO LIVE QUOTE"}
+              </span>
+            </div>
+            <div className="mt-3 flex items-end justify-between">
+              <p data-testid="text-live-price" className="text-[30px] font-black leading-none text-white">
+                {analysis.livePrice > 0 ? fmtPrice(analysis.livePrice) : "—"}
+              </p>
+              <p className="text-[11px] font-semibold text-white/45">{analysis.dataSource}</p>
+            </div>
+            {analysis.lastCandle && (
+              <p className="mt-2 text-[11px] text-white/40">
+                Latest candle ({analysis.timeframe}): O {fmtPrice(analysis.lastCandle.open)} · H{" "}
+                {fmtPrice(analysis.lastCandle.high)} · L {fmtPrice(analysis.lastCandle.low)} · C{" "}
+                {fmtPrice(analysis.lastCandle.close)} · {analysis.candleCount} candles loaded
+              </p>
+            )}
+            <div className="mt-3 space-y-2">
+              {analysis.readouts.map((readout) => (
+                <div key={readout.label} className="flex items-center justify-between text-[12px]">
+                  <span className="text-white/40">{readout.label}</span>
+                  <span
+                    className="font-bold"
+                    style={{
+                      color: readout.bullish === true ? "#22c55e" : readout.bullish === false ? "#ef4444" : "rgba(255,255,255,0.85)",
+                    }}
+                  >
+                    {readout.value}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* UPLOADED CHART — the screenshot the trader attached for this scan
+              stays visible with the plan instead of vanishing after the scan. */}
+          {chartSrc && (
+            <div
+              className={`relative overflow-hidden border-2 bg-[#151a20] ${cardRadius}`}
+              style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}
+            >
+              <img
+                src={chartSrc}
+                alt={`Chart attached for the ${timeframe} scan`}
+                className="max-h-72 w-full object-contain"
+              />
+              <span className="absolute left-3 top-3 rounded-full bg-black/70 px-3 py-1 text-[10px] font-black uppercase tracking-wide text-white/80">
+                {timeframe} chart
+              </span>
+            </div>
+          )}
+
+          {/* TRADE PLAN — real calculated levels */}
+          <div className={`border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
+                <h2 data-testid="text-analysis-symbol" className="mt-1 text-[22px] font-black text-white">
+                  {analysis.symbol}
+                </h2>
+              </div>
+              <div className="flex flex-col items-end gap-1">
+                <span
+                  data-testid="status-analysis-signal"
+                  className="rounded-full px-6 py-2 text-[13px] font-bold text-white"
+                  style={{ background: SIGNAL_COLORS[analysis.signal] }}
+                >
+                  {analysis.signal}
+                </span>
+                <span className="text-[10px] font-bold text-white/40">CONFIDENCE {analysis.confidence}%</span>
+              </div>
+            </div>
+
+            <div className="mt-4 grid grid-cols-3 gap-2">
+              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+                <p className="text-[10px]" style={{ color: accent }}>
+                  ENTRY
+                </p>
+                <p data-testid="text-analysis-entry" className="mt-1 text-[13px] font-bold text-white">
+                  {fmtSignalLevel(analysis.entry)}
+                </p>
+              </div>
+              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+                <p className="text-[10px] text-red-400">STOP-LOSS</p>
+                <p data-testid="text-analysis-stop-loss" className="mt-1 text-[13px] font-bold text-white">
+                  {fmtSignalLevel(analysis.stopLoss)}
+                </p>
+              </div>
+              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+                <p className="text-[10px] text-green-400">TAKE-PROFIT</p>
+                <p data-testid="text-analysis-take-profit" className="mt-1 text-[13px] font-bold text-white">
+                  {fmtSignalLevel(analysis.takeProfit)}
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-3 flex items-center justify-between text-[11px]">
+              <span className="text-white/30">RISK : REWARD</span>
+              <span data-testid="text-analysis-risk-reward" className="font-bold" style={{ color: accent }}>
+                {analysis.riskReward}
+              </span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between text-[11px]">
+              <span className="text-white/30">CONFIDENCE</span>
+              <span data-testid="text-analysis-confidence" className="font-bold" style={{ color: accent }}>
+                {analysis.confidence}%
+              </span>
+            </div>
+            {/* Signal strength — WAIT means the engine refuses to execute this setup. */}
+            <div className="mt-1.5 flex items-center justify-between text-[11px]">
+              <span className="text-white/30">SIGNAL STRENGTH</span>
+              <span
+                data-testid="text-analysis-strength"
+                className="rounded-full px-2 py-0.5 text-[10px] font-black tracking-wide"
+                style={{
+                  background:
+                    analysis.strength === "STRONG"
+                      ? "rgba(34,197,94,0.15)"
+                      : analysis.strength === "MODERATE"
+                        ? "rgba(234,179,8,0.15)"
+                        : analysis.strength === "WEAK"
+                          ? "rgba(249,115,22,0.15)"
+                          : "rgba(239,68,68,0.15)",
+                  color:
+                    analysis.strength === "STRONG"
+                      ? "#4ade80"
+                      : analysis.strength === "MODERATE"
+                        ? "#eab308"
+                        : analysis.strength === "WEAK"
+                          ? "#fb923c"
+                          : "#f87171",
+                }}
+              >
+                {analysis.strength === "WAIT" ? "WAIT — NO TRADE" : analysis.strength}
+              </span>
+            </div>
+
+            <div className="mt-3 space-y-1.5">
+              {analysis.reasons.map((reason, index) => (
+                <p key={index} className="flex gap-2 text-[12px] leading-relaxed text-white/50">
+                  <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: accent }} aria-hidden="true" />
+                  <span>{reason}</span>
+                </p>
+              ))}
+            </div>
+
+            {/* EXECUTE TRADE — the single visible action on a valid plan.
+                Only WAIT (simulated/synthetic data) is un-executable: the
+                levels would not describe the traded instrument. WEAK setups
+                are executable — the reasons panel says to trade small. */}
+            {analysis.strength === "WAIT" ? (
+              <div
+                className="mt-4 flex h-[58px] w-full items-center justify-center gap-2 rounded-full border border-red-400/30 bg-red-400/10 text-[13px] font-black tracking-wide text-red-300"
+                data-testid="text-wait-blocked"
+              >
+                ⛔ SIMULATED DATA — EXECUTION DISABLED
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={openConfirm}
+                disabled={executing}
+                data-testid="button-execute-trade"
+                className={`plat-pressable mt-4 flex h-[58px] w-full items-center justify-center text-[15px] font-black tracking-wide text-white disabled:opacity-60 ${isIos ? "plat-btn-primary" : "rounded-full"}`}
+                style={{ background: accent, boxShadow: `0 0 24px ${accent}66` }}
+              >
+                {executing ? "EXECUTING..." : `EXECUTE TRADE — ${analysis.signal} ${lot} Lot`}
+              </button>
+            )}
+
+            {/* Connection lifecycle: Offline → Connecting → Connected → Executing → Executed → Disconnected */}
+            <div data-testid="chain-execution-status" className="mt-3 flex flex-wrap items-center gap-1.5">
+              {statusChain.map((stage) => {
+                const order = ["OFFLINE", "CONNECTING", "CONNECTED", "EXECUTING", "EXECUTED", "DISCONNECTED"] as const;
+                const currentIndex = order.indexOf(execStage);
+                const stageIndex = order.indexOf(stage.label);
+                const done = stageIndex < currentIndex;
+                const active = stageIndex === currentIndex && !executed;
+                const color = done || active ? accent : "rgba(255,255,255,0.25)";
+                return (
+                  <span
+                    key={stage.label}
+                    className="rounded-full border px-2.5 py-1 text-[10px] font-bold tracking-wide"
+                    style={{
+                      borderColor: active ? accent : color + "55",
+                      color,
+                      backgroundColor: active ? accent + "1f" : "transparent",
+                    }}
+                  >
+                    {stage.label}
+                  </span>
+                );
+              })}
+            </div>
+
+            {/* EXECUTING state — live progress while the order is in flight */}
+            {executing && (
+              <div className="mt-3 rounded-[16px] border border-yellow-400/25 bg-yellow-400/[0.05] p-3">
+                <p className="text-[12px] font-bold text-yellow-300">EXECUTING — {execStage === "CONNECTING" ? "opening broker connection" : "order in flight"}</p>
+                <p className="mt-1 text-[12px] text-white/60">{execProgress || "Connecting and sending the order..."}</p>
+              </div>
+            )}
+
+            {/* EXECUTED state — real broker ticket + price */}
+            {executed && execResult && (
+              <div className="mt-3 rounded-[16px] border border-emerald-400/30 bg-emerald-400/[0.06] p-3">
+                <p className="text-[12px] font-black tracking-wide text-emerald-300">EXECUTED ✔</p>
+                <div className="mt-1.5 space-y-1 text-[12px] text-white/70">
+                  <p>
+                    Order: {analysis.signal} {analysis.symbol} · {lot} lots × {trades}
+                  </p>
+                  {execResult.orderId && <p>Ticket / order ID: {execResult.orderId}</p>}
+                  {execResult.executionPrice !== undefined && (
+                    <p>Execution price: {fmtPrice(execResult.executionPrice)}</p>
+                  )}
+                  <p className="text-white/50">{execResult.message}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnalysis(null);
+                    resetResult();
+                  }}
+                  className="mt-3 h-[44px] w-full rounded-full border text-[13px] font-bold"
+                  style={{ borderColor: `${accent}40`, color: accent }}
+                >
+                  New scan
+                </button>
+              </div>
+            )}
+
+            {/* ERROR state — the real backend/broker error, verbatim */}
+            {execError && (
+              <div className="mt-3 rounded-[16px] border border-red-500/30 bg-red-500/[0.06] p-3">
+                <p className="text-[12px] font-black tracking-wide text-red-300">EXECUTION ERROR</p>
+                <p className="mt-1 text-[12px] leading-relaxed text-white/65">{execError}</p>
+                <button
+                  type="button"
+                  onClick={() => setExecError("")}
+                  className="mt-3 h-[44px] w-full rounded-full border border-red-400/40 text-[13px] font-bold text-red-300"
+                >
+                  Try again
+                </button>
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={() => {
+                setAnalysis(null);
+                resetResult();
+              }}
+              className="mt-3 h-[48px] w-full rounded-full border text-[14px] font-bold"
+              style={{ borderColor: `${accent}40`, color: accent }}
+            >
+              New scan
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmation popup — symbol, direction, entry, SL, TP and lot */}
+      <Dialog open={confirmOpen} onOpenChange={(open) => (open ? setConfirmOpen(true) : setConfirmOpen(false))}>
+        <DialogContent className="max-w-sm border border-white/10 bg-[#0b0b0d] pt-safe text-white sm:max-w-sm">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-black">Confirm trade</DialogTitle>
+            <DialogDescription className="text-sm text-white/55">
+              The order is sent through the secure server-side MT5 link. Nothing is executed until you confirm.
+            </DialogDescription>
+          </DialogHeader>
+          {analysis && (
+            <div className="mt-2 space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-[13px]">
+              <div className="flex justify-between">
+                <span className="text-white/45">Symbol</span>
+                <span className="font-bold text-white">{analysis.symbol}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Direction</span>
+                <span className="font-black" style={{ color: SIGNAL_COLORS[analysis.signal] }}>
+                  {analysis.signal}
+                </span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Entry</span>
+                <span className="font-bold text-white">{fmtPrice(analysis.entry)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Stop-loss</span>
+                <span className="font-bold text-red-300">{fmtPrice(analysis.stopLoss)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Take-profit</span>
+                <span className="font-bold text-green-300">{fmtPrice(analysis.takeProfit)}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Lot size</span>
+                <span className="font-bold text-white">{lot}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-white/45">Trades</span>
+                <span className="font-bold text-white">{trades}</span>
+              </div>
+            </div>
+          )}
+          <div className="mt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={() => setConfirmOpen(false)}
+              className="h-12 flex-1 rounded-2xl border border-white/15 text-sm font-bold text-white/75"
+            >
+              CANCEL
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmExecute()}
+              data-testid="button-confirm-execute"
+              className="h-12 flex-1 rounded-2xl text-sm font-black text-white"
+              style={{ background: accent }}
+            >
+              CONFIRM
+            </button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* LIVE QUOTES — the EA's symbols with real-time prices. */}
+      <LiveQuotesSheet open={quotesOpen} onOpenChange={setQuotesOpen} symbols={symbols} />
+    </div>
+  );
+}

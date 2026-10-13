@@ -1,0 +1,191 @@
+-- ============================================================
+-- EA Migrate Pro — Supabase schema (replaces the Upstash store
+-- for users / sessions / admin approvals)
+-- Run this ONCE in Supabase Dashboard → SQL Editor.
+-- ============================================================
+
+-- 1) USERS — one row per registered email
+create table if not exists public.users (
+  id         uuid primary key default gen_random_uuid(),
+  email      text unique not null,
+  is_paid    boolean default false,
+  is_admin   boolean default false,
+  created_at timestamp default now()
+);
+
+-- Repair for projects created before is_admin existed: create-table-if-not-
+-- exists never alters an existing table, so re-running this file also adds
+-- any column a stale table is missing. Safe to run repeatedly.
+alter table public.users add column if not exists is_admin   boolean default false;
+alter table public.users add column if not exists is_paid    boolean default false;
+alter table public.users add column if not exists created_at timestamp default now();
+
+-- 2) SESSIONS — one row per app sign-in
+create table if not exists public.user_sessions (
+  id          uuid primary key default gen_random_uuid(),
+  email       text references public.users(email) on delete cascade,
+  license_key text,
+  created_at  timestamp default now()
+);
+
+-- Repair for sessions tables created before license_key existed. Safe to
+-- re-run; create-table-if-not-exists never alters an existing table.
+alter table public.user_sessions add column if not exists license_key text;
+alter table public.user_sessions add column if not exists created_at timestamp default now();
+
+create index if not exists user_sessions_email_idx on public.user_sessions (email);
+create index if not exists users_created_at_idx on public.users (created_at desc);
+
+-- 4) MENTOR APPROVALS — the portal's pending/approved/rejected index.
+--    The admin console's tabs and its Approve/Reject buttons read and write
+--    THIS table so every device agrees on a mentor's status.
+create table if not exists public.mentor_approvals (
+  email      text primary key,
+  status     text not null default 'pending' check (status in ('pending','approved','rejected')),
+  created_at timestamp default now()
+);
+
+-- 5) PAYMENT LEDGER — THE console's paid/unpaid source of truth.
+--    A row with a timestamp = paid. A row with paid_at = null = explicitly
+--    revoked ("Mark unpaid"). No row = never paid.
+--    This is what the admin console's Paid section reads, and what the
+--    app's payment gate (payment-gate.ts) reads to decide access.
+create table if not exists public.paid_emails (
+  email     text primary key,
+  paid_at   timestamp,
+  created_at timestamp default now()
+);
+
+-- 5) PORTAL SYNC TABLES — full account records, payments, MT5 metadata and
+--    EA video backups for the mentor portal (Upstash Redis replacement).
+create table if not exists public.portal_accounts (
+  email      text primary key,
+  data       text not null,
+  updated_at timestamp default now()
+);
+
+create table if not exists public.portal_payments (
+  email    text primary key,
+  paid     boolean not null default false,
+  paid_at  timestamp
+);
+
+create table if not exists public.mt5_accounts (
+  user_id    text primary key,
+  data       text not null,
+  updated_at timestamp default now()
+);
+
+create table if not exists public.ea_videos (
+  video_id   text primary key,
+  data_url   text not null,
+  updated_at timestamp default now()
+);
+
+create index if not exists portal_accounts_updated_idx on public.portal_accounts (updated_at desc);
+
+-- 6) LICENSE KEYS — every key issued to an app user, with its linked EA and
+--    expiry. Written by the send-email flow (license_approved) with the
+--    service-role key; safe to re-run (create-if-not-exists).
+create table if not exists public.license_keys (
+  license_key text primary key,
+  email       text,
+  ea_name     text,
+  expiry      text,
+  created_at  timestamp default now()
+);
+
+alter table public.license_keys enable row level security;
+create policy "license_keys full access"
+  on public.license_keys for all to anon, authenticated
+  using (true) with check (true);
+
+create index if not exists license_keys_email_idx on public.license_keys (email);
+
+-- ============================================================
+-- 3) ROW LEVEL SECURITY
+--
+--    Reads are open to the anon key so the /app/admin page can
+--    list every registered email straight from the browser —
+--    admin must never be blocked (this happened before with
+--    RLS). Writes that change money/admin state (approve, make
+--    admin) go through the app's server functions with the
+--    service-role key, which bypasses RLS.
+--
+--    NOTE: with an anon-only flow there is no per-row way to
+--    scope "own row" reads without Supabase Auth claims, so
+--    read access is table-wide by design.
+-- ============================================================
+alter table public.users enable row level security;
+alter table public.user_sessions enable row level security;
+
+-- Registration: anyone may create their own (unpaid, non-admin) row.
+create policy "anon can register own email"
+  on public.users for insert to anon, authenticated
+  with check (is_paid = false and is_admin = false);
+
+-- Reads: open (covers "read own user by email" AND the admin list).
+create policy "anon can read users"
+  on public.users for select to anon, authenticated
+  using (true);
+
+-- Sessions: insert on sign-in, read own session.
+create policy "anon can create own session"
+  on public.user_sessions for insert to anon, authenticated
+  with check (true);
+
+create policy "anon can read sessions"
+  on public.user_sessions for select to anon, authenticated
+  using (true);
+
+-- ── Payment ledger (paid_emails) — the console AND the app read this ────
+-- The anon key needs full access so the admin page can list paid users and
+-- the app's payment gate can decide access without a service-role round trip.
+alter table public.paid_emails enable row level security;
+
+create policy "anon can read paid_emails"
+  on public.paid_emails for select to anon, authenticated
+  using (true);
+
+create policy "anon can upsert paid_emails"
+  on public.paid_emails for all to anon, authenticated
+  with check (true);
+
+-- ── Portal sync tables (accounts, approvals, payments, MT5, videos) ────
+-- These are written exclusively through the app's server functions with
+-- the service-role key (which bypasses RLS), so no anon policies are
+-- strictly required. Broad policies are still declared so the tables stay
+-- usable if the project later moves reads to the browser — matching the
+-- owner's "never block the admin page" trade-off used above.
+alter table public.mentor_approvals enable row level security;
+alter table public.portal_accounts  enable row level security;
+alter table public.portal_payments  enable row level security;
+alter table public.mt5_accounts     enable row level security;
+alter table public.ea_videos        enable row level security;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['mentor_approvals','portal_accounts','portal_payments','mt5_accounts','ea_videos']
+  loop
+    execute format(
+      'create policy %I on public.%I for all to anon, authenticated using (true) with check (true)',
+      t || ' full access', t
+    );
+  end loop;
+exception
+  when duplicate_object then null; -- policy already exists — safe to re-run
+end $$;
+
+-- ── Admin flag updates from the browser (anon key) ──────────────────────
+-- Production builds this app as a STATIC site where the server functions
+-- do not exist, so the admin page's Approve / Make Admin buttons fall back
+-- to direct anon-key updates. Registration still cannot grant itself
+-- privileges: the insert policy above forces new rows to unpaid/non-admin.
+--
+-- NOTE: this means the anon key can flip paid/admin flags by design —
+-- that is the user's chosen "never block the admin page" trade-off.
+-- Tighten later with Supabase Auth claims if the project outgrows it.
+create policy "anon can update users"
+  on public.users for update to anon, authenticated
+  using (true) with check (true);

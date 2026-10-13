@@ -1,0 +1,3 @@
+- [TanStack artifact runtime](tanstack-artifact-runtime.md) — bind the routed PORT explicitly and keep MetaApi credentials out of public source.
+- [Weekend scanner setups](weekend-scanner-setups.md) — show conditional BUY/SELL levels from the latest broker candle, but require a live quote before execution.
+- [Search branding](search-branding.md) — use explicit site-name metadata and a square transparent favicon to prevent hosting-provider branding in search results.

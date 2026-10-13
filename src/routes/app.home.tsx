@@ -1,170 +1,578 @@
-import { useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { ChevronRight, MoreHorizontal, Pause, Play, Plus, ScanLine, Trash2, X } from "lucide-react";
-import { AppFrame } from "@/components/AppFrame";
-import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
-import { removeRobot, setActiveRobot, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
-import { useCurrentAccount } from "@/lib/auth-store";
-import { useInterfaceStore } from "@/stores/interfaceStore";
-import { safeTradeCount } from "@/lib/auto-trade";
-import type { PairSetting } from "@/lib/app-store";
-import type { InterfaceProps } from "@/components/interfaces/types";
-import { BlueOrbit } from "@/components/interfaces/BlueOrbit";
-import { CrimsonNexus } from "@/components/interfaces/CrimsonNexus";
-import { EclipseCore } from "@/components/interfaces/EclipseCore";
-import { NeonPhantom } from "@/components/interfaces/NeonPhantom";
-import { NeonEdge } from "@/components/interfaces/NeonEdge";
-import { PredatorOval } from "@/components/interfaces/PredatorOval";
-import { RedHalo } from "@/components/interfaces/RedHalo";
-import { SkylineStack } from "@/components/interfaces/SkylineStack";
-import { SpectreGrid } from "@/components/interfaces/SpectreGrid";
-import { VoidPulse } from "@/components/interfaces/VoidPulse";
+import { useEffect, useRef, useState } from "react";
+import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
+import { toast } from "sonner";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { FixedBottomNav } from "@/components/app/FixedBottomNav";
+import { ThemeContent } from "@/components/app/ThemeContent";
+import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
+import { paymentStatusForEmail } from "@/lib/auth-store";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { usePlatform } from "@/lib/platform";
+import { speakBot } from "@/lib/bot-voice";
+import { executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount } from "@/lib/auto-trade";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
-  head: () => ({ meta: [{ title: "Robot Dashboard - EA Migrate Pro" }, { name: "description", content: "Control your licensed Forex robots." }] }),
+  beforeLoad: async () => {
+    const email = getAppState().email;
+    /**
+     * AN OWED LICENCE KEY SENDS THIS SESSION TO THE LICENCE FORM, NOT HERE.
+     *
+     * A paid account that has passed the code step but has not entered a key
+     * has nothing to control on this screen — the old behaviour was the
+     * ping-pong the customer complained about: this guard has no robot to show,
+     * so the app fell back to the login screen, which (before the owed-key flag
+     * existed) was the EMAIL FORM again. Handing them back to /app/login with
+     * the licence step intact is the whole point: it must stay on the key form
+     * "until I put a key".
+     *
+     * Only applies while there is genuinely no activated robot, so an account
+     * with a working robot is never dragged back to the form by a stale flag.
+     */
+    if (email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
+      throw redirect({ href: "/app/login?license=1" });
+    }
+    // STRICT DATABASE CHECK FIRST — an explicit `resolveCloudAccess` pass in
+    // the route guard itself, not just inside the gate helper. "unpaid" here
+    // is a HARD STOP: the session is ended and the person is handed to
+    // /app/login?pay=1 (the Choose Plan screen). This is deliberately checked
+    // before anything else can decide the route may load.
+    //
+    // MENTOR APPROVAL IS A DIFFERENT THING ENTIRELY. `mentor_approvals` /
+    // status: "approved" lets somebody use the MENTOR LICENSES DASHBOARD
+    // (/dashboard/licenses) and nothing else. It is NOT read here and it is
+    // NOT read in payment-gate.ts: an account the portal approved but never
+    // marked is_paid is treated as strictly UNPAID for the trading app, which
+    // is exactly what this guard enforces. Only is_paid (or an active Whop
+    // membership / a license key bound to the email) opens the app.
+    //
+    // `fresh: true` skips the cache: the whole point of this guard is to
+    // re-read the database at the moment of entry, so a session that was
+    // allowed a moment ago under different rules cannot slip through on a
+    // remembered answer.
+    if (email) {
+      try {
+        const cloud = await resolveCloudAccess(email, { fresh: true });
+        if (cloud === "unpaid" || cloud === "revoked") {
+          // DEACTIVATED vs NEVER PAID — the same distinction the gate makes.
+          // "revoked" is the database's own answer (the owner pressed Mark
+          // unpaid), so it always gets the plain notice. A never-paid account
+          // is the one that owes money and gets the plans; a stale local paid
+          // record beside an "unpaid" answer is the older, weaker signal for
+          // the same thing and is kept as a fallback.
+          const revoked = cloud === "revoked" || paymentStatusForEmail(email) !== "unpaid";
+          appSignOut();
+          invalidateAccessCache(email);
+          throw redirect({ href: revoked ? "/app/login?deactivated=1" : "/app/login?pay=1" });
+        }
+      } catch (error) {
+        // A gated redirect is control flow, not a failure — let it through.
+        // Anything else (the database unreachable) falls to
+        // requireVerifiedAccess below, which fails CLOSED.
+        if (error && typeof error === "object" && "href" in error) throw error;
+      }
+    }
+    // Cloud-verified gates: no email → /app/login; an unpaid one → checkout.
+    const access = await requireVerifiedAccess(email);
+    if (access.action === "signin") throw redirect({ href: "/app/login" });
+    // Access revoked by the owner (Set unpaid in the console) — the session
+    // is already signed out inside the gate; hand them the notice.
+    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+    // An EXTERNAL url is not a valid router location — `redirect({href:
+    // "https://whop.com/…"})` was resolved as an app path and went nowhere,
+    // which is part of why an unpaid user ended up back on the login screen
+    // with nothing happening. Hand the decision to the login page instead:
+    // /app/login?pay=1 renders the Choose Plan screen (monthly + lifetime).
+    if (access.action === "pay") {
+      throw redirect({ href: "/app/login?pay=1" });
+    }
+  },
+  head: () => ({
+    meta: [
+      { title: "Robot Dashboard — EA Migrate" },
+      { name: "description", content: "Control your licensed Forex robots." },
+    ],
+  }),
+  errorComponent: HomeErrorFallback,
   component: AppHome,
 });
 
-function BotModal({ active, onClose }: { active: Robot; onClose: () => void }) {
+/** Shown while the cloud decides whether this account may use the app. */
+function AccessSplash() {
   return (
-    <div className="fixed inset-0 z-[90] flex items-center justify-center bg-black/75 p-5" onClick={onClose}>
-      <section role="dialog" aria-modal="true" aria-label="Bot details" className="w-full max-w-md rounded-3xl border border-white/10 bg-[#111111] p-5" onClick={(event) => event.stopPropagation()}>
-        <div className="flex items-center gap-3">
-          <img src={active.image || "/ea-migrate-platform-robot.jpg"} alt={active.name} className="size-16 rounded-2xl object-cover" />
-          <div className="min-w-0 flex-1">
-            <h2 className="truncate text-xl font-black">{active.name}</h2>
-            <p className="text-xs text-white/50">{active.running ? "Trading active" : "Ready"} · {active.symbols.join(" · ") || "No symbols"}</p>
-          </div>
-          <button type="button" onClick={onClose} aria-label="Close bot details" className="flex size-9 items-center justify-center rounded-full bg-white/10">
-            <X className="size-4" />
-          </button>
-        </div>
-        <div className="mt-5 grid grid-cols-3 gap-2">
-          <div className="rounded-2xl bg-white/5 p-3">
-            <p className="text-[10px] uppercase text-white/40">Pairs</p>
-            <p className="mt-1 font-black">{active.symbols.length}</p>
-          </div>
-          <div className="rounded-2xl bg-white/5 p-3">
-            <p className="text-[10px] uppercase text-white/40">Lot</p>
-            <p className="mt-1 font-black">{active.pairs?.[0]?.lotSize || "0.01"}</p>
-          </div>
-          <div className="rounded-2xl bg-white/5 p-3">
-            <p className="text-[10px] uppercase text-white/40">Status</p>
-            <p className="mt-1 truncate font-black">{active.running ? "Live" : "Idle"}</p>
-          </div>
-        </div>
-      </section>
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 pt-safe pb-safe-base text-white">
+      <img src="/logo.png" alt="" className="size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+      <p className="text-sm font-semibold text-white/60">Checking your access…</p>
     </div>
   );
 }
 
-function InterfaceHome({ active, robots, mentorName, eaName, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner }: InterfaceProps) {
-  const { selected } = useInterfaceStore();
-  const props = { active, robots, mentorName, eaName, onStart, onRemove, onSelectBot, onOpenBotModal, onOpenPairs, onOpenScanner };
-  if (selected === "blue-orbit") return <BlueOrbit {...props} />;
-  if (selected === "void-pulse") return <VoidPulse {...props} />;
-  if (selected === "eclipse-core") return <EclipseCore {...props} />;
-  if (selected === "crimson-nexus") return <CrimsonNexus {...props} />;
-  if (selected === "neon-phantom") return <NeonPhantom {...props} />;
-  if (selected === "red-halo") return <RedHalo {...props} />;
-  if (selected === "predator-oval") return <PredatorOval {...props} />;
-  if (selected === "skyline-stack") return <SkylineStack {...props} />;
-  if (selected === "neon-edge") return <NeonEdge {...props} />;
-  return <SpectreGrid {...props} />;
+/**
+ * Dashboard-only recovery screen — a crash here never falls back to the
+ * generic site error page. Offers a retry AND a clean logout: a corrupted
+ * robot/local-state record is the most likely cause, so logging out (which
+ * clears the app session) must always be one tap away.
+ */
+function HomeErrorFallback({ error, reset }: ErrorComponentProps) {
+  const router = useRouter();
+  const handleLogout = () => {
+    appSignOut();
+    window.location.assign("/app/login");
+  };
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center bg-black px-6 pt-safe pb-safe-base text-center text-white">
+      <img src="/logo.png" alt="" className="plat-card size-16 rounded-2xl border border-white/10 bg-white/5 object-contain p-1" />
+      <h1 className="mt-5 text-xl font-black tracking-tight">Dashboard didn't load</h1>
+      <p className="mt-2 max-w-xs text-sm text-white/55">
+        Something interrupted your robot dashboard. Try again — if it keeps happening, log out and sign back in.
+      </p>
+      {/* The raw message is the ONLY way to diagnose a device-specific crash
+          (Android WebView bundles fail differently than desktop Chrome) — and
+          it is rendered in tiny, low-contrast text so normal users ignore it. */}
+      <p className="mt-3 max-w-xs break-words text-[10px] leading-4 text-white/30">
+        {error instanceof Error ? error.message : String(error)}
+      </p>
+      <div className="mt-6 flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={() => {
+            router.invalidate();
+            reset();
+          }}
+          className="plat-pressable plat-control h-11 rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] px-6 text-sm font-black text-black"
+        >
+          Try again
+        </button>
+        <button
+          type="button"
+          onClick={handleLogout}
+          className="plat-pressable plat-control h-11 rounded-2xl border border-white/15 px-6 text-sm font-bold text-white/75 transition-colors hover:text-white"
+        >
+          Log out
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpenChange: (open: boolean) => void; onSubmit: (key: string) => void | Promise<void> }) {
+  const [key, setKey] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) setKey("");
+        onOpenChange(next);
+      }}
+    >
+      <DialogContent className="max-h-[92vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 pt-safe text-white sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="text-2xl font-black tracking-tight">Add robot</DialogTitle>
+          <DialogDescription className="text-sm text-white/55">
+            Paste the HOST ROBOT KEY from your email to activate this device.
+          </DialogDescription>
+        </DialogHeader>
+        <form
+          className="mt-2 space-y-4"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            if (submitting) return;
+            const cleaned = key.trim().toUpperCase();
+            if (!cleaned) {
+              toast.error("Enter your HOST ROBOT KEY.");
+              return;
+            }
+            setSubmitting(true);
+            try {
+              await onSubmit(cleaned);
+              setKey("");
+            } finally {
+              setSubmitting(false);
+            }
+          }}
+        >
+          <input
+            autoFocus
+            value={key}
+            onChange={(event) => setKey(event.target.value.toUpperCase())}
+            placeholder="EMP-XXXXXXXXXXXX"
+            aria-label="Host robot key"
+            className="plat-field h-14 w-full border border-white/10 bg-white/[0.05] px-5 font-mono text-sm tracking-[0.18em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-white/30 focus:border-[#FFA500]/70"
+          />
+          <button
+            type="submit"
+            disabled={submitting}
+            className="plat-pressable h-14 w-full bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)] disabled:cursor-wait disabled:opacity-70"
+          >
+            {submitting ? "ACTIVATING…" : "ACTIVATE ROBOT"}
+          </button>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Full-screen welcome moment — greets on every app entry, flashes briefly, voice on. */
+function WelcomeMaster() {
+  const { color } = useCustomization();
+  const accent = accentColorValue(color);
+  const [show, setShow] = useState(false);
+
+  useEffect(() => {
+    // Greet on every app entry — but navigating within the app re-arms nothing
+    // because AppHome only mounts on /app/home, and the in-app nav never
+    // remounts it. The old armed-once flow skipped the greeting entirely on
+    // most entries, which felt broken.
+    setShow(true);
+    // Speak the greeting through the Bot Voice engine (respects its toggle).
+    speakBot("Welcome Master. It's time to make money.");
+    // Brief flash, then straight into the app — fast redirect, greeting still seen.
+    const timer = setTimeout(() => setShow(false), 600);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (!show) return null;
+
+  return (
+    <div
+      role="status"
+      aria-label="Welcome"
+      className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-black"
+      style={{ animation: "welcomeIn 0.25s ease-out both" }}
+    >
+      {/* Ambient accent glow */}
+      <div
+        aria-hidden
+        className="absolute inset-0"
+        style={{ background: `radial-gradient(ellipse 70% 45% at 50% 30%, ${accent}26, transparent 70%)` }}
+      />
+      <img
+        src="/logo.png"
+        alt=""
+        className="relative size-24 rounded-[24px] bg-white/5 object-contain p-1"
+        style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
+      />
+      <h1
+        className="relative mt-6 text-3xl font-black tracking-tight text-white"
+        style={{ textShadow: `0 0 32px ${accent}88`, animation: "welcomeUp 0.35s ease-out 0.15s both" }}
+      >
+        WELCOME <span style={{ color: accent }}>MASTER</span>
+      </h1>
+      <p
+        className="relative mt-2 text-sm font-semibold tracking-wide text-white/70"
+        style={{ animation: "welcomeUp 0.3s ease-out 0.3s both", paddingBottom: "var(--sa-bottom)" }}
+      >
+        It&apos;s time to make money 💰
+      </p>
+    </div>
+  );
 }
 
 function AppHome() {
   const app = useAppState();
-  const portalAccount = useCurrentAccount();
-  const navigate = useNavigate();
-  const [showBotModal, setShowBotModal] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const touchStartX = useRef<number | null>(null);
+  const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
-  // TradeExecutionToast state
-  const [toastOpen, setToastOpen] = useState(false);
-  const [toastTrades, setToastTrades] = useState(0);
-  const [toastSymbol, setToastSymbol] = useState("");
+  // Pull the mentor's latest EA data (symbols, image, video) into the activated
+  // robots whenever the home screen mounts — portal edits appear instantly.
+  // LOCAL store covers mentors on their own device; the CLOUD portal scan
+  // covers clients (their local mentor store is empty) — this repaints
+  // robots activated before the picture started travelling with activation.
+  useEffect(() => {
+    void syncRobotsFromPortal();
+    void syncRobotsFromCloudPortal();
+  }, []);
 
-  const active = app.robots.find((robot) => robot.id === app.activeRobotId) || app.robots[0];
+  /**
+   * THE LAST LINE OF DEFENCE — nothing renders here until the cloud says this
+   * account may use the app, and it keeps asking.
+   *
+   * beforeLoad already runs requireVerifiedAccess, but it is a single guard on
+   * a single navigation: a redirect that cannot be resolved, a back/forward
+   * restore, or any future caller reaching this component another way all skip
+   * it. That is how an unpaid account reached the dashboard and could add a
+   * robot key. This re-checks on mount and keeps the screen blank until the
+   * answer is "pass".
+   *
+   * AND IT KEEPS CHECKING, because a one-shot mount check protects nobody who
+   * already had the app open. An Android WebView or a phone home-screen app
+   * that was backgrounded all day came straight back into the dashboard with a
+   * session that had since been revoked. `visibilitychange`, `focus` and
+   * `pageshow` all fire the moment the app is brought back to the front, on
+   * both platforms, and anything short of "pass" is thrown out on the spot.
+   * requireVerifiedAccess never throws and fails CLOSED — an unreachable
+   * database means "pay", not "in".
+   */
+  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  useEffect(() => {
+    let cancelled = false;
+    let running = false;
+    const verify = async () => {
+      if (cancelled || running) return;
+      running = true;
+      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
+      try {
+        result = await requireVerifiedAccess(app.email);
+      } catch {
+        result = { action: "pay" };
+      }
+      running = false;
+      if (cancelled) return;
+      if (result.action === "pass") {
+        setAccess("ok");
+        return;
+      }
+      // DEACTIVATED — the owner set this account to unpaid while it was open.
+      // The gate already signed the session out; all that is left is the door.
+      if (result.action === "deactivate") {
+        window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      // UNPAID — the door, and the plans. No programmatic hop to Whop here:
+      // /app/login?pay=1 renders the Choose Plan screen (monthly + lifetime)
+      // and the customer picks. An automatic redirect could only guess which
+      // product, and it is silently dropped in an iOS home-screen app anyway.
+      if (result.action === "pay") {
+        window.location.replace("/app/login?pay=1");
+        return;
+      }
+      window.location.replace("/app/login");
+    };
+    void verify();
+    // KEEP ASKING while this tab stays open — a deactivated account that
+    // never touches the screen must still be thrown out. Fifteen seconds, not
+    // a minute: the requirement is that the app locks the moment the owner
+    // presses Reject or Mark unpaid, and a session left running on a phone
+    // all afternoon must not be usable for an hour afterwards. The gate
+    // caches a "paid" answer for 60s, so this only costs one read a minute
+    // even at this cadence, and only while the dashboard is visible.
+    const poll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void verify();
+    }, 15_000);
+    const onWake = () => {
+      if (document.visibilityState !== "visible") return;
+      void verify();
+    };
+    // Throttled: returning to the tab repeatedly must not become a request
+    // storm against the database.
+    let lastCheck = Date.now();
+    const throttled = () => {
+      if (Date.now() - lastCheck < 20_000) return;
+      lastCheck = Date.now();
+      onWake();
+    };
+    document.addEventListener("visibilitychange", onWake);
+    window.addEventListener("focus", throttled);
+    window.addEventListener("pageshow", throttled);
+    return () => {
+      cancelled = true;
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onWake);
+      window.removeEventListener("focus", throttled);
+      window.removeEventListener("pageshow", throttled);
+    };
+  }, [app.email]);
 
-  if (!active) {
-    return (
-      <AppFrame>
-        <div className="min-h-screen bg-[#0A0A0A] pt-16 text-center text-white">
-          <span className="mx-auto flex size-16 items-center justify-center rounded-full bg-[#1A2332] text-[#38BDF8]">
-            <Plus className="size-8" />
-          </span>
-          <h1 className="mt-5 text-2xl font-black">No robot connected</h1>
-          <p className="mt-2 text-sm text-white/50">Add a licence key to unlock your first trading robot.</p>
-          <Link to="/app/activate" className="mx-auto mt-6 flex h-14 max-w-sm items-center justify-center gap-2 rounded-full bg-[#00A8FF] text-sm font-black uppercase text-[#0A0A0A]">
-            <Plus className="size-5" />
-            Connect your EA
-          </Link>
-        </div>
-      </AppFrame>
-    );
-  }
+  if (access !== "ok") return <AccessSplash />;
 
-  const mentorName = portalAccount?.displayName || portalAccount?.username || "Kman traders";
-  const eaName = active.name || "Sniper killer ea v2";
-
-  // Calculate total trades for toast
-  const runConfiguredPairs = (pairs: PairSetting[]) => {
-    if (!pairs.length) return;
-
-    // Calculate total trades across Allowed Quotes
-    const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
-    setToastTrades(totalTrades);
-    setToastSymbol(pairs[0]?.symbol ?? "");
-    setToastOpen(true);
-
-    // In actual implementation, this would trigger the trade execution
-    // with a 1.5s delay before sending the first trade order
-    setTimeout(() => {
-      // Trade execution would start here
-      console.log(`[app.home] Starting trades for ${pairs[0].symbol}, total: ${totalTrades}`);
-    }, 1500);
+  // Swipe left anywhere on the screen opens the customization drawer.
+  const onTouchStart = (event: React.TouchEvent) => {
+    touchStartX.current = event.touches[0]?.clientX ?? null;
+  };
+  const onTouchEnd = (event: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const endX = event.changedTouches[0]?.clientX ?? null;
+    if (endX !== null && touchStartX.current - endX > 70) setDrawerOpen(true);
+    touchStartX.current = null;
   };
 
-  const actions: InterfaceProps = {
-    active,
-    mentorName,
-    eaName,
-    robots: app.robots,
-    license: null,
-    onStart: () => {
-      toggleRobot(active.id);
-      // Trigger toast for auto-trading
-      if (active.pairs && active.pairs.length > 0) {
-        const totalTrades = active.pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
-        setToastTrades(totalTrades);
-        setToastSymbol(active.pairs[0]?.symbol ?? "");
-        setToastOpen(true);
+  const handleSubmit = async (key: string) => {
+    const result = await activateKey(key);
+    if (result.error) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(`${result.robot?.name ?? "Robot"} activated on this device`);
+    setModalOpen(false);
+  };
+
+  /**
+   * AUTO-TRADE the robot's configured Allowed Quotes on the user's own MT5
+   * account through the VPS bridge.
+   *
+   * Each pair is executed one after another — never in parallel, because
+   * brokers rate-limit bursts — and every step is announced on the
+   * `eamp:execution-result` bus so the floating bot popup narrates the run.
+   * A pair configured as BOTH is resolved against the market before trading;
+   * a specific BUY/SELL is honoured as the user's own instruction.
+   *
+   * The robot is already RUNNING by the time this is called: START is a
+   * toggle, and the user must not wait on a broker round-trip to see their bot
+   * come alive. Failures are reported per symbol and never leave the run half
+   * finished without an explanation.
+   */
+  const runConfiguredPairs = async (target: Robot) => {
+    // ALLOWED QUOTES ONLY. `target.pairs` IS the Allowed Quotes list — the
+    // symbols the user opened, set lot/direction/trade count for and pressed
+    // Configure on. Nothing is ever inferred from the EA's symbol universe
+    // (target.symbols), so a symbol sitting in Selected Quotes can never be
+    // traded by START.
+    const pairs = target.pairs ?? [];
+    if (pairs.length === 0) {
+      // NOTHING TO TRADE — say so instead of leaving a running bot that
+      // silently does nothing, which reads as "the bot is broken".
+      toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
+      return;
+    }
+    const credentials = readMtCredentials(app.mt);
+    if (!credentials) {
+      toast.message(`${target.name} is running`, {
+        description: "Add your MT5 details to trade its quotes automatically — MetaTrader page.",
+      });
+      return;
+    }
+
+    let opened = 0;
+    let refused = 0;
+    for (const pair of pairs) {
+      const symbol = pair.symbol.trim();
+      if (!symbol) continue;
+      try {
+        const resolution = await resolveTradeDirection(symbol, pair.direction);
+        const result = await executeAutoTrade({
+          credentials,
+          symbol,
+          direction: resolution.direction,
+          lot: Number(pair.lotSize) || 0.01,
+          trades: safeTradeCount(pair.maxTrades),
+          botName: target.name,
+          ...(target.image ? { robotImage: target.image } : {}),
+        });
+        if (result.ok) opened += 1;
+        else refused += 1;
+      } catch (error) {
+        refused += 1;
+        console.warn(`[start] ${symbol} failed:`, error);
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: {
+              ok: false,
+              message: `${symbol.toUpperCase()} FAILED — ${error instanceof Error ? error.message.toUpperCase() : "UNKNOWN ERROR"}`,
+            },
+          }),
+        );
       }
-    },
-    onRemove: () => removeRobot(active.id),
-    onSelectBot: (id) => setActiveRobot(id),
-    onOpenBotModal: () => setShowBotModal(true),
-    onOpenPairs: () => navigate({ to: "/app/pairs", search: { robot: active.id } }),
-    onOpenScanner: () => navigate({ to: "/app/settings/scanner" }),
+    }
+
+    if (opened > 0) {
+      toast.success(
+        `${target.name} opened ${opened} ${opened === 1 ? "trade" : "trades"} on MT5`,
+        refused > 0 ? { description: `${refused} symbol(s) were refused — see the bot log.` } : undefined,
+      );
+    } else if (refused > 0) {
+      toast.error(`${target.name} could not open any trades`, {
+        description: "Check your MT5 details and the bot log for the broker's reason.",
+      });
+    }
+  };
+
+  // START toggles the robot and always confirms with the draggable bot popup.
+  const handleStart = () => {
+    if (!robot) return;
+    if (robot.running) {
+      toggleRobot(robot.id);
+      window.showBotStarted?.(robot.name, "stopped");
+      toast.success(`${robot.name} stopped`);
+      speakBot(`${robot.name} stopped. Trading closed.`);
+      return;
+    }
+    toggleRobot(robot.id);
+    window.showBotStarted?.(robot.name, "started");
+    toast.success(`${robot.name} started`);
+    speakBot(`${robot.name} started. Time to make money.`);
+    // Live execution fires in the background on the user's own saved MT5
+    // account through the VPS bridge; it never blocks START.
+    // Fire-and-forget: START is a toggle and must not wait on the broker.
+    // runConfiguredPairs handles and reports its own per-symbol failures.
+    void runConfiguredPairs(robot).catch((error: unknown) => {
+      console.warn("[start] auto-trade run failed:", error);
+    });
+  };
+
+  // ── QUOTES — the QUOTES button opens the redesigned quotes page (Selected
+  // Quotes / Allowed Quotes with the per-symbol Configure modal), identical
+  // on iOS, Android and the web.
+  const handleQuotes = () => window.location.assign("/app/tradingpairs");
+  const handleRemove = () => {
+    if (!robot) return;
+    if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
+    removeRobot(robot.id);
+    toast.success(`${robot.name} removed`);
   };
 
   return (
-    <AppFrame>
-      <div className="px-5 pb-20">
-        <InterfaceHome {...actions} />
-        {showBotModal && <BotModal active={active} onClose={() => setShowBotModal(false)} />}
+    <div
+      className="app-fullscreen flex w-full flex-col bg-black text-white"
+      onTouchStart={onTouchStart}
+      onTouchEnd={(event) => {
+        // A horizontal swipe (>70px) opens the customisation drawer.
+        if (touchStartX.current !== null && event.changedTouches?.length === 1) {
+          const touchEnd = event.changedTouches?.[0];
+          if (!touchEnd) return;
+          const dx = touchStartX.current - touchEnd.clientX;
+          if (dx > 70) {
+            // Horizontal swipe opens the customisation drawer.
+            setDrawerOpen(true);
+            touchStartX.current = null;
+            return;
+          }
+        }
+        touchStartX.current = null;
+      }}
+    >
+      <div className="app-scroll-area">
+        <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
+          <ThemeContent
+            robot={robot}
+            robots={app.robots}
+            onStart={() => void handleStart()}
+            onQuotes={handleQuotes}
+            onRemove={handleRemove}
+            onOpenScanner={() => {
+              window.location.assign("/app/scanner");
+            }}
+            onOpenSymbols={() => {
+              window.location.assign("/app/metatrader");
+            }}
+            onSelectRobot={(id) => {
+              setActiveRobot(id);
+              toast.success("Robot selected");
+            }}
+            onOpenAdd={() => setModalOpen(true)}
+          />
+        </main>
       </div>
 
-      {/* TradeExecutionToast mounted at the bottom */}
-      <TradeExecutionToast
-        isOpen={toastOpen}
-        onClose={() => setToastOpen(false)}
-        botName={active.name ?? "EA"}
-        totalTrades={toastTrades}
-        mode="auto"
-        symbol={toastSymbol}
-      />
-    </AppFrame>
+      <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
+
+      <WelcomeMaster />
+      <DraggableBotPopup />
+      <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <FixedBottomNav />
+    </div>
   );
 }

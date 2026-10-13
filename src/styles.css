@@ -1,3 +1,5 @@
+/* EA Migrate app theme fonts — must precede all rules */
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400..900&family=Space+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;700&family=Orbitron:wght@400..900&family=Rajdhani:wght@400..700&family=Audiowide&family=Michroma&family=Teko:wght@400..700&family=Syncopate:wght@400;700&family=Cinzel:wght@400..900&family=Major+Mono+Display&family=Bruno+Ace+SC&family=Russo+One&display=swap");
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
@@ -9,26 +11,9 @@
   display: none !important;
 }
 
-@keyframes logoMove {
-  0% {
-    transform: translateX(0);
-  }
 
-  50% {
-    transform: translateX(20px);
-  }
-
-  100% {
-    transform: translateX(0);
-  }
-}
-
-.logo-animate {
-  animation: logoMove 1.2s ease-in-out infinite;
-  animation-delay: 2s;
-  animation-iteration-count: infinite;
-}
-
+/* The header logo no longer auto-slides — the translate loop made it overlap
+   the brand text on narrow screens. Hover feedback only. */
 /*
  * Design system definition.
  *
@@ -132,6 +117,87 @@
   --surface-panel: linear-gradient(180deg, #151515, #111111);
 }
 
+/* Landing header logo — a slow, continuous spin (12s per turn). */
+@keyframes logo-spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+.logo-spin {
+  animation: logo-spin 12s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .logo-spin {
+    animation: none;
+  }
+}
+
+/* Landing light mode — activated ONLY by the sun toggle in the header.
+   Overrides the core tokens so the whole page renders on a white base. */
+html.light-mode {
+  --background: #f6f8fb;
+  --foreground: #0b1220;
+  --card: #ffffff;
+  --card-foreground: #0b1220;
+  --popover: #ffffff;
+  --popover-foreground: #0b1220;
+  --secondary: #eef2f7;
+  --secondary-foreground: #0b1220;
+  --muted: #eef2f7;
+  --muted-foreground: #5a6474;
+  --accent: #e8f1fb;
+  --accent-foreground: #0077cc;
+  --border: #dbe2ec;
+  --input: #dbe2ec;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #0b1220;
+  --sidebar-accent: #e8f1fb;
+  --surface-panel: linear-gradient(180deg, #ffffff, #f2f5f9);
+  --gradient-hero: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(0 168 255 / 0.14), transparent 70%);
+  --glow: 0 0 40px rgb(0 168 255 / 0.18);
+  color-scheme: light;
+}
+html.light-mode body {
+  background: var(--background);
+}
+/* The landing hardcodes many dark surfaces — flip them ALL in light mode:
+   black/navy backgrounds → white cards, white text → ink, white-alpha
+   utilities → ink-alpha, dark shadows → soft light-mode shadows. */
+html.light-mode [class*="bg-black"],
+html.light-mode [class*="bg-[#0"],
+html.light-mode [class*="bg-[#1"],
+html.light-mode [class*="bg-[#2"] {
+  background-color: #ffffff;
+}
+html.light-mode [class*="text-white"] {
+  color: #101828;
+}
+html.light-mode [class*="bg-white/"] {
+  background-color: rgb(15 23 42 / 0.04);
+}
+html.light-mode [class*="border-white/"] {
+  border-color: rgb(15 23 42 / 0.12);
+}
+html.light-mode [class*="border-[#"],
+html.light-mode [class*="border-border"] {
+  border-color: rgb(15 23 42 / 0.12);
+}
+html.light-mode .panel {
+  background: linear-gradient(180deg, #ffffff, #f4f7fa);
+  box-shadow: 0 8px 28px rgb(15 23 42 / 0.06);
+}
+html.light-mode [class*="shadow-["] {
+  --tw-shadow-colored: 0 8px 24px rgb(15 23 42 / 0.10);
+  box-shadow: 0 8px 24px rgb(15 23 42 / 0.10);
+}
+/* Gradient/solid text accents stay readable on white. */
+html.light-mode .hero-glow {
+  background: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(0 168 255 / 0.10), transparent 70%);
+}
+
 @utility text-brand {
   background: var(--gradient-brand);
   -webkit-background-clip: text;
@@ -153,117 +219,456 @@
   box-shadow: var(--glow-soft);
 }
 
-@keyframes backgroundFloat {
-  0%, 100% { transform: translate3d(0, 8vh, 0) scale(0.9); opacity: 0; }
-  18% { opacity: 0.7; }
-  72% { opacity: 0.32; }
-  100% { transform: translate3d(calc((var(--i) - 9) * 2.8vw), -112vh, 0) scale(1.1); }
+/* Overflow safety — MUST live in @layer base so Tailwind utilities always win.
+   Never add an unlayered universal margin/padding reset here: in Tailwind v4 it
+   would override every px-/mt-/gap- utility and flatten the whole layout. */
+@layer base {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden !important;
+  }
+
+  body {
+    min-height: 100dvh;
+    height: auto !important;
+    background-color: #000;
+  }
+
+  img,
+  video {
+    max-width: 100%;
+  }
+
+  /* Kill every source of the right-edge line: no visible scrollbar chrome
+     anywhere (touch scrolling still works, content just never shows a bar). */
+  html {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  ::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none;
+  }
+
+  /* ── 4K ULTRA polish: crisp text, smooth motion, premium chrome ───────── */
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    scroll-behavior: smooth;
+  }
+
+  body {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    text-shadow: 0.02px 0.02px 0 rgba(255, 255, 255, 0.06);
+    transition: background-color 0.3s ease;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    letter-spacing: -0.02em;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--primary) 35%, transparent);
+    color: #fff;
+  }
+
+  /* All interactive elements get instant-focus polish and buttery transitions. */
+  button,
+  a,
+  input,
+  select,
+  textarea,
+  [role="button"] {
+    -webkit-tap-highlight-color: transparent;
+    transition-property: color, background-color, border-color, box-shadow, transform, opacity, filter;
+    transition-duration: 200ms;
+    transition-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+  }
+
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--primary) 80%, transparent);
+    outline-offset: 2px;
+  }
+
+  /* GPU-composited easing — the “4K ultra smooth” feel on phones. */
+  @supports (transform: translateZ(0)) {
+    [role="button"],
+    button {
+      will-change: auto;
+      -webkit-transform: translateZ(0);
+    }
+  }
+
+  /* Lock the body only while a locked app shell is mounted — the mentor portal still scrolls. */
+  body:has(.app-shell-locked) {
+    overflow: hidden;
+  }
 }
 
-@keyframes backgroundPulse {
-  0%, 100% { opacity: 0.2; transform: scale(0.96); }
-  50% { opacity: 0.65; transform: scale(1.04); }
+#root,
+[data-slot="router-outlet"],
+[data-viewport] {
+  min-height: 100%;
 }
 
-@keyframes backgroundScan {
-  from { transform: translateY(-30%); }
-  to { transform: translateY(130%); }
+/* Hero card used by the home themes — rounded 32px card, small side margins. */
+.app-hero-bleed {
+  width: calc(100% - 1.5rem);
+  margin: 0 auto;
+  border-radius: 32px !important;
 }
 
-@keyframes scannerLine {
-  0%, 100% { transform: translateY(-7rem); opacity: 0.45; }
-  50% { transform: translateY(7rem); opacity: 1; }
+/* Chart scanner: the white scan line sweeping up and down over the chart. */
+@keyframes scanMove {
+  0% {
+    top: 10%;
+  }
+  50% {
+    top: 85%;
+  }
+  100% {
+    top: 10%;
+  }
 }
 
-.scanner-line {
-  animation: scannerLine 1.8s ease-in-out infinite;
+/* Trade execution toast: slide down from the top edge. */
+@keyframes slideDown {
+  from {
+    transform: translateY(-120%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 
-.app-background-layer {
-  position: fixed;
-  z-index: 0;
-  inset: 0;
+/* Welcome Master gate — plain CSS so content never renders as a black screen. */
+@keyframes welcomeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes welcomePop {
+  from {
+    transform: scale(0.7) translateY(18px);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1) translateY(0);
+    opacity: 1;
+  }
+}
+@keyframes welcomeUp {
+  from {
+    transform: translateY(14px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+/* Fullscreen lock helper — intentionally unused for now: the app scrolls like
+   a normal page again (users found the locked shell ugly). Kept in case we
+   reintroduce a native-shell mode later. */
+.app-fullscreen {
+  min-height: 100dvh;
+}
+
+.app-fullscreen .app-scroll-area {
+  min-height: 100dvh;
+}
+
+/* When a background animation is enabled, the app screens must be transparent
+   so the fixed canvas behind them shows through (body.eamp-bg-on is kept in
+   sync by the BackgroundEffects engine). With effects off, screens stay black. */
+body.eamp-bg-on .app-fullscreen.bg-black {
+  background-color: transparent;
+}
+
+/* Lock the body only while a native-shell screen is actually mounted with the
+   locked variant — the mentor portal still scrolls normally. */
+body:has(.app-shell-locked) {
   overflow: hidden;
-  pointer-events: none;
-  color: var(--accent);
-  opacity: 0.78;
+}
+.app-shell-locked {
+  height: 100dvh;
+  overflow: hidden;
 }
 
-.background-vignette {
-  position: absolute;
-  inset: 0;
-  background: radial-gradient(circle at 50% 42%, transparent 0%, color-mix(in srgb, var(--background) 30%, transparent) 72%, var(--background) 100%);
+/* Brighter portal variant, toggled from the portal header. */
+
+/* ══════════════════════════════════════════════════════════════════════
+   PLATFORM-ADAPTIVE UI LAYER
+   ══════════════════════════════════════════════════════════════════════
+   The pre-paint script in __root.tsx stamps `platform-android` or
+   `platform-ios` on <html>. Components read these tokens so the SAME screens
+   render Material-style on Android and iOS-style on iPhone: corner radii,
+   fonts, control heights, nav shape, sheets and safe areas. Presentation
+   only — functionality, wiring and branding are untouched.
+
+   Safe areas (notch / Dynamic Island / home indicator / Android nav bar). */
+:root {
+  --sa-top: env(safe-area-inset-top, 0px);
+  --sa-bottom: env(safe-area-inset-bottom, 0px);
+  --sa-left: env(safe-area-inset-left, 0px);
+  --sa-right: env(safe-area-inset-right, 0px);
 }
 
-.background-particle {
-  position: absolute;
-  left: calc(var(--i) * 6.2% - 8%);
-  bottom: -4rem;
-  color: var(--accent);
-  font-size: clamp(0.65rem, 1.8vw, 0.95rem);
-  font-weight: 800;
-  opacity: 0;
-  text-shadow: 0 0 14px color-mix(in srgb, var(--accent) 80%, transparent);
-  animation: backgroundFloat 14s linear infinite;
-  animation-delay: var(--delay);
+/* ── Android / Material defaults (also the desktop rendering) ─────────── */
+html {
+  --plat-font-ui: "Roboto", "Saira", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --plat-font-display: "Saira", "Orbitron", "Space Grotesk", system-ui, sans-serif;
+  --plat-radius-control: 16px;
+  --plat-radius-card: 20px;
+  --plat-radius-sheet: 24px;
+  --plat-radius-field: 16px;
+  --plat-radius-button: 999px;
+  --plat-control-h: 52px;
+  --plat-field-h: 54px;
+  --plat-touch-min: 48px;
+  --plat-nav-h: 64px;
+  --plat-label-size: 11px;
+  --plat-label-track: 0.22em;
+  --plat-title-size: 26px;
+  --plat-elev-1: 0 1px 2px rgba(0, 0, 0, 0.5), 0 4px 16px rgba(0, 0, 0, 0.35);
+  --plat-elev-2: 0 2px 6px rgba(0, 0, 0, 0.55), 0 14px 38px rgba(0, 0, 0, 0.45);
+  --plat-elev-3: 0 4px 10px rgba(0, 0, 0, 0.5), 0 24px 64px rgba(0, 0, 0, 0.55);
 }
 
-.background-neon-grid {
-  background-image: linear-gradient(color-mix(in srgb, var(--accent) 13%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--accent) 13%, transparent) 1px, transparent 1px);
-  background-size: 42px 42px;
-  mask-image: linear-gradient(to bottom, transparent, black 28%, black 75%, transparent);
+/* ── iOS overrides — SF-adjacent stack, continuous radii, Apple metrics ── */
+html.platform-ios {
+  --plat-font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --plat-font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Inter", "Helvetica Neue", system-ui, sans-serif;
+  --plat-radius-control: 14px;
+  --plat-radius-card: 20px;
+  --plat-radius-sheet: 38px;
+  --plat-radius-field: 14px;
+  --plat-radius-button: 14px;
+  --plat-control-h: 50px;
+  --plat-field-h: 50px;
+  --plat-touch-min: 44px;
+  --plat-nav-h: 60px;
+  --plat-label-size: 10px;
+  --plat-label-track: 0.06em;
+  --plat-title-size: 28px;
+  --plat-elev-1: 0 1px 3px rgba(0, 0, 0, 0.35);
+  --plat-elev-2: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --plat-elev-3: 0 18px 60px rgba(0, 0, 0, 0.6);
 }
 
-.background-neon-grid::after,
-.background-candle-charts::after,
-.background-ticker-wave::after {
-  position: absolute;
-  inset: 0;
-  content: "";
-  background: linear-gradient(transparent 45%, color-mix(in srgb, var(--accent) 22%, transparent) 50%, transparent 55%);
-  background-size: 100% 180px;
-  animation: backgroundScan 8s linear infinite;
+html.platform-ios body {
+  letter-spacing: -0.01em;
 }
 
-.background-starfield .background-particle,
-.background-particles .background-particle {
-  animation-name: backgroundPulse;
-  animation-duration: 4.5s;
-  left: calc(var(--i) * 3%);
-  bottom: 32%;
+/* Platform utilities — components opt in with these classes. */
+@utility plat-title {
+  font-family: var(--plat-font-display);
+  font-size: clamp(var(--plat-title-size), 7vw, calc(var(--plat-title-size) + 6px));
+  line-height: 1.12;
+  letter-spacing: -0.01em;
+}
+@utility plat-label {
+  font-size: var(--plat-label-size);
+  letter-spacing: var(--plat-label-track);
+}
+@utility plat-elev-1 { box-shadow: var(--plat-elev-1); }
+@utility plat-elev-2 { box-shadow: var(--plat-elev-2); }
+@utility plat-elev-3 { box-shadow: var(--plat-elev-3); }
+
+/* Safe-area helpers — compose with flex/grid; never hardcode positions.
+   Each one keeps the screen's previous spacing when no inset exists
+   (max/calc) and grows only where the system reports a real inset, so
+   Android-browser spacing is unchanged while iPhone notch/home-indicator
+   clearances become correct. */
+@utility pt-safe { padding-top: max(2rem, var(--sa-top)); }
+@utility pb-safe-nav {
+  padding-bottom: calc(var(--plat-nav-h) + var(--sa-bottom) + 5rem);
+}
+@utility pb-safe-base { padding-bottom: max(1.25rem, var(--sa-bottom)); }
+@utility pb-safe-xl { padding-bottom: max(5rem, var(--sa-bottom)); }
+
+/* ── Platform press feedback ────────────────────────────────────────────
+   Android: Material-style brighten + pop. iOS: Apple dim + spring-back. */
+html.platform-android .plat-pressable {
+  transition: transform 160ms cubic-bezier(0.2, 0, 0, 1), opacity 160ms ease, filter 160ms ease;
+}
+html.platform-android .plat-pressable:active:not(:disabled) {
+  transform: scale(0.97);
+  filter: brightness(1.12);
+}
+html.platform-ios .plat-pressable {
+  transition: transform 220ms cubic-bezier(0.32, 0.72, 0, 1), opacity 180ms ease, filter 180ms ease;
+}
+html.platform-ios .plat-pressable:active:not(:disabled) {
+  transform: scale(0.96);
+  opacity: 0.82;
 }
 
-.background-starfield .background-particle { font-size: 0.45rem; }
-.background-snow .background-particle { color: color-mix(in srgb, white 85%, var(--accent)); }
-.background-ticker-wave .background-particle { left: auto; right: -2rem; animation-duration: 9s; }
-.background-falling-dollars .background-particle { color: #7ee787; }
-.background-candle-charts .background-particle { color: #ff9f43; }
-
-.background-orbit {
-  position: absolute;
-  left: 50%;
-  top: 45%;
-  width: 52vw;
-  max-width: 26rem;
-  aspect-ratio: 2.4;
-  border: 1px solid color-mix(in srgb, var(--accent) 18%, transparent);
-  border-radius: 50%;
-  transform: translate(-50%, -50%) rotate(-18deg);
-  animation: backgroundPulse 7s ease-in-out infinite;
+/* Platform card / field / control vocabulary. */
+.plat-card {
+  border-radius: var(--plat-radius-card);
+  box-shadow: var(--plat-elev-1);
+}
+.plat-field {
+  height: var(--plat-field-h);
+  border-radius: var(--plat-radius-field);
+}
+.plat-control {
+  min-height: var(--plat-touch-min);
+  border-radius: var(--plat-radius-control);
 }
 
-.background-orbit-two { transform: translate(-50%, -50%) rotate(38deg) scale(0.7); animation-delay: -2.5s; }
-.background-chart-line { position: absolute; left: 12%; right: 12%; top: 48%; height: 1px; background: var(--accent); opacity: 0.12; transform: rotate(-8deg); }
+html.platform-ios .plat-uppercase-label {
+  letter-spacing: 0.08em;
+}
 
-.effect-preview { background: #0b1721; }
-.effect-preview-lines { position: absolute; inset: 0; background-image: linear-gradient(color-mix(in srgb, var(--primary) 20%, transparent) 1px, transparent 1px), linear-gradient(90deg, color-mix(in srgb, var(--primary) 20%, transparent) 1px, transparent 1px); background-size: 18px 18px; opacity: 0.6; }
-.effect-preview-particles { position: absolute; inset: 15% 10%; background: radial-gradient(circle, var(--primary) 0 1px, transparent 2px) 0 0 / 22px 18px; opacity: 0.75; animation: backgroundPulse 3s ease-in-out infinite; }
-.effect-preview-0 { background: linear-gradient(135deg, #10251e, #0b1721); }
-.effect-preview-1 { background: repeating-linear-gradient(90deg, #0b1721 0 8px, #123346 9px 10px); }
-.effect-preview-2 { background: linear-gradient(135deg, #2c1c14, #0b1721); }
-.effect-preview-3 { background: radial-gradient(circle at 20% 30%, #c3d8ff 0 1px, transparent 2px), #0b1721; background-size: 24px 18px; }
-.effect-preview-4 { background: linear-gradient(135deg, #0b1721, #162c43); }
-.effect-preview-5 { background: linear-gradient(160deg, #0b1721 40%, #14364e 41% 43%, #0b1721 44%); }
-.effect-preview-6 { background: radial-gradient(circle at 30% 40%, #62d7ff 0 1px, transparent 2px), #0b1721; background-size: 18px 16px; }
-.effect-preview-7 { background: linear-gradient(135deg, #10223a, #d6eaff 46%, #0b1721 47%); }
+/* Horizontal safe-area insets (landscape notch) are handled by the existing
+   px-* gutters on every screen; vertical insets use the utilities above. A
+   .plat-screen class is deliberately NOT defined: any unlayered padding or
+   display rule here would fight the px and flex utilities in the cascade. */
+
+/* ── Platform dialogs & sheets (components/ui/dialog.tsx) ─────────────── */
+/* Android: centered Material card, 28px radius, fade + rise.
+   The card is centred with `left-[50%] top-[50%] -translate-x-1/2
+   -translate-y-1/2`, which Tailwind v4 emits as the `translate` PROPERTY.
+   These animations therefore touch `transform` only and must never repeat
+   the -50% shift: that centred the card a second time and pushed it one
+   full width off the left edge — and `both` fill-mode kept the doubled
+   shift in place after the animation finished. */
+.plat-dialog-android {
+  border-radius: 28px;
+  animation: platAndroidDialogIn 240ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+@keyframes platAndroidDialogIn {
+  from { opacity: 0; transform: scale(0.94); }
+  to { opacity: 1; transform: scale(1); }
+}
+/* iOS: bottom sheet on the home-indicator edge, grabber, slide-up. */
+.plat-dialog-ios {
+  border-radius: var(--plat-radius-sheet) var(--plat-radius-sheet) 0 0;
+  padding-bottom: calc(1rem + var(--sa-bottom));
+  animation: platIosSheetIn 320ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+@keyframes platIosSheetIn {
+  from { opacity: 0.4; transform: translateY(12%); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.plat-sheet-grabber { display: none; }
+html.platform-ios .plat-sheet-grabber {
+  display: block;
+  width: 40px;
+  height: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.28);
+  margin: 2px auto 10px;
+}
+
+/* ── Platform bottom navigation ──────────────────────────────────────── */
+.plat-nav-android {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: var(--sa-bottom);
+}
+.plat-nav-ios {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: calc(var(--sa-bottom) + 8px);
+}
+.plat-nav-indicator {
+  width: 56px;
+  height: 30px;
+  border-radius: 999px;
+  transition: background-color 200ms ease, width 220ms cubic-bezier(0.2, 0, 0, 1);
+}
+
+/* ── Responsive guards ──────────────────────────────────────────────────
+   Ultra-narrow phones (Fold cover, 320px class): shrink display type so
+   nothing clips. Short landscape phones: soften hero corners. */
+@media (max-width: 360px) {
+  html {
+    --plat-title-size: 22px;
+  }
+}
+
+@media (max-height: 620px) {
+  .app-hero-bleed {
+    border-radius: 24px !important;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .plat-dialog-android,
+  .plat-dialog-ios {
+    animation: none;
+  }
+  html.platform-android .plat-pressable,
+  html.platform-ios .plat-pressable {
+    transition: none;
+  }
+}
+.portal-bright .panel {
+  background: linear-gradient(180deg, #1a222d, #151b23);
+  border-color: rgb(255 255 255 / 0.12);
+}
+.portal-bright .bg-\[\#0A0A0A\] {
+  background-color: #10151c;
+}
+
+/* ── Colour Matrix effect — pulses glows on images, buttons and names ──── */
+/* Scoped under body.eamp-colour-matrix so it only runs when toggled on.   */
+@keyframes eampGlowPulse {
+  0%,
+  100% {
+    box-shadow: 0 0 10px color-mix(in srgb, var(--eamp-glow, #00e5ff) 30%, transparent);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: 0 0 32px color-mix(in srgb, var(--eamp-glow, #00e5ff) 90%, transparent);
+    filter: brightness(1.18);
+  }
+}
+@keyframes eampTextGlowPulse {
+  0%,
+  100% {
+    text-shadow: 0 0 4px color-mix(in srgb, var(--eamp-glow, #00e5ff) 20%, transparent);
+  }
+  50% {
+    text-shadow: 0 0 22px color-mix(in srgb, var(--eamp-glow, #00e5ff) 95%, transparent);
+  }
+}
+body.eamp-colour-matrix img {
+  animation: eampGlowPulse 2.6s ease-in-out infinite;
+}
+body.eamp-colour-matrix button {
+  animation: eampGlowPulse 2.6s ease-in-out infinite;
+}
+body.eamp-colour-matrix h1,
+body.eamp-colour-matrix h2 {
+  animation: eampTextGlowPulse 2.6s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  body.eamp-colour-matrix img,
+  body.eamp-colour-matrix button,
+  body.eamp-colour-matrix h1,
+  body.eamp-colour-matrix h2 {
+    animation: none;
+  }
+}
+
 
