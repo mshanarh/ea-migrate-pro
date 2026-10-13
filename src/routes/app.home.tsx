@@ -11,7 +11,7 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
+import DraggableBotPopup from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
@@ -314,6 +314,12 @@ function AppHome() {
       return;
     }
 
+    // Calculate total trades across Allowed Quotes
+    const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
+    setToastTrades(totalTrades);
+    setToastSymbol(pairs[0]?.symbol ?? "");
+    setToastOpen(true);
+
     let opened = 0;
     let blocked = 0;
     let refused = 0;
@@ -419,6 +425,7 @@ function AppHome() {
     toast.success(`${robot.name} started`);
     speakBot(`${robot.name} started. Time to make money.`);
 
+    // Fire-and-forget auto-trade with safety checks
     void runConfiguredPairs(robot).catch((error: unknown) => {
       console.warn("[start] auto-trade run failed:", error);
     });
@@ -485,3 +492,5 @@ function AppHome() {
     </div>
   );
 }
+
+export default AppHome;
