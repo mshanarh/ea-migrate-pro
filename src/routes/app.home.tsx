@@ -11,7 +11,7 @@ import {
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
-import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
@@ -229,6 +229,7 @@ function AppHome() {
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
+
   useEffect(() => {
     let cancelled = false;
     let running = false;
@@ -306,7 +307,6 @@ function AppHome() {
     setModalOpen(false);
   };
 
-  /** Auto-Trade with safety checks using the new API */
   const runConfiguredPairs = async (target: Robot) => {
     const pairs = target.pairs ?? [];
     if (pairs.length === 0) {
@@ -323,7 +323,6 @@ function AppHome() {
       if (!symbol) continue;
 
       try {
-        // SAFETY: Use new resolveTradeDirection which blocks on weak data
         const analysis = await resolveTradeDirection(symbol);
 
         if (analysis.direction.type === "NO_TRADE") {
@@ -341,13 +340,11 @@ function AppHome() {
           continue;
         }
 
-        // Direction determined by safety analysis
         const direction = analysis.direction;
         const trades = safeTradeCount(pair.maxTrades);
 
         if (trades === 0) continue;
 
-        // Execute with safety checks
         const result = await executeAutoTrade({
           symbol: analysis.symbol,
           lotSize: Number(pair.lotSize) || 0.01,
@@ -422,7 +419,6 @@ function AppHome() {
     toast.success(`${robot.name} started`);
     speakBot(`${robot.name} started. Time to make money.`);
 
-    // Fire-and-forget auto-trade with safety checks
     void runConfiguredPairs(robot).catch((error: unknown) => {
       console.warn("[start] auto-trade run failed:", error);
     });
@@ -476,9 +472,6 @@ function AppHome() {
       <DraggableBotPopup />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
-    </div>
-  );
-}
 
       {/* TradeExecutionToast mounted at the bottom */}
       <TradeExecutionToast
@@ -489,6 +482,6 @@ function AppHome() {
         mode="auto"
         symbol={toastSymbol}
       />
-    </div >
+    </div>
   );
 }
