@@ -51,7 +51,7 @@ type Props = {
   symbol?: string;
 };
 
-export default function TradeExecutionToast({
+export function TradeExecutionToast({
   isOpen,
   onClose,
   botName,
@@ -282,3 +282,5 @@ export default function TradeExecutionToast({
     </div>
   );
 }
+
+export default TradeExecutionToast;

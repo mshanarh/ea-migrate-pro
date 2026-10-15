@@ -6,7 +6,7 @@ import {
   Menu,
   RefreshCw,
 } from "lucide-react";
-import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { requireVerifiedAccess } from "@/lib/payment-gate";

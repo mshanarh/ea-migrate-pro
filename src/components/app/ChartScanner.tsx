@@ -391,9 +391,9 @@ export default function ChartScanner({
         timeframe,
       });
       if (!result.ok) {
-        setAnalysisError(result.message);
+        setAnalysisError(result.message ?? "Could not run the chart analysis. Try again in a moment.");
       } else {
-        setAnalysis(result.analysis);
+        setAnalysis(result.analysis ?? null);
       }
     } catch {
       setAnalysisError("Could not run the chart analysis. Check your connection and try again.");

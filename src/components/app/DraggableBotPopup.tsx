@@ -36,7 +36,7 @@ declare global {
   }
 }
 
-export default function DraggableBotPopup() {
+export function DraggableBotPopup() {
   const app = useAppState();
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   const running = robot?.running ?? false;
@@ -522,3 +522,5 @@ export default function DraggableBotPopup() {
     </>
   );
 }
+
+export default DraggableBotPopup;

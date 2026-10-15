@@ -1,5 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
-import { analyzeMarket, type ScannerAnalysis, type ScannerAnalysisRequest } from "@/lib/market-scanner-core";
+import {
+  analyzeMarket,
+  type AnalyzeMarketRequest,
+  type AnalyzeMarketResult,
+  type ScannerAnalysis,
+} from "@/lib/market-scanner-core";
+
+/** The request shape keeps its historical name for existing callers. */
+type ScannerAnalysisRequest = AnalyzeMarketRequest;
 
 /**
  * Market Scanner server function — a thin TanStack Start wrapper around the
@@ -18,6 +26,4 @@ type ScannerFailure = { ok: false; code: string; message: string };
 
 export const getScannerAnalysis = createServerFn({ method: "POST" })
   .validator((data: ScannerAnalysisRequest) => data)
-  .handler(async ({ data }): Promise<{ ok: true; analysis: ScannerAnalysis } | ScannerFailure> =>
-    analyzeMarket(data),
-  );
+  .handler(async ({ data }): Promise<AnalyzeMarketResult> => analyzeMarket(data));

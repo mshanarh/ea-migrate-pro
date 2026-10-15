@@ -5,8 +5,8 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import ChartScanner from "@/components/app/ChartScanner";
 import type { ExecutionOutcome, ExecutionPlan } from "@/components/app/ChartScanner";
-import DraggableBotPopup from "@/components/app/DraggableBotPopup";
-import TradeExecutionToast from "@/components/app/TradeExecutionToast";
+import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
+import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { getAppState, leaveForCheckout } from "@/lib/app-store";

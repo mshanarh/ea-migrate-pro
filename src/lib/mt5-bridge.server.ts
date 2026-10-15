@@ -27,11 +27,9 @@ function bridgeTransportError(err: unknown): string {
   return `Cannot reach the VPS bridge at ${host} (${detail}). Check that bridge.py is running and that port 8000 is open in the VPS firewall/security group.`;
 }
 
-/**
- * Single bridge transport helper — every call site uses this so timeouts and
- * error shaping are consistent. Never throws: transport failures come back
- * as { transportError } and are turned into user-facing messages upstream.
- */
+/** \n * Single bridge transport helper — every call site uses this so timeouts and
+ *  error shaping are consistent. Never throws: transport failures come back
+ *  as { transportError } and are turned into user-facing messages upstream. */
 async function bridgeFetch(
   path: string,
   body: unknown,
@@ -58,9 +56,7 @@ async function bridgeFetch(
   }
 }
 
-/**
- * 1. Verify MT5 Account Credentials
- */
+/** \n * 1. Verify MT5 Account Credentials */
 export const verifyMt5Credentials = createServerFn({ method: "POST" })
   .validator((data: { login: number | string; password: string; server: string }) => data)
   .handler(
@@ -81,17 +77,7 @@ export const verifyMt5Credentials = createServerFn({ method: "POST" })
     },
   );
 
-/**
- * 2. Save MT5 credentials — SAVE FIRST, VERIFY BEST-EFFORT.
- *
- * The credentials are ALWAYS persisted — on the device first, then in the
- * cloud store best-effort — before any broker contact. Verification then
- * runs against the VPS bridge with a short timeout; a bridge outage, wrong
- * password or timeout NEVER blocks or rolls back the save — the account is
- * simply marked unverified and the platform verifies again when the next
- * trade executes. This is the bridge-offline fix: the user's details are
- * never lost because the VPS was down.
- */
+/** \n * 2. Save MT5 credentials — SAVE FIRST, VERIFY BEST-EFFORT. */
 export type SaveMt5CredentialsInput = {
   userId: string;
   login: number | string;
@@ -153,9 +139,6 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
     }
     // Bridge offline/slow (transportError) — DO NOT throw; the save stands as
     // unverified and verification retries at the next trade.
-
-    // 3. Always succeed — the credentials are kept (device + cloud when
-    //    reachable) and verification happens again at the next trade.
     return {
       success: true,
       verified,
@@ -164,15 +147,7 @@ export const saveMt5Credentials = createServerFn({ method: "POST" })
     };
   });
 
-/**
- * 3. Execute trades for a signed-in user — THE LIVE EXECUTION PATH.
- *
- * Trade execution needs the MT5 password, and the password NEVER travels
- * through the browser. This server function takes the signed-in user id,
- * reads the saved credentials server-side from the cloud store, then sends
- * them to the VPS bridge which opens the broker connection, places the
- * order(s) and closes the connection again.
- */
+/** \n * 3. Execute trades for a signed-in user — THE LIVE EXECUTION PATH. */
 export type ExecuteMt5ForUserInput = {
   userId: string;
   eaName?: string | undefined;
@@ -260,9 +235,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
     };
   });
 
-/**
- * 4. Execute one trade directly to MT5 — internal, credentials in hand.
- */
+/** \n * 4. Execute one trade directly to MT5 — internal, credentials in hand. */
 async function executeVpsTradeInternal(input: {
   login: number | string;
   password: string;
@@ -273,16 +246,11 @@ async function executeVpsTradeInternal(input: {
   stop_loss?: number | undefined;
   take_profit?: number | undefined;
   eaName?: string | undefined;
-}): Promise<{ success: boolean; error?: string; transportDown?: boolean }> {
-  // THE EA NAME ONLY in the order comment — the " ~ EA Migrate" suffix and
-  // the "EA Migrate" fallback were removed on request: letters, digits and
-  // spaces, capped at MT5's 31 characters, and an EMPTY comment when the EA
-  // has no usable name (the bridge applies its own default then).
-  const safeEaName = (input.eaName ?? "")
-    .replace(/[^A-Za-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 31);
+}): Promise<{ success: boolean; error?: string; transportDown?: boolean; actualComment?: string }> {
+  // Preserve EA name EXACTLY — no sanitization, no stripping, no truncation
+  // The app's trade record contains the exact name as saved in the robot config
+  const requestedComment = input.eaName ?? "";
+
   const result = await bridgeFetch("/trade/execute", {
     credentials: {
       login: Number(input.login),
@@ -294,8 +262,9 @@ async function executeVpsTradeInternal(input: {
     volume: input.volume,
     stop_loss: input.stop_loss || 0,
     take_profit: input.take_profit || 0,
-    comment: safeEaName,
+    comment: requestedComment,
   });
+
   if (result.transportError) {
     return { success: false, error: result.transportError, transportDown: true };
   }
@@ -303,14 +272,23 @@ async function executeVpsTradeInternal(input: {
     const res = result.data as { detail?: string; message?: string };
     return { success: false, error: res.detail || res.message || `Trade execution failed (HTTP ${result.status})` };
   }
-  return { success: true };
+
+  // Surface any comment truncation/change that the broker reported
+  let actualComment = requestedComment;
+  if (result.data && typeof result.data === "object") {
+    const data = result.data as Record<string, unknown>;
+    if (typeof data["comment"] === "string" && data["comment"] !== requestedComment) {
+      actualComment = data["comment"];
+    }
+  }
+
+  return {
+    success: true,
+    actualComment,
+  };
 }
 
-/**
- * 5. Execute Trade Directly to MT5 — explicit-credentials server function.
- * Kept for callers that already hold the credentials server-side; the app's
- * live path goes through executeMt5ForUser so no password reaches the client.
- */
+/** \n * 5. Execute Trade Directly to MT5 — explicit-credentials server function. */
 export const executeVpsTrade = createServerFn({ method: "POST" })
   .validator((data: {
     credentials: { login: number | string; password: string; server: string };
