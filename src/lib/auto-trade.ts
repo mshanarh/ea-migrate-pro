@@ -236,7 +236,8 @@ function verifySymbolMapping(publicTicker: string, brokerSymbol: string): { veri
 // Core Direction Resolution - NO DEFAULT BUY/SELL
 // ============================================================================
 
-const MIN_RSI_CONFIDENCE = 5; // RSI must be at least 5 points from neutral (50)
+const RSI_BUY_BELOW = 40; // Spec: any timeframe RSI < 40 → BUY bias
+const RSI_SELL_ABOVE = 60; // Spec: any timeframe RSI > 60 → SELL bias
 const MIN_MOMENTUM_CONFIDENCE = 0.05; // Momentum must exceed this threshold
 
 export async function resolveTradeDirection(
@@ -343,20 +344,22 @@ export async function resolveTradeDirection(
   // ============================================================================
 
   let source: "mt5_broker" | "proxy" | "unavailable" = "mt5_broker";
+  // Moving-average/candle trend: a positive structure biases BUY, a negative
+  // structure biases SELL (spec: "positive/negative moving average trend").
+  let maBullish = false;
+  let maBearish = false;
   if (candlesResult && candlesResult.length > 1) {
     // Verify candles show the expected direction
     const recentCandle = candlesResult[0];
     const prevCandle = candlesResult[1];
     if (recentCandle && prevCandle) {
       // Check for bearish structure (lower lows, lower highs)
-      const isBearishStructure = recentCandle.close < prevCandle.close &&
-                                  recentCandle.low < prevCandle.low;
+      maBearish = recentCandle.close < prevCandle.close && recentCandle.low < prevCandle.low;
 
-      // Check for bullish structure
-      const isBullishStructure = recentCandle.close > prevCandle.close &&
-                                  recentCandle.high > prevCandle.high;
+      // Check for bullish structure (higher highs, higher closes)
+      maBullish = recentCandle.close > prevCandle.close && recentCandle.high > prevCandle.high;
 
-      console.log(`[auto-trade] ${symbol} candle structure: ${isBearishStructure ? "BEARISH" : isBullishStructure ? "BULLISH" : "NEUTRAL"}`);
+      console.log(`[auto-trade] ${symbol} candle structure: ${maBearish ? "BEARISH" : maBullish ? "BULLISH" : "NEUTRAL"}`);
     }
   }
 
@@ -371,46 +374,61 @@ export async function resolveTradeDirection(
   let strength: "strong" | "weak" | "none" = "none";
   let reason = "";
 
-  // RSI-based signals (requires clear deviation from 50)
-  const rsiBullish = avgRSI < (50 - MIN_RSI_CONFIDENCE); // RSI significantly oversold
-  const rsiBearish = avgRSI > (50 + MIN_RSI_CONFIDENCE); // RSI significantly overbought
+  // DIRECTION BIAS (spec): RSI < 40 on either timeframe → BUY bias,
+  // RSI > 60 on either timeframe → SELL bias; the moving-average/candle trend
+  // is an equivalent trigger in each direction.
+  const rsiBuyBias = rsi15mResult.value < RSI_BUY_BELOW || rsi1hResult.value < RSI_BUY_BELOW;
+  const rsiSellBias = rsi15mResult.value > RSI_SELL_ABOVE || rsi1hResult.value > RSI_SELL_ABOVE;
+  const buyBias = rsiBuyBias || maBullish;
+  const sellBias = rsiSellBias || maBearish;
 
-  // Momentum-based signals (requires clear trend)
+  // Momentum confirmation (requires clear trend) — a bias alone is never
+  // enough: RSI/momentum must agree before an order is allowed.
   const momentumBullish = avgMomentum > MIN_MOMENTUM_CONFIDENCE;
   const momentumBearish = avgMomentum < -MIN_MOMENTUM_CONFIDENCE;
 
   // ============================================================================
-  // DECISION: Strong signals agree -> trade, otherwise NO_TRADE
+  // DECISION: Bias + momentum must agree -> trade, otherwise NO_TRADE
   // ============================================================================
 
-  if (rsiBearish && momentumBearish) {
-    // Both RSI and momentum confirm BEARISH - STRONG SELL
+  if (sellBias && momentumBearish && !buyBias) {
+    // SELL bias (RSI > 60 or negative MA trend) + momentum confirm - STRONG SELL
     direction = {
       type: "SELL",
       entry: quoteResult.bid,
       sl: quoteResult.ask + (quoteResult.ask * 0.005),
       tp: quoteResult.bid - (quoteResult.ask * 0.005 * 2),
       rrRatio: 2,
-      reason: `Strong bearish confirmation: RSI=${avgRSI.toFixed(1)} (>${50 + MIN_RSI_CONFIDENCE}), Momentum=${avgMomentum.toFixed(2)} (<${-MIN_MOMENTUM_CONFIDENCE})`,
+      reason: `Strong bearish confirmation: RSI=${avgRSI.toFixed(1)} (>${RSI_SELL_ABOVE}), Momentum=${avgMomentum.toFixed(2)} (<${-MIN_MOMENTUM_CONFIDENCE})`,
     };
     strength = "strong";
     reason = direction.reason;
     console.log(`[auto-trade] ${symbol}: STRONG SELL signal (RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)})`);
-  } else if (rsiBullish && momentumBullish) {
-    // Both RSI and momentum confirm BULLISH - STRONG BUY
+  } else if (buyBias && momentumBullish && !sellBias) {
+    // BUY bias (RSI < 40 or positive MA trend) + momentum confirm - STRONG BUY
     direction = {
       type: "BUY",
       entry: quoteResult.ask,
       sl: quoteResult.bid - (quoteResult.ask * 0.005),
       tp: quoteResult.ask + (quoteResult.ask * 0.005 * 2),
       rrRatio: 2,
-      reason: `Strong bullish confirmation: RSI=${avgRSI.toFixed(1)} (<${50 - MIN_RSI_CONFIDENCE}), Momentum=${avgMomentum.toFixed(2)} (>${MIN_MOMENTUM_CONFIDENCE})`,
+      reason: `Strong bullish confirmation: RSI=${avgRSI.toFixed(1)} (<${RSI_BUY_BELOW}), Momentum=${avgMomentum.toFixed(2)} (>${MIN_MOMENTUM_CONFIDENCE})`,
     };
     strength = "strong";
     reason = direction.reason;
     console.log(`[auto-trade] ${symbol}: STRONG BUY signal (RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)})`);
-  } else if (rsiBearish || momentumBearish) {
-    // One indicator bearish, other neutral - WEAK sell, block
+  } else if (buyBias && sellBias) {
+    // Conflicting timeframes - refuse rather than guess.
+    direction = {
+      type: "NO_TRADE",
+      reason: `Conflicting signals: RSI=${avgRSI.toFixed(1)} gives both a BUY bias (<${RSI_BUY_BELOW}) and a SELL bias (>${RSI_SELL_ABOVE}) across the 15m/1h reads.`,
+      blocked: true,
+    };
+    strength = "weak";
+    reason = direction.reason;
+    console.warn(`[auto-trade] ${symbol}: CONFLICTING bias - BLOCKED`);
+  } else if (sellBias) {
+    // SELL bias without momentum confirmation - WEAK, block
     direction = {
       type: "NO_TRADE",
       reason: `Weak bearish signal: RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}. Requires both indicators to confirm.`,
@@ -419,8 +437,8 @@ export async function resolveTradeDirection(
     strength = "weak";
     reason = direction.reason;
     console.warn(`[auto-trade] ${symbol}: WEAK bearish - BLOCKED (no confirmation)`);
-  } else if (rsiBullish || momentumBullish) {
-    // One indicator bullish, other neutral - WEAK buy, block
+  } else if (buyBias) {
+    // BUY bias without momentum confirmation - WEAK, block
     direction = {
       type: "NO_TRADE",
       reason: `Weak bullish signal: RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}. Requires both indicators to confirm.`,
@@ -436,7 +454,7 @@ export async function resolveTradeDirection(
       reason: `No clear direction: RSI=${avgRSI.toFixed(1)} (neutral), Momentum=${avgMomentum.toFixed(2)} (neutral). Waiting for clearer signal.`,
       blocked: true,
     };
-    strength = "none";
+    strength = "weak";
     reason = direction.reason;
     console.warn(`[auto-trade] ${symbol}: NEUTRAL - BLOCKED (no signal)`);
   }

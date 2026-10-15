@@ -319,6 +319,18 @@ function AppHome() {
     setToastTrades(totalTrades);
     setToastSymbol(pairs[0]?.symbol ?? "");
     setToastOpen(true);
+
+    // The floating bot popup narrates the same four steps (spec: the popup's
+    // initial log lines stay in sync with the toast sequence).
+    const first = pairs[0];
+    if (first) {
+      window.triggerExecutionToast?.(target.name, target.image, {
+        symbol: first.symbol,
+        lot_size: first.lotSize,
+        max_trades: totalTrades,
+        ...(first.direction ? { direction: first.direction } : {}),
+      });
+    }
     // Calm pacing: hold for 1.5s so the analysis steps finish on screen
     // before the first order is sent.
     if (totalTrades > 0) {
@@ -369,7 +381,12 @@ function AppHome() {
               new CustomEvent("eamp:execution-result", {
                 detail: {
                   ok: trade.status === "executed",
-                  message: trade.message,
+                  // Spec: each successful order announces itself as
+                  // `TRADE {index}/{total} EXECUTED` on the event bus.
+                  message:
+                    trade.status === "executed"
+                      ? `TRADE ${index}/${total} EXECUTED`
+                      : trade.message,
                   symbol: trade.symbol,
                   side: trade.side,
                   index,
