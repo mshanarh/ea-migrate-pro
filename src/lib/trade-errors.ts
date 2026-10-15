@@ -22,7 +22,11 @@ export function friendlyTradeError(raw: string): string {
     return "Not enough free margin for this trade — lower the lot size or the number of trades.";
   }
   if (text.includes("invalid \"comment\"") || (text.includes("comment") && text.includes("invalid"))) {
-    return "MT5 rejected the order comment — the app strips unsafe characters automatically; simplify the bot's name if this keeps happening.";
+    // The app sends the robot's name EXACTLY as configured (no stripping, no
+    // shortening, no brand stamp), so a comment refusal is the broker
+    // objecting to those characters — say that instead of promising a
+    // rewrite the app does not perform.
+    return "The broker refused the order COMMENT. Your robot's name is sent exactly as you typed it (no characters are stripped or shortened), so the broker rejected those characters — rename the robot with letters, digits and spaces to trade live.";
   }
   if (text.includes("symbol") && (text.includes("unknown") || text.includes("not found") || text.includes("invalid"))) {
     return "Couldn't match that symbol on your broker under any known name — open MT5 → Market Watch, find the exact symbol there and use that exact name in your robot's pairs.";

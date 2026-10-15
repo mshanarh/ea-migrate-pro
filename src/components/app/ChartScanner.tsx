@@ -580,6 +580,14 @@ export default function ChartScanner({
                       {trade.filled}
                     </span>
                   </div>
+                  {/* The EA name EXACTLY as it was sent to the broker — this
+                      is the comment the order carried, kept alongside the
+                      outcome so both can be reviewed together. */}
+                  {trade.eaName && (
+                    <div className="mt-1 truncate text-[11px] font-medium text-white/55" title={trade.eaName}>
+                      EA: {trade.eaName}
+                    </div>
+                  )}
                   <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-white/40">
                     <span className="truncate">{trade.detail}</span>
                     <span className="shrink-0">{new Date(trade.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</span>

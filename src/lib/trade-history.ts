@@ -9,6 +9,12 @@ export type TradeRecord = {
   id: string;
   at: string;
   symbol: string;
+  /**
+   * The EA name sent to the broker for this run — kept EXACTLY as configured
+   * (spaces, version text, plus signs and all), never the stripped/stamped
+   * variant, so the record matches what the order actually carried.
+   */
+  eaName?: string;
   direction: "BUY" | "SELL";
   lot: string;
   trades: number;

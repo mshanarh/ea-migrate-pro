@@ -15,7 +15,7 @@ import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/l
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
-import { sanitizeBotName } from "@/lib/utils";
+import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
@@ -128,12 +128,12 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // MT5 caps comments at 31 characters and some brokers refuse anything
-      // beyond plain letters/digits. The comment is the CURRENT BOT'S NAME
-      // ONLY — letters+digits, nothing appended, always ≤31 chars, and ""
-      // when the robot has no name (no brand fallback; the bridge default
-      // covers an empty comment).
-      const orderComment = sanitizeBotName(robot?.name);
+      // The order comment is the CURRENT BOT'S NAME EXACTLY AS CONFIGURED —
+      // spaces, version text, plus signs and every other character included
+      // ("sniper killer ea v2+" is sent as "sniper killer ea v2+"). Nothing
+      // is stripped, collapsed, truncated or appended, and there is no brand
+      // fallback: "" only when the robot has no name.
+      const orderComment = mt5OrderComment(robot?.name);
       // SL/TP strategy:
       // • Feed-backed symbols — the planned levels are real-price based, send them.
       // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
@@ -190,9 +190,6 @@ function AppScanner() {
       const withStops = stopLossValue > 0 || takeProfitValue > 0;
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
-      // Switched to the bare safe stamp when a broker refuses the EA-name comment.
-      let activeComment = orderComment;
-      let commentRetried = false;
       const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
         const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
           method: "POST",
@@ -207,7 +204,8 @@ function AppScanner() {
             volume: Number(lot),
             stop_loss: stopLossValue,
             take_profit: takeProfitValue,
-            comment: activeComment,
+            // The EA name exactly as configured — no client-side rewriting.
+            comment: orderComment,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -319,25 +317,14 @@ function AppScanner() {
           // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
           // market without SL/TP — a filled market order beats a refused one.
           const raw = error instanceof Error ? error.message : "";
-          // Comment refused by the broker (unsafe characters in the EA name):
-          // FORCE the same trade through once with the bare safe fallback name.
-          if (!commentRetried && /comment/i.test(raw)) {
-            commentRetried = true;
-            activeComment = sanitizeBotName(robot?.name);
-            try {
-              const payload = await executeWithSymbolFallback();
-              opened += 1;
-              if (index === 1) firstPayload = payload;
-              window.dispatchEvent(
-                new CustomEvent("eamp:execution-result", {
-                  detail: { ok: true, message: `TRADE ${opened}/${total} EXECUTED` },
-                }),
-              );
-              if (index < total) await new Promise((resolve) => setTimeout(resolve, 2000));
-              continue;
-            } catch {
-              /* comment-retry failed too — normal handling below */
-            }
+          // Comment refused by the broker: surface it and say so plainly.
+          // There is deliberately NO retry with a stripped/stamped comment —
+          // that used to place the order under a name the trader never
+          // configured while the log claimed the trade simply "EXECUTED".
+          if (/comment/i.test(raw)) {
+            console.warn(
+              `[scanner] ${symbol}: BROKER REFUSED THE ORDER COMMENT — requested "${orderComment}", no order was placed with a changed comment. Broker said: ${raw}`,
+            );
           }
           if (useStops && !stopRetried && /invalid stops|10016/i.test(raw)) {
             stopRetried = true;
@@ -385,6 +372,8 @@ function AppScanner() {
       if (opened === 0 || !firstPayload) {
         recordTrade({
           symbol,
+          // The app's trade record keeps the EXACT EA name that was sent.
+          eaName: orderComment,
           direction,
           lot,
           trades: total,
@@ -416,10 +405,36 @@ function AppScanner() {
         firstPayload["stops_removed"] === true
           ? " ⚠ Broker rejected the SL/TP levels — position opened WITHOUT them. Set stop-loss and take-profit manually in MT5."
           : "";
-      const finalMessage = `${message}${stopsWarning}`;
+      // The broker echoes the comment it actually applied. When it is not the
+      // EA name we sent, LOG BOTH and say so in the run report — the app never
+      // rewrites the name itself, so any difference is the broker's doing and
+      // must not be presented as "the full comment was applied".
+      // The bridge may echo the applied comment at the top level or nested
+      // under `result`. An empty/absent value means "not reported", not "the
+      // broker wiped the comment" — never raise a false alarm on it.
+      const nestedResult = (firstPayload["result"] ?? {}) as Record<string, unknown>;
+      const echoedComment =
+        typeof firstPayload["comment"] === "string" && firstPayload["comment"]
+          ? (firstPayload["comment"] as string)
+          : typeof nestedResult["comment"] === "string" && nestedResult["comment"]
+            ? (nestedResult["comment"] as string)
+            : null;
+      const appliedComment = echoedComment;
+      const commentChanged = appliedComment !== null && appliedComment !== orderComment;
+      if (commentChanged) {
+        console.warn(
+          `[scanner] ${symbol}: BROKER CHANGED THE ORDER COMMENT — requested "${orderComment}", broker applied "${appliedComment}". The trade record keeps both values.`,
+        );
+      }
+      const commentWarning = commentChanged
+        ? ` ⚠ Broker applied the comment "${appliedComment}" instead of your robot name "${orderComment}" — the full name may not have been applied.`
+        : "";
+      const finalMessage = `${message}${stopsWarning}${commentWarning}`;
       onProgress("Disconnecting...");
       recordTrade({
         symbol,
+        // The app's trade record keeps the EXACT EA name that was sent.
+        eaName: orderComment,
         direction,
         lot,
         trades: total,

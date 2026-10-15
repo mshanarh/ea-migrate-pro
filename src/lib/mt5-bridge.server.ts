@@ -218,20 +218,32 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
       results.push(...rest);
     }
     const executed = results.filter((item) => item.success).length;
+    // The broker is free to truncate or rewrite the comment. When it did, the
+    // run report says so with both values instead of a clean "opened" that
+    // implies the trader's own name was applied.
+    const changed = results.find((item) => item.commentChanged === true);
+    const commentWarning = changed
+      ? ` ⚠ The broker applied the comment "${changed.actualComment}" instead of the requested "${changed.requestedComment}" — the full name may not have been applied.`
+      : "";
     if (executed === total) {
+      const summary =
+        total > 1
+          ? `${total}/${total} ${data.symbol} trades opened on MT5 — EA Migrate`
+          : `${data.symbol} trade opened on MT5 — EA Migrate`;
       return {
         ok: true,
         executed,
         total,
-        message: total > 1 ? `${total}/${total} ${data.symbol} trades opened on MT5 — EA Migrate` : `${data.symbol} trade opened on MT5 — EA Migrate`,
+        message: `${summary}${commentWarning}`,
       };
     }
     const reason = results.find((item) => !item.success)?.error ?? "The bridge did not accept the order.";
+    const base = executed > 0 ? `${executed}/${total} executed — ${reason}` : reason;
     return {
       ok: false,
       executed,
       total,
-      message: executed > 0 ? `${executed}/${total} executed — ${reason}` : reason,
+      message: `${base}${commentWarning}`,
     };
   });
 
@@ -246,9 +258,17 @@ async function executeVpsTradeInternal(input: {
   stop_loss?: number | undefined;
   take_profit?: number | undefined;
   eaName?: string | undefined;
-}): Promise<{ success: boolean; error?: string; transportDown?: boolean; actualComment?: string }> {
-  // Preserve EA name EXACTLY — no sanitization, no stripping, no truncation
-  // The app's trade record contains the exact name as saved in the robot config
+}): Promise<{
+  success: boolean;
+  error?: string;
+  transportDown?: boolean;
+  requestedComment?: string;
+  actualComment?: string;
+  commentChanged?: boolean;
+}> {
+  // Preserve EA name EXACTLY — no sanitization, no stripping, no truncation.
+  // The app's trade record contains the exact name as saved in the robot
+  // config ("sniper killer ea v2+" rides to the broker verbatim).
   const requestedComment = input.eaName ?? "";
 
   const result = await bridgeFetch("/trade/execute", {
@@ -273,18 +293,34 @@ async function executeVpsTradeInternal(input: {
     return { success: false, error: res.detail || res.message || `Trade execution failed (HTTP ${result.status})` };
   }
 
-  // Surface any comment truncation/change that the broker reported
+  // Surface any comment truncation/change the bridge/broker echoed back. A
+  // difference is never silently swallowed: BOTH values are logged and travel
+  // with the result, so the caller can tell the trader what actually landed on
+  // the order instead of implying the full name was applied.
   let actualComment = requestedComment;
   if (result.data && typeof result.data === "object") {
     const data = result.data as Record<string, unknown>;
-    if (typeof data["comment"] === "string" && data["comment"] !== requestedComment) {
+    // Only a non-empty echoed comment counts as the broker's own value — a
+    // missing/empty field means it was simply not reported.
+    if (typeof data["comment"] === "string" && data["comment"] && data["comment"] !== requestedComment) {
       actualComment = data["comment"];
     }
+  }
+  const commentChanged = actualComment !== requestedComment;
+  console.log(
+    `[mt5-bridge] order comment — requested "${requestedComment}", applied "${actualComment}"${commentChanged ? " (BROKER CHANGED IT)" : ""}`,
+  );
+  if (commentChanged) {
+    console.warn(
+      `[mt5-bridge] BROKER CHANGED THE ORDER COMMENT — requested "${requestedComment}", broker applied "${actualComment}". The full name may not have been applied.`,
+    );
   }
 
   return {
     success: true,
+    requestedComment,
     actualComment,
+    ...(commentChanged ? { commentChanged: true } : {}),
   };
 }
 

@@ -6,20 +6,24 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 /**
- * Sanitize a robot name into an MT5 ORDER COMMENT — the bot name ONLY.
+ * The MT5 ORDER COMMENT for a robot — the EA name EXACTLY as configured.
  *
- * MT5 accepts 31 characters of letters, digits and spaces and refuses the
- * rest, so punctuation/symbols are stripped, runs of spaces collapse, the
- * result is trimmed and capped at 31. Returns "" when there is no name:
- * there is deliberately NO brand fallback ("Eamigrate", "EA MIGRATE", …) —
- * the bridge applies its own server-side default for an empty comment.
+ * "sniper killer ea v2+" goes to the broker as "sniper killer ea v2+". No
+ * character stripping, no space collapsing, no trimming, no 31-character cap
+ * and no brand fallback: the trader's name is authoritative and the app never
+ * rewrites it. Only null/undefined collapses to "" (there is no name to
+ * send); the bridge applies its own server-side default for an empty comment.
+ *
+ * This replaced `sanitizeBotName`, which stripped punctuation, collapsed
+ * spaces and capped the name at 31 characters BEFORE the request left the
+ * app — so an order carried a name the trader never configured and nothing
+ * said so. If a broker now rejects, truncates or rewrites the comment, that
+ * is surfaced (requested vs actual, logged and recorded) instead of hidden —
+ * see `friendlyTradeError`, `recordTrade` and `ExecutedTrade.meta`.
+ *
  * Shared by the scanner and the auto-trade engine so both send the exact
  * same stamp.
  */
-export function sanitizeBotName(name: string | null | undefined): string {
-  return (name ?? "")
-    .replace(/[^A-Za-z0-9 ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 31);
+export function mt5OrderComment(name: string | null | undefined): string {
+  return name ?? "";
 }

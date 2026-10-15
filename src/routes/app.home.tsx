@@ -390,6 +390,14 @@ function AppHome() {
           // LIVE orders on the trader's own account through the VPS bridge.
           credentials,
           onTradeExecute: (trade, index, total) => {
+            // When the BROKER applied a different comment than the robot name
+            // we sent, that limitation rides along on the per-trade event —
+            // the trader is never told the full name was applied when it
+            // was not. Prefix stays `TRADE n/m EXECUTED` so the popup/toast
+            // still sync on the real sequential fills.
+            const commentNote = trade.meta?.commentChanged
+              ? ` — ⚠ broker applied the comment "${trade.meta.actualComment}" instead of "${trade.meta.requestedComment}"`
+              : "";
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
                 detail: {
@@ -398,12 +406,19 @@ function AppHome() {
                   // `TRADE {index}/{total} EXECUTED` on the event bus.
                   message:
                     trade.status === "executed"
-                      ? `TRADE ${index}/${total} EXECUTED`
+                      ? `TRADE ${index}/${total} EXECUTED${commentNote}`
                       : trade.message,
                   symbol: trade.symbol,
                   side: trade.side,
                   index,
                   total,
+                  ...(trade.meta?.commentChanged
+                    ? {
+                        commentRequested: trade.meta.requestedComment,
+                        commentActual: trade.meta.actualComment,
+                        commentChanged: true,
+                      }
+                    : {}),
                 },
               }),
             );

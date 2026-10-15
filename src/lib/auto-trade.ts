@@ -2,7 +2,7 @@ import type { Position, TradeSignal } from "@/types/trading";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "./bridge-client";
 import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
 import { recordTrade } from "./trade-history";
-import { sanitizeBotName } from "./utils";
+import { mt5OrderComment } from "./utils";
 
 // ============================================================================
 // SAFETY CRITICAL: No default BUY/SELL - explicit decision or NO TRADE
@@ -697,6 +697,12 @@ export interface ExecutedTrade {
   meta?: {
     requestedComment?: string;
     actualComment?: string;
+    /**
+     * True when the BROKER applied a comment that differs from the EA name we
+     * sent. The app never rewrites the name itself, so a difference here is
+     * the broker's doing and is surfaced, never hidden.
+     */
+    commentChanged?: boolean;
     mtOrderId?: string;
   };
 }
@@ -729,18 +735,20 @@ export async function executeAutoTrade(
 
   // ── LIVE-mode retry state — learned once, applied to every fill below.
   // Brokers brand the same market differently (BTCUSDm, XAUUSDM, US30Cash…),
-  // so a symbol refusal retries once through the candidate list; a comment
-  // refusal retries once with the MT5-safe stamp.
+  // so a symbol refusal retries once through the candidate list.
+  //
+  // The COMMENT deliberately has no retry: nothing here swaps in a "safer"
+  // stamp. The name the trader configured rides on every order unchanged, and
+  // a broker that refuses it gets that refusal surfaced instead of a silent
+  // substitution (see the comment branch in `sendLiveOrder`).
   let symbolRetried = false;
-  let commentRetried = false;
-  let activeComment = eaName;
   const isSymbolMismatch = (text: string) =>
     /symbol/i.test(text) &&
     /not found|unknown|invalid|no such|not available|not listed|renamed|rejected that symbol|isn't available|couldn't match/i.test(
       text,
     );
 
-  /** One LIVE order through the bridge, with symbol/comment fallbacks. */
+  /** One LIVE order through the bridge, with a symbol-name fallback only. */
   const sendLiveOrder = async (params: {
     target: string;
     action: "BUY" | "SELL";
@@ -754,7 +762,9 @@ export async function executeAutoTrade(
         volume: lotSize,
         stopLoss: params.stopLoss,
         takeProfit: params.takeProfit,
-        comment: activeComment,
+        // THE EA NAME EXACTLY AS CONFIGURED — never sanitized, stripped,
+        // shortened or swapped for a brand stamp.
+        comment: eaName,
       });
     try {
       return await attempt(params.target);
@@ -762,11 +772,14 @@ export async function executeAutoTrade(
       const raw =
         ((error as Error & { raw?: string }).raw ?? (error instanceof Error ? error.message : "")) as string;
       if (!(error instanceof Error)) throw error;
-      // Unsafe characters in the EA name → one retry with the safe stamp.
-      if (!commentRetried && /comment/i.test(raw)) {
-        commentRetried = true;
-        activeComment = sanitizeBotName(eaName) || "EA Migrate";
-        return attempt(params.target);
+      // Comment refused → report it verbatim, naming BOTH the requested
+      // comment and the broker's own words. There is deliberately no retry
+      // with a "safer" comment: that would place the order under a name the
+      // trader never configured and quietly hide the substitution.
+      if (/comment/i.test(raw)) {
+        throw new Error(
+          `The broker refused the order comment "${eaName}" — no order was placed with a changed comment. Broker said: ${raw}`,
+        );
       }
       // Symbol refused → retry once through the broker-name candidates.
       if (!symbolRetried && isSymbolMismatch(raw)) {
@@ -910,7 +923,7 @@ export async function executeAutoTrade(
       // (plan risk percentages) and pushed outside the broker's minimum stop
       // distance, so a plan computed on feed prices cannot be refused with
       // 10016. Paper mode simulates the fill.
-      console.log(`[auto-trade] ${symbol}: Sending ${side} order, comment="${activeComment}"`);
+      console.log(`[auto-trade] ${symbol}: Sending ${side} order, comment="${eaName}"`);
 
       let executed: ExecutedTrade;
       let orderId: string | null = null;
@@ -934,7 +947,16 @@ export async function executeAutoTrade(
         const filledPrice = typeof payload["price"] === "number" ? payload["price"] : entry;
         const rawOrder = payload["order"] ?? payload["deal"] ?? null;
         orderId = rawOrder != null ? String(rawOrder) : null;
-        const brokerComment = typeof payload["comment"] === "string" ? payload["comment"] : activeComment;
+        // The broker's own comment comes back with the fill. When it is not
+        // the name we sent, LOG BOTH and carry the difference into the trade
+        // record — never claim the requested comment was applied.
+        const brokerComment = typeof payload["comment"] === "string" ? payload["comment"] : eaName;
+        const commentChanged = brokerComment !== eaName;
+        if (commentChanged) {
+          console.warn(
+            `[auto-trade] ${symbol}: BROKER CHANGED THE ORDER COMMENT — requested "${eaName}", broker applied "${brokerComment}". The trade record keeps both values.`,
+          );
+        }
 
         executed = {
           index: i + 1,
@@ -945,10 +967,13 @@ export async function executeAutoTrade(
           sl: stopLoss,
           tp: takeProfit,
           status: "executed",
-          message: `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
+          message: commentChanged
+            ? `Trade ${i + 1}/${maxTrades} executed on MetaTrader — the broker applied the comment "${brokerComment}" instead of the requested "${eaName}"`
+            : `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
           meta: {
             requestedComment: eaName,
             actualComment: brokerComment,
+            ...(commentChanged ? { commentChanged: true } : {}),
             ...(orderId ? { mtOrderId: orderId } : {}),
           },
         };
@@ -989,6 +1014,7 @@ export async function executeAutoTrade(
           eaName,
           commentRequested: eaName,
           commentActual: executed.meta?.actualComment ?? eaName,
+          commentChanged: executed.meta?.commentChanged === true,
           orderId,
           paperTrading: !credentials,
         });
@@ -1040,14 +1066,21 @@ export async function executeAutoTrade(
   if (credentials) {
     const filled = results.filter((r) => r.status === "executed").length;
     const firstSide = results.find((r) => r.side === "BUY" || r.side === "SELL")?.side ?? "BUY";
+    const changed = results.find((r) => r.meta?.commentChanged === true);
+    const outcome =
+      filled === maxTrades ? "All orders filled on MetaTrader" : `${filled} of ${maxTrades} orders filled`;
     recordTrade({
       symbol,
+      // The app's trade record keeps the EXACT EA name that was sent.
+      eaName,
       direction: firstSide === "SELL" ? "SELL" : "BUY",
       lot: String(lotSize),
       trades: maxTrades,
       filled: `${filled}/${maxTrades}`,
       ok: filled > 0,
-      detail: filled === maxTrades ? "All orders filled on MetaTrader" : `${filled} of ${maxTrades} orders filled`,
+      detail: changed
+        ? `${outcome}. The broker applied the comment "${changed.meta?.actualComment}" instead of the requested "${eaName}" — the full name may not have been applied.`
+        : outcome,
     });
   }
 
@@ -1078,11 +1111,15 @@ export interface PairConfig extends TradeConfig {
   enabled?: boolean;
 }
 
-// Preserve exact EA name without sanitization
+/**
+ * Preserve the exact EA name without sanitization.
+ *
+ * Delegates to `mt5OrderComment` so the app has ONE implementation of "the
+ * name exactly as configured" — spaces, version text, plus signs and every
+ * other character included ("sniper killer ea v2+" → "sniper killer ea v2+").
+ */
 export function preserveEaName(name: string): string {
-  // Do NOT strip spaces, plus signs, or any characters
-  // Return exactly as configured
-  return name;
+  return mt5OrderComment(name);
 }
 
 // Validate that comment was preserved through the system

@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 
+import { mt5OrderComment } from "./utils";
+
 /**
  * MetaApi (metaapi.cloud) platform integration — ONE master token for everyone.
  *
@@ -748,9 +750,13 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       data.takeProfit !== undefined && data.takeProfit !== ""
         ? Number.parseFloat(data.takeProfit)
         : undefined;
-    // MT5 caps the order comment at 31 characters. The comment carries the
-    // CURRENT EA NAME ONLY (letters+digits, no suffix) — truncated to the cap.
-    const comment = data.eaName.replace(/[^A-Za-z0-9]/g, "").slice(0, 31) || "Eamigrate";
+    // The order comment carries the CURRENT EA NAME EXACTLY AS CONFIGURED.
+    // This used to strip every non-alphanumeric character, cap the name at 31
+    // characters and fall back to "Eamigrate" — three silent rewrites of the
+    // trader's own name. None of them happen now: if the broker truncates or
+    // changes the comment, the run reports the requested vs applied value
+    // instead of claiming the full name was applied.
+    const comment = mt5OrderComment(data.eaName);
     const body: Record<string, unknown> = {
       actionType: data.direction === "SELL" ? "ORDER_TYPE_SELL" : "ORDER_TYPE_BUY",
       symbol: data.symbol,
@@ -845,7 +851,15 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
       const { status, payload } = outcome.response;
       if (status >= 200 && status < 300) {
         const result = payload as
-          | { stringCode?: string; message?: string; orderId?: string; positionId?: string; price?: number }
+          | {
+              stringCode?: string;
+              message?: string;
+              orderId?: string;
+              positionId?: string;
+              price?: number;
+              /** The comment the provider/broker actually applied, when echoed back. */
+              comment?: string;
+            }
           | undefined;
         const accepted =
           result?.stringCode === "TRADE_RETCODE_DONE" ||
@@ -863,9 +877,24 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
               : `Broker rejected the order (${humanized}).`;
           break;
         }
+        // When the provider echoes back the comment it applied, compare it
+        // with the exact EA name we sent. A difference is the broker's doing —
+        // log both and say so in the result instead of reporting a clean
+        // "executed" that implies the full name was applied.
+        // Only a non-empty echoed comment counts — a missing field means the
+        // provider did not report one, not that the comment was wiped.
+        const appliedComment = typeof result?.comment === "string" && result.comment ? result.comment : null;
+        const commentChanged = appliedComment !== null && appliedComment !== comment;
+        if (commentChanged) {
+          console.warn(
+            `[metaapi] BROKER CHANGED THE ORDER COMMENT — requested "${comment}", applied "${appliedComment}".`,
+          );
+        }
         return {
           ok: true,
-          message: `${data.direction} ${volume} ${data.symbol} executed`,
+          message: commentChanged
+            ? `${data.direction} ${volume} ${data.symbol} executed — the broker applied the comment "${appliedComment}" instead of the requested "${comment}"`
+            : `${data.direction} ${volume} ${data.symbol} executed`,
           ...(result?.orderId || result?.positionId
             ? { orderId: result.orderId ?? result.positionId }
             : {}),
