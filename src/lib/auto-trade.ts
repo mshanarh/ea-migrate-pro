@@ -1,4 +1,8 @@
 import type { Position, TradeSignal } from "@/types/trading";
+import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "./bridge-client";
+import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
+import { recordTrade } from "./trade-history";
+import { sanitizeBotName } from "./utils";
 
 // ============================================================================
 // SAFETY CRITICAL: No default BUY/SELL - explicit decision or NO TRADE
@@ -527,6 +531,156 @@ export async function resolveTradeDirection(
 }
 
 // ============================================================================
+// LIVE MT5 BRIDGE — the home START button trades the user's OWN account
+// through the VPS bridge instead of simulating the fills. The bridge allows
+// CORS from the app's origins (verified) and signs every call with the
+// repository's bridge key.
+// ============================================================================
+
+const QUOTE_TIMEOUT_MS = 15000;
+const ORDER_TIMEOUT_MS = 30000;
+
+/** Just enough of the saved MT5 account to sign a bridge request. */
+export type BridgeCredentials = { login: number | string; password: string; server: string };
+
+/**
+ * The login id lives in app state, but the MT5 PASSWORD never leaves the
+ * device — it is written to localStorage when the user saves their details on
+ * the MetaTrader page. Returns null when either half is missing so callers
+ * can tell "not configured" apart from "configured but rejected".
+ */
+export function readMtCredentials(
+  mt: { loginId?: string; server?: string } | null | undefined,
+): BridgeCredentials | null {
+  if (!mt || !mt.loginId || !mt.server) return null;
+  const password = window.localStorage.getItem("mt_password") ?? "";
+  if (!password) return null;
+  const loginNumber = Number(mt.loginId);
+  return {
+    // Keep the raw string when it is not a usable number — some brokers use
+    // non-numeric logins and the bridge passes it straight to MT5.
+    login: Number.isFinite(loginNumber) && loginNumber > 0 ? loginNumber : mt.loginId,
+    password,
+    server: mt.server,
+  };
+}
+
+type BridgeLiveQuote = { bid: number; ask: number; digits: number; point: number; minDistance: number };
+type BridgeQuoteResult = { quote: BridgeLiveQuote } | { failure: "unavailable" | "unreachable"; detail?: string };
+
+/** LIVE bid/ask straight from the broker via the bridge — SL/TP anchor to it. */
+async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string): Promise<BridgeQuoteResult> {
+  // The bridge opens a fresh MetaTrader session per call. On a closed market
+  // or an unknown symbol that session can sit there far longer than anyone
+  // should wait, so the request is capped rather than awaited forever.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BRIDGE_URL}/symbol/price`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+      body: JSON.stringify({ credentials, symbol }),
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    const bid = typeof payload["bid"] === "number" ? payload["bid"] : 0;
+    const ask = typeof payload["ask"] === "number" ? payload["ask"] : 0;
+    const digits = typeof payload["digits"] === "number" ? payload["digits"] : null;
+    if (payload["success"] !== true || bid <= 0 || ask <= 0 || digits === null) {
+      const detail =
+        (typeof payload["message"] === "string" && payload["message"]) ||
+        (typeof payload["detail"] === "string" && payload["detail"]) ||
+        undefined;
+      return detail ? { failure: "unavailable", detail } : { failure: "unavailable" };
+    }
+    const point =
+      typeof payload["point"] === "number" && payload["point"] > 0 ? payload["point"] : 10 ** -digits;
+    const stopsLevelPoints = typeof payload["stops_level"] === "number" ? payload["stops_level"] : 0;
+    // A broker can report stops_level 0 and still refuse levels inside the
+    // spread, so keep a real buffer on top of the reported minimum.
+    const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
+    return { quote: { bid, ask, digits, point, minDistance } };
+  } catch (error) {
+    const message = (error as Error)?.message || "Broker unavailable";
+    console.warn(`[auto-trade] Failed to fetch live quote for ${symbol}: ${message}`);
+    return { failure: "unreachable", detail: message };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Place one market order through the bridge. THROWS a human message. */
+async function sendBridgeOrder(
+  credentials: BridgeCredentials,
+  target: string,
+  params: { action: "BUY" | "SELL"; volume: number; stopLoss: number; takeProfit: number; comment: string },
+): Promise<Record<string, unknown>> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ORDER_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+      body: JSON.stringify({
+        credentials,
+        symbol: target,
+        action: params.action,
+        volume: params.volume,
+        stop_loss: params.stopLoss,
+        take_profit: params.takeProfit,
+        comment: params.comment,
+      }),
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+    if (!response.ok) {
+      const detail =
+        (typeof payload["detail"] === "string" && payload["detail"]) ||
+        (typeof payload["message"] === "string" && payload["message"]) ||
+        `The bridge rejected the order (HTTP ${response.status}).`;
+      const error = new Error(friendlyTradeError(detail)) as Error & { raw?: string };
+      error.raw = detail;
+      throw error;
+    }
+    // HTTP 200 is not a fill — the broker's retcode is the source of truth.
+    // Only 10008/10009/10010 mean the order actually opened.
+    const result = (payload["result"] ?? {}) as Record<string, unknown>;
+    const rawRetcode = payload["retcode"] ?? result["retcode"];
+    const retcode =
+      typeof rawRetcode === "number"
+        ? rawRetcode
+        : typeof rawRetcode === "string" && /^\d+$/.test(rawRetcode)
+          ? Number(rawRetcode)
+          : null;
+    if (retcode !== null) {
+      if (retcode === 10008 || retcode === 10009 || retcode === 10010) return payload;
+      const message = friendlyRetcode(retcode) ?? `The broker refused the order (MT5 code ${retcode}).`;
+      const brokerComment =
+        (typeof payload["comment"] === "string" && payload["comment"]) ||
+        (typeof result["comment"] === "string" && result["comment"]) ||
+        "";
+      const refusal = new Error(
+        brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message,
+      ) as Error & { raw?: string };
+      refusal.raw = message;
+      throw refusal;
+    }
+    if (payload["success"] === false) {
+      const rawDetail =
+        (typeof payload["message"] === "string" && payload["message"]) ||
+        (typeof payload["detail"] === "string" && payload["detail"]) ||
+        "The broker refused the order.";
+      const refusal = new Error(friendlyTradeError(rawDetail)) as Error & { raw?: string };
+      refusal.raw = rawDetail;
+      throw refusal;
+    }
+    return payload;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// ============================================================================
 // Trade Execution with Safety Checks
 // ============================================================================
 
@@ -555,15 +709,82 @@ export interface AutoTradeOptions {
   onTradeExecute?: (trade: ExecutedTrade, index: number, total: number) => void;
   emitEvent?: (event: string, data: Record<string, unknown>) => void;
   paperTrading?: boolean;
+  /**
+   * Saved MT5 login + password → LIVE orders through the user's VPS bridge.
+   * Without it the run stays on simulated (paper) fills.
+   */
+  credentials?: BridgeCredentials | null;
 }
 
 export async function executeAutoTrade(
   options: AutoTradeOptions,
 ): Promise<ExecutedTrade[]> {
   const { symbol, lotSize, maxTrades, eaName, onTradeExecute, emitEvent, paperTrading = false } = options;
+  const credentials = options.credentials && options.credentials.password ? options.credentials : null;
   const results: ExecutedTrade[] = [];
 
-  console.log(`[auto-trade] Starting execution for ${symbol}, ${maxTrades} trades, EA: "${eaName}"`);
+  console.log(
+    `[auto-trade] Starting ${credentials ? "LIVE" : "paper"} execution for ${symbol}, ${maxTrades} trades, EA: "${eaName}"`,
+  );
+
+  // ── LIVE-mode retry state — learned once, applied to every fill below.
+  // Brokers brand the same market differently (BTCUSDm, XAUUSDM, US30Cash…),
+  // so a symbol refusal retries once through the candidate list; a comment
+  // refusal retries once with the MT5-safe stamp.
+  let symbolRetried = false;
+  let commentRetried = false;
+  let activeComment = eaName;
+  const isSymbolMismatch = (text: string) =>
+    /symbol/i.test(text) &&
+    /not found|unknown|invalid|no such|not available|not listed|renamed|rejected that symbol|isn't available|couldn't match/i.test(
+      text,
+    );
+
+  /** One LIVE order through the bridge, with symbol/comment fallbacks. */
+  const sendLiveOrder = async (params: {
+    target: string;
+    action: "BUY" | "SELL";
+    stopLoss: number;
+    takeProfit: number;
+  }): Promise<Record<string, unknown>> => {
+    if (!credentials) throw new Error("MT5 credentials are not available for live execution");
+    const attempt = async (target: string) =>
+      sendBridgeOrder(credentials, target, {
+        action: params.action,
+        volume: lotSize,
+        stopLoss: params.stopLoss,
+        takeProfit: params.takeProfit,
+        comment: activeComment,
+      });
+    try {
+      return await attempt(params.target);
+    } catch (error) {
+      const raw =
+        ((error as Error & { raw?: string }).raw ?? (error instanceof Error ? error.message : "")) as string;
+      if (!(error instanceof Error)) throw error;
+      // Unsafe characters in the EA name → one retry with the safe stamp.
+      if (!commentRetried && /comment/i.test(raw)) {
+        commentRetried = true;
+        activeComment = sanitizeBotName(eaName) || "EA Migrate";
+        return attempt(params.target);
+      }
+      // Symbol refused → retry once through the broker-name candidates.
+      if (!symbolRetried && isSymbolMismatch(raw)) {
+        symbolRetried = true;
+        let lastError: unknown = error;
+        for (const candidate of bridgeSymbolCandidates(symbol)) {
+          if (candidate.toUpperCase() === symbol.trim().toUpperCase()) continue;
+          try {
+            return await attempt(candidate);
+          } catch (candidateError) {
+            lastError = candidateError;
+          }
+        }
+        throw lastError;
+      }
+      throw error;
+    }
+  };
 
   for (let i = 0; i < maxTrades; i++) {
     try {
@@ -620,8 +841,34 @@ export async function executeAutoTrade(
       const direction = analysis.direction as { type: "BUY" | "SELL"; entry: number; sl: number; tp: number };
       const side = direction.type;
 
-      // 4. Final quote verification before order
-      const liveQuote = await fetchLiveBrokerQuote(symbol);
+      // 4. Final quote verification before order — LIVE mode reads the REAL
+      // broker quote through the VPS bridge; paper mode uses the simulated feed.
+      let bridgeQuote: BridgeLiveQuote | null = null;
+      let liveQuote: BrokerQuote | null;
+      if (credentials) {
+        const quoteResult = await fetchBridgeQuote(credentials, symbol);
+        if ("failure" in quoteResult) {
+          // Surface the bridge's OWN reason (auth failure, closed market,
+          // unknown symbol…) — it is the only honest explanation available.
+          const detail = quoteResult.detail
+            ? quoteResult.detail
+            : quoteResult.failure === "unavailable"
+              ? "the market is closed or the symbol is inactive on your broker"
+              : "could not reach your trading bridge";
+          throw new Error(`Cannot execute ${symbol}: ${detail}`);
+        }
+        bridgeQuote = quoteResult.quote;
+        liveQuote = {
+          symbol,
+          ask: quoteResult.quote.ask,
+          bid: quoteResult.quote.bid,
+          spread: Math.round((quoteResult.quote.ask - quoteResult.quote.bid) / quoteResult.quote.point),
+          timestamp: Date.now(),
+          isFresh: true,
+        };
+      } else {
+        liveQuote = await fetchLiveBrokerQuote(symbol);
+      }
       if (!liveQuote) {
         throw new Error(`Live quote unavailable for ${symbol} at order time`);
       }
@@ -658,29 +905,74 @@ export async function executeAutoTrade(
         break;
       }
 
-      // 5. Execute order (simulated - in production, sends to MT5 bridge)
-      const orderComment = eaName; // Preserve exact EA name, no sanitization
-      const simulatedOrderId = paperTrading ? `PAPER-${Date.now()}-${i + 1}` : `MT5-${Date.now()}-${i + 1}`;
+      // 5. Execute the order. LIVE mode sends REAL market orders through the
+      // user's VPS bridge — SL/TP re-anchored to the bridge's own live quote
+      // (plan risk percentages) and pushed outside the broker's minimum stop
+      // distance, so a plan computed on feed prices cannot be refused with
+      // 10016. Paper mode simulates the fill.
+      console.log(`[auto-trade] ${symbol}: Sending ${side} order, comment="${activeComment}"`);
 
-      console.log(`[auto-trade] ${symbol}: Sending ${side} order, comment="${orderComment}"`);
+      let executed: ExecutedTrade;
+      let orderId: string | null = null;
+      if (credentials && bridgeQuote) {
+        const { digits, minDistance } = bridgeQuote;
+        const riskPct = direction.entry > 0 ? Math.abs(direction.entry - direction.sl) / direction.entry : 0.005;
+        const rewardPct =
+          direction.entry > 0 ? Math.abs(direction.tp - direction.entry) / direction.entry : riskPct * 2;
+        const entry = side === "BUY" ? bridgeQuote.ask : bridgeQuote.bid;
+        const round = (value: number) => Number(value.toFixed(digits));
+        const rawStop = side === "BUY" ? entry * (1 - riskPct) : entry * (1 + riskPct);
+        const rawTarget = side === "BUY" ? entry * (1 + rewardPct) : entry * (1 - rewardPct);
+        const stopLoss = round(
+          side === "BUY" ? Math.min(rawStop, entry - minDistance) : Math.max(rawStop, entry + minDistance),
+        );
+        const takeProfit = round(
+          side === "BUY" ? Math.max(rawTarget, entry + minDistance) : Math.min(rawTarget, entry - minDistance),
+        );
 
-      // Simulate order execution
-      const executed: ExecutedTrade = {
-        index: i + 1,
-        symbol,
-        side,
-        lotSize,
-        entry: direction.entry,
-        sl: direction.sl,
-        tp: direction.tp,
-        status: "executed",
-        message: `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
-        meta: {
-          requestedComment: eaName,
-          actualComment: orderComment, // In production, this comes back from MT5
-          mtOrderId: simulatedOrderId,
-        },
-      };
+        const payload = await sendLiveOrder({ target: symbol, action: side, stopLoss, takeProfit });
+        const filledPrice = typeof payload["price"] === "number" ? payload["price"] : entry;
+        const rawOrder = payload["order"] ?? payload["deal"] ?? null;
+        orderId = rawOrder != null ? String(rawOrder) : null;
+        const brokerComment = typeof payload["comment"] === "string" ? payload["comment"] : activeComment;
+
+        executed = {
+          index: i + 1,
+          symbol,
+          side,
+          lotSize,
+          entry: filledPrice,
+          sl: stopLoss,
+          tp: takeProfit,
+          status: "executed",
+          message: `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
+          meta: {
+            requestedComment: eaName,
+            actualComment: brokerComment,
+            ...(orderId ? { mtOrderId: orderId } : {}),
+          },
+        };
+      } else {
+        // Paper path — the fill is simulated (tests, previews, no MT5 saved).
+        const simulatedOrderId = paperTrading ? `PAPER-${Date.now()}-${i + 1}` : `MT5-${Date.now()}-${i + 1}`;
+        orderId = simulatedOrderId;
+        executed = {
+          index: i + 1,
+          symbol,
+          side,
+          lotSize,
+          entry: direction.entry,
+          sl: direction.sl,
+          tp: direction.tp,
+          status: "executed",
+          message: `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
+          meta: {
+            requestedComment: eaName,
+            actualComment: eaName, // In production, this comes back from MT5
+            mtOrderId: simulatedOrderId,
+          },
+        };
+      }
 
       results.push(executed);
 
@@ -690,15 +982,15 @@ export async function executeAutoTrade(
           event: `TRADE ${i + 1}/${maxTrades} EXECUTED`,
           symbol,
           side,
-          entry: direction.entry,
-          sl: direction.sl,
-          tp: direction.tp,
+          entry: executed.entry,
+          sl: executed.sl,
+          tp: executed.tp,
           lotSize,
           eaName,
           commentRequested: eaName,
-          commentActual: orderComment,
-          orderId: simulatedOrderId,
-          paperTrading,
+          commentActual: executed.meta?.actualComment ?? eaName,
+          orderId,
+          paperTrading: !credentials,
         });
       }
 
@@ -741,6 +1033,22 @@ export async function executeAutoTrade(
       console.error(`[auto-trade] ${symbol}: Trade ${i + 1} failed, stopping batch`);
       break;
     }
+  }
+
+  // LIVE runs leave a trail in the recent-trades history so the trader can
+  // review what actually went out to the broker.
+  if (credentials) {
+    const filled = results.filter((r) => r.status === "executed").length;
+    const firstSide = results.find((r) => r.side === "BUY" || r.side === "SELL")?.side ?? "BUY";
+    recordTrade({
+      symbol,
+      direction: firstSide === "SELL" ? "SELL" : "BUY",
+      lot: String(lotSize),
+      trades: maxTrades,
+      filled: `${filled}/${maxTrades}`,
+      ok: filled > 0,
+      detail: filled === maxTrades ? "All orders filled on MetaTrader" : `${filled} of ${maxTrades} orders filled`,
+    });
   }
 
   return results;

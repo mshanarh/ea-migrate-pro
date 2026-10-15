@@ -19,7 +19,7 @@ import { paymentStatusForEmail } from "@/lib/auth-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
-import { executeAutoTrade, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
+import { executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -314,6 +314,18 @@ function AppHome() {
       return;
     }
 
+    // LIVE TRADING NEEDS THE SAVED MT5 ACCOUNT. Without the password half
+    // (never leaves this device) there is nothing to place orders with, so
+    // the run stops here with guidance instead of faking a filled batch.
+    const credentials = readMtCredentials(app.mt);
+    if (!credentials) {
+      toast.message(`${target.name} is running`, {
+        description:
+          "Add your MT5 login, password and server on the MetaTrader page — the bot trades live with them saved.",
+      });
+      return;
+    }
+
     // Calculate total trades across Allowed Quotes
     const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
     setToastTrades(totalTrades);
@@ -375,7 +387,8 @@ function AppHome() {
           lotSize: Number(pair.lotSize) || 0.01,
           maxTrades: trades,
           eaName: target.name,
-          paperTrading: true,
+          // LIVE orders on the trader's own account through the VPS bridge.
+          credentials,
           onTradeExecute: (trade, index, total) => {
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
