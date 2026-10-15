@@ -12,6 +12,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import DraggableBotPopup from "@/components/app/DraggableBotPopup";
+import TradeExecutionToast from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
 import { paymentStatusForEmail } from "@/lib/auth-store";
@@ -283,6 +284,9 @@ function AppHome() {
   const app = useAppState();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [toastOpen, setToastOpen] = useState(false);
+  const [toastTrades, setToastTrades] = useState(0);
+  const [toastSymbol, setToastSymbol] = useState("");
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -438,6 +442,16 @@ function AppHome() {
       toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
       return;
     }
+
+    const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
+    setToastTrades(totalTrades);
+    setToastSymbol(pairs[0]?.symbol ?? "");
+    setToastOpen(true);
+
+    if (totalTrades > 0) {
+      await new Promise((r) => setTimeout(r, 1500));
+    }
+
     const credentials = readMtCredentials(app.mt);
     if (!credentials) {
       toast.message(`${target.name} is running`, {
@@ -575,6 +589,15 @@ function AppHome() {
       <DraggableBotPopup />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
+
+      <TradeExecutionToast
+        isOpen={toastOpen}
+        onClose={() => setToastOpen(false)}
+        botName={robot?.name ?? "EA"}
+        totalTrades={toastTrades}
+        mode="auto"
+        symbol={toastSymbol}
+      />
     </div>
   );
 }

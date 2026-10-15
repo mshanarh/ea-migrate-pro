@@ -308,12 +308,10 @@ export default function DraggableBotPopup() {
       // and those arrive via onExecutionResult below, keeping this popup,
       // the top toast and the native floating bubble perfectly in sync.
       const stream: LogLine[] = [
-        { text: `NEW SIGNAL: ${p.symbol} ${direction}`, kind: "cmd" },
-        { text: `OPEN ${direction}: ${p.symbol} ${p.lot_size}`, kind: "cmd" },
-        p.stopLoss != null && p.takeProfit != null
-          ? { text: `TP: ${p.takeProfit} | SL: ${p.stopLoss}`, kind: "info" }
-          : { text: "SL/TP attached by the trade plan", kind: "info" },
-        { text: `EXECUTING ${p.max_trades} TRADE${p.max_trades === 1 ? "" : "S"} ONE BY ONE...`, kind: "info" },
+        { text: `Checking selected symbol: ${p.symbol}`, kind: "cmd" },
+        { text: `Analyzing chart trend & technical levels...`, kind: "cmd" },
+        { text: `Lot size configured: ${p.lot_size}`, kind: "cmd" },
+        { text: `Executing ${p.max_trades} trades one by one...`, kind: "cmd" },
       ];
       setState("executed");
       setLogs([]);
@@ -339,7 +337,7 @@ export default function DraggableBotPopup() {
       });
       // Speak only milestone lines (per-trade fills + the final summary),
       // not every refusal — the voice would otherwise stack up.
-      if (/TRADE \d+ EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
+      if (/TRADE \d+(?:\/\d+)? EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
         speakBot(result.ok ? result.message : result.message);
       }
 

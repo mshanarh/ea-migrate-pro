@@ -34,10 +34,11 @@ import { sanitizeBotName } from "./utils";
 const MAX_ORDERS_PER_SYMBOL = 20;
 /** Fallback risk when the scanner produced no usable levels: 0.5% stop. */
 const DEFAULT_RISK_PCT = 0.005;
-/** 1:2.5 reward-to-risk, matching the scanner's stated plan. */
-const REWARD_RATIO = 2.5;
+/** Structured 1:2 risk/reward when the scanner supplied no plan levels. */
+const REWARD_RATIO = 2;
 /** Hard cap on the market read. Past this we trade the fallback, not stall. */
 const ANALYSIS_TIMEOUT_MS = 6000;
+const RESOLVE_CONCURRENCY = 2;
 /** Hard cap on the bridge's live-quote lookup. */
 const QUOTE_TIMEOUT_MS = 15000;
 
@@ -120,50 +121,107 @@ export async function resolveTradeDirection(
     return { direction: chosen, source: "selection", reason: `${chosen} was selected for this symbol` };
   }
 
-  let analysis: Awaited<ReturnType<typeof analyzeMarket>> | null = null;
+  // Use two TimeFrames to read both short-term trigger (15m) and the
+  // higher-timeFrame trend (1h) before we move real money.
+  const timeframes = ["15m", "1h"] as const;
+  const reads: Array<Awaited<ReturnType<typeof analyzeMarket>> | null> = [];
   let timedOut = false;
   try {
-    // The public chart feeds behind analyzeMarket are the slowest link in the
-    // whole run, and most of them simply never answer for an exotic or
-    // weekend-quiet symbol — an unbounded await there is exactly why pressing
-    // Configure looked like it had done nothing. Cap the wait and fall back.
-    analysis = await Promise.race([
-      analyzeMarket({ symbol, timeframe }),
-      new Promise<null>((resolve) => {
-        const timer = setTimeout(() => {
-          timedOut = true;
-          resolve(null);
-        }, ANALYSIS_TIMEOUT_MS);
-        // Never hold the process open for the timer.
-        if (typeof (timer as { unref?: () => void }).unref === "function") {
-          (timer as unknown as { unref: () => void }).unref();
-        }
-      }),
-    ]);
-  } catch {
-    analysis = null;
-  }
-
-  if (analysis && analysis.ok) {
-    const { signal, strength, rsi } = analysis.analysis;
-    if (signal === "BUY" || signal === "SELL") {
-      return {
-        direction: signal,
-        source: "analysis",
-        reason: `Market read on ${timeframe}: ${signal} (${strength}, RSI ${Math.round(rsi)})`,
-      };
+    const tasks = timeframes.map((tf) =>
+      Promise.race([
+        analyzeMarket({ symbol, timeframe: tf }),
+        new Promise<null>((resolve) => {
+          const timer = setTimeout(() => {
+            timedOut = true;
+            resolve(null);
+          }, ANALYSIS_TIMEOUT_MS);
+          if (typeof (timer as { unref?: () => void }).unref === "function") {
+            (timer as unknown as { unref: () => void }).unref();
+          }
+        }),
+      ]),
+    );
+    const collected: Array<Awaited<ReturnType<typeof analyzeMarket>> | null> = [];
+    for (const task of tasks) {
+      collected.push(await task);
+      if (timedOut) break;
     }
+    reads.push(...collected);
+  } catch {
+    reads.push(null);
   }
 
-  // BOTH with no usable read — fall back, but say so.
+  const hasBuy = reads.some((r) => r?.ok && r.analysis.signal === "BUY");
+  const hasSell = reads.some((r) => r?.ok && r.analysis.signal === "SELL");
+
+  /** Narrow one TimeFrame read to its analysis, or null when unreadable. */
+  const analysisOf = (read: (typeof reads)[number]) => (read && read.ok ? read.analysis : null);
+
+  if (hasBuy || hasSell) {
+    const winningSignal = hasBuy && !hasSell ? "BUY" : "SELL";
+    const sideRead = reads.find((r) => r?.ok && r.analysis.signal === winningSignal) ?? reads[0];
+    const sideAnalysis = analysisOf(sideRead ?? null);
+    const strength = sideAnalysis?.strength ?? "MODERATE";
+    const rsi = sideAnalysis?.rsi ?? 50;
+    return {
+      direction: winningSignal,
+      source: "analysis",
+      reason: `Multi-TimeFrame read (${timeframes.join(" + ")}): ${winningSignal} (${strength}, RSI ${Math.round(rsi)})`,
+    };
+  }
+
+  // No clear directional signal from either TimeFrame — decide on the 15m
+  // and 1h RSI ranges plus the 1h moving-average trend.
+  const primary = analysisOf(reads[1] ?? null);
+  const shortTerm = analysisOf(reads[0] ?? null);
+  const rsiValues = [shortTerm?.rsi, primary?.rsi].filter((value): value is number => typeof value === "number");
+  const rsiLow = rsiValues.some((value) => value < 40);
+  const rsiHigh = rsiValues.some((value) => value > 60);
+  const rsiLabel = rsiValues.length > 0 ? rsiValues.map((value) => Math.round(value)).join(" / ") : "n/a";
+
+  /** Moving-average trend (EMA 21/50/200 readout), falling back to the bias. */
+  const maTrend = (read: typeof primary): "positive" | "negative" | null => {
+    if (!read) return null;
+    const readout = read.readouts.find((item) => /^trend/i.test(item.label));
+    if (readout?.bullish === true) return "positive";
+    if (readout?.bullish === false) return "negative";
+    if (read.bias === "BULLISH") return "positive";
+    if (read.bias === "BEARISH") return "negative";
+    return null;
+  };
+  const trend = maTrend(primary);
+
+  // BUY bias when price is pulled back to a discount (RSI < 40) or the
+  // moving average trend is already positive.
+  if (rsiLow || trend === "positive") {
+    return {
+      direction: "BUY",
+      source: "analysis",
+      reason: rsiLow
+        ? `RSI pulled back below 40 (15m / 1h: ${rsiLabel}) — BUY bias`
+        : "Moving average trend is positive — BUY bias",
+    };
+  }
+
+  // SELL bias when price is stretched to the upside (RSI > 60) or the
+  // moving average trend is already negative.
+  if (rsiHigh || trend === "negative") {
+    return {
+      direction: "SELL",
+      source: "analysis",
+      reason: rsiHigh
+        ? `RSI stretched above 60 (15m / 1h: ${rsiLabel}) — SELL bias`
+        : "Moving average trend is negative — SELL bias",
+    };
+  }
+
+  // Fallback — both TimeFrames were unreadable or undecided.
   return {
     direction: "BUY",
     source: "default",
     reason: timedOut
       ? `Market data for ${symbol} did not respond in ${ANALYSIS_TIMEOUT_MS / 1000}s — traded BUY by default`
-      : analysis && !analysis.ok
-        ? `No market data for ${symbol} — traded BUY by default`
-        : `Weak or unreadable ${timeframe} data for ${symbol} — traded BUY by default`,
+      : `No clear short/long-term signal on ${symbol} — traded BUY by default`,
   };
 }
 
@@ -417,6 +475,7 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   };
 
   // Brokers brand the same market differently (BTCUSDm, XAUUSDM, US30Cash…);
+  // Space out consecutive fills by 2s so the broker is never flooded.
   // on a symbol refusal, retry once through the candidate list.
   let symbolRetried = false;
   const isSymbolMismatch = (text: string) =>
@@ -454,14 +513,15 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
   let stopRetried = false;
   let commentRetried = false;
   let lastError: string | null = null;
+  const slowDownBetween = 2000;
 
   for (let index = 1; index <= total; index += 1) {
     try {
       const payload = await executeWithSymbolFallback();
       opened += 1;
       if (index === 1) firstPayload = payload;
-      announce(true, `TRADE ${opened} EXECUTED — EA MIGRATE ✓`);
-      if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+      announce(true, `TRADE ${opened}/${total} EXECUTED`);
+      if (index < total) await new Promise((resolve) => setTimeout(resolve, slowDownBetween));
     } catch (error) {
       const raw = error instanceof Error ? error.message : "";
       // Unsafe characters in the bot name → one retry with the safe stamp.
@@ -470,10 +530,10 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
         activeComment = sanitizeBotName(botName);
         try {
           const payload = await executeWithSymbolFallback();
-          opened += 1;
-          if (index === 1) firstPayload = payload;
-          announce(true, `TRADE ${opened} EXECUTED — EA MIGRATE ✓`);
-          if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+      opened += 1;
+      if (index === 1) firstPayload = payload;
+      announce(true, `TRADE ${opened}/${total} EXECUTED`);
+      if (index < total) await new Promise((resolve) => setTimeout(resolve, slowDownBetween));
           continue;
         } catch {
           /* fall through to normal handling */
@@ -488,10 +548,10 @@ export async function executeAutoTrade(options: AutoTradeOptions): Promise<AutoT
         takeProfit = 0;
         try {
           const payload = await executeWithSymbolFallback();
-          opened += 1;
-          if (index === 1) firstPayload = payload;
-          announce(true, `TRADE ${opened} EXECUTED — EA MIGRATE ✓`);
-          if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+      opened += 1;
+      if (index === 1) firstPayload = payload;
+      announce(true, `TRADE ${opened}/${total} EXECUTED`);
+      if (index < total) await new Promise((resolve) => setTimeout(resolve, slowDownBetween));
           continue;
         } catch {
           /* the abort below reports it */

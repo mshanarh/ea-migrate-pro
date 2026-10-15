@@ -48,6 +48,7 @@ function AppScanner() {
   const [limitOpen, setLimitOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
+  const [toastSymbol, setToastSymbol] = useState("");
   const unlimited = isUnlimitedScanner(app.email);
   const scansLeft = unlimited ? Infinity : DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
 
@@ -103,6 +104,7 @@ function AppScanner() {
       ...(takeProfit ? { takeProfit } : {}),
     });
     setToastTrades(Math.max(1, Math.min(trades, 20)));
+    setToastSymbol(symbol);
     setToastOpen(true);
     onProgress("Connecting to broker...");
     window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "CONNECTING TO BROKER..." } }));
@@ -306,13 +308,13 @@ function AppScanner() {
           opened += 1;
           if (index === 1) firstPayload = payload;
           // Per-trade announcement — toast + popup + native bubble all update.
-          const perTrade = `TRADE ${opened} EXECUTED — EA MIGRATE ✓`;
+          const perTrade = `TRADE ${opened}/${total} EXECUTED`;
           window.dispatchEvent(
             new CustomEvent("eamp:execution-result", { detail: { ok: true, message: perTrade } }),
           );
           // Give the broker a beat between orders — avoids rate-limit
           // rejections on fast consecutive market orders.
-          if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+          if (index < total) await new Promise((resolve) => setTimeout(resolve, 2000));
         } catch (error) {
           // Invalid-stops rejection on a feed-backed symbol: retry ONCE at
           // market without SL/TP — a filled market order beats a refused one.
@@ -328,10 +330,10 @@ function AppScanner() {
               if (index === 1) firstPayload = payload;
               window.dispatchEvent(
                 new CustomEvent("eamp:execution-result", {
-                  detail: { ok: true, message: `TRADE ${opened} EXECUTED — EA MIGRATE ✓` },
+                  detail: { ok: true, message: `TRADE ${opened}/${total} EXECUTED` },
                 }),
               );
-              if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+              if (index < total) await new Promise((resolve) => setTimeout(resolve, 2000));
               continue;
             } catch {
               /* comment-retry failed too — normal handling below */
@@ -348,10 +350,10 @@ function AppScanner() {
               if (index === 1) firstPayload = payload;
               window.dispatchEvent(
                 new CustomEvent("eamp:execution-result", {
-                  detail: { ok: true, message: `TRADE ${opened} EXECUTED — EA MIGRATE ✓` },
+                  detail: { ok: true, message: `TRADE ${opened}/${total} EXECUTED` },
                 }),
               );
-              if (index < total) await new Promise((resolve) => setTimeout(resolve, 350));
+              if (index < total) await new Promise((resolve) => setTimeout(resolve, 2000));
               continue;
             } catch {
               /* stop-retry also failed — the opened===0 abort below reports it */
@@ -456,7 +458,7 @@ function AppScanner() {
       </div>
       <FixedBottomNav />
       <DraggableBotPopup />
-      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} />
+      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">

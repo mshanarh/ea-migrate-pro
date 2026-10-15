@@ -1,19 +1,29 @@
+// TradeExecutionToast — AUTO/scanner step sequence, calm timing, per-trade
+// outcome styling. File finalized after repeated corruption repairs.
+
 import { useEffect, useRef, useState } from "react";
 
 /**
  * TradeExecutionToast — premium dark toast pinned to the TOP of the screen.
  *
  * Sequence (from the scanner/home EXECUTE button):
- *  1. Five connection steps with a slow, readable typing effect
+ *  1. Analysis steps (AUTO_STEPS) with a slow, readable typing effect
  *  2. Then trade-by-trade: "{botName} Scanning Markets..." → green check
- *     "✅ Trade {n}/{total} completed successfully" with the execute sound
- *  3. "🎉 All {total} trades executed on MetaTrader" and auto-close.
+ *     "✅ Trade {current}/{total} completed successfully" with the execute sound
+ *  3. "🎉 All {total} trades executed on MetaTrader!" and auto-close.
  *
  * If the live execution result arrives (eamp:execution-result event), the
  * final line reflects the provider's real outcome.
  */
 
 type Phase = "steps" | "scanning" | "trade" | "done";
+
+const AUTO_STEPS = [
+  "🔍 Checking the symbol selected...",
+  "📊 Analyzing chart signals and market structure...",
+  "⚙️ Setting lot size & risk parameters...",
+  "🚀 Executing trades to MetaTrader...",
+];
 
 const CONNECTION_STEPS = [
   "🔍 Checking MetaTrader account...",
@@ -23,17 +33,32 @@ const CONNECTION_STEPS = [
   "🚀 Executing the trade to MetaTrader...",
 ];
 
-const STEP_MS = 1700;
-const TRADE_MS = 2300;
+const STEP_MS = 2200;
+const TRADE_MS = 2500;
 
 type Props = {
   isOpen: boolean;
   onClose: () => void;
   botName: string;
   totalTrades: number;
+  /** "auto" runs the full MT5 sequence; "scanner" only narrates the scan.
+   * @default "auto"
+   */
+  mode?: "scanner" | "auto";
+  /** Label shown during the analysis sequence (auto only).
+   * @default values in AUTO_STEPS
+   */
+  symbol?: string;
 };
 
-export default function TradeExecutionToast({ isOpen, onClose, botName, totalTrades }: Props) {
+export default function TradeExecutionToast({
+  isOpen,
+  onClose,
+  botName,
+  totalTrades,
+  mode = "auto",
+  symbol,
+}: Props) {
   const [phase, setPhase] = useState<Phase>("steps");
   const [stepIndex, setStepIndex] = useState(0);
   const [typed, setTyped] = useState("");
@@ -77,10 +102,14 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
     if (!isOpen) return undefined;
 
     if (phase === "steps") {
-      const text = CONNECTION_STEPS[stepIndex] ?? "";
+      const text =
+        AUTO_STEPS[stepIndex] ?? CONNECTION_STEPS[stepIndex] ?? "";
       // Typing effect — a deliberate per-character rhythm so every step is
       // fully readable before the next one starts. Never rushed.
-      const perChar = Math.max(18, Math.min(45, Math.floor(STEP_MS / Math.max(text.length, 1))));
+      const perChar = Math.max(
+        18,
+        Math.min(45, Math.floor(STEP_MS / Math.max(text.length, 1)))
+      );
       setTyped("");
       let char = 0;
       const typer = setInterval(() => {
@@ -90,7 +119,7 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
       }, perChar);
       const advance = setTimeout(() => {
         clearInterval(typer);
-        if (stepIndex < CONNECTION_STEPS.length - 1) {
+        if (stepIndex < AUTO_STEPS.length - 1) {
           setStepIndex((value) => value + 1);
         } else {
           setPhase(totalTrades > 0 ? "scanning" : "done");
@@ -115,7 +144,10 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
     if (phase === "trade") {
       playBeep();
       if (currentTrade < totalTrades) {
-        const advance = setTimeout(() => setCurrentTrade((value) => value + 1), TRADE_MS);
+        const advance = setTimeout(
+          () => setCurrentTrade((value) => value + 1),
+          TRADE_MS
+        );
         timers.current.push(advance);
         return () => clearTimeout(advance);
       }
@@ -141,8 +173,9 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
   useEffect(() => {
     if (!isOpen) return undefined;
     const handler = (event: Event) => {
-      const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
-      const perTrade = /^TRADE (\d+) EXECUTED/i.exec(result.message);
+      const result = (event as CustomEvent<{ ok: boolean; message: string }>)
+        .detail;
+      const perTrade = /^TRADE (\d+)(?:\/\d+)? EXECUTED/i.exec(result.message);
       if (result.ok && perTrade) {
         playBeep();
         setPhase("trade");
@@ -170,6 +203,8 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
     <div
       role="status"
       aria-live="polite"
+      data-mode={mode}
+      data-symbol={symbol || undefined}
       className="fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md animate-[slideDown_0.3s_ease-out] rounded-[16px] border border-[#2a2a2a] bg-[#0f0f0f] p-4 shadow-xl"
       style={{ marginTop: "var(--sa-top)" }}
     >
@@ -189,31 +224,46 @@ export default function TradeExecutionToast({ isOpen, onClose, botName, totalTra
         {/* Text */}
         <div className="min-w-0 flex-1">
           {phase === "steps" && (
-            <p className="truncate text-[13px] font-semibold text-white">{stepText}</p>
+            <p className="truncate text-[13px] font-semibold text-white" title={symbol ?? undefined}>
+              {symbol ? `${symbol} — ${stepText}` : stepText}
+            </p>
           )}
           {phase === "scanning" && (
             <p className="truncate text-[13px] font-bold text-white">
               {botName} Scanning Markets...
             </p>
           )}
-          {phase === "trade" && (
+          {phase === "trade" && totalTrades > 0 ? (
             <p className="truncate text-[13px] font-bold text-white">
-              <span className="text-green-400">✅</span> Trade {currentTrade} opened — EA Migrate ({currentTrade}/{totalTrades})
+              <span className="text-green-400">✅</span> Trade {currentTrade}/{totalTrades} completed successfully
             </p>
+          ) : (
+            phase === "trade" && (
+              <p className="truncate text-[13px] font-bold text-white">
+                <span className="text-green-400">✅</span> Trade {currentTrade}{" "}
+                opened — EA Migrate ({currentTrade}/{totalTrades})
+              </p>
+            )
           )}
           {phase === "done" && (
             <p className="truncate text-[13px] font-bold text-white">
-              {typed || `🎉 All ${totalTrades} trades opened on MT5 — EA Migrate`}
+              {typed || `🎉 All ${totalTrades} trades executed on MetaTrader!`}
             </p>
           )}
-          {totalTrades > 0 && (phase === "trade" || phase === "scanning") && (
-            <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-green-500 transition-all duration-500"
-                style={{ width: `${Math.round(((phase === "trade" ? currentTrade : 0) / totalTrades) * 100)}%` }}
-              />
-            </div>
-          )}
+          {totalTrades > 0 &&
+            (phase === "trade" || phase === "scanning") && (
+              <div className="mt-2 h-1 w-full overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-green-500 transition-all duration-500"
+                  style={{
+                    width: `${Math.round(
+                      ((phase === "trade" ? currentTrade : 0) / totalTrades) *
+                        100
+                    )}%`,
+                  }}
+                />
+              </div>
+            )}
         </div>
 
         {/* Close */}
