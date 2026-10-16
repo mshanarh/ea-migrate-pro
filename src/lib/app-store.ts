@@ -368,8 +368,12 @@ export async function restoreRobotsFromCloud(): Promise<{ robots: number; mt5: b
 
   // An active license is itself proof of payment — restore payment memory so
   // the user is never charged twice for the same EA on a new deployment.
+  //
+  // Recorded as a LICENCE grant, not a platform payment: this device has seen a
+  // key, not the ledger, so a later cloud "unpaid" for this email must not be
+  // read as a payment the owner revoked (see PaymentSource in auth-store).
   if (restoredCount > 0 && state.email && paymentStatusForEmail(state.email) === "unpaid") {
-    markEmailPaid(state.email);
+    markEmailPaid(state.email, "license");
   }
 
   return { robots: restoredCount, mt5: mt5Restored };
@@ -893,8 +897,16 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   state = { ...state, activeRobotId: state.activeRobotId || robot.id, robots: [...state.robots, robot] };
   // A valid license key IS proof of payment — mark the email paid so the
   // app gate never bounces a freshly-activated user to checkout.
+  //
+  // RECORDED AS A LICENCE GRANT, NOT A PLATFORM PAYMENT. That distinction is
+  // load-bearing at the door: the platform's ledger may legitimately hold no
+  // subscription for a mentor's client, and the gate used to read the plain
+  // local "paid" this line writes as "a payment the owner has since revoked" —
+  // so the next check sent a customer who had just activated a key to "your
+  // account was deactivated" and back to the sign-in form for their email and
+  // another six-digit code.
   const activationEmail = state.email;
-  if (activationEmail) markEmailPaid(activationEmail);
+  if (activationEmail) markEmailPaid(activationEmail, "license");
   // CLOUD PROOF: claim the key on its license_keys row, set users.is_paid=true
   // and bind THIS device in the DATABASE. All three writes are independent —
   // run them IN PARALLEL so activation doesn't queue them one by one. All

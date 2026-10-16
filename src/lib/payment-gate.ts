@@ -61,7 +61,7 @@
  * still remembers from a session the owner has since revoked — can never open
  * the app, because it is never consulted.
  */
-import { markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import { markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { checkAccessServer } from "@/lib/supabase-users";
 import { getDeviceBinding, bindDeviceToEmail } from "@/lib/supabase-users";
@@ -91,11 +91,46 @@ export type CloudAccess = "admin" | "paid" | "unpaid" | "revoked";
  * account was REVOKED by the owner ("Mark unpaid" in the console). The
  * session ends and the person lands on /app/login?deactivated=1, which says
  * so plainly instead of offering checkout for an account that was just
- * deactivated. A cloud-decided unpaid account that was NEVER paid also ends
- * its session and returns to `signin` — the first page, where the email is
- * entered.
+ * deactivated.
+ *
+ * `pay` means the ledger has no payment for this email. It KEEPS the session
+ * now (see the long note inside `requireVerifiedAccess`): the person is sent
+ * to the plans, not back to the email form, and the app opens by itself the
+ * moment the ledger agrees — which is what "I activated a key and it asked me
+ * for my email and code all over again" was really about.
  */
 export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
+
+/**
+ * DOES THIS DEVICE REMEMBER A **PAYMENT** FOR THIS EMAIL?
+ *
+ * The local store records two very different facts under one word ("paid"):
+ *
+ *   • a PLATFORM payment — Whop checkout verified, or the console's "Mark
+ *     paid" seen by this device. The cloud refusing this email afterwards is a
+ *     DECISION about money ("Mark unpaid"), so the honest screen is the
+ *     deactivation notice.
+ *   • a LICENCE-KEY grant — `activateKey` marks the email paid because the key
+ *     proves the customer's entitlement to the MENTOR's EA. The platform's
+ *     ledger is entitled to have no subscription for that address at all, and
+ *     reading its "unpaid" as a revoked payment told a customer who had just
+ *     entered a valid key "your account was deactivated" and threw them back
+ *     to the sign-in form for their email and a fresh six-digit code.
+ *
+ * Only the first is evidence that something was taken away. `paymentSourceForEmail`
+ * is where that distinction is stored (see PaymentSource in auth-store).
+ *
+ * The payment-EXEMPT list is deliberately not one of them: `paymentStatusForEmail`
+ * answers "admin" for those addresses whatever the ledger says, and reading an
+ * exemption as proof of a payment would tell somebody who has simply never
+ * been marked paid that their account had been deactivated.
+ */
+export function remembersLedgerPayment(email: string | null | undefined): boolean {
+  const clean = (email ?? "").trim().toLowerCase();
+  if (!clean) return false;
+  if (paymentStatusForEmail(clean) !== "paid") return false;
+  return paymentSourceForEmail(clean) !== "license";
+}
 
 type Resolution = { status: CloudAccess; at: number };
 
@@ -371,27 +406,39 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // There is no approval branch: an approved mentor who was never marked paid
   // is sent to Whop like everybody else, which is the entire point.
   if (cloud === "unpaid") {
-    // A local PAID record beside an UNPAID cloud answer can still mean the
+    // A local PAYMENT record beside an UNPAID cloud answer can still mean the
     // owner flipped the flag before the ledger marker existed (Mark unpaid on
-    // an account whose record had been cleaned up). Same outcome,
-    // kept as a second door rather than the only one.
+    // an account whose record had been cleaned up). Same outcome, kept as a
+    // second door rather than the only one.
     //
-    // ONLY a genuine local "paid" record counts. `paymentStatusForEmail` also
-    // answers "admin" for the hardcoded payment-exempt list, and treating that
-    // as evidence of a revoked payment would tell somebody who has simply never
-    // been marked paid that they were deactivated — the wrong message for an
-    // account that owes money and belongs at checkout.
-    if (paymentStatusForEmail(email) === "paid") {
+    // ONLY a record that came from a PAYMENT counts (`remembersLedgerPayment`).
+    // A licence-key grant (`activateKey`) also marks the email paid locally,
+    // and reading THAT as a revoked payment is what told a customer who had
+    // just activated a valid key that their account had been deactivated and
+    // sent them back to the sign-in form. `paymentStatusForEmail` also answers
+    // "admin" for the hardcoded payment-exempt list; that is not evidence of a
+    // revoked payment either.
+    if (remembersLedgerPayment(email)) {
       appSignOut();
       return { action: "deactivate" };
     }
-    // NEVER PAID — THE APP MUST NOT OPEN. The session ends here and the
-    // caller sends the person to /app/login?pay=1, which renders the CHOOSE
-    // PLAN screen (monthly + lifetime). This is `pay`, not `signin`: the
-    // person has already told us who they are, so the email form would be a
-    // pointless extra step in front of the only decision left — which plan.
-    // Nothing inside the app may open for an unpaid account.
-    appSignOut();
+    // NEVER PAID — THE APP STILL MUST NOT OPEN, but the session stays.
+    //
+    // The caller sends the person to /app/login?pay=1, which renders the
+    // CHOOSE PLAN screen — never the email form. `pay`, not `signin`, because
+    // the person has already told us who they are.
+    //
+    // THE SESSION IS NO LONGER ENDED HERE, and that is the fix for the report
+    // "it loads back to the first page and asks for the email and code".
+    // Signing out on this branch threw the person back to the START of the
+    // door: the email form, then a fresh six-digit code, then the licence step
+    // again — for an account the door was only waiting on the ledger about.
+    // Ending the session bought nothing: NOTHING inside the app opens on a
+    // session alone (every /app route guard re-asks this function and refuses),
+    // while the session is exactly what makes the app open BY ITSELF on the
+    // next check the moment the ledger agrees — the same behaviour the payment
+    // flow already relies on. The refusal itself is unchanged: `pay` is still a
+    // refusal, and the plans screen is still the only way in.
     return { action: "pay" };
   }
   // CLOUD UNDECIDED — FAIL CLOSED. This branch used to hand the decision back

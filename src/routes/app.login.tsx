@@ -1,6 +1,6 @@
 import { BrandLogo } from "@/components/BrandLogo";
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { usePlatform } from "@/lib/platform";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { ArrowRight, Check, LockKeyhole, Mail } from "lucide-react";
@@ -151,6 +151,7 @@ function withDeadline<T>(work: Promise<T>, ms: number, fallback: T): Promise<T> 
 
 function AppAccess() {
   const platform = usePlatform();
+  const navigate = useNavigate();
   const app = useAppState();
   const [email, setEmail] = useState(app.email ?? "");
   const [key, setKey] = useState("");
@@ -607,7 +608,21 @@ function AppAccess() {
     if (resuming || !app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
     // outcome, or while a checkout / approval / blocked card is on screen.
-    if (busy || choosePlan || payPrompt || mustPay || blockedEmail || codeStage) return;
+    if (busy || blockedEmail || codeStage) return;
+    /**
+     * A REFUSAL ON SCREEN IS NOT YANKED AWAY — UNLESS THE DATABASE HAS
+     * CHANGED ITS MIND, in which case the refusal is exactly what must go.
+     *
+     * The plans / checkout card is the honest screen for "the ledger has no
+     * payment for this email". But the database can answer differently a
+     * moment later (the owner presses Mark paid, a payment lands, a read that
+     * failed comes back), and this screen polls it. While the cloud says PAID
+     * for the signed-in email there is nothing left to decide, so the app
+     * opens by itself instead of making the person sign in again, wait for a
+     * fresh six-digit code and retype their licence key.
+     */
+    const cloudSaysPaid = cloudStatus === "paid" || cloudStatus === "admin";
+    if ((choosePlan || payPrompt || mustPay) && !cloudSaysPaid) return;
     // NOTHING IS DECIDED YET. `effectiveStatus` falls back to the device's own
     // memory while the database is still answering, and that memory is exactly
     // what a forged or stale session exploits — walking an account into
@@ -1143,7 +1158,44 @@ function AppAccess() {
       setLicensePending(false);
       // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
       window.sessionStorage.setItem("eamp_pending_welcome", "1");
-      window.location.replace("/app/home");
+      /**
+       * DROP ANY REMEMBERED REFUSAL FOR THIS EMAIL BEFORE THE GUARD ASKS.
+       *
+       * This screen polls the cloud while the person is still typing their key,
+       * so an "unpaid"/"revoked" answer from BEFORE the activation can be
+       * sitting in the gate's cache. /app/home re-checks the database, and it
+       * must read it afresh: a cached refusal is what turned "the key is in"
+       * into "you were signed out and asked for your email and code again".
+       */
+      invalidateAccessCache(getAppState().email ?? activeEmail);
+      /**
+       * GO STRAIGHT IN — IN THIS PAGE LOAD, NOT VIA A RELOAD.
+       *
+       * This used to be `window.location.replace("/app/home")`, which restarts
+       * the whole app: a fresh boot re-runs the epoch/reset checks, re-reads
+       * every store from localStorage and re-runs the route guards from
+       * scratch. That reload is what the report describes — "it loads back to
+       * the first page and asks for the email and code" — because anything the
+       * fresh boot disagrees with (a wiped session, a refusal read before the
+       * activation's cloud writes settled) restarts the door from step one.
+       *
+       * The session, the freshly activated robot and the local paid mirror are
+       * all already in memory here, so the app simply walks into /app/home and
+       * the guard asks the database once.
+       *
+       * A GATED REDIRECT IS NOT A FAILURE — the guard sends the person to the
+       * screen they belong on (plans / deactivated) and the router resolves
+       * that itself — so only a REAL failure falls back to the old hard
+       * navigation, which re-runs the guards from scratch. Without that
+       * fallback a hand-off that never completed would leave the person on
+       * this form holding a key that is already spent.
+       */
+      try {
+        await navigate({ to: "/app/home" });
+      } catch (error) {
+        console.warn("[app-login] in-page hand-off failed, reloading:", error);
+        window.location.replace("/app/home");
+      }
     } finally {
       setUnlocking(false);
     }

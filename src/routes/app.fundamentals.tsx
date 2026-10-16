@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { createFileRoute, isRedirect, redirect } from "@tanstack/react-router";
 import {
   CalendarDays,
   ChevronLeft,
@@ -30,7 +30,11 @@ export const Route = createFileRoute("/app/fundamentals")({
     } catch (error) {
       // A gated redirect is normal control flow; anything else must never
       // take the whole page down — the calendar renders for everyone.
-      if (error && typeof error === "object" && "href" in error) throw error;
+      //
+      // `isRedirect` (not `"href" in error`): `redirect()` returns a Response
+      // whose `href` sits on `.options`, so the old test never matched and the
+      // gate's own redirect was swallowed.
+      if (isRedirect(error)) throw error;
     }
   },
   head: () => ({

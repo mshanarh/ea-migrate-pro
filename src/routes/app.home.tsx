@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
+import { createFileRoute, isRedirect, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -14,8 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
-import { invalidateAccessCache, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
-import { paymentStatusForEmail } from "@/lib/auth-store";
+import { invalidateAccessCache, remembersLedgerPayment, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -32,13 +31,33 @@ export const Route = createFileRoute("/app/home")({
       try {
         const cloud = await resolveCloudAccess(email, { fresh: true });
         if (cloud === "unpaid" || cloud === "revoked") {
-          const revoked = cloud === "revoked" || paymentStatusForEmail(email) !== "unpaid";
-          appSignOut();
+          // DEACTIVATED vs NEVER PAID — decided from the cloud's own verdict.
+          //
+          // The device's memory may only convert an "unpaid" answer into the
+          // deactivation notice when it remembers a PAYMENT for this email
+          // (see `remembersLedgerPayment`). It used to be any local "paid"
+          // record, and `activateKey` writes one for every key activation — so
+          // activating a key turned the very next check into "your account was
+          // deactivated", which is the screen that asks for the email and a
+          // fresh six-digit code again.
+          const revoked = cloud === "revoked" || remembersLedgerPayment(email);
           invalidateAccessCache(email);
+          // The session ENDS only for a revocation. An "unpaid" answer keeps it
+          // and shows the plans: nothing opens on a session alone (every /app
+          // guard re-asks the gate), and keeping it means the app walks in on
+          // its own the moment the ledger agrees instead of making the person
+          // sign in, wait for a code and enter the key all over again.
+          if (revoked) appSignOut();
           throw redirect({ href: revoked ? "/app/login?deactivated=1" : "/app/login?pay=1" });
         }
       } catch (error) {
-        if (error && typeof error === "object" && "href" in error) throw error;
+        // A GATED REDIRECT IS NORMAL CONTROL FLOW. `redirect()` returns a
+        // Response whose `href` lives on `.options` (see isRedirect in
+        // @tanstack/router-core), so the old `"href" in error` test NEVER
+        // matched and every refusal above was silently swallowed — the route
+        // then fell through to a second, different decision below and could
+        // sign the session out and land on the plain sign-in page.
+        if (isRedirect(error)) throw error;
       }
     }
     const access = await requireVerifiedAccess(email);

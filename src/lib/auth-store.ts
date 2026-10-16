@@ -2,10 +2,30 @@ import { useSyncExternalStore } from "react";
 
 export type PortalStatus = "pending" | "approved" | "rejected";
 
+/**
+ * WHERE A LOCAL "PAID" RECORD CAME FROM — and it matters at the door.
+ *
+ * `ledger`  the PLATFORM's payment ledger confirmed this email (Whop checkout,
+ *           the console's "Mark paid"). This is the receipt the app's gate
+ *           treats as a subscription: if the cloud later answers "unpaid" for
+ *           an email the device remembers as PAID, something was taken away
+ *           ("Mark unpaid") and the honest screen is the deactivation notice.
+ *
+ * `license` a LICENCE KEY was activated for this email (`activateKey`). That is
+ *           the MENTOR's grant, not a platform subscription, and the cloud is
+ *           entitled to keep answering "unpaid" for it. Reading it as a
+ *           revoked payment is what showed a freshly activated customer "your
+ *           account was deactivated" and sent them back to the sign-in form
+ *           asking for their email and code all over again.
+ */
+export type PaymentSource = "ledger" | "license";
+
 export type PaymentRecord = {
   email: string;
   paid: boolean;
   paidAt?: string | undefined;
+  /** Absent on records written before this existed — read as `ledger`. */
+  source?: PaymentSource | undefined;
 };
 
 export type DeviceBinding = {
@@ -254,7 +274,24 @@ export function paymentStatusForEmail(email: string): PaymentStatus {
   if (isRevokedEmail(clean)) return "unpaid";
   if (isPaymentExemptEmail(clean)) return "admin";
   return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
-}export function markEmailPaid(email: string) {
+}
+
+/**
+ * WHERE the local "paid" record for this email came from, or null when there
+ * is no paid record at all. See `PaymentSource`: only a `ledger` record means
+ * "the platform took money for this account", which is the only thing that may
+ * be read as a payment the owner later revoked.
+ */
+export function paymentSourceForEmail(email: string): PaymentSource | null {
+  load();
+  const clean = cleanEmail(email);
+  if (!clean) return null;
+  const payment = state.payments.find((record) => record.email === clean && record.paid);
+  if (!payment) return null;
+  return payment.source ?? "ledger";
+}
+
+export function markEmailPaid(email: string, source: PaymentSource = "ledger") {
   load();
   const clean = cleanEmail(email);
   if (!clean || isRevokedEmail(clean) || isPaymentExemptEmail(clean)) return;
@@ -263,14 +300,22 @@ export function paymentStatusForEmail(email: string): PaymentStatus {
   // this is called after the database has already said the account is entitled
   // (finishSignIn, the waiting-room poll, the dashboard's own mark-paid path),
   // so a stale or missing cloud answer must not re-impose the gate here.
-  if (state.payments.some((payment) => payment.email === clean && payment.paid)) return;
+  const existing = state.payments.find((payment) => payment.email === clean);
+  if (existing?.paid) {
+    // A LEDGER record is never downgraded by a later licence grant: once the
+    // platform has confirmed a payment for this email, that is the stronger
+    // fact and the door must keep reading the refusal that follows as a
+    // revocation rather than as "this device only ever saw a key".
+    if (existing.source === "ledger" || source !== "ledger") return;
+  }
 
   state = {
     ...state,
     payments: [...state.payments.filter((payment) => payment.email !== clean), {
       email: clean,
       paid: true,
-      paidAt: new Date().toISOString(),
+      paidAt: existing?.paidAt ?? new Date().toISOString(),
+      source,
     }],
   };
   persist();
@@ -283,7 +328,7 @@ export function setEmailPaymentStatus(email: string, paid: boolean) {
   const rest = state.payments.filter((payment) => payment.email !== clean);
   state = {
     ...state,
-    payments: paid ? [...rest, { email: clean, paid: true, paidAt: new Date().toISOString() }] : [...rest, { email: clean, paid: false }],
+    payments: paid ? [...rest, { email: clean, paid: true, paidAt: new Date().toISOString(), source: "ledger" }] : [...rest, { email: clean, paid: false }],
   };
   persist();
 }
@@ -353,7 +398,14 @@ function normalise(store: Store): Store {
 
   const payments = (Array.isArray(store.payments) ? store.payments : [])
     .filter((payment) => typeof payment?.email === "string")
-    .map((payment) => ({ email: payment.email.trim().toLowerCase(), paid: payment.paid === true, paidAt: payment.paidAt }));
+    .map((payment) => ({
+      email: payment.email.trim().toLowerCase(),
+      paid: payment.paid === true,
+      paidAt: payment.paidAt,
+      // Records written before this field existed were all ledger payments,
+      // and a missing source must never be read as a licence grant.
+      source: payment.source === "license" ? ("license" as const) : ("ledger" as const),
+    }));
   const deviceBindings = (Array.isArray(store.deviceBindings) ? store.deviceBindings : [])
     .filter((binding) => typeof binding?.email === "string" && typeof binding?.deviceId === "string")
     .map((binding) => ({ email: binding.email.trim().toLowerCase(), deviceId: binding.deviceId, boundAt: binding.boundAt || new Date().toISOString() }));
