@@ -51,15 +51,21 @@ function DashboardLayout() {
   useEffect(() => {
     if (!accountId) return;
     let cancelled = false;
+    // THE FIRST CHECK ALWAYS RUNS — PAUSED OR NOT.
+    //
+    // "Pause work" is a promise to stop the five-second polling, not to stop
+    // ever hearing the admin's answer. The pending card invites a tap on it, and
+    // a mentor who paused while waiting then kept the very same "Portal pending
+    // approval" card they saw right after registering — even though the admin
+    // had approved them and the decision was sitting in the store unread,
+    // because a pause never un-pauses itself. Opening the portal now always
+    // asks once; the pause is honoured for the interval after that.
+    let firstPull = true;
     const pull = async () => {
       const current = accountRef.current;
       if (!current) return;
-      // "PAUSE WORK" — a pending account has nothing to do but wait, and this
-      // poll is the work. While it is paused we stop reading the cloud so a
-      // person who stepped away is not holding a request every five seconds.
-      // Resuming puts the account back on the very next tick (five seconds),
-      // so a pause can never cost somebody their approval notice.
-      if (isPortalPaused()) return;
+      if (!firstPull && isPortalPaused()) return;
+      firstPull = false;
       try {
         // Read the approval straight from the database. The old call went
         // through syncGetAccount, a TanStack server function whose route is not

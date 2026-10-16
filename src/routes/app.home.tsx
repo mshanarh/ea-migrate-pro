@@ -484,7 +484,11 @@ function AppHome() {
     });
   };
 
-  const handleQuotes = () => window.location.assign("/app/tradingpairs");
+  // The QUOTES / Symbols button lives on /app/trading-pairs (route id
+  // "/app/trading-pairs"). The old href dropped the hyphen, so the button
+  // navigated to /app/tradingpairs — a path no route matches, which landed
+  // the user on the router's "404 Page not found" screen.
+  const handleQuotes = () => window.location.assign("/app/trading-pairs");
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;

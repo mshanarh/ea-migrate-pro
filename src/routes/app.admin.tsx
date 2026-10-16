@@ -8,7 +8,8 @@ import { requireVerifiedAccess } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
 import { supabaseConfigured } from "@/lib/supabase";
-import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin, adminSetUserPaid } from "@/lib/supabase.server";
+import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin } from "@/lib/supabase.server";
+import { setAdminActor, setUserPaid as writePaymentLedger } from "@/lib/admin-store";
 import type { UserRow } from "@/lib/supabase";
 
 /**
@@ -155,12 +156,26 @@ function AppAdmin() {
     );
   }, []);
 
+  /**
+   * PAYMENT GOES THROUGH THE LEDGER, NOT THE MIRROR.
+   *
+   * `users.is_paid` is only a mirror. The app's access gate never reads it —
+   * payment-gate.ts opens the app from /api/check-access, which answers from
+   * the KV registration record and the `paid_emails` ledger. This button used
+   * to write the mirror alone, so it toasted "approved" while the person was
+   * still sent to checkout: marked paid, app never opened. It now writes the
+   * same record the console's own Mark paid button does (KV + both mirrors, see
+   * api/_handlers/admin-approve.ts), so being marked paid here really does open
+   * the app and land the customer on the activation-code step.
+   *
+   * A refused write is reported instead of silently falling back to the mirror:
+   * the mirror cannot open the app, and a success toast for it is the lie that
+   * caused this bug.
+   */
   const setPaid = async (user: UserRow, value: boolean) => {
     setBusyEmail(user.email);
-    const result = await withAnonFallback(
-      () => adminSetUserPaid({ data: { email: user.email, value } }),
-      () => setUserFlagAnon(user.email, { is_paid: value }),
-    );
+    setAdminActor(app.email ?? "");
+    const result = await writePaymentLedger(user.email, value);
     setBusyEmail(null);
     if (!result.ok) {
       toast.error(result.error ?? "Could not update user");

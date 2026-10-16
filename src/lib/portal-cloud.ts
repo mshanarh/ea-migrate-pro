@@ -323,11 +323,18 @@ export async function portalGetAccount(email: string): Promise<{ enabled: boolea
       .select("email, data")
       .eq("email", address)
       .maybeSingle();
-    if (error) {
-      console.error("[portal-cloud] account read failed:", error.message);
-      return { enabled: true, account: null };
-    }
-    const raw = (row as { data?: string | null } | null)?.data;
+    // AN UNREADABLE ACCOUNT ROW MUST NEVER SWALLOW A REAL APPROVAL.
+    //
+    // The approval above came from the KV store the admin console writes — it
+    // IS the decision, and it is already in hand. Returning `account: null`
+    // here threw it away, so the dashboard's poll had nothing to apply and a
+    // mentor the admin had just approved kept showing the "Portal pending
+    // approval" card they saw right after registering, for as long as the read
+    // kept failing (this database answers `exceed_egress_quota` often). An
+    // unreadable row is now treated exactly like a missing one below — the
+    // record is built from the approval — and the failure is still logged.
+    if (error) console.error("[portal-cloud] account read failed:", error.message);
+    const raw = error ? null : (row as { data?: string | null } | null)?.data;
 
     // No account row, but an approval exists: this person signed up (their
     // account write failed or they only ever created an approval row). They

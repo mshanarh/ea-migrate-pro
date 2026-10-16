@@ -4,9 +4,10 @@
  *
  * Payment changes are also mirrored server-side into the app's existing
  * payment ledger when SUPABASE_SERVICE_ROLE_KEY is set, so the trading app's
- * OTP activation gate keeps honouring "Mark paid" / "Mark unpaid".
+ * OTP activation gate keeps honouring "Mark paid" / "Mark unpaid" — and the
+ * approval itself is mirrored into `mentor_approvals`, the fallback the mentor
+ * portal reads when the KV store cannot answer (see mirrorApproval below).
  */
-import { createClient } from "@supabase/supabase-js";
 import {
   adminFromRequest,
   getRegistration,
@@ -22,16 +23,49 @@ import {
 const ACTIONS = ["approve", "reject", "pending", "paid", "unpaid", "limit"] as const;
 type Action = (typeof ACTIONS)[number];
 
-async function mirrorPayment(email: string, paid: boolean): Promise<void> {
+/** Service-role Supabase client, or null when the mirror is not configured. */
+async function mirrorDb() {
   const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
   const key = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
-  if (!url || !key) return;
+  if (!url || !key) return null;
+  // Imported lazily, like every other server-side Supabase use in /api.
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+async function mirrorPayment(email: string, paid: boolean): Promise<void> {
   try {
-    const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+    const db = await mirrorDb();
+    if (!db) return;
     await db.from("users").upsert({ email, is_paid: paid }, { onConflict: "email" });
     await db.from("paid_emails").upsert({ email, paid_at: paid ? new Date().toISOString() : null }, { onConflict: "email" });
   } catch (error) {
     console.warn("[admin-approve] payment mirror failed", error);
+  }
+}
+
+/**
+ * Mirror the DECISION into the legacy Supabase `mentor_approvals` table.
+ *
+ * The KV record is the authoritative store (see AGENTS.md), but the mentor
+ * portal still reads that table as its FALLBACK whenever the KV read cannot
+ * answer — and nothing has written `approved` to it since the store moved. A
+ * signup leaves a `pending` row behind (src/lib/send-email.ts), so an approval
+ * that only reached KV left the fallback answering "pending" — the exact
+ * "I approved them and their portal still says pending" report.
+ *
+ * Best-effort, exactly like the payment mirror above: the KV write already
+ * happened and a mirror failure is logged, never surfaced as a failed
+ * approval. `mentor_approvals.email` is the primary key, so the upsert can
+ * never duplicate a mentor.
+ */
+async function mirrorApproval(email: string, status: Registration["status"]): Promise<void> {
+  try {
+    const db = await mirrorDb();
+    if (!db) return;
+    await db.from("mentor_approvals").upsert({ email, status }, { onConflict: "email" });
+  } catch (error) {
+    console.warn("[admin-approve] approval mirror failed", error);
   }
 }
 
@@ -92,6 +126,9 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     }
 
     await saveRegistration(record);
+    // The DECISION is mirrored for the portal's legacy fallback read, so no
+    // read path can keep answering "pending" for an approved mentor.
+    await mirrorApproval(email, record.status);
     if (action === "paid" || action === "unpaid") await mirrorPayment(email, record.isPaid);
     response.status(200).json({ ok: true, user: toPublic(record) });
   } catch (error) {
