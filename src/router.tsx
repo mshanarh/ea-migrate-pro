@@ -36,6 +36,33 @@ if (typeof window !== "undefined") {
   });
 }
 
+/**
+ * THE GUARD SPLASH — what a route shows while its `beforeLoad` is still
+ * waiting on the access check.
+ *
+ * Without this the router has nothing to render while the guard runs: the
+ * previous screen just sits there frozen (or the page is blank on a cold
+ * start), which reads as "the app hung" even when the check is healthy. The
+ * splash appears as soon as a navigation is pending for `defaultPendingMs`
+ * and is replaced by the screen the moment the guard answers.
+ */
+function RoutePending() {
+  return (
+    <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 text-white">
+      <img
+        src="/logo.png"
+        alt=""
+        className="size-14 rounded-2xl border border-white/10 bg-white/5 object-contain p-1"
+      />
+      <span
+        aria-hidden
+        className="size-5 animate-spin rounded-full border-2 border-white/15 border-t-white"
+      />
+      <p className="text-sm font-semibold text-white/55">Loading…</p>
+    </div>
+  );
+}
+
 export const getRouter = () => {
   const queryClient = new QueryClient();
 
@@ -44,6 +71,14 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
+    // GUARDS MUST FEEL ALIVE. `defaultPendingMs` is how long a route may be
+    // pending before the splash above renders (the router's default is 1000ms,
+    // which is a full second of frozen screen); `defaultPendingMinMs` keeps it
+    // from flashing on navigations that resolve immediately — which is most of
+    // them now that a warm access cache answers without any network call.
+    defaultPendingMs: 150,
+    defaultPendingMinMs: 400,
+    defaultPendingComponent: RoutePending,
   });
 
   return router;

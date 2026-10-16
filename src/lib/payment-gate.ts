@@ -132,20 +132,95 @@ export function remembersLedgerPayment(email: string | null | undefined): boolea
   return paymentSourceForEmail(clean) !== "license";
 }
 
-type Resolution = { status: CloudAccess; at: number };
+type Resolution = {
+  status: CloudAccess;
+  at: number;
+  /** The cloud's device binding as it was answered with `status`. */
+  binding: DeviceBinding | null;
+  /**
+   * FALSE when the server could not read the binding and the answer was
+   * therefore NOT stored as fact — see ServerDeviceBinding in supabase-users.
+   */
+  bindingKnown: boolean;
+};
 
-const CACHE_TTL_MS = 60_000;
+/**
+ * ONE ANSWER, BOTH QUESTIONS — the payment verdict AND the device binding.
+ *
+ * `/api/check-access` returns them together (see readDeviceBinding in
+ * api/_handlers/check-access.ts), so a guard is ONE serverless round trip
+ * instead of the sequence it used to be: binding read (Supabase) → payment
+ * read (Vercel KV) → binding write (Supabase), three to four round trips per
+ * navigation before a screen could paint.
+ */
+type Bundle = {
+  /** `null` = the cloud could not decide — the caller must FAIL CLOSED. */
+  status: CloudAccess | null;
+  binding: DeviceBinding | null;
+  bindingKnown: boolean;
+};
+
+/** THE CLOUD'S DEVICE BINDING for one email. */
+type DeviceBinding = { deviceEmail: string | null; deviceId: string | null };
+
+/**
+ * CONFIRMED PAID SESSIONS ARE HELD FOR FIVE MINUTES.
+ *
+ * The cache exists so navigation feels instant. A confirmed "paid" answer
+ * never goes stale in a way that matters within this window: revocation,
+ * sign-in, activation and a checkout return all call `invalidateAccessCache`
+ * or pass `fresh`, which drop the entry immediately. Five minutes is the
+ * difference between a screen that opens and a screen that waits for a
+ * serverless round trip on every tab switch.
+ */
+const CACHE_TTL_MS = 300_000;
 /**
  * AN UNPAID ANSWER IS CACHED FOR FAR LESS TIME.
  *
- * The cache exists so navigation feels instant, and a confirmed "paid" never
- * goes stale in a way that hurts anybody. "unpaid" is the opposite: the owner
- * marks somebody paid in the console and that person's very next app launch
- * must not be handed yesterday's answer. Caching a refusal for a full minute
- * is exactly how a customer who has been paid for ends up back at checkout.
+ * "unpaid" is a refusal the owner can lift at any moment by pressing Mark
+ * paid, and that person's very next app launch must not be handed yesterday's
+ * answer. Caching a refusal for a full minute is exactly how a customer who
+ * has been paid for ends up back at checkout.
  */
 const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
+
+/**
+ * THE NAVIGATION WINDOW — WHY A GUARD RUNS ITS CHECK ONCE, NOT THREE TIMES.
+ *
+ * A single navigation walks several `beforeLoad`s in a row (parent → child →
+ * the target route), and `/app/home` re-checks again from its component the
+ * moment it mounts. Without this window every one of those is its own server
+ * round trip for the exact same question.
+ *
+ * The first asker starts the work and everyone else inside the window awaits
+ * the SAME promise. The window is short — it exists only to join the pieces of
+ * ONE navigation — while the payment answer itself is held by `cache` above.
+ * `fresh: true` (sign-in, checkout return) throws the entry away and replaces
+ * it, so a fresh answer is never shadowed by a stale one.
+ */
+const NAVIGATION_WINDOW_MS = 1_500;
+const navigation = new Map<string, { promise: Promise<Bundle>; at: number }>();
+
+/**
+ * A BINDING WRITE IS ATTEMPTED ONCE PER DEVICE, NOT ONCE PER NAVIGATION.
+ *
+ * `bindDeviceToEmail` used to run on every successful guard, which is two
+ * Supabase round trips on every screen. It now runs only when the binding this
+ * device just read is missing or belongs to another device — and a refused or
+ * failed attempt is not retried for BIND_RETRY_MS, so a broken row cannot turn
+ * into a write on every tab switch either.
+ */
+const BIND_RETRY_MS = 30_000;
+const bindAttempts = new Map<string, { at: number; ok: boolean }>();
+
+/**
+ * FALLBACK BINDING READ (server could not answer it) — remembered for a
+ * minute so even the degraded path is at most one read per minute instead of
+ * one per navigation. Unreadable answers are not memoised.
+ */
+const LOCAL_BINDING_TTL_MS = 60_000;
+const localBindings = new Map<string, { value: DeviceBinding; at: number }>();
 
 /**
  * SESSION VERSION — the blunt instrument that forces every cached session on
@@ -182,10 +257,19 @@ function consumeStaleSession(): boolean {
   }
 }
 
-/** Drop any remembered answer for this email — used the moment a payment lands. */
+/**
+ * Drop any remembered answer for this email — used the moment a payment lands.
+ *
+ * Clears the payment cache, THE NAVIGATION WINDOW and the fallback binding
+ * read together: after this call the very next guard asks the cloud again,
+ * with nothing from before it in the way.
+ */
 export function invalidateAccessCache(email: string | null | undefined): void {
   const clean = (email ?? "").trim().toLowerCase();
-  if (clean) cache.delete(clean);
+  if (!clean) return;
+  cache.delete(clean);
+  navigation.delete(clean);
+  localBindings.delete(clean);
 }
 
 /**
@@ -204,67 +288,115 @@ export async function resolveCloudAccess(
   // NO OWNER SHORTCUT. This used to answer "admin" before touching the
   // database, which meant a platform address opened the app with no payment
   // record at all — the exact thing "paid only" has to mean. Every email,
-  // owner included, now goes to computeFromUpstash below and is answered by
-  // the ledger.
+  // owner included, goes to the server below, which is answered by the ledger.
   // The browser never imports the KV client: this endpoint answers with the
   // real server-side verdict, and the browser only reads one JSON shape.
-  const cached = cache.get(clean);
-  if (!options?.fresh && cached) {
-    // Only a POSITIVE answer is worth holding for a minute. "unpaid" and
-    // "revoked" are both refusals the owner can lift at any moment by
-    // pressing Mark paid, so they get the short TTL like everything else.
+  const bundle = await resolveBundle(clean, options?.fresh === true);
+  return bundle.status;
+}
+
+/**
+ * THE ONE RESOLUTION A NAVIGATION PERFORMS — see NAVIGATION_WINDOW_MS.
+ *
+ * Everything else (the route guards, the home screen's own re-check) reads
+ * this result instead of asking the cloud again.
+ */
+async function resolveBundle(clean: string, fresh: boolean): Promise<Bundle> {
+  if (!fresh) {
+    const memo = navigation.get(clean);
+    if (memo && Date.now() - memo.at < NAVIGATION_WINDOW_MS) return memo.promise;
+  }
+  // `fresh` REPLACES the window entry, so a fresh verdict is what every later
+  // guard in this navigation reuses.
+  const promise = readBundle(clean, fresh);
+  navigation.set(clean, { promise, at: Date.now() });
+  try {
+    return await promise;
+  } catch (error) {
+    navigation.delete(clean); // never let a failure be reused by later guards
+    throw error;
+  }
+}
+
+/**
+ * Read the answer: from cache when it is still valid, from the cloud otherwise.
+ *
+ * `fresh` SKIPS THE CACHE ENTIRELY — that is what makes it mean "ask the
+ * cloud right now". It still WRITES the cache, so the fresh verdict is what
+ * the next ordinary guard in this navigation reads.
+ */
+async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
+  const cached = fresh ? undefined : cache.get(clean);
+  if (cached) {
     const ttl =
       cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
     if (Date.now() - cached.at < ttl) {
       // The dashboard may have just marked this email paid from another device.
       // A stale "unpaid"/"revoked" here is the exact bug where a freshly-marked
       // paid account still sees the plan screen, so before returning a refusal
-      // from cache we re-check the Upstash record the dashboard writes to.
-      // If it has gone paid since this cache entry was stored,
-      // refresh the cache and return the new answer instead of the stale refusal.
+      // from cache we re-check the record the dashboard writes to. If it has
+      // gone paid since this entry was stored, refresh it instead of answering
+      // with the stale refusal.
       if (cached.status !== "paid" && cached.status !== "admin") {
         const local = paymentStatusForEmail(clean);
         if (local === "paid" || local === "admin") {
           const pay: CloudAccess = local === "admin" ? "admin" : "paid";
-          cache.set(clean, { status: pay, at: Date.now() });
-          return pay;
+          const upgraded: Resolution = { ...cached, status: pay, at: Date.now() };
+          cache.set(clean, upgraded);
+          return { status: pay, binding: upgraded.binding, bindingKnown: upgraded.bindingKnown };
         }
       }
-      return cached.status;
+      return { status: cached.status, binding: cached.binding, bindingKnown: cached.bindingKnown };
     }
   }
 
   try {
-    const server = await checkAccessServer(clean);
-    if (!server.ok) return null; // endpoint could not decide — caller must fail closed
+    const server = await checkAccessServer(clean, getDeviceId());
+    // Endpoint could not decide — caller must fail closed. Nothing is cached.
+    if (!server.ok) return { status: null, binding: null, bindingKnown: false };
 
     const status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
-    cache.set(clean, { status, at: Date.now() });
-    if (status === "admin") return "admin";
-    if (status === "paid") return "paid";
-    if (status === "revoked") return "revoked";
-    return "unpaid";
+
+    // THE BINDING CAME BACK WITH THE SAME ANSWER in the normal case. When the
+    // server could not read it (`deviceBinding` absent), fall back to this
+    // device's own read — the behaviour the gate had before, so an old server
+    // build or an unreadable column never changes who gets in.
+    let binding: DeviceBinding | null;
+    let bindingKnown: boolean;
+    if (server.deviceBinding !== undefined) {
+      binding = server.deviceBinding;
+      bindingKnown = true;
+    } else {
+      binding = await readLocalBinding(clean);
+      bindingKnown = binding !== null;
+    }
+
+    cache.set(clean, { status, at: Date.now(), binding, bindingKnown });
+    return { status, binding, bindingKnown };
   } catch (error) {
     console.warn("[payment-gate] access check failed:", error);
-    return null;
+    return { status: null, binding: null, bindingKnown: false };
   }
 }
 
 /**
- * DEVICE-BINDING LIVENESS — true when the cloud has a registration record for
- * this email whose device_id no longer matches THIS device. Bindings are only
- * written at a fresh sign-in (and at key activation), so a cleared binding
- * means the session predates the global access reset and must end. The
- * check fails OPEN (network hiccup = no kick) so a flaky connection can
- * never log someone out.
+ * The fallback read used only when the SERVER could not answer the binding.
+ * Memoised for a minute when it succeeds (see LOCAL_BINDING_TTL_MS).
  */
-async function deviceBindingRevoked(email: string): Promise<boolean> {
+async function readLocalBinding(clean: string): Promise<DeviceBinding | null> {
+  const hit = localBindings.get(clean);
+  if (hit && Date.now() - hit.at < LOCAL_BINDING_TTL_MS) return hit.value;
   try {
-    const binding = await getDeviceBinding(email.trim().toLowerCase());
-    if (!binding || !binding.deviceId) return false;
-    return binding.deviceId !== getDeviceId();
+    const binding = await getDeviceBinding(clean);
+    if (!binding) return null; // unreadable — never memoise an error as fact
+    const value: DeviceBinding = {
+      deviceEmail: binding.deviceEmail,
+      deviceId: binding.deviceId,
+    };
+    localBindings.set(clean, { value, at: Date.now() });
+    return value;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -332,8 +464,17 @@ async function computeFromUpstash(clean: string): Promise<CloudAccess> {
  * The gate every /app route guard must await. Fail-closed for cloud-decided
  * unpaid emails; falls back to the legacy local store only when the cloud
  * cannot be reached at all (Upstash unconfigured) so dev never blocks.
+ *
+ * ONE CALL, ONE ROUND TRIP. This asks `resolveBundle`, which answers the
+ * payment verdict AND the device binding from a single POST to
+ * /api/check-access, and which every guard in the SAME navigation reuses (see
+ * NAVIGATION_WINDOW_MS). `fresh: true` forces a new round trip — use it only
+ * where the answer decides what somebody is about to be shown.
  */
-export async function requireVerifiedAccess(email: string | null): Promise<AppAccessCheck> {
+export async function requireVerifiedAccess(
+  email: string | null,
+  options?: { fresh?: boolean },
+): Promise<AppAccessCheck> {
   // STALE SESSION KICK — runs BEFORE anything else. A session cached under the
   // previous access rules is not trusted at all: it is signed out here and the
   // cloud decides again on this very pass. Nobody is exempt, owners included.
@@ -344,35 +485,44 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
   // app it administers. That is precisely the hole "paid only, everybody"
   // closes: if the owner's email is not on the payment ledger, the app does not
   // open for it either. Mark it paid in the console like any other account.
-  //
+  const clean = email.trim().toLowerCase();
+
+  let bundle: Bundle = { status: null, binding: null, bindingKnown: false };
+  try {
+    bundle = await resolveBundle(clean, options?.fresh === true);
+  } catch {
+    // NEVER let a gate error crash a route (that was the "Dashboard didn't
+    // load" screen on Android) — an undecided cloud falls through to the
+    // FAIL-CLOSED branch below, never to the local store.
+    bundle = { status: null, binding: null, bindingKnown: false };
+  }
+
   // GLOBAL ACCESS RESET — everyone: if the cloud no longer binds this
   // device to the email (the reset cleared every binding), the stale session
   // is dead. appSignOut clears it ONCE and the route sends the person to
   // /app/login, where the cloud gate decides who gets back in: unpaid emails
   // go to checkout, paid emails re-bind on sign-in.
-  if (await deviceBindingRevoked(email)) {
+  //
+  // Bindings are written at sign-in, at key activation and (when genuinely
+  // new) by `bindIfNeeded` below — never on every navigation. The check FAILS
+  // OPEN on an unreadable answer (network hiccup = no kick) so a flaky
+  // connection can never log someone out; the binding arrives on the same
+  // round trip as the payment verdict, and falls back to this device's own
+  // read only when the server could not answer it.
+  const deviceId = getDeviceId();
+  const binding = bundle.bindingKnown ? bundle.binding : await readLocalBinding(clean);
+  if (binding?.deviceId && binding.deviceId !== deviceId) {
     appSignOut();
     return { action: "signin" };
   }
-  let cloud: CloudAccess | null = null;
-  try {
-    cloud = await resolveCloudAccess(email);
-  } catch {
-    // NEVER let a gate error crash a route (that was the "Dashboard didn't
-    // load" screen on Android) — an undecided cloud falls through to the
-    // FAIL-CLOSED branch below, never to the local store.
-    cloud = null;
-  }
+  const cloud = bundle.status;
   if (cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.
     markEmailPaid(email);
-    // Bind this device to the email on successful paid access
-    try {
-      await bindDeviceToEmail(email, getDeviceId());
-    } catch {
-      /* device binding is not critical — fail silent */
-    }
+    // Bind this device — ONLY when the binding read on this very round trip
+    // says it is missing or belongs to another device.
+    await bindIfNeeded(clean, deviceId, binding);
     return { action: "pass" };
   }
   if (cloud === "admin") {
@@ -380,12 +530,7 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
     // already marked paid and still needs to open the app. If admin access
     // still requires payment in your current setup, treat this like unpaid.
     markEmailPaid(email);
-    // Bind this device to the email on successful admin access
-    try {
-      await bindDeviceToEmail(email, getDeviceId());
-    } catch {
-      /* device binding is not critical — fail silent */
-    }
+    await bindIfNeeded(clean, deviceId, binding);
     return { action: "pass" };
   }
   // DEACTIVATED BY THE OWNER. The cloud holds a revocation marker for this
@@ -452,6 +597,39 @@ export async function requireVerifiedAccess(email: string | null): Promise<AppAc
 }
 
 /**
+ * BIND THIS DEVICE, AT MOST ONCE — never on every navigation.
+ *
+ * Three rules, in order:
+ *   • the cloud already says THIS device is bound → nothing to write (the
+ *     common case on every screen after the first bind),
+ *   • the binding is missing, or belongs to another device → write it,
+ *   • a refused/failed write is not retried for BIND_RETRY_MS, so a row that
+ *     cannot be bound cannot become a write on every tab switch either.
+ *
+ * The write is deliberately best effort: binding is not what opens the app
+ * (the payment verdict is), so a failure here must never block a paid session.
+ */
+async function bindIfNeeded(
+  clean: string,
+  deviceId: string,
+  binding: DeviceBinding | null,
+): Promise<void> {
+  if (!deviceId) return;
+  if (binding?.deviceId === deviceId) return;
+  const key = `${clean}|${deviceId}`;
+  const prior = bindAttempts.get(key);
+  if (prior && (prior.ok || Date.now() - prior.at < BIND_RETRY_MS)) return;
+  bindAttempts.set(key, { at: Date.now(), ok: false });
+  try {
+    const result = await bindDeviceToEmail(clean, deviceId);
+    const record = bindAttempts.get(key);
+    if (record) record.ok = result.ok === true;
+  } catch {
+    /* device binding is not critical — fail silent */
+  }
+}
+
+/**
  * Verify a Whop checkout return (?success=true). Returns true ONLY when the
  * cloud or the server-side Whop check confirms payment. Never trusts the
  * URL parameter itself, and never consults mentor approval.
@@ -462,15 +640,24 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
     // ALWAYS FRESH — this is the moment somebody has just handed over money
     // and is waiting on the answer. A cached "unpaid" here sends a paying
     // customer straight back to the checkout page they just completed.
-    const cloud = await resolveCloudAccess(clean, { fresh: true });
+    const bundle = await resolveBundle(clean, true);
+    const cloud = bundle.status;
     if (cloud === "admin" || cloud === "paid") {
       markEmailPaid(clean);
-      // Bind this device on successful payment verification
-      try {
-        await bindDeviceToEmail(clean, getDeviceId());
-      } catch {
-        /* device binding is not critical — fail silent */
-      }
+      // THIS FRESH ANSWER BECOMES THE CACHE, so the walk into /app/home that
+      // follows reads it instead of buying another round trip: paying costs
+      // one check, not one per screen.
+      cache.set(clean, {
+        status: cloud,
+        at: Date.now(),
+        binding: bundle.binding,
+        bindingKnown: bundle.bindingKnown,
+      });
+      await bindIfNeeded(
+        clean,
+        getDeviceId(),
+        bundle.bindingKnown ? bundle.binding : await readLocalBinding(clean),
+      );
       return true;
     }
     if (cloud === "unpaid" || cloud === "revoked") return false;
@@ -484,12 +671,7 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
     const whop = await whopVerifyMembership({ data: { email: clean } });
     if (whop.ok && whop.paid) {
       markEmailPaid(clean);
-      // Bind this device on successful Whop verification
-      try {
-        await bindDeviceToEmail(clean, getDeviceId());
-      } catch {
-        /* device binding is not critical — fail silent */
-      }
+      await bindIfNeeded(clean, getDeviceId(), await readLocalBinding(clean));
       return true;
     }
   } catch {

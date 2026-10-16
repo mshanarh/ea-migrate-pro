@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, isRedirect, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
+import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -14,7 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
-import { invalidateAccessCache, remembersLedgerPayment, requireVerifiedAccess, resolveCloudAccess } from "@/lib/payment-gate";
+import { invalidateAccessCache, requireVerifiedAccess } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -27,43 +27,31 @@ export const Route = createFileRoute("/app/home")({
     if (email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
       throw redirect({ href: "/app/login?license=1" });
     }
-    if (email) {
-      try {
-        const cloud = await resolveCloudAccess(email, { fresh: true });
-        if (cloud === "unpaid" || cloud === "revoked") {
-          // DEACTIVATED vs NEVER PAID — decided from the cloud's own verdict.
-          //
-          // The device's memory may only convert an "unpaid" answer into the
-          // deactivation notice when it remembers a PAYMENT for this email
-          // (see `remembersLedgerPayment`). It used to be any local "paid"
-          // record, and `activateKey` writes one for every key activation — so
-          // activating a key turned the very next check into "your account was
-          // deactivated", which is the screen that asks for the email and a
-          // fresh six-digit code again.
-          const revoked = cloud === "revoked" || remembersLedgerPayment(email);
-          invalidateAccessCache(email);
-          // The session ENDS only for a revocation. An "unpaid" answer keeps it
-          // and shows the plans: nothing opens on a session alone (every /app
-          // guard re-asks the gate), and keeping it means the app walks in on
-          // its own the moment the ledger agrees instead of making the person
-          // sign in, wait for a code and enter the key all over again.
-          if (revoked) appSignOut();
-          throw redirect({ href: revoked ? "/app/login?deactivated=1" : "/app/login?pay=1" });
-        }
-      } catch (error) {
-        // A GATED REDIRECT IS NORMAL CONTROL FLOW. `redirect()` returns a
-        // Response whose `href` lives on `.options` (see isRedirect in
-        // @tanstack/router-core), so the old `"href" in error` test NEVER
-        // matched and every refusal above was silently swallowed — the route
-        // then fell through to a second, different decision below and could
-        // sign the session out and land on the plain sign-in page.
-        if (isRedirect(error)) throw error;
-      }
-    }
+    // ONE RESOLUTION PER NAVIGATION — payment AND the device binding come
+    // back in that ONE round trip.
+    //
+    // This guard used to run `resolveCloudAccess(fresh)` and then
+    // `requireVerifiedAccess`, which asked the cloud AGAIN plus a device-binding
+    // READ and a device-binding WRITE: four serverless round trips before the
+    // dashboard could paint, on every entry. The gate now resolves once per
+    // navigation and every guard in it reuses that answer — one round trip on a
+    // cold cache, ZERO while a confirmed-paid answer is still fresh (see
+    // CACHE_TTL_MS in @/lib/payment-gate). The verdict itself is unchanged:
+    // deactivated (a revoked payment, or a cloud `revoked`) ends the session,
+    // while an account the ledger has simply never marked paid keeps its
+    // session and lands on the plans, so the app can walk in by itself the
+    // moment the ledger agrees.
     const access = await requireVerifiedAccess(email);
     if (access.action === "signin") throw redirect({ href: "/app/login" });
-    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+    // Access revoked by the owner (Mark unpaid) — the gate signed the session
+    // out; hand them the first page with the notice. The cached verdict is
+    // dropped first, so the next ask reads the cloud and never this refusal.
+    if (access.action === "deactivate") {
+      invalidateAccessCache(email);
+      throw redirect({ href: "/app/login?deactivated=1" });
+    }
     if (access.action === "pay") {
+      invalidateAccessCache(email);
       throw redirect({ href: "/app/login?pay=1" });
     }
   },

@@ -76,6 +76,30 @@ const ROUTES: Record<string, () => Promise<HandlerModule>> = {
   "whop-payment": () => import("./_handlers/whop-payment.js"),
 };
 
+/**
+ * RUNTIME AND COLD-START COST — EXPLICIT, AND DELIBERATELY MINIMAL.
+ *
+ * Every handler under /api runs on the NODE runtime (nothing here is an edge
+ * function, and no handler opts out of it), which is what lets them use
+ * `node:crypto`, the KV REST client and the Supabase service-role key.
+ *
+ * The whole API surface is ONE function on purpose: Vercel's Hobby plan caps a
+ * deployment at 12 functions (see the note above), so the smallest possible
+ * configuration for the hot endpoints (`check-access`, `ping`) is not a second
+ * function — that trade was already made and is what the ROUTES table below
+ * exists for. What keeps each invocation cheap instead:
+ *   • handlers are lazily imported, so a `ping` never loads `activation`,
+ *   • /api/check-access keeps one Supabase client per instance and reads the
+ *     payment ledger + device binding in a single round trip (see
+ *     api/_handlers/check-access.ts),
+ *   • the KV client is a plain REST fetch with a 10s deadline — no per-call
+ *     client construction anywhere in the request path.
+ * No `maxDuration` is pinned: the longest handlers (activation, ea-media) are
+ * bounded by their own timeouts, and capping the whole function would break
+ * them to save nothing on the fast ones.
+ */
+export const config = { runtime: "nodejs" };
+
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   const url = request.url ?? "";
   const search = url.split("?", 2)[1] ?? "";

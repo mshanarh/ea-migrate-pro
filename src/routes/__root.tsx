@@ -8,8 +8,22 @@ import {
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
-import { PushPermissionBanner } from "@/components/PushPermissionBanner";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+
+/**
+ * THE PUSH PROMPT IS NOT FIRST-PAINT WORK — and neither is Firebase.
+ *
+ * `PushPermissionBanner` imports `@/lib/firebase/app` + `firebase/messaging`,
+ * which is one of the largest single pieces the entry chunk used to carry. It
+ * is a dialog that appears AFTER the screen is up, so it is loaded on the next
+ * tick after first paint instead of blocking the download of the app itself.
+ * The banner itself is unchanged — it still renders in the same place.
+ */
+const PushPermissionBanner = lazy(() =>
+  import("@/components/PushPermissionBanner").then((module) => ({
+    default: module.PushPermissionBanner,
+  })),
+);
 
 import appCss from "../styles.css?url";
 
@@ -243,6 +257,16 @@ function RootComponent() {
     applyColourMatrixFromStorage();
   }, []);
 
+  // DEFERRED UNTIL AFTER FIRST PAINT — see PushPermissionBanner above. The
+  // timeout (rather than a bare rAF) is deliberate: it waits for the first
+  // paint AND for the browser's idle slot, so the permission dialog never
+  // competes with the screen people actually asked for.
+  const [pushReady, setPushReady] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setPushReady(true), 250);
+    return () => window.clearTimeout(timer);
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       {/* Animated background sits behind everything; content lifts above it. */}
@@ -250,7 +274,11 @@ function RootComponent() {
       <div style={{ position: "relative", zIndex: 1 }}>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />
-        <PushPermissionBanner />
+        {pushReady ? (
+          <Suspense fallback={null}>
+            <PushPermissionBanner />
+          </Suspense>
+        ) : null}
         <Toaster position="top-center" />
       </div>
     </QueryClientProvider>

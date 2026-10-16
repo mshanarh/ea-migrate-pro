@@ -58,6 +58,69 @@ function bodyEmail(request: ApiRequest): string {
   return normEmail(body["email"]);
 }
 
+/**
+ * ONE SUPABASE CLIENT PER FUNCTION INSTANCE — not one per request.
+ *
+ * `createClient` was built inside `paidEmailInSupabase`, so every access check
+ * constructed a fresh client on the hottest path the app has. The client is
+ * cheap to reuse and costly to rebuild, and this endpoint runs on every route
+ * guard, so it is created once and kept for the life of the instance.
+ * `null` = unconfigured (or the package could not be loaded).
+ */
+async function buildServiceClient() {
+  const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
+  const key = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
+  if (!url || !key) return null;
+  const { createClient } = await import("@supabase/supabase-js");
+  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+}
+
+let clientPromise: ReturnType<typeof buildServiceClient> | null = null;
+
+function serviceClient(): ReturnType<typeof buildServiceClient> {
+  if (!clientPromise) clientPromise = buildServiceClient().catch(() => null);
+  return clientPromise;
+}
+
+/** The device binding for this email — the same column the app reads today. */
+type Binding = { deviceEmail: string | null; deviceId: string | null };
+type BindingAnswer = { readable: boolean; value: Binding | null };
+
+/**
+ * WHY THIS LIVES IN THE PAYMENT CHECK
+ * ────────────────────────────────────
+ * The route guards used to ask TWO servers in sequence: /api/check-access for
+ * the ledger verdict, then Supabase for `users.device_id`, then Supabase again
+ * to write the binding. Three to four round trips before a screen could paint.
+ * The binding is now answered inside this same call, so one POST decides
+ * everything.
+ *
+ * `readable: false` (unconfigured, error, missing column) means the key is
+ * OMITTED from the response rather than sent as `null`: the client must be able
+ * to tell "the cloud says unbound" from "the cloud could not answer", and it
+ * falls back to its own read in the second case — exactly the behaviour it has
+ * today, so a database hiccup can never sign anybody out.
+ */
+async function readDeviceBinding(email: string): Promise<BindingAnswer> {
+  const db = await serviceClient();
+  if (!db) return { readable: false, value: null };
+  try {
+    const { data, error } = await db
+      .from("users")
+      .select("device_email, device_id")
+      .eq("email", email)
+      .maybeSingle();
+    if (error) return { readable: false, value: null };
+    const row = data as { device_email?: string | null; device_id?: string | null } | null;
+    return {
+      readable: true,
+      value: { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null },
+    };
+  } catch {
+    return { readable: false, value: null };
+  }
+}
+
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
   response.setHeader("Cache-Control", "no-store");
 
@@ -72,9 +135,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     response.status(400).json({ ok: false, error: "email is required" });
     return;
   }
+  const deviceId = request.method === "POST" ? bodyDeviceId(request) : null;
 
   try {
-    const answer = await resolveAccess(email);
+    const answer = await resolveAccess(email, deviceId);
     response.status(200).json(answer);
   } catch (error) {
     console.error("[check-access]", error);
@@ -82,44 +146,64 @@ export default async function handler(request: ApiRequest, response: ApiResponse
   }
 }
 
-async function resolveAccess(email: string) {
+/** The caller's device id — optional; only used to answer `deviceMatches`. */
+function bodyDeviceId(request: ApiRequest): string | null {
+  const body = parseBody(request);
+  const value = body["deviceId"];
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+type AccessAnswer = Record<string, unknown> & {
+  ok: boolean;
+  isPaid: boolean;
+  status: string;
+  paidAt?: string;
+};
+
+async function resolveAccess(email: string, deviceId: string | null): Promise<AccessAnswer> {
   // Server-side only now — this file never ships KV client code to the browser.
   const { isAdminEmail, getRegistration } = await import("./_registry.js");
 
+  let answer: AccessAnswer;
   if (isAdminEmail(email)) {
-    return { ok: true, isPaid: true, status: "admin" };
+    answer = { ok: true, isPaid: true, status: "admin" };
+  } else {
+    const record = await getRegistration(email);
+    if (record) {
+      if (record.isPaid && record.paidAt) {
+        answer = { ok: true, isPaid: true, status: "paid", paidAt: record.paidAt };
+      } else if (record.isPaid === false && record.paidAt === null) {
+        answer = { ok: true, isPaid: false, status: "revoked" };
+      } else if (record.status === "rejected") {
+        answer = { ok: true, isPaid: false, status: "rejected" };
+      } else {
+        answer = { ok: true, isPaid: false, status: "unpaid" };
+      }
+    } else {
+      // Fallback: the same payment ledger the console reads, when KV has no record.
+      const paid = await paidEmailInSupabase(email);
+      answer = paid
+        ? { ok: true, isPaid: true, status: "paid", paidAt: paid }
+        : { ok: true, isPaid: false, status: "unpaid" };
+    }
   }
 
-  const record = await getRegistration(email);
-  if (record) {
-    if (record.isPaid && record.paidAt) {
-      return { ok: true, isPaid: true, status: "paid", paidAt: record.paidAt };
+  // THE BINDING, IN THE SAME ANSWER — see readDeviceBinding above. The keys are
+  // only added when the read succeeded, so an unreadable database can never be
+  // mistaken for "this email is unbound".
+  const binding = await readDeviceBinding(email);
+  if (binding.readable) {
+    answer["deviceBinding"] = binding.value;
+    if (deviceId) {
+      answer["deviceMatches"] = binding.value?.deviceId === deviceId;
     }
-    if (record.isPaid === false && record.paidAt === null) {
-      return { ok: true, isPaid: false, status: "revoked" };
-    }
-    if (record.status === "rejected") {
-      return { ok: true, isPaid: false, status: "rejected" };
-    }
-    return { ok: true, isPaid: false, status: "unpaid" };
   }
-
-  // Fallback: the same payment ledger the console reads, when KV has no record.
-  const paid = await paidEmailInSupabase(email);
-  if (paid) {
-    return { ok: true, isPaid: true, status: "paid", paidAt: paid };
-  }
-
-  return { ok: true, isPaid: false, status: "unpaid" };
+  return answer;
 }
 
 async function paidEmailInSupabase(email: string): Promise<string | null> {
-  const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
-  const key = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
-  if (!url || !key) return null;
-
-  const { createClient } = await import("@supabase/supabase-js");
-  const db = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const db = await serviceClient();
+  if (!db) return null;
 
   const { data, error } = await db
     .from("paid_emails")

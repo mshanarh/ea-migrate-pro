@@ -57,17 +57,32 @@ function db() {
  * The only browser-side access check this module makes.
  */
 
-export async function checkAccessServer(email: string): Promise<{
+/**
+ * THE DEVICE BINDING, ANSWERED BY THE SAME POST AS THE PAYMENT VERDICT.
+ *
+ * `undefined` means the server OMITTED the key — it could not read the column
+ * (unconfigured, error, pre-SQL deployment) and the caller must fall back to
+ * its own read. `null` means the cloud read it and the email is unbound. Those
+ * two must never collapse into one: the first is "we do not know", the second
+ * is "nothing is bound here".
+ */
+export type ServerDeviceBinding = { deviceEmail: string | null; deviceId: string | null } | null;
+
+export type AccessServerAnswer = {
   ok: boolean;
   isPaid: boolean;
   status: "admin" | "paid" | "revoked" | "rejected" | "unpaid";
   paidAt?: string;
-}> {
+  deviceBinding?: ServerDeviceBinding;
+  deviceMatches?: boolean;
+};
+
+export async function checkAccessServer(email: string, deviceId?: string): Promise<AccessServerAnswer> {
   try {
     const reply = await fetch("/api/check-access", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ email }),
+      body: JSON.stringify(deviceId ? { email, deviceId } : { email }),
       signal: AbortSignal.timeout(15_000),
     });
     if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
@@ -76,16 +91,30 @@ export async function checkAccessServer(email: string): Promise<{
       isPaid?: boolean;
       status?: string;
       paidAt?: string;
+      deviceBinding?: unknown;
+      deviceMatches?: unknown;
     };
     if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
     const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
     if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
-    return {
+    const answer: AccessServerAnswer = {
       ok: true,
       isPaid: Boolean(payload.isPaid),
       status,
       paidAt: typeof payload.paidAt === "string" ? payload.paidAt : "",
     };
+    // Only present when the SERVER actually read the binding — see ServerDeviceBinding.
+    if (payload.deviceBinding !== undefined) {
+      const raw = payload.deviceBinding as { deviceEmail?: unknown; deviceId?: unknown } | null;
+      answer.deviceBinding = raw === null
+        ? null
+        : {
+            deviceEmail: typeof raw?.deviceEmail === "string" ? raw.deviceEmail : null,
+            deviceId: typeof raw?.deviceId === "string" ? raw.deviceId : null,
+          };
+    }
+    if (typeof payload.deviceMatches === "boolean") answer.deviceMatches = payload.deviceMatches;
+    return answer;
   } catch {
     return { ok: false, isPaid: false, status: "unpaid" };
   }
