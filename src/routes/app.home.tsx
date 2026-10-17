@@ -18,7 +18,7 @@ import { invalidateAccessCache, requireVerifiedAccess } from "@/lib/payment-gate
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
-import { executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
+import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 
 export const Route = createFileRoute("/app/home")({
   ssr: false,
@@ -371,11 +371,14 @@ function AppHome() {
 
         if (analysis.direction.type === "NO_TRADE") {
           blocked += 1;
+          // NO TRADE (…) with the specific reason — a refusal the trader can
+          // read (weak setup / no data / stale quote), never a vague error.
+          const kind = classifyNoTrade(analysis.direction.reason);
           window.dispatchEvent(
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `${symbol.toUpperCase()} BLOCKED — ${analysis.direction.reason}`,
+                message: `${symbol.toUpperCase()} NO TRADE (${kind}) — ${analysis.direction.reason}`,
                 blocked: true,
                 reason: analysis.direction.reason,
               },

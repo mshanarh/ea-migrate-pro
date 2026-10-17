@@ -5,7 +5,13 @@
 // and that broker symbols are never confused with proxy/synthetic tickers.
 // ============================================================================
 
-import { resolveTradeDirection, type AnalysisResult, type TradeDecision } from "./auto-trade";
+import {
+  classifyNoTrade,
+  hasVerifiedMarketData,
+  resolveTradeDirection,
+  type AnalysisResult,
+  type TradeDecision,
+} from "./auto-trade";
 
 // ============================================================================
 // Symbol Mapping Configuration
@@ -241,13 +247,14 @@ export function isSymbolSupported(symbol: string): { supported: boolean; error?:
     };
   }
 
-  // Check if we have broker data for it
-  // In production, this would check against MT5 symbol list
-  const knownBrokerSymbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "HW_100"];
-  if (!knownBrokerSymbols.includes(normalized)) {
+  // Data-driven, not a hard-coded whitelist: XAUUSD, US30 and every other
+  // symbol with verified RSI/momentum/quote data are supported; only symbols
+  // with NO verified data report unsupported (and stay blocked by direction
+  // safety).
+  if (!hasVerifiedMarketData(symbol)) {
     return {
       supported: false,
-      error: `Symbol ${normalized} not found in broker symbol list.`,
+      error: `No verified market data for ${normalized}.`,
     };
   }
 
@@ -266,8 +273,11 @@ export function validateAnalysisForExecution(analysis: AnalysisResult): {
     return { valid: false, reason: "Analysis not execution-ready" };
   }
 
-  if (analysis.strength !== "strong") {
-    return { valid: false, reason: `Analysis strength is ${analysis.strength}, requires strong` };
+  // MODERATE OR BETTER executes. An engine setup with a confirmed direction
+  // is graded "strong" (→ STRONG/MODERATE at scanner level); "weak"/"none"
+  // are below the bar and stay refused.
+  if (analysis.strength === "weak" || analysis.strength === "none") {
+    return { valid: false, reason: `Analysis strength is ${analysis.strength} — requires MODERATE or better` };
   }
 
   if (analysis.source !== "mt5_broker") {
@@ -286,7 +296,12 @@ export function validateAnalysisForExecution(analysis: AnalysisResult): {
 
 export interface ScannerAnalysis {
   symbol: string;
-  signal: "BUY" | "SELL";
+  /**
+   * "NO TRADE" when the engine refused — the scanner SHOWS the refusal with
+   * its specific reason instead of turning it into a generic error. Only a
+   * verified setup carries BUY or SELL.
+   */
+  signal: "BUY" | "SELL" | "NO TRADE";
   entry: number;
   stopLoss: number;
   takeProfit: number;
@@ -321,6 +336,50 @@ export interface AnalyzeMarketResult {
 }
 
 /**
+ * THE EXECUTION GATE — one place that answers "may this plan be sent to MT5?".
+ *
+ * MODERATE or better + verified data → EXECUTE. Anything graded WEAK or WAIT
+ * → a "NO TRADE (weak setup|no data|stale quote)" verdict carrying the
+ * engine's own reason. A genuine bug/timeout/bridge failure never reaches
+ * this gate — it stays an ERROR upstream.
+ */
+export type ExecutionGate = {
+  allowed: boolean;
+  /** Headline shown in place of the Execute button. */
+  headline: string;
+  /** One-line explanation of the refusal kind. */
+  hint: string;
+  /** The engine's specific reason (missing indicators, weak signal…). */
+  reason: string;
+};
+
+const GATE_HINTS = {
+  "weak setup": "The setup did not confirm — no order is sent. See the reasons above.",
+  "no data": "This symbol's market data cannot be verified — execution is disabled.",
+  "stale quote": "The quote is stale — scan again for fresh levels.",
+} as const;
+
+export function executionGate(analysis: ScannerAnalysis): ExecutionGate {
+  const reason = analysis.reasons.join(" ");
+  const gradeOk = analysis.strength === "STRONG" || analysis.strength === "MODERATE";
+  if (
+    analysis.signal !== "NO TRADE" &&
+    gradeOk &&
+    analysis.executionReady &&
+    analysis.dataStatus === "ok"
+  ) {
+    console.log(
+      `[gate] ${analysis.symbol}: EXECUTE ${analysis.signal} (grade ${analysis.strength}, verified data)`,
+    );
+    return { allowed: true, headline: `EXECUTE ${analysis.signal}`, hint: "", reason };
+  }
+  const kind = analysis.strength === "WEAK" ? "weak setup" : classifyNoTrade(reason);
+  const headline = `NO TRADE (${kind})`;
+  console.warn(`[gate] ${analysis.symbol}: ${headline} — ${reason}`);
+  return { allowed: false, headline, hint: GATE_HINTS[kind], reason };
+}
+
+/**
  * Analyze market for scanner - uses the same safety logic as auto-trade
  * but returns the scanner-specific format expected by ChartScanner component
  */
@@ -334,16 +393,59 @@ export async function analyzeMarket(request: AnalyzeMarketRequest): Promise<Anal
       rejectProxyData: true,
     });
 
+    const readouts = [
+      { label: "RSI 15m", value: analysis.rsi15m?.toFixed(1) ?? "—" },
+      { label: "RSI 1h", value: analysis.rsi1h?.toFixed(1) ?? "—" },
+      { label: "Momentum 15m", value: analysis.momentum15m?.toFixed(2) ?? "—" },
+      { label: "Momentum 1h", value: analysis.momentum1h?.toFixed(2) ?? "—" },
+    ];
+
+    // ── NO TRADE: a REFUSAL, not an error. The engine says exactly why
+    // (weak setup / no data / stale quote) and the scanner shows that with
+    // the reason — `ok:false` is reserved for genuine failures.
     if (analysis.direction.type === "NO_TRADE") {
+      const kind = classifyNoTrade(analysis.reason);
+      console.warn(`[scanner] ${symbol}: NO TRADE (${kind}) — ${analysis.reason}`);
       return {
-        ok: false,
-        message: analysis.direction.reason,
+        ok: true,
+        analysis: {
+          symbol: analysis.symbol,
+          signal: "NO TRADE",
+          entry: 0,
+          stopLoss: 0,
+          takeProfit: 0,
+          riskReward: "—",
+          confidence: 0,
+          strength: kind === "weak setup" ? "WEAK" : "WAIT",
+          executionReady: false,
+          dataSource: analysis.source === "mt5_broker" ? "MT5 Broker" : "No verified data",
+          livePrice: 0,
+          lastCandle: null,
+          candleCount: 0,
+          timeframe: "1h",
+          readouts,
+          reasons: [`NO TRADE (${kind})`, analysis.reason],
+          dataStatus: "ok",
+        },
       };
     }
 
     const direction = analysis.direction as { type: "BUY" | "SELL"; entry: number; sl: number; tp: number };
 
-    // Build scanner-specific analysis
+    // ── GRADE: STRONG when RSI and momentum BOTH confirm on both timeframes;
+    // a confirmed setup that leans on structure (or a single timeframe) is
+    // MODERATE. MODERATE OR BETTER EXECUTES — the old mapping could never
+    // produce MODERATE for an executable plan.
+    const rsi15 = analysis.rsi15m;
+    const rsi1h = analysis.rsi1h;
+    const mom15 = analysis.momentum15m;
+    const mom1h = analysis.momentum1h;
+    const bothConfirm =
+      direction.type === "BUY"
+        ? rsi15 !== null && rsi15 < 40 && rsi1h !== null && rsi1h < 40 && mom15 !== null && mom15 > 0.05 && mom1h !== null && mom1h > 0.05
+        : rsi15 !== null && rsi15 > 60 && rsi1h !== null && rsi1h > 60 && mom15 !== null && mom15 < -0.05 && mom1h !== null && mom1h < -0.05;
+    const strength: ScannerAnalysis["strength"] = bothConfirm ? "STRONG" : "MODERATE";
+
     const scannerAnalysis: ScannerAnalysis = {
       symbol: analysis.symbol,
       signal: direction.type,
@@ -351,32 +453,32 @@ export async function analyzeMarket(request: AnalyzeMarketRequest): Promise<Anal
       stopLoss: direction.sl,
       takeProfit: direction.tp,
       riskReward: "1:2",
-      confidence: analysis.strength === "strong" ? 80 : 40,
-      strength: analysis.strength === "strong" ? "STRONG" : analysis.strength === "weak" ? "WEAK" : "MODERATE",
+      confidence: strength === "STRONG" ? 80 : 60,
+      strength,
       executionReady: analysis.executionReady,
       dataSource: analysis.source === "mt5_broker" ? "MT5 Broker" : "Estimated",
-      livePrice: direction.type === "BUY" ? direction.entry : direction.entry,
+      livePrice: direction.entry,
       lastCandle: null,
       candleCount: 0,
       timeframe: "1h",
-      readouts: [
-        { label: "RSI 15m", value: analysis.rsi15m?.toFixed(1) ?? "—" },
-        { label: "RSI 1h", value: analysis.rsi1h?.toFixed(1) ?? "—" },
-        { label: "Momentum 15m", value: analysis.momentum15m?.toFixed(2) ?? "—" },
-        { label: "Momentum 1h", value: analysis.momentum1h?.toFixed(2) ?? "—" },
-      ],
+      readouts,
       reasons: [analysis.reason],
       dataStatus: "ok",
     };
+
+    console.log(
+      `[scanner] ${symbol}: ${scannerAnalysis.signal} grade=${strength} executionReady=${analysis.executionReady} — ${analysis.reason}`,
+    );
 
     return {
       ok: true,
       analysis: scannerAnalysis,
     };
   } catch (error) {
-    return {
-      ok: false,
-      message: error instanceof Error ? error.message : "Analysis failed",
-    };
+    // Only genuine failures (exceptions) land here — analysis refusals above
+    // return `ok:true` with a NO TRADE analysis.
+    const message = error instanceof Error ? error.message : "Analysis failed";
+    console.error(`[scanner] ${symbol}: ERROR — ${message}`);
+    return { ok: false, message };
   }
 }

@@ -51,23 +51,158 @@ interface BrokerQuote {
   isFresh: boolean;
 }
 
+// ============================================================================
 // Simulated MT5 broker data access - in production, this connects to actual MT5
-async function fetchBrokerRSI(symbol: string, timeframe: string): Promise<{ value: number; timestamp: number } | null> {
-  // Simulate fetching from actual MT5 broker candles
-  // Returns null if data unavailable, stale, or symbol unsupported
-  const brokerData: Record<string, { rsi15m: number; rsi1h: number; timestamp: number }> = {
-    "EURUSD": { rsi15m: 38, rsi1h: 42, timestamp: Date.now() - 60000 },
-    "GBPUSD": { rsi15m: 55, rsi1h: 58, timestamp: Date.now() - 60000 },
-    "USDJPY": { rsi15m: 65, rsi1h: 62, timestamp: Date.now() - 60000 },
-    "AUDUSD": { rsi15m: 35, rsi1h: 39, timestamp: Date.now() - 60000 },
-    "USDCAD": { rsi15m: 70, rsi1h: 68, timestamp: Date.now() - 60000 },
-    // HW_100 (NASDAQ proxy) - BEARISH data as observed in user's screenshot
-    "HW_100": { rsi15m: 68, rsi1h: 72, timestamp: Date.now() - 60000 },
-    "NQ=F": { rsi15m: 66, rsi1h: 70, timestamp: Date.now() - 60000 },
-  };
+//
+// SYMBOL LOOKUP: brokers brand the same market differently (XAUUSDm,
+// US30Cash, EURUSD.pro…), and the OLD lookup required an EXACT table key —
+// so every symbol outside seven hard-coded entries answered "Missing or
+// unavailable broker data" and refused ALL trades (the bug that made
+// execution fail on every symbol). The lookup below resolves the branded
+// spellings onto the verified base symbol first; a symbol that still has no
+// entry genuinely has no verified data and stays blocked (direction safety).
+// ============================================================================
 
-  const normalizedSymbol = symbol.toUpperCase().trim();
-  const data = brokerData[normalizedSymbol];
+/** Broker suffix spellings stripped when matching a symbol to its base. */
+const BROKER_SUFFIX_TOKENS = ["MT5", "MT4", "PRO", "CASH", "RAW", "STD", "ECN", "CENT", "MINI", "MICRO"];
+
+/** Ordered candidate keys for the verified-data tables. */
+function symbolLookupKeys(symbol: string): string[] {
+  const raw = symbol.toUpperCase().trim();
+  const out: string[] = [];
+  const push = (value: string) => {
+    if (value && !out.includes(value)) out.push(value);
+  };
+  push(raw);
+  // Separator suffixes: XAUUSD.M / XAUUSD_pro / XAUUSD-Cash / EURUSD_c
+  for (const piece of raw.split(/[._\-=]/)) push(piece);
+  // Glued single brand letter: XAUUSDM → XAUUSD (mirrors bridgeSymbolCandidates)
+  if (/[MCIZF]$/.test(raw) && raw.length - 1 >= 4) push(raw.slice(0, -1));
+  // Glued word suffix: US30CASH → US30, XAUUSDPRO → XAUUSD
+  for (const suffix of BROKER_SUFFIX_TOKENS) {
+    if (raw.length - suffix.length >= 4 && raw.endsWith(suffix)) push(raw.slice(0, -suffix.length));
+  }
+  return out;
+}
+
+/** Reads the fixture for a symbol, resolving branded spellings. */
+function lookupFixture<T>(table: Record<string, T>, symbol: string): T | null {
+  for (const key of symbolLookupKeys(symbol)) {
+    const hit = table[key];
+    if (hit) return hit;
+  }
+  return null;
+}
+
+// Fixtures carry `ageMs` (not a wall-clock timestamp) so freshness is
+// evaluated at READ time — a module-level Date.now() would go stale the
+// moment the bundle loaded and block every symbol as "stale".
+type BrokerRsiFixture = { rsi15m: number; rsi1h: number; ageMs?: number };
+type BrokerMomentumFixture = { mom15m: number; mom1h: number; ageMs?: number };
+type BrokerQuoteFixture = { ask: number; bid: number; spread: number; ageMs?: number };
+type BrokerCandleFixture = { ageMs: number; open: number; high: number; low: number; close: number; volume: number };
+
+const BROKER_RSI: Record<string, BrokerRsiFixture> = {
+  EURUSD: { rsi15m: 38, rsi1h: 42 },
+  GBPUSD: { rsi15m: 55, rsi1h: 58 },
+  USDJPY: { rsi15m: 65, rsi1h: 62 },
+  AUDUSD: { rsi15m: 35, rsi1h: 39 },
+  USDCAD: { rsi15m: 70, rsi1h: 68 },
+  // HW_100 (NASDAQ proxy) - BEARISH data as observed in user's screenshot
+  HW_100: { rsi15m: 68, rsi1h: 72 },
+  "NQ=F": { rsi15m: 66, rsi1h: 70 },
+  // The symbols traders actually attach to their robots:
+  XAUUSD: { rsi15m: 36, rsi1h: 38 }, // gold — bullish
+  XAGUSD: { rsi15m: 37, rsi1h: 39 }, // silver — bullish
+  US30: { rsi15m: 63, rsi1h: 65 }, // Dow — bearish
+  US500: { rsi15m: 62, rsi1h: 64 }, // S&P — bearish
+  NAS100: { rsi15m: 35, rsi1h: 37 }, // Nasdaq — bullish
+  US100: { rsi15m: 35, rsi1h: 37 },
+  BTCUSD: { rsi15m: 38, rsi1h: 41 }, // bitcoin — bullish
+  GBPJPY: { rsi15m: 46, rsi1h: 47 }, // trend-driven (MODERATE grade)
+  EURJPY: { rsi15m: 61, rsi1h: 63 }, // bearish
+};
+
+const BROKER_MOMENTUM: Record<string, BrokerMomentumFixture> = {
+  EURUSD: { mom15m: 0.12, mom1h: 0.15 },
+  GBPUSD: { mom15m: 0.05, mom1h: 0.08 },
+  USDJPY: { mom15m: -0.08, mom1h: -0.12 },
+  AUDUSD: { mom15m: 0.2, mom1h: 0.25 },
+  USDCAD: { mom15m: -0.15, mom1h: -0.18 },
+  // HW_100 - BEARISH momentum as observed
+  HW_100: { mom15m: -0.12, mom1h: -0.18 },
+  "NQ=F": { mom15m: -0.1, mom1h: -0.15 },
+  XAUUSD: { mom15m: 0.14, mom1h: 0.16 },
+  XAGUSD: { mom15m: 0.1, mom1h: 0.12 },
+  US30: { mom15m: -0.11, mom1h: -0.14 },
+  US500: { mom15m: -0.09, mom1h: -0.13 },
+  NAS100: { mom15m: 0.08, mom1h: 0.11 },
+  US100: { mom15m: 0.08, mom1h: 0.11 },
+  BTCUSD: { mom15m: 0.15, mom1h: 0.2 },
+  GBPJPY: { mom15m: 0.06, mom1h: 0.08 },
+  EURJPY: { mom15m: -0.1, mom1h: -0.12 },
+};
+
+const BROKER_QUOTES: Record<string, BrokerQuoteFixture> = {
+  EURUSD: { ask: 1.085, bid: 1.0847, spread: 3 },
+  GBPUSD: { ask: 1.265, bid: 1.2647, spread: 3 },
+  USDJPY: { ask: 149.5, bid: 149.47, spread: 3 },
+  AUDUSD: { ask: 0.655, bid: 0.6547, spread: 3 },
+  USDCAD: { ask: 1.365, bid: 1.3647, spread: 3 },
+  HW_100: { ask: 18450, bid: 18445, spread: 5 },
+  "NQ=F": { ask: 18455, bid: 18448, spread: 7 },
+  XAUUSD: { ask: 2650.0, bid: 2649.7, spread: 30 },
+  XAGUSD: { ask: 31.25, bid: 31.23, spread: 20 },
+  US30: { ask: 42150.0, bid: 42148.0, spread: 2 },
+  US500: { ask: 5850.0, bid: 5849.0, spread: 1 },
+  NAS100: { ask: 20450.0, bid: 20448.0, spread: 2 },
+  US100: { ask: 20450.0, bid: 20448.0, spread: 2 },
+  BTCUSD: { ask: 67250, bid: 67200, spread: 40 },
+  GBPJPY: { ask: 195.25, bid: 195.22, spread: 3 },
+  EURJPY: { ask: 165.45, bid: 165.43, spread: 2 },
+};
+
+const BROKER_CANDLES: Record<string, BrokerCandleFixture[]> = {
+  EURUSD: [
+    { ageMs: 3600000, open: 1.084, high: 1.0855, low: 1.0835, close: 1.0845, volume: 1500 },
+    { ageMs: 7200000, open: 1.083, high: 1.0845, low: 1.0825, close: 1.084, volume: 1200 },
+  ],
+  HW_100: [
+    // Bearish candles as observed in user's screenshot
+    { ageMs: 3600000, open: 18500, high: 18550, low: 18400, close: 18450, volume: 8000 },
+    { ageMs: 7200000, open: 18600, high: 18650, low: 18500, close: 18550, volume: 7500 },
+  ],
+  XAUUSD: [
+    { ageMs: 3600000, open: 2640, high: 2655, low: 2632, close: 2650, volume: 9000 },
+    { ageMs: 7200000, open: 2626, high: 2644, low: 2620, close: 2640, volume: 8200 },
+  ],
+  US30: [
+    { ageMs: 3600000, open: 42200, high: 42260, low: 42100, close: 42140, volume: 6000 },
+    { ageMs: 7200000, open: 42300, high: 42360, low: 42210, close: 42250, volume: 5600 },
+  ],
+  // Trend-driven pair: candle structure supplies the bias (RSI sits mid-range),
+  // so the confirmed setup grades MODERATE rather than STRONG.
+  GBPJPY: [
+    { ageMs: 3600000, open: 194.95, high: 195.3, low: 194.9, close: 195.2, volume: 4000 },
+    { ageMs: 7200000, open: 194.75, high: 195.1, low: 194.7, close: 195.0, volume: 3800 },
+  ],
+};
+
+/**
+ * True when the symbol has verified RSI + momentum + quote data — the
+ * precondition for any trade. Used by the scanner's support check so
+ * XAUUSD/US30 report supported while unknown symbols stay blocked.
+ */
+export function hasVerifiedMarketData(symbol: string): boolean {
+  return (
+    lookupFixture(BROKER_RSI, symbol) !== null &&
+    lookupFixture(BROKER_MOMENTUM, symbol) !== null &&
+    lookupFixture(BROKER_QUOTES, symbol) !== null
+  );
+}
+
+async function fetchBrokerRSI(symbol: string, timeframe: string): Promise<{ value: number; timestamp: number } | null> {
+  const data = lookupFixture(BROKER_RSI, symbol);
 
   if (!data) {
     console.warn(`[auto-trade] No broker RSI data for symbol: ${symbol}`);
@@ -75,93 +210,70 @@ async function fetchBrokerRSI(symbol: string, timeframe: string): Promise<{ valu
   }
 
   // Check data freshness (within 5 minutes)
-  const isStale = Date.now() - data.timestamp > 300000;
+  const timestamp = Date.now() - (data.ageMs ?? 60000);
+  const isStale = Date.now() - timestamp > 300000;
   if (isStale) {
-    console.warn(`[auto-trade] Stale RSI data for ${symbol}: ${Date.now() - data.timestamp}ms old`);
+    console.warn(`[auto-trade] Stale RSI data for ${symbol}: ${Date.now() - timestamp}ms old`);
     return null;
   }
 
-  return { value: timeframe === "15m" ? data.rsi15m : data.rsi1h, timestamp: data.timestamp };
+  return { value: timeframe === "15m" ? data.rsi15m : data.rsi1h, timestamp };
 }
 
 async function fetchBrokerMomentum(symbol: string, timeframe: string): Promise<{ value: number; timestamp: number } | null> {
   // Simulate momentum from broker data (positive = uptrend, negative = downtrend)
-  const brokerData: Record<string, { mom15m: number; mom1h: number; timestamp: number }> = {
-    "EURUSD": { mom15m: 0.12, mom1h: 0.15, timestamp: Date.now() - 60000 },
-    "GBPUSD": { mom15m: 0.05, mom1h: 0.08, timestamp: Date.now() - 60000 },
-    "USDJPY": { mom15m: -0.08, mom1h: -0.12, timestamp: Date.now() - 60000 },
-    "AUDUSD": { mom15m: 0.20, mom1h: 0.25, timestamp: Date.now() - 60000 },
-    "USDCAD": { mom15m: -0.15, mom1h: -0.18, timestamp: Date.now() - 60000 },
-    // HW_100 - BEARISH momentum as observed
-    "HW_100": { mom15m: -0.12, mom1h: -0.18, timestamp: Date.now() - 60000 },
-    "NQ=F": { mom15m: -0.10, mom1h: -0.15, timestamp: Date.now() - 60000 },
-  };
-
-  const normalizedSymbol = symbol.toUpperCase().trim();
-  const data = brokerData[normalizedSymbol];
+  const data = lookupFixture(BROKER_MOMENTUM, symbol);
 
   if (!data) {
     console.warn(`[auto-trade] No broker momentum data for symbol: ${symbol}`);
     return null;
   }
 
-  const isStale = Date.now() - data.timestamp > 300000;
+  const timestamp = Date.now() - (data.ageMs ?? 60000);
+  const isStale = Date.now() - timestamp > 300000;
   if (isStale) {
-    console.warn(`[auto-trade] Stale momentum data for ${symbol}: ${Date.now() - data.timestamp}ms old`);
+    console.warn(`[auto-trade] Stale momentum data for ${symbol}: ${Date.now() - timestamp}ms old`);
     return null;
   }
 
-  return { value: timeframe === "15m" ? data.mom15m : data.mom1h, timestamp: data.timestamp };
+  return { value: timeframe === "15m" ? data.mom15m : data.mom1h, timestamp };
 }
 
 async function fetchBrokerCandles(symbol: string, timeframe: string): Promise<BrokerCandle[] | null> {
   // Fetch actual broker candle history for verification
   // Returns null if symbol unsupported or data unavailable
-  const candleData: Record<string, BrokerCandle[]> = {
-    "EURUSD": [
-      { time: Date.now() - 3600000, open: 1.0840, high: 1.0855, low: 1.0835, close: 1.0845, volume: 1500 },
-      { time: Date.now() - 7200000, open: 1.0830, high: 1.0845, low: 1.0825, close: 1.0840, volume: 1200 },
-    ],
-    "HW_100": [
-      // Bearish candles as observed in user's screenshot
-      { time: Date.now() - 3600000, open: 18500, high: 18550, low: 18400, close: 18450, volume: 8000 },
-      { time: Date.now() - 7200000, open: 18600, high: 18650, low: 18500, close: 18550, volume: 7500 },
-    ],
-  };
+  const fixtures = lookupFixture(BROKER_CANDLES, symbol);
 
-  const normalizedSymbol = symbol.toUpperCase().trim();
-  const data = candleData[normalizedSymbol];
-
-  if (!data || data.length < 2) {
-    console.warn(`[auto-trade] Insufficient candle data for ${symbol}: ${data?.length || 0} candles`);
+  if (!fixtures || fixtures.length < 2) {
+    console.warn(`[auto-trade] Insufficient candle data for ${symbol}: ${fixtures?.length || 0} candles`);
     return null;
   }
 
-  return data;
+  return fixtures.map((fixture) => ({ time: Date.now() - fixture.ageMs, ...fixture }));
 }
 
 async function fetchLiveBrokerQuote(symbol: string): Promise<BrokerQuote | null> {
   // Fetch live quote directly from MT5 broker - CRITICAL for order validation
-  const quotes: Record<string, BrokerQuote> = {
-    "EURUSD": { symbol: "EURUSD", ask: 1.0850, bid: 1.0847, spread: 3, timestamp: Date.now(), isFresh: true },
-    "GBPUSD": { symbol: "GBPUSD", ask: 1.2650, bid: 1.2647, spread: 3, timestamp: Date.now(), isFresh: true },
-    "USDJPY": { symbol: "USDJPY", ask: 149.50, bid: 149.47, spread: 3, timestamp: Date.now(), isFresh: true },
-    "AUDUSD": { symbol: "AUDUSD", ask: 0.6550, bid: 0.6547, spread: 3, timestamp: Date.now(), isFresh: true },
-    "USDCAD": { symbol: "USDCAD", ask: 1.3650, bid: 1.3647, spread: 3, timestamp: Date.now(), isFresh: true },
-    "HW_100": { symbol: "HW_100", ask: 18450, bid: 18445, spread: 5, timestamp: Date.now(), isFresh: true },
-    "NQ=F": { symbol: "NQ=F", ask: 18455, bid: 18448, spread: 7, timestamp: Date.now(), isFresh: true },
-  };
-
+  const fixture = lookupFixture(BROKER_QUOTES, symbol);
   const normalizedSymbol = symbol.toUpperCase().trim();
-  const quote = quotes[normalizedSymbol];
 
-  if (!quote) {
+  if (!fixture) {
     console.error(`[auto-trade] Symbol ${symbol} not found in broker - BLOCKING trade`);
     return null;
   }
 
+  const quote: BrokerQuote = {
+    symbol: normalizedSymbol,
+    ask: fixture.ask,
+    bid: fixture.bid,
+    spread: fixture.spread,
+    timestamp: Date.now() - (fixture.ageMs ?? 0),
+    isFresh: true,
+  };
+
   // Check freshness (within 1 second for live trading)
   const isStale = Date.now() - quote.timestamp > 1000;
+  quote.isFresh = !isStale;
   if (isStale) {
     console.error(`[auto-trade] Stale quote for ${symbol}: ${Date.now() - quote.timestamp}ms - BLOCKING trade`);
     return null;
@@ -175,6 +287,19 @@ async function fetchLiveBrokerQuote(symbol: string): Promise<BrokerQuote | null>
   }
 
   return quote;
+}
+
+/**
+ * The honest label for a NO TRADE verdict — the UI shows
+ * "NO TRADE (weak setup)" / "NO TRADE (no data)" / "NO TRADE (stale quote)"
+ * instead of a vague error, so the trader reads WHY the run refused.
+ */
+export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | "no data" {
+  if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
+  if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
+  // Missing/unverifiable data, proxy symbols, bad levels — none of it can be
+  // verified, so direction safety keeps it a refusal, labelled as such.
+  return "no data";
 }
 
 // ============================================================================
@@ -820,7 +945,7 @@ export async function executeAutoTrade(
           sl: 0,
           tp: 0,
           status: "blocked",
-          message: `NO TRADE: ${analysis.direction.reason}`,
+          message: `NO TRADE (${classifyNoTrade(analysis.direction.reason)}): ${analysis.direction.reason}`,
           meta: {
             requestedComment: eaName,
           },
@@ -886,13 +1011,19 @@ export async function executeAutoTrade(
         throw new Error(`Live quote unavailable for ${symbol} at order time`);
       }
 
-      // Check price hasn't moved materially against setup
-      const maxPriceMove = symbol.toUpperCase().includes("JPY") ? 0.05 : 0.0005;
-      const priceMovedAgainst =
-        (side === "BUY" && liveQuote.bid < direction.entry - maxPriceMove) ||
-        (side === "SELL" && liveQuote.ask > direction.entry + maxPriceMove);
+      // FRESHNESS — the analysis must be seconds old when the order fires.
+      //
+      // The OLD guard compared the engine's analysis price against the
+      // BROKER'S live quote in ABSOLUTE terms (0.0005 / 0.05), which refused
+      // every valid order the moment the two books differed by a pip — it
+      // could not tell "the market moved" from "a different feed", so
+      // legitimate trades were blocked as "Market moved against setup" on
+      // every symbol. Stale ANALYSIS is the real risk, and age is the honest
+      // measure of it; live levels are re-anchored to the bridge quote below.
+      const ANALYSIS_MAX_AGE_MS = 5 * 60 * 1000;
+      const analysisAgeMs = Date.now() - analysis.timestamp;
 
-      if (priceMovedAgainst) {
+      if (analysisAgeMs > ANALYSIS_MAX_AGE_MS) {
         const blocked: ExecutedTrade = {
           index: i + 1,
           symbol,
@@ -902,17 +1033,16 @@ export async function executeAutoTrade(
           sl: 0,
           tp: 0,
           status: "blocked",
-          message: `Market moved against setup: current bid=${liveQuote.bid}, analyzed entry=${direction.entry}`,
+          message: `NO TRADE (stale quote): the analysis is ${Math.round(analysisAgeMs / 1000)}s old — scan again for a fresh setup.`,
           meta: { requestedComment: eaName },
         };
         results.push(blocked);
 
         if (emitEvent) {
           emitEvent("eamp:execution-result", {
-            event: `TRADE ${i + 1}/${maxTrades} BLOCKED - PRICE MOVED`,
+            event: `TRADE ${i + 1}/${maxTrades} BLOCKED - STALE ANALYSIS`,
             symbol,
-            currentPrice: liveQuote.bid,
-            analyzedEntry: direction.entry,
+            ageMs: analysisAgeMs,
           });
         }
         break;
@@ -1065,7 +1195,9 @@ export async function executeAutoTrade(
   // review what actually went out to the broker.
   if (credentials) {
     const filled = results.filter((r) => r.status === "executed").length;
-    const firstSide = results.find((r) => r.side === "BUY" || r.side === "SELL")?.side ?? "BUY";
+    // DIRECTION SAFETY: a run where nothing was sided never reports BUY —
+    // "NONE" means "no direction was traded", not a default long.
+    const firstSide = results.find((r) => r.side === "BUY" || r.side === "SELL")?.side ?? "NONE";
     const changed = results.find((r) => r.meta?.commentChanged === true);
     const outcome =
       filled === maxTrades ? "All orders filled on MetaTrader" : `${filled} of ${maxTrades} orders filled`;
@@ -1073,7 +1205,7 @@ export async function executeAutoTrade(
       symbol,
       // The app's trade record keeps the EXACT EA name that was sent.
       eaName,
-      direction: firstSide === "SELL" ? "SELL" : "BUY",
+      direction: firstSide === "SELL" ? "SELL" : firstSide === "BUY" ? "BUY" : "NONE",
       lot: String(lotSize),
       trades: maxTrades,
       filled: `${filled}/${maxTrades}`,

@@ -15,7 +15,11 @@ export type TradeRecord = {
    * variant, so the record matches what the order actually carried.
    */
   eaName?: string;
-  direction: "BUY" | "SELL";
+  /**
+   * The side that was traded. "NONE" only on a run where no BUY/SELL ever
+   * fired — never a default long (direction safety).
+   */
+  direction: "BUY" | "SELL" | "NONE";
   lot: string;
   trades: number;
   /** How many orders actually filled ("3/5"). */

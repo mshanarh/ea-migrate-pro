@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Waves } from "lucide-react";
-import { analyzeMarket, type ScannerAnalysis } from "@/lib/market-scanner-core";
+import { analyzeMarket, executionGate, type ScannerAnalysis } from "@/lib/market-scanner-core";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
 import LiveQuotesSheet from "@/components/app/LiveQuotesSheet";
@@ -25,12 +25,14 @@ const TIMEFRAME_CHARTS_PLACEHOLDER: Record<ScannerTimeframe, string | null> = {
  * Scanner lifecycle states (per product spec):
  *  loading  — waiting for market data
  *  no-data  — broker data unavailable
- *  ready    — valid setup with Entry/SL/TP (the scanner ALWAYS returns BUY or SELL)
+ *  ready    — valid setup with Entry/SL/TP (MODERATE or better → executable)
+ *  no-trade — the engine refused this setup (weak setup / no data / stale
+ *             quote) — a refusal with its reason, NOT an error
  *  executing— order is being submitted
  *  executed — order successfully placed
  *  error    — backend/broker error
  */
-export type ScannerPhase = "idle" | "loading" | "no-data" | "ready" | "executing" | "executed" | "error";
+export type ScannerPhase = "idle" | "loading" | "no-data" | "ready" | "no-trade" | "executing" | "executed" | "error";
 
 export type ExecutionPlan = {
   symbol: string;
@@ -151,6 +153,7 @@ function fmtSignalLevel(value: number): string {
 const SIGNAL_COLORS: Record<ScannerAnalysis["signal"], string> = {
   BUY: "#22c55e",
   SELL: "#ef4444",
+  "NO TRADE": "#f87171",
 };
 
 /** Derives the visible scanner phase from the analysis + execution state. */
@@ -166,9 +169,11 @@ function phaseOf(
   if (scanning) return "loading";
   if (analysisError) return "error";
   if (!analysis) return "idle";
-  // No NO TRADE state: the server always returns BUY or SELL. The only
-  // non-ready outcome is genuinely unavailable broker data.
-  return analysis.dataStatus === "no-data" ? "no-data" : "ready";
+  if (analysis.dataStatus === "no-data") return "no-data";
+  // The gate decides: MODERATE-or-better with verified data is READY;
+  // anything the engine refused is a NO TRADE verdict with its reason —
+  // never a generic error.
+  return executionGate(analysis).allowed ? "ready" : "no-trade";
 }
 
 const PHASE_META: Record<
@@ -178,6 +183,7 @@ const PHASE_META: Record<
   loading: { label: "LOADING", color: "#facc15", hint: "Reading live broker data..." },
   "no-data": { label: "NO DATA", color: "#f87171", hint: "Broker data unavailable for this symbol." },
   ready: { label: "READY TO EXECUTE", color: "#22c55e", hint: "Signal with Entry, Stop-Loss and Take-Profit." },
+  "no-trade": { label: "NO TRADE", color: "#f87171", hint: "The engine refused this setup — the reason is below." },
   executing: { label: "EXECUTING", color: "#facc15", hint: "Sending the order through the secure server link..." },
   executed: { label: "EXECUTED", color: "#22c55e", hint: "Order placed with the broker." },
   error: { label: "ERROR", color: "#f87171", hint: "The provider reported a problem — details below." },
@@ -425,7 +431,9 @@ export default function ChartScanner({
 
   // EXECUTE pressed → open the confirmation popup with the full plan.
   const openConfirm = () => {
+    // The gate refuses WEAK/WAIT plans — no confirm dialog, no order.
     if (!analysis || analysis.dataStatus === "no-data" || executing) return;
+    if (!executionGate(analysis).allowed) return;
     resetResult();
     setConfirmOpen(true);
   };
@@ -433,6 +441,9 @@ export default function ChartScanner({
   // Confirmed → fire the real order through the server-side integration.
   const confirmExecute = useCallback(async () => {
     if (!analysis || executing) return;
+    // Direction safety: a NO TRADE verdict (weak setup / no data / stale
+    // quote) is never sent to MT5, no matter how the dialog was reached.
+    if (!executionGate(analysis).allowed) return;
     // Pair type filter (Quotes page): BUY ONLY / SELL ONLY pairs refuse
     // setups on the other side of the market.
     const pairDirection = pairs.find((pair) => pair.symbol === analysis.symbol)?.direction ?? "BOTH";
@@ -498,6 +509,9 @@ export default function ChartScanner({
   }, [analysis, executing, lot, onExecute, pairs, trades]);
 
   const phase = phaseOf(scanning, analysis, analysisError, executing, execError);
+  // The single gate that answers "may this plan execute?" — also drives the
+  // NO TRADE badge/hint, so the UI and the tests read the same verdict.
+  const gate = analysis ? executionGate(analysis) : null;
 
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col pt-safe pb-safe-nav" style={{ backgroundColor: "#090c10" }}>
@@ -1028,16 +1042,18 @@ export default function ChartScanner({
               ))}
             </div>
 
-            {/* EXECUTE TRADE — the single visible action on a valid plan.
-                Only WAIT (simulated/synthetic data) is un-executable: the
-                levels would not describe the traded instrument. WEAK setups
-                are executable — the reasons panel says to trade small. */}
-            {analysis.strength === "WAIT" ? (
+            {/* EXECUTE TRADE — only a plan the gate allows (MODERATE or better
+                with verified data) reaches the confirm dialog. A refused plan
+                shows NO TRADE with its specific reason instead of an error. */}
+            {gate && !gate.allowed ? (
               <div
-                className="mt-4 flex h-[58px] w-full items-center justify-center gap-2 rounded-full border border-red-400/30 bg-red-400/10 text-[13px] font-black tracking-wide text-red-300"
+                className="mt-4 flex min-h-[58px] w-full flex-col items-center justify-center gap-1 rounded-[18px] border border-red-400/30 bg-red-400/10 px-4 py-3 text-center"
                 data-testid="text-wait-blocked"
               >
-                ⛔ SIMULATED DATA — EXECUTION DISABLED
+                <span className="text-[13px] font-black tracking-wide text-red-300">
+                  ⛔ {gate.headline}
+                </span>
+                <span className="text-[11px] font-semibold text-red-200/70">{gate.hint}</span>
               </div>
             ) : (
               <button
