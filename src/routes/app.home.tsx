@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, redirect, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
+import { createFileRoute, redirect, useNavigate, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
   Dialog,
@@ -222,6 +222,10 @@ function WelcomeMaster() {
 
 function AppHome() {
   const app = useAppState();
+  // SPA navigation for the QUOTES / SCANNER / METATRADER buttons — a
+  // window.location.* call reloaded the whole document, which rebooted the
+  // app and flashed the full-screen "Loading…" splash on EVERY press.
+  const navigate = useNavigate();
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
@@ -235,7 +239,13 @@ function AppHome() {
     void syncRobotsFromCloudPortal();
   }, []);
 
-  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  // Paint instantly: the route's own beforeLoad already awaited
+  // requireVerifiedAccess for THIS navigation before this component mounted,
+  // so the "Checking your access…" splash would only ever flash between the
+  // mount paint and that same cached answer resolving. The effect below still
+  // runs as the mid-session re-check — a revocation keeps redirecting out via
+  // window.location.replace, and a denial never leaves the screen up.
+  const [access, setAccess] = useState<"checking" | "ok">("ok");
 
   useEffect(() => {
     let cancelled = false;
@@ -495,10 +505,10 @@ function AppHome() {
   };
 
   // The QUOTES / Symbols button lives on /app/trading-pairs (route id
-  // "/app/trading-pairs"). The old href dropped the hyphen, so the button
-  // navigated to /app/tradingpairs — a path no route matches, which landed
-  // the user on the router's "404 Page not found" screen.
-  const handleQuotes = () => window.location.assign("/app/trading-pairs");
+  // "/app/trading-pairs"). It goes through the router now — the path is
+  // matched against the route tree (no more typo'd hrefs landing on the 404)
+  // and the navigation stays in the SPA instead of reloading the document.
+  const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
@@ -532,8 +542,8 @@ function AppHome() {
             onStart={() => void handleStart()}
             onQuotes={handleQuotes}
             onRemove={handleRemove}
-            onOpenScanner={() => { window.location.assign("/app/scanner"); }}
-            onOpenSymbols={() => { window.location.assign("/app/metatrader"); }}
+            onOpenScanner={() => { void navigate({ to: "/app/scanner" }); }}
+            onOpenSymbols={() => { void navigate({ to: "/app/metatrader" }); }}
             onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
           />

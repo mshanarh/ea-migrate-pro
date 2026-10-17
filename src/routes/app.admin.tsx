@@ -64,10 +64,14 @@ function AppAdmin() {
   const [busyEmail, setBusyEmail] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
-  // Same last line of defence as the dashboard: the user list is the most
-  // sensitive screen in the app and nothing on it may paint before the cloud
-  // confirms this session is allowed through.
-  const [access, setAccess] = useState<"checking" | "ok">("checking");
+  // The user list is the most sensitive screen in the app, and nothing on it
+  // may paint before the cloud confirms this session is allowed through —
+  // that confirmation already happened in this route's own beforeLoad (one
+  // requireVerifiedAccess resolution per navigation, awaited before this
+  // component mounts). Start at "ok" so the verified screen opens instantly
+  // instead of flashing "Checking your access…" on every visit; the effect
+  // below remains the mid-session re-check and still redirects on a denial.
+  const [access, setAccess] = useState<"checking" | "ok">("ok");
   useEffect(() => {
     let cancelled = false;
     void (async () => {
