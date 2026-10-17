@@ -1,5 +1,5 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { createFileRoute, redirect } from "@tanstack/react-router";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { motion } from "framer-motion";
 import { toast } from "sonner";
 import { AlertTriangle, ChevronDown, ChevronsRight, Clock, Database, Eye, EyeOff, Fingerprint, Lock, RefreshCw, ShieldCheck, User } from "lucide-react";
@@ -121,6 +121,170 @@ function Mt5Logo() {
   );
 }
 
+/** The four steps the connect overlay narrates, in order. */
+const SYNC_STEP_LABELS = [
+  "Checking broker details",
+  "Logging in",
+  "Checking password",
+  "Syncing account",
+] as const;
+
+type SyncStepState = "idle" | "active" | "done" | "failed";
+type SyncPhase = "syncing" | "connected" | "failed";
+type SyncState = {
+  brokerLabel: string;
+  phase: SyncPhase;
+  steps: SyncStepState[];
+  detail: string | null;
+};
+
+const SYNC_CAPTION: Record<SyncPhase, string> = {
+  syncing: "SYNCING ACCOUNT…",
+  connected: "ACCOUNT CONNECTED ✓",
+  failed: "CONNECTION FAILED",
+};
+
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * FULL-SCREEN SYNC OVERLAY — the broker-style "verifying your account"
+ * experience on CONNECT ACCOUNT. The forced save already happened (the
+ * details live on this device); this overlay makes the REAL bridge
+ * verification visible step by step instead of a silent background toast.
+ * Dark dimmed backdrop over the form, pulsing accent ring around the MT5
+ * mark, the broker name large, letterspaced caption, and the step list with
+ * spinner / tick / cross per row.
+ */
+function Mt5SyncOverlay({
+  state,
+  accent,
+  onRetry,
+  onContinue,
+}: {
+  state: SyncState;
+  accent: string;
+  onRetry: () => void;
+  onContinue: () => void;
+}) {
+  return (
+    <div
+      data-testid="overlay-mt5-sync"
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/85 px-8 text-white"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Verifying MT5 account"
+      style={{ boxShadow: `inset 0 0 160px ${accent}22` }}
+    >
+      {/* Pulsing accent ring with the MT5 mark glowing in the middle */}
+      <div className="relative flex size-40 items-center justify-center">
+        {state.phase === "syncing" && (
+          <span
+            aria-hidden
+            className="absolute inset-0 animate-spin rounded-full border-[3px] border-white/10"
+            style={{ borderTopColor: accent, animationDuration: "1.6s", boxShadow: `0 0 30px ${accent}55` }}
+          />
+        )}
+        <span
+          aria-hidden
+          className={state.phase === "syncing" ? "animate-pulse" : ""}
+          style={{ filter: `drop-shadow(0 0 26px ${accent}88)` }}
+        >
+          <span className="block scale-75"><Mt5Logo /></span>
+        </span>
+      </div>
+
+      <p className="mt-5 text-center text-3xl font-black tracking-tight text-white">{state.brokerLabel}</p>
+      <p
+        className="mt-2 text-center text-[13px] font-black uppercase tracking-[0.35em]"
+        style={{
+          color:
+            state.phase === "connected" ? "#4ade80" : state.phase === "failed" ? "#f87171" : accent,
+        }}
+        data-testid="text-sync-caption"
+      >
+        {SYNC_CAPTION[state.phase]}
+      </p>
+      {state.phase !== "failed" && (
+        <p className="mt-2 max-w-[19rem] text-center text-[12px] leading-relaxed text-white/50">
+          This can take a few seconds while your broker terminal starts up.
+        </p>
+      )}
+      {state.phase === "failed" && state.detail && (
+        <p className="mt-3 max-w-[20rem] text-center text-[13px] leading-relaxed text-red-200/90" data-testid="text-sync-error">
+          {state.detail}
+        </p>
+      )}
+
+      {/* The step list — spinner while active, green tick once passed, red
+          cross on failure, dimmed before it starts. */}
+      <ul className="mt-6 w-full max-w-[19rem] space-y-2.5">
+        {SYNC_STEP_LABELS.map((label, index) => {
+          const step = state.steps[index] ?? "idle";
+          return (
+            <li key={label} className="flex items-center gap-3 text-[13px] font-semibold">
+              <span
+                className="flex size-5 shrink-0 items-center justify-center"
+                aria-hidden
+                style={{
+                  color: step === "done" ? "#4ade80" : step === "failed" ? "#f87171" : "rgba(255,255,255,0.45)",
+                }}
+              >
+                {step === "active" ? (
+                  <span
+                    className="size-4 animate-spin rounded-full border-2 border-white/15"
+                    style={{ borderTopColor: accent }}
+                  />
+                ) : step === "done" ? (
+                  <span className="text-[15px] font-black">✓</span>
+                ) : step === "failed" ? (
+                  <span className="text-[15px] font-black">✗</span>
+                ) : (
+                  <span className="size-1.5 rounded-full bg-white/30" />
+                )}
+              </span>
+              <span
+                className={
+                  step === "idle"
+                    ? "text-white/40"
+                    : step === "failed"
+                      ? "text-red-200"
+                      : step === "done"
+                        ? "text-white/85"
+                        : "text-white"
+                }
+              >
+                {label}
+              </span>
+            </li>
+          );
+        })}
+      </ul>
+
+      {state.phase === "failed" && (
+        <div className="mt-7 flex w-full max-w-[19rem] flex-col gap-2.5">
+          <button
+            type="button"
+            onClick={onRetry}
+            data-testid="button-sync-retry"
+            className="h-12 w-full rounded-full text-[13px] font-black tracking-[0.2em] text-white transition-transform active:scale-[0.98]"
+            style={{ background: accent, boxShadow: `0 0 24px ${accent}55` }}
+          >
+            TRY AGAIN
+          </button>
+          <button
+            type="button"
+            onClick={onContinue}
+            data-testid="button-sync-continue"
+            className="h-12 w-full rounded-full border border-white/20 text-[13px] font-black tracking-[0.2em] text-white/70"
+          >
+            CONTINUE ANYWAY
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Local, instant UI mirror of the SAVED connection (cloud keeps the durable copy). */
 const MT5_UI_KEY = "mt5_saved_state";
 
@@ -153,6 +317,14 @@ function AppMetatrader() {
   const platform = usePlatform();
   const isIos = platform === "ios";
   const mt = app.mt;
+  const navigate = useNavigate();
+
+  // Full-screen staged verification overlay (CONNECT ACCOUNT → syncing…).
+  const [sync, setSync] = useState<SyncState | null>(null);
+  /** Monotonic attempt id — a superseded overlay run must stop updating UI. */
+  const syncAttemptRef = useRef(0);
+  /** The details of the run currently shown, so TRY AGAIN can re-verify. */
+  const syncDetailsRef = useRef<{ login: string; password: string; server: string; brokerLabel: string } | null>(null);
 
   const [broker, setBroker] = useState(mt?.broker ?? "");
   const [server, setServer] = useState(mt?.server ?? "");
@@ -211,15 +383,149 @@ function AppMetatrader() {
   }, [app.email]);
 
   /**
+   * THE ONE REAL VERIFICATION behind the overlay's steps 2–4 — the same
+   * direct browser → bridge call the TEST CONNECTION button uses, with an
+   * overall 15s timeout so the overlay can never hang.
+   */
+  const verifyViaBridge = async (login: string, pass: string, srv: string): Promise<Record<string, unknown>> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 15_000);
+    try {
+      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+        body: JSON.stringify({ login: Number(login) || login, password: pass, server: srv }),
+        signal: controller.signal,
+      });
+      const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+      return { ...payload, __httpOk: response.ok, __status: response.status };
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  /** The balance/equity summary line from the bridge's account_info. */
+  const accountSummary = (accountInfo: unknown): string => {
+    const account = (accountInfo ?? {}) as Record<string, unknown>;
+    const num = (key: string): number | null => {
+      const value = account[key];
+      return typeof value === "number" && Number.isFinite(value) ? value : null;
+    };
+    const currency = typeof account["currency"] === "string" && account["currency"] ? `${account["currency"]} ` : "";
+    const fmt = (value: number | null) =>
+      value === null ? "" : currency + value.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const marginFree = num("margin_free") ?? num("equity") ?? num("balance");
+    const balance = num("balance");
+    const equity = num("equity");
+    if (marginFree === null && balance === null && equity === null) {
+      return "Account ready — trades will execute on demand.";
+    }
+    return (
+      `Free margin: ${fmt(marginFree) || "—"}` +
+      (balance !== null ? ` · Balance: ${fmt(balance)}` : "") +
+      (equity !== null ? ` · Equity: ${fmt(equity)}` : "")
+    );
+  };
+
+  /**
+   * RUN THE STAGED VERIFICATION the overlay narrates. Step 1 (broker details)
+   * passes on the validated form; steps 2–4 (login / password / syncing) are
+   * driven by ONE real bridge call. Every exit path is covered: success closes
+   * the overlay and navigates home; failure shows TRY AGAIN / CONTINUE
+   * ANYWAY (the account stays saved); an unexpected crash closes the overlay
+   * and falls back to today's behavior — the account is always saved.
+   */
+  const runSync = async (details: { login: string; password: string; server: string; brokerLabel: string }) => {
+    const attempt = ++syncAttemptRef.current;
+    syncDetailsRef.current = details;
+    const stale = () => syncAttemptRef.current !== attempt;
+    const patch = (next: Partial<SyncState>) =>
+      setSync((prev) => (prev ? { ...prev, ...next } : prev));
+
+    setSync({
+      brokerLabel: details.brokerLabel,
+      phase: "syncing",
+      steps: ["active", "idle", "idle", "idle"],
+      detail: null,
+    });
+    try {
+      // Step 1 — broker details: the form already validated them; a brief
+      // pause so the sequence reads as a check, not a flash.
+      await pause(750);
+      if (stale()) return;
+      patch({ steps: ["done", "active", "idle", "idle"] });
+
+      // ONE real verification drives login → password → syncing.
+      let ok = false;
+      let summary = "";
+      let failure = "";
+      try {
+        const payload = await verifyViaBridge(details.login, details.password, details.server);
+        if (payload["__httpOk"] === true && payload["success"] === true) {
+          ok = true;
+          summary = accountSummary(payload["account"]);
+        } else {
+          const raw =
+            (typeof payload["detail"] === "string" && payload["detail"]) ||
+            (typeof payload["message"] === "string" && payload["message"]) ||
+            `Verification failed (HTTP ${Number(payload["__status"]) || "network"}).`;
+          failure = friendlyTradeError(raw);
+        }
+      } catch (error) {
+        failure =
+          (error as Error)?.name === "AbortError"
+            ? "The broker did not answer within 15 seconds — check the server name and try again."
+            : "Could not reach the trading bridge — check your connection and try again.";
+      }
+      if (stale()) return;
+
+      if (!ok) {
+        patch({ phase: "failed", steps: ["done", "failed", "idle", "idle"], detail: failure });
+        return;
+      }
+
+      // Success — tick the remaining steps one at a time so the sequence is
+      // visible, then hold the connected state with the balance line.
+      patch({ steps: ["done", "done", "active", "idle"] });
+      await pause(700);
+      if (stale()) return;
+      patch({ steps: ["done", "done", "done", "active"] });
+      await pause(700);
+      if (stale()) return;
+      patch({ phase: "connected", steps: ["done", "done", "done", "done"], detail: summary });
+      try { window.localStorage.setItem("mt5_last_verified", new Date().toLocaleTimeString()); } catch { /* ignore */ }
+      await pause(1200);
+      if (stale()) return;
+      setSync(null);
+      toast.success(`Connected ✓ — Account ${details.login} · ${details.server}`);
+      void navigate({ to: "/app/home" });
+    } catch {
+      // The overlay must never block the save — fall back to the old flow.
+      setSync(null);
+      toast.success(`Saved ✓ — Account ${details.login} · ${details.server}`);
+    }
+  };
+
+  /** CONTINUE ANYWAY — close the overlay; the details stay saved on device. */
+  const dismissSync = () => {
+    syncAttemptRef.current += 1; // cancel any in-flight overlay run
+    setSync(null);
+    const details = syncDetailsRef.current;
+    toast.success(
+      details ? `Saved ✓ — Account ${details.login} · ${details.server}` : "Saved ✓ — verify later from TEST CONNECTION.",
+    );
+  };
+
+  /**
    * SAVE DETAILS — FORCED SAVE. The details are stored on this device right
-   * away (nothing can block that), then the cloud copy + broker verification
-   * run quietly in the background. A bridge outage or wrong password NEVER
-   * blocks or fails the save — the account is simply verified later, when a
-   * trade executes.
+   * away (nothing can block that), then the staged overlay runs the REAL
+   * bridge verification while a best-effort cloud copy is stored in the
+   * background. A bridge outage or wrong password NEVER blocks or fails the
+   * save — the account is simply verified later, when a trade executes.
    */
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    if (saving) return;
+    if (saving || sync) return;
     if (!loginId.trim() || !password.trim() || !server.trim()) {
       toast.error("Fill in server, login ID and password.");
       return;
@@ -250,15 +556,24 @@ function AppMetatrader() {
       /* storage unavailable — execution will ask the user to re-save */
     }
     setPassword("");
-    toast.success(`Saved ✓ — Account ${account.loginId} · ${account.server}`);
     setSaving(false);
 
-    // 2. Cloud copy + best-effort verification in the background. The server
-    //    persists the credentials and tries the VPS bridge with a 5s timeout;
-    //    ANY failure here is silent — the save above always stands.
+    // 2. Staged verification overlay — REAL bridge work, visible step by
+    //    step. On success it toasts and navigates home; on failure it offers
+    //    TRY AGAIN / CONTINUE ANYWAY and the save above always stands.
+    void runSync({
+      login: account.loginId,
+      password: typedPassword,
+      server: account.server,
+      brokerLabel: derivedBroker,
+    });
+
+    // 3. Cloud copy in the background — persisted best-effort; its own
+    //    verification result is announced only by the overlay (no duplicate
+    //    "Connected ✓" toast).
     void (async () => {
       try {
-        const result = await saveMt5Credentials({
+        await saveMt5Credentials({
           data: {
             userId: app.email ?? "device-local",
             login: account.loginId,
@@ -268,9 +583,6 @@ function AppMetatrader() {
             accountType,
           },
         });
-        if (result.verified) {
-          toast.success("Connected ✓ — verified with the broker.");
-        }
         // An unverified result is NOT a rejection — it can be a slow bridge.
         // The device keeps the password so execution still works; wrong
         // credentials surface as a clear error on the next Execute attempt.
@@ -465,6 +777,20 @@ function AppMetatrader() {
       </div>
       <FixedBottomNav />
       <DraggableBotPopup />
+      {/* Staged broker verification — shown while CONNECT ACCOUNT verifies
+          through the bridge; failure offers TRY AGAIN / CONTINUE ANYWAY. */}
+      {sync && (
+        <Mt5SyncOverlay
+          state={sync}
+          accent={accent}
+          onRetry={() => {
+            const details = syncDetailsRef.current;
+            if (details) void runSync(details);
+            else dismissSync();
+          }}
+          onContinue={dismissSync}
+        />
+      )}
     </div>
   );
 }

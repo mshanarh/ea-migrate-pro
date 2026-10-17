@@ -186,6 +186,65 @@ const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
 
 /**
+ * STALE-WHILE-REVALIDATE FOR CONFIRMED PAID ANSWERS.
+ *
+ * A paid entry past its 5-minute TTL but younger than MAX_STALE_MS still
+ * OPENS THE SCREEN instantly — the cloud is re-asked in the background and
+ * the cache is updated when the answer lands. The stale answer being reused
+ * is one the SERVER previously gave THIS device in this page load (the cache
+ * never survives a reload), so no local or forged record is ever involved.
+ *
+ * Refusals (unpaid/revoked) are NOT held stale: they keep their short TTL and
+ * go to the server as always, so a freshly-marked-paid account escapes
+ * checkout on its very next tap.
+ */
+const MAX_STALE_MS = 30 * 60 * 1000;
+/** At most ONE background revalidation per email per minute. */
+const BACKGROUND_REVALIDATE_MS = 60_000;
+/**
+ * In-flight/throttled background revalidations, keyed by email. The in-flight
+ * guard means a burst of navigation can never stack server calls: later
+ * callers reuse the run that is already going.
+ */
+const backgroundRevalidations = new Map<string, { promise: Promise<void>; startedAt: number; done: boolean }>();
+
+/**
+ * Re-ask the cloud in the background and overwrite the cache with the answer.
+ * Never throws: a failure (or an undecided cloud) keeps the entry we already
+ * have and warns instead. An "unpaid"/"revoked" answer simply overwrites the
+ * cache — the NEXT navigation picks up the new truth; this navigation is
+ * never blocked on it.
+ */
+function revalidateInBackground(clean: string): void {
+  const existing = backgroundRevalidations.get(clean);
+  if (existing && !existing.done) return; // reuse the run already in flight
+  if (existing && Date.now() - existing.startedAt < BACKGROUND_REVALIDATE_MS) return;
+  const entry = { promise: Promise.resolve(), startedAt: Date.now(), done: false };
+  entry.promise = (async () => {
+    try {
+      const server = await checkAccessServer(clean, getDeviceId());
+      if (!server.ok) return; // cloud could not decide — keep the current entry
+      const status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
+      let binding: DeviceBinding | null;
+      let bindingKnown: boolean;
+      if (server.deviceBinding !== undefined) {
+        binding = server.deviceBinding;
+        bindingKnown = true;
+      } else {
+        binding = await readLocalBinding(clean);
+        bindingKnown = binding !== null;
+      }
+      cache.set(clean, { status, at: Date.now(), binding, bindingKnown });
+    } catch (error) {
+      console.warn("[payment-gate] background access revalidation failed:", error);
+    } finally {
+      entry.done = true;
+    }
+  })();
+  backgroundRevalidations.set(clean, entry);
+}
+
+/**
  * THE NAVIGATION WINDOW — WHY A GUARD RUNS ITS CHECK ONCE, NOT THREE TIMES.
  *
  * A single navigation walks several `beforeLoad`s in a row (parent → child →
@@ -270,6 +329,7 @@ export function invalidateAccessCache(email: string | null | undefined): void {
   cache.delete(clean);
   navigation.delete(clean);
   localBindings.delete(clean);
+  backgroundRevalidations.delete(clean);
 }
 
 /**
@@ -328,9 +388,10 @@ async function resolveBundle(clean: string, fresh: boolean): Promise<Bundle> {
 async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
   const cached = fresh ? undefined : cache.get(clean);
   if (cached) {
+    const age = Date.now() - cached.at;
     const ttl =
       cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
-    if (Date.now() - cached.at < ttl) {
+    if (age < ttl) {
       // The dashboard may have just marked this email paid from another device.
       // A stale "unpaid"/"revoked" here is the exact bug where a freshly-marked
       // paid account still sees the plan screen, so before returning a refusal
@@ -346,6 +407,15 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
           return { status: pay, binding: upgraded.binding, bindingKnown: upgraded.bindingKnown };
         }
       }
+      return { status: cached.status, binding: cached.binding, bindingKnown: cached.bindingKnown };
+    }
+    // STALE-WHILE-REVALIDATE — a CONFIRMED PAID answer the server gave this
+    // device in this page load still opens the screen instantly while the
+    // cloud is re-asked in the background (see MAX_STALE_MS above). Refusals
+    // NEVER take this path: unpaid/revoked fall through to the server so a
+    // newly-paid account escapes checkout on its next tap.
+    if ((cached.status === "paid" || cached.status === "admin") && age < MAX_STALE_MS) {
+      revalidateInBackground(clean);
       return { status: cached.status, binding: cached.binding, bindingKnown: cached.bindingKnown };
     }
   }

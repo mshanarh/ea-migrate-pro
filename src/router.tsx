@@ -71,13 +71,18 @@ export const getRouter = () => {
     context: { queryClient },
     scrollRestoration: true,
     defaultPreloadStaleTime: 0,
+    // PRELOAD ON INTENT — the moment a user touches/intends a tab, its route
+    // chunk starts downloading, so the tap itself renders from an in-memory
+    // module instead of a network round trip.
+    defaultPreload: "intent",
     // GUARDS MUST FEEL ALIVE. `defaultPendingMs` is how long a route may be
     // pending before the splash above renders (the router's default is 1000ms,
-    // which is a full second of frozen screen); `defaultPendingMinMs` keeps it
-    // from flashing on navigations that resolve immediately — which is most of
-    // them now that a warm access cache answers without any network call.
+    // which is a full second of frozen screen). The minimum used to be 400ms,
+    // which FORCED the full-screen splash on every single navigation even when
+    // the warm access cache answered instantly — with the minimum at 0, the
+    // splash only appears when a check is genuinely slow (>150ms).
     defaultPendingMs: 150,
-    defaultPendingMinMs: 400,
+    defaultPendingMinMs: 0,
     defaultPendingComponent: RoutePending,
   });
 
