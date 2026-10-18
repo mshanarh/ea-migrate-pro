@@ -279,14 +279,10 @@ export function DraggableBotPopup() {
     y: (typeof window !== "undefined" ? window.innerHeight : 800) - SIZE - 96,
   });
 
-  // START (false→true while mounted): reset to ready and pop the popup open.
-  // STOP (true→false): close it. Navigating while running does NOT auto-open.
+  // START opens NOTHING — the execution popup (window.triggerExecutionToast)
+  // is the ONLY popup, opened by scanner Execute and auto trading. STOP
+  // closes it. Navigating while running does NOT auto-open either.
   useEffect(() => {
-    if (running && !prevRunning.current) {
-      setState("ready");
-      setLogs([]);
-      setOpen(true);
-    }
     if (!running && prevRunning.current) {
       setOpen(false);
     }
@@ -313,6 +309,19 @@ export function DraggableBotPopup() {
         { text: `Lot size configured: ${p.lot_size}`, kind: "cmd" },
         { text: `Executing ${p.max_trades} trades one by one...`, kind: "cmd" },
       ];
+      // VOICE: ONE clear sentence from the real plan — direction, symbol and
+      // the levels the caller passed (scanner Execute and auto trade both
+      // send them now). A missing level is skipped word-by-word rather than
+      // announced as "undefined".
+      const levelWords = (label: string, value: string | number | undefined) =>
+        value !== undefined && `${value}`.trim() !== "" && Number(value) > 0
+          ? `${label} ${value}.`
+          : "";
+      speakBot(
+        [`${direction === "SELL" ? "Sell" : "Buy"} ${p.symbol}.`, levelWords("Take profit", p.takeProfit), levelWords("Stop loss", p.stopLoss)]
+          .filter(Boolean)
+          .join(" "),
+      );
       setState("executed");
       setLogs([]);
       setOpen(true);
@@ -327,7 +336,14 @@ export function DraggableBotPopup() {
     // Live MT5 outcome — arrives on the event bus so this popup shows the real
     // result alongside the top execution toast (no single-slot overwrite).
     const onExecutionResult = (event: Event) => {
-      const result = (event as CustomEvent<{ ok: boolean; message: string }>).detail;
+      const result = (event as CustomEvent<{
+        ok: boolean;
+        message: string;
+        side?: string;
+        symbol?: string;
+        stopLoss?: number | string;
+        takeProfit?: number | string;
+      }>).detail;
       setLogs((prev) => {
         // The log BUILDS UP: each executed trade stays as its own line
         // ("TRADE 1 EXECUTED", then "TRADE 2 EXECUTED", …) — only the bold
@@ -338,7 +354,26 @@ export function DraggableBotPopup() {
       // Speak only milestone lines (per-trade fills + the final summary),
       // not every refusal — the voice would otherwise stack up.
       if (/TRADE \d+(?:\/\d+)? EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
-        speakBot(result.ok ? result.message : result.message);
+        // A CONFIRMED FILL SAYS ITS PLAN FIRST — "Buy XAUUSD, take profit
+        // 3350, stop loss 3336" — then the trade count, as ONE utterance:
+        // bot-voice cancels before every speak, so two calls would drop the
+        // plan sentence, and native TTS queues this single string in order.
+        // Missing/zero levels (blocked rows, older events) fall back to the
+        // count line alone — never the word "undefined".
+        const fill = result.ok && /TRADE \d+(?:\/\d+)? EXECUTED/.test(result.message);
+        const plan =
+          fill &&
+          !!result.side &&
+          !!result.symbol &&
+          result.takeProfit !== undefined &&
+          Number(result.takeProfit) > 0 &&
+          result.stopLoss !== undefined &&
+          Number(result.stopLoss) > 0;
+        speakBot(
+          plan
+            ? `${result.side === "SELL" ? "Sell" : "Buy"} ${result.symbol}, take profit ${result.takeProfit}, stop loss ${result.stopLoss}. ${result.message}`
+            : result.message,
+        );
       }
 
       // Phone heads-up: the native Android layer shows a foreground

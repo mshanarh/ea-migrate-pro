@@ -33,6 +33,12 @@ type NativeBridge = {
    */
   showTradeNotification?: (eaName: string, text: string) => void;
   /**
+   * Speak text through Android's native TextToSpeech (the WebView's own
+   * speechSynthesis is silent on Android). The native side uses QUEUE_ADD so
+   * trade announcements queue instead of cutting each other off.
+   */
+  speak?: (text: string) => void;
+  /**
    * False when Android 13+ has notifications switched off for this app, in which
    * case showTradeNotification is silently dropped by the OS. Callers use this
    * to tell the user WHY no alert arrived instead of appearing to be broken.

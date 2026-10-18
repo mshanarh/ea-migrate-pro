@@ -1,9 +1,13 @@
 /**
- * Bot Voice — the smooth male voice that announces start/stop and reads live
- * trade logs. Built on SpeechSynthesis (on-device, no network). The toggle in
- * Settings → Back Animation → Bot Voice persists in localStorage; the app
+ * Bot Voice — the smooth male voice that welcomes the trader and reads live
+ * trade announcements. In a browser it runs on SpeechSynthesis (on-device, no
+ * network); inside the Android wrapper it routes to the NATIVE TextToSpeech
+ * bridge, because the WebView's speechSynthesis is silent there. The toggle
+ * in Settings → Back Animation → Bot Voice persists in localStorage; the app
  * announces through `speakBot` which no-ops when disabled or unsupported.
  */
+
+import { callNative, hasNativeBridge } from "@/lib/native-bridge";
 
 const KEY = "botVoiceEnabled";
 
@@ -46,7 +50,17 @@ function pickVoice(): SpeechSynthesisVoice | null {
 /** Announce a phrase in the bot's smooth male voice. No-op when disabled. */
 export function speakBot(text: string): void {
   if (!isBotVoiceEnabled()) return;
-  if (typeof window === "undefined" || !("speechSynthesis" in window)) return;
+  if (typeof window === "undefined") return;
+  // INSIDE THE ANDROID APP the native TextToSpeech owns speech: the WebView's
+  // speechSynthesis never speaks there (the "voice works in the browser but
+  // not on the phone" bug). Same bridge check the rest of the app uses. An
+  // older APK without speak() degrades to silence — never to the web path —
+  // and the updated APK carries the method.
+  if (hasNativeBridge()) {
+    callNative("speak", text);
+    return;
+  }
+  if (!("speechSynthesis" in window)) return;
   try {
     const synth = window.speechSynthesis;
     synth.cancel();

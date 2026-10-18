@@ -179,7 +179,15 @@ function WelcomeMaster() {
 
   useEffect(() => {
     setShow(true);
-    speakBot("Welcome Master. It's time to make money.");
+    // EA NAME FIRST, THEN WELCOME — same lookup the bot popup uses (active
+    // robot → first robot → "My EA"), read at announcement time from the
+    // store: "Sniper Killer EA v6+. Welcome." The name is spoken EXACTLY
+    // as configured — "+", spaces and version text included.
+    const state = getAppState();
+    const active =
+      state.robots.find((candidate) => candidate.id === state.activeRobotId) ??
+      state.robots[0];
+    speakBot(`${active?.name ?? "My EA"}. Welcome.`);
     const timer = setTimeout(() => setShow(false), 600);
     return () => clearTimeout(timer);
   }, []);
@@ -432,6 +440,11 @@ function AppHome() {
                   side: trade.side,
                   index,
                   total,
+                  // Exact SL/TP executeAutoTrade sent to the bridge for this
+                  // trade (read-only surfacing — no logic change). 0 on
+                  // blocked rows; the popup skips zero levels when speaking.
+                  stopLoss: trade.sl,
+                  takeProfit: trade.tp,
                   ...(trade.meta?.commentChanged
                     ? {
                         commentRequested: trade.meta.requestedComment,
@@ -485,17 +498,16 @@ function AppHome() {
 
   const handleStart = () => {
     if (!robot) return;
+    // START/STOP SHOWS NOTHING — no toast, no popup, no voice. Only the
+    // floating bubble changes state. The execution popup and its voice
+    // belong to runConfiguredPairs below (scanner Execute / auto trading).
     if (robot.running) {
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
-      toast.success(`${robot.name} stopped`);
-      speakBot(`${robot.name} stopped. Trading closed.`);
       return;
     }
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
-    toast.success(`${robot.name} started`);
-    speakBot(`${robot.name} started. Time to make money.`);
 
     // Fire-and-forget auto-trade with safety checks
     console.log("[START DEBUG] robot.pairs:", robot?.pairs?.map(p => ({symbol: p?.symbol, lotSize: p?.lotSize, maxTrades: p?.maxTrades})));

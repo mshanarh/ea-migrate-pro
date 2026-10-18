@@ -23,6 +23,8 @@ import android.webkit.WebViewClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebChromeClient;
 import android.webkit.ConsoleMessage;
+import android.speech.tts.TextToSpeech;
+import java.util.Locale;
 
 /**
  * EA Migrate Android wrapper — a fast, full-screen WebView over the live
@@ -183,9 +185,31 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    /** Native speech — the WebView's own speechSynthesis is silent on Android. */
+    private TextToSpeech tts;
+    private volatile boolean ttsReady = false;
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        // Native TextToSpeech up front: every announcement (welcome, trade
+        // plans, counts) goes through window.EAMigrate.speak → this engine,
+        // because the WebView's speechSynthesis never speaks on Android.
+        // Initialising here — not on the first utterance — means the engine
+        // is ready by the time the page says anything.
+        try {
+            tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+                @Override
+                public void OnInit(int status) {
+                    ttsReady = status == TextToSpeech.SUCCESS;
+                    if (ttsReady && tts != null) {
+                        tts.setLanguage(Locale.US);
+                    }
+                }
+            });
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "TextToSpeech init failed: " + t);
+        }
         // Trade alerts must work from the first fill, whether or not the floating
         // bubble happens to be running: register the channel, then ask for the
         // permission Android 13+ requires. Both are cheap and neither can throw
@@ -475,6 +499,43 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * Speak a phrase through the native TextToSpeech engine. The WebView's
+         * speechSynthesis is silent on Android, so every app announcement
+         * (welcome, trade plan, counts) arrives here instead. QUEUE_ADD: the
+         * lines queue in order instead of cutting each other off. The lazy
+         * init below is a safety net — onCreate normally starts the engine.
+         */
+        @JavascriptInterface
+        public void speak(final String text) {
+            if (text == null || text.trim().isEmpty()) {
+                return;
+            }
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (tts == null) {
+                            tts = new TextToSpeech(MainActivity.this, new TextToSpeech.OnInitListener() {
+                                @Override
+                                public void OnInit(int status) {
+                                    ttsReady = status == TextToSpeech.SUCCESS;
+                                    if (ttsReady && tts != null) {
+                                        tts.setLanguage(Locale.US);
+                                    }
+                                }
+                            });
+                        }
+                        if (ttsReady && tts != null) {
+                            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "eamigrate");
+                        }
+                    } catch (Throwable t) {
+                        android.util.Log.e("EAMIGRATE", "speak bridge failed: " + t);
+                    }
+                }
+            });
+        }
+
+        /**
          * May this app post notifications right now? The web app asks before it
          * promises the user an alert, so a blocked permission shows an honest
          * "turn on notifications" path instead of silently doing nothing.
@@ -632,6 +693,15 @@ public class MainActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (tts != null) {
+            try {
+                tts.shutdown();
+            } catch (Throwable t) {
+                android.util.Log.e("EAMIGRATE", "tts shutdown failed: " + t);
+            }
+            tts = null;
+            ttsReady = false;
+        }
         if (web != null) {
             web.destroy();
         }
