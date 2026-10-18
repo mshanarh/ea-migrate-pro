@@ -112,21 +112,27 @@ describe("Auto-Trade Safety: Synthetic & Proxy Symbols", () => {
 });
 
 // ============================================================================
-// Tests: Weak & WAIT Analysis
+// Tests: weak/neutral signals now EXECUTE — FORCE_WEAK_EXECUTION
 // ============================================================================
 
-describe("Auto-Trade Safety: Weak & WAIT Analysis", () => {
-  it("should block weak bullish signals (only one indicator)", async () => {
+describe("Weak signals execute (FORCE_WEAK_EXECUTION)", () => {
+  it("a one-indicator signal resolves to a direction, never NO_TRADE", async () => {
     const result = await resolveTradeDirection("USDCAD");
-    expect(["BUY", "SELL", "NO_TRADE"]).toContain(result.direction.type);
+    expect(["BUY", "SELL"]).toContain(result.direction.type);
+    // Confirmed fixtures stay strong; forced ones declare the force in-line.
+    expect(["strong", "weak"]).toContain(result.strength);
+    if (result.strength === "weak") expect(result.reason).toContain("FORCE_WEAK_EXECUTION");
   });
 
-  it("should block when RSI is neutral and momentum is weak", async () => {
+  it("every supported weak/neutral fixture produces a direction", async () => {
     const symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD"];
     for (const symbol of symbols) {
       const result = await resolveTradeDirection(symbol);
-      if (result.direction.type === "NO_TRADE") {
-        expect(result.strength).toBe("weak");
+      expect(["BUY", "SELL"], `${symbol} must resolve to a direction`).toContain(result.direction.type);
+      if (result.strength === "weak") {
+        expect(result.reason, `${symbol} forced plan must declare the force`).toContain(
+          "FORCE_WEAK_EXECUTION",
+        );
       }
     }
   });
@@ -155,9 +161,13 @@ describe("Auto-Trade Safety: Bearish Data with BOTH Mode", () => {
     expect(result.executionReady).toBe(true);
   });
 
-  it("should block if bearish data is weak (no confirmation)", async () => {
+  it("weak bearish data executes as a forced SELL (FORCE_WEAK_EXECUTION)", async () => {
+    // This fixture actually carries momentum confirmation, so it lands on the
+    // STRONG SELL path — either way bearish data must resolve SELL, never BUY.
     const result = await resolveTradeDirection("USDJPY");
-    expect(result.direction.type).not.toBe("BUY");
+    expect(result.direction.type).toBe("SELL");
+    expect(["strong", "weak"]).toContain(result.strength);
+    if (result.strength === "weak") expect(result.reason).toContain("FORCE_WEAK_EXECUTION");
   });
 });
 
@@ -172,28 +182,35 @@ describe("Auto-Trade Safety: Bullish Data with BOTH Mode", () => {
     expect(result.reason).toContain("Strong bullish confirmation");
   });
 
-  it("should block if bullish data is weak", async () => {
+  it("weak bullish data still resolves to a direction (FORCE_WEAK_EXECUTION)", async () => {
     const result = await resolveTradeDirection("GBPUSD");
-    if (result.direction.type !== "NO_TRADE") {
-      expect(result.strength).toBe("strong");
-    }
+    expect(result.direction.type).toBe("BUY");
+    expect(result.strength).toBe("weak");
+    expect(result.reason).toContain("FORCE_WEAK_EXECUTION");
   });
 
-  it("should never trade on RSI alone without momentum confirmation", async () => {
+  it("STRONG trades keep the RSI+momentum bar; forced trades declare the force", async () => {
     const symbols = ["EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "HW_100"];
     for (const symbol of symbols) {
       const result = await resolveTradeDirection(symbol);
-      if (result.direction.type !== "NO_TRADE") {
-        const avgRSI = ((result.rsi15m || 50) + (result.rsi1h || 50)) / 2;
-        const avgMomentum = ((result.momentum15m || 0) + (result.momentum1h || 0)) / 2;
+      if (result.direction.type === "NO_TRADE") continue; // safety blocks only
+      if (result.strength !== "strong") {
+        // A forced plan trades BELOW the old confirmation bar on purpose —
+        // accuracy is no longer the blocker (FORCE_WEAK_EXECUTION).
+        expect(result.reason, `${symbol} weak plan must declare the force`).toContain(
+          "FORCE_WEAK_EXECUTION",
+        );
+        continue;
+      }
+      const avgRSI = ((result.rsi15m || 50) + (result.rsi1h || 50)) / 2;
+      const avgMomentum = ((result.momentum15m || 0) + (result.momentum1h || 0)) / 2;
 
-        if (result.direction.type === "BUY") {
-          expect(avgRSI).toBeLessThan(45);
-          expect(avgMomentum).toBeGreaterThan(0.05);
-        } else if (result.direction.type === "SELL") {
-          expect(avgRSI).toBeGreaterThan(55);
-          expect(avgMomentum).toBeLessThan(-0.05);
-        }
+      if (result.direction.type === "BUY") {
+        expect(avgRSI).toBeLessThan(45);
+        expect(avgMomentum).toBeGreaterThan(0.05);
+      } else if (result.direction.type === "SELL") {
+        expect(avgRSI).toBeGreaterThan(55);
+        expect(avgMomentum).toBeLessThan(-0.05);
       }
     }
   });
@@ -578,12 +595,23 @@ describe("Market Scanner Core: Shared Analysis", () => {
     const validation = validateAnalysisForExecution(validAnalysis);
     expect(validation.valid).toBe(true);
 
-    const invalidAnalysis: AnalysisResult = {
+    // FORCE_WEAK_EXECUTION: a weak-but-Directional plan is executable — the
+    // strength check that used to refuse it below MODERATE is gone.
+    const weakAnalysis: AnalysisResult = {
       ...validAnalysis,
       strength: "weak",
     };
+    expect(validateAnalysisForExecution(weakAnalysis).valid).toBe(true);
 
-    const invalidValidation = validateAnalysisForExecution(invalidAnalysis);
-    expect(invalidValidation.valid).toBe(false);
+    // The genuine order-breakers still refuse, unchanged.
+    const refused: AnalysisResult = {
+      ...validAnalysis,
+      direction: { type: "NO_TRADE", reason: "Missing or unavailable broker data", blocked: true },
+    };
+    expect(validateAnalysisForExecution(refused).valid).toBe(false);
+    const stale: AnalysisResult = { ...validAnalysis, executionReady: false };
+    expect(validateAnalysisForExecution(stale).valid).toBe(false);
+    const proxy: AnalysisResult = { ...validAnalysis, source: "proxy" };
+    expect(validateAnalysisForExecution(proxy).valid).toBe(false);
   });
 });

@@ -3,6 +3,8 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { BG_EFFECTS, BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
 import { isBotVoiceEnabled, setBotVoiceEnabled, warmBotVoice } from "@/lib/bot-voice";
 import { isRobotVideoAuto, setRobotVideoAuto, setVideoActive } from "@/lib/video-playback";
+import { useAppState } from "@/lib/app-store";
+import { loadVideoUrl } from "@/lib/media-store";
 
 type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice";
 
@@ -92,6 +94,9 @@ const ROWS: EffectRow[] = [
 ];
 
 const MATRIX_KEY = "eamp-colour-matrix";
+
+/** Refs already reported as unresolvable — one log line per ref, not one per re-check. */
+const warnedUnresolvedVideoRefs = new Set<string>();
 
 function readCanvasConfig() {
   if (typeof window === "undefined") return { enabled: true, type: "dollars" };
@@ -185,6 +190,10 @@ function Toggle({
 export function BackAnimationSection() {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
+  // The SAME signal every app-state update already notifies through
+  // (activation sync, a cloud restore, a mentor re-upload) — the Robot Video
+  // unlock re-checks whenever it changes instead of only on mount.
+  const appState = useAppState();
 
   const [canvas, setCanvas] = useState({ enabled: true, type: "dollars" });
   const [matrix, setMatrix] = useState(false);
@@ -200,18 +209,52 @@ export function BackAnimationSection() {
     setVoice(isBotVoiceEnabled());
     setRobotVideoAutoState(isRobotVideoAuto());
     warmBotVoice();
-    try {
-      const raw = localStorage.getItem("eamp.app.v3");
-      const state = raw ? (JSON.parse(raw) as { robots?: { video?: string }[] }) : null;
-      setHasRobotVideo(
-        (state?.robots ?? []).some(
-          (robot) => typeof robot.video === "string" && robot.video.length > 0,
-        ),
-      );
-    } catch {
-      setHasRobotVideo(false);
-    }
   }, []);
+
+  /**
+   * THE UNLOCK FOLLOWS THE APP STATE — reading `eamp.app.v3` once on mount
+   * left the row locked until a full reload whenever the robot's video
+   * arrived later (activation sync, a cloud restore, a mentor re-upload).
+   * `useAppState` is the signal every state update notifies through, so this
+   * re-runs the moment a video ref appears.
+   *
+   * The ref must also RESOLVE: an `idb-video:` ref whose local blob is gone
+   * and has no cloud backup is nothing the app can play, so the honest state
+   * stays locked — with a log line naming the ref that died. Data/http URLs
+   * are self-contained and unlock without a lookup.
+   */
+  const videoRefs = appState.robots.map((robot) => robot.video ?? "").join("\u0000");
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      let unlocked = false;
+      for (const ref of videoRefs.split("\u0000").filter(Boolean)) {
+        if (!ref.startsWith("idb-video:")) {
+          unlocked = true;
+          break;
+        }
+        try {
+          const url = await loadVideoUrl(ref);
+          if (url) {
+            URL.revokeObjectURL(url);
+            unlocked = true;
+            break;
+          }
+        } catch {
+          /* unreadable store — reported below, like a missing blob */
+        }
+        if (!warnedUnresolvedVideoRefs.has(ref)) {
+          warnedUnresolvedVideoRefs.add(ref);
+          console.warn(`[media] robot video ref ${ref} could not be resolved`);
+        }
+      }
+      if (!cancelled) setHasRobotVideo(unlocked);
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [videoRefs]);
 
   const toggleRow = (row: EffectRow) => {
     if (row.kind === "canvas" && row.canvasId) {

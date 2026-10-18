@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type ExpertAdvisor } from "@/lib/auth-store";
-import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob } from "@/lib/media-store";
+import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob, videoTooLargeForCloud } from "@/lib/media-store";
 import { syncRegister } from "@/lib/account-sync.server";
 import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 
@@ -236,6 +236,23 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
 }) {
   const [symbol, setSymbol] = useState("");
   const [error, setError] = useState("");
+  // VISIBLE when the picked video will NOT ride inside the cloud record —
+  // the mirror used to drop oversized videos silently and the app then
+  // honestly (but wrongly, from the mentor's view) said "no video".
+  const [videoTooLarge, setVideoTooLarge] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    if (!video) {
+      setVideoTooLarge(false);
+      return;
+    }
+    void videoTooLargeForCloud(video).then((tooLarge) => {
+      if (!cancelled) setVideoTooLarge(tooLarge);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [video]);
   const chooseFile = (file: File | undefined, kind: "image" | "video") => {
     if (!file) return;
     setError("");
@@ -278,6 +295,11 @@ function EaFields({ briefing, setBriefing, symbols, setSymbols, image, setImage,
     </div>
     <div><p className={labelClass}>EA Video / GIF <span className="text-sm font-bold text-primary">Unlocked</span></p>
       <div className="mt-2 rounded-2xl border border-dashed border-white/20 bg-white/[0.02] p-4 text-center text-sm text-white/40">{video ? <VideoPreview src={video} className="mx-auto max-h-32 rounded-xl" /> : "No video"}</div>
+      {videoTooLarge && (
+        <p className="mt-2 text-xs font-semibold text-amber-400">
+          This video is too large to sync to the app — use a video under 20 MB.
+        </p>
+      )}
       <label className="mt-3 flex h-14 cursor-pointer items-center justify-center gap-2 rounded-2xl border border-primary/40 bg-primary/10 text-sm font-bold text-primary transition-colors hover:bg-primary/20"><Video className="size-4" /> {video ? "Replace Video / GIF" : "Upload Video / GIF"}<input type="file" accept="video/*,image/gif" className="hidden" onChange={(event) => chooseFile(event.target.files?.[0], "video")} /></label>
       <p className="mt-2 text-xs text-white/40">Any video type · Max 50 MB. MP4 / WebM / MOV / GIF all work.</p>
     </div>

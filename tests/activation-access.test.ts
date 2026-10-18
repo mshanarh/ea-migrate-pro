@@ -47,6 +47,10 @@ vi.mock("@supabase/supabase-js", () => ({
       select: () => ({
         eq: () => ({
           maybeSingle: async () => supabase.rows[table] ?? { data: null, error: null },
+          // The offline licence lock reads its row with `.limit(1)`. An
+          // unscripted table answers "could not read" — the state every dead
+          // store funnels into, which the tests below pin to the new wording.
+          limit: async () => supabase.rows[table] ?? { data: null, error: { message: "connection failed" } },
         }),
       }),
     }),
@@ -299,5 +303,127 @@ describe("activating a key, then walking into the app", () => {
       appStore.getAppState().robots.some((robot) => robot.key === "EMP-AAAA-BBBB-CCCC"),
       "the activated robot must be on the device after the walk-in",
     ).toBe(true);
+  });
+});
+
+/**
+ * THE REPORT ITSELF — "We could not check that licence key. Please try again."
+ * on the Activate screen.
+ *
+ * That sentence was written only by store-FAILURE paths, never by anything
+ * wrong with the key: a dropped answer from /api/activation sent the customer
+ * into a fallback that read a database which no longer answers, and every
+ * retry landed in the same place. These cases drive `activateKey` — the call
+ * the Activate screen actually makes — through those failure modes and pin
+ * what the customer sees instead.
+ */
+describe("an activation whose stores fail", () => {
+  /**
+   * Script every endpoint, with two overrides: `activation: "drop"` loses the
+   * server's answer on the way back (the common mobile-network failure), and
+   * `claim` decides what /api/licenses answers the fallback lock — a payload,
+   * or "drop" to lose that answer too.
+   */
+  function stubEndpoints(overrides: {
+    activation?: "drop";
+    claim: Record<string, unknown> | "drop";
+  }) {
+    const seen: string[] = [];
+    const reply = (payload: Record<string, unknown>, status = 200) => ({
+      ok: status < 400,
+      status,
+      json: async () => payload,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string | URL, init?: RequestInit) => {
+        const target = String(url);
+        const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
+        seen.push(`${target} ${String(body["action"] ?? "")}`.trim());
+        if (target.includes("/api/activation") && overrides.activation === "drop") {
+          throw new Error("connection dropped mid-request");
+        }
+        if (target.includes("/api/activation")) return reply({ ok: true });
+        if (target.includes("/api/mentor-status")) return reply({ ok: true, found: false });
+        if (target.includes("/api/licenses")) {
+          if (body["action"] === "count") return reply({ ok: true, count: 0 });
+          if (body["action"] === "claim") {
+            if (overrides.claim === "drop") throw new Error("connection dropped mid-request");
+            return reply(overrides.claim);
+          }
+          return reply({
+            ok: true,
+            found: true,
+            license: {
+              key: "EMP-AAAA-BBBB-CCCC",
+              mentorEmail: "mentor@example.com",
+              clientName: "Client",
+              clientEmail: EMAIL,
+              eaName: "Sniper Killer",
+              eaId: "ea-1",
+              expiry: "Lifetime",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              claimedBy: null,
+              claimedAt: null,
+              symbols: ["AUDUSD"],
+            },
+          });
+        }
+        return reply(access.payload, access.status);
+      }),
+    );
+    return seen;
+  }
+
+  it("gets the customer in when the server's answer is lost and nobody holds the key yet", async () => {
+    const seen = stubEndpoints({ activation: "drop", claim: { ok: true } });
+    const { appStore } = await loadModules();
+    seedSession(appStore);
+
+    const result = await appStore.activateKey("EMP-AAAA-BBBB-CCCC");
+
+    expect(result.error, `activation refused: ${result.error ?? ""}`).toBeUndefined();
+    expect(result.robot?.name).toBe("Sniper Killer");
+    // The claim is NEVER re-asked at the strong endpoint — its recovery path
+    // is the fallback lock, so a re-ask could never find the lock already
+    // written and refuse its own customer.
+    expect(seen.filter((call) => call.startsWith("/api/activation"))).toHaveLength(1);
+    expect(seen).toContain("/api/licenses claim");
+  });
+
+  it("accepts the customer's OWN lock when the lost answer was this account's own claim", async () => {
+    // The first attempt DID land server-side; only its response was dropped.
+    // The lock now names this very account — the case that used to strand the
+    // customer on a key they hold, refused by their own lock on every retry.
+    stubEndpoints({
+      activation: "drop",
+      claim: { ok: false, alreadyInUse: true, heldBy: EMAIL, error: "License key already in use" },
+    });
+    const { appStore } = await loadModules();
+    seedSession(appStore);
+
+    const result = await appStore.activateKey("EMP-AAAA-BBBB-CCCC");
+
+    expect(
+      result.error,
+      `the holder's own account must not be refused its own lock: ${result.error ?? ""}`,
+    ).toBeUndefined();
+    expect(result.robot?.name).toBe("Sniper Killer");
+  });
+
+  it("says the store is busy — never 'could not check that licence key' — when every store is down", async () => {
+    stubEndpoints({ activation: "drop", claim: "drop" });
+    const { appStore } = await loadModules();
+    seedSession(appStore);
+
+    const result = await appStore.activateKey("EMP-AAAA-BBBB-CCCC");
+
+    expect(result.error, "two dead stores must still answer the customer").toBeTruthy();
+    expect(result.error).toContain("Licence storage is busy right now");
+    expect(
+      result.error,
+      "the reported sentence must be gone from every failure path",
+    ).not.toContain("could not check that licence key");
+    expect(result.robot, "nothing may be created when no lock could be taken").toBeUndefined();
   });
 });

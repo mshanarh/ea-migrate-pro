@@ -9,6 +9,17 @@
  * customer cannot release their own key. That is the better implementation,
  * and it is tried first.
  *
+ * THE STORE MOVED AND THE ROW BELOW FELL OUTSIDE IT. Licence keys now live in
+ * Upstash KV behind `/api/licenses`, and the `app_settings` row kept here lives
+ * in the legacy database — which answers nothing — so EVERY fallback that
+ * reached it came back with "We could not check that licence key": a customer
+ * whose server answer had merely been dropped on a mobile network was not just
+ * refused, but refused forever, on every retry, by a store that was gone. This
+ * module therefore claims through the SAME KV lock the server writes (one
+ * round trip to `/api/licenses`, no database needed) before it ever touches
+ * the row, and says "busy, try again in a moment" — never something that
+ * reads as a broken key — when neither store can answer.
+ *
  * IT CANNOT BE THE ONLY ONE. The app ships as a STATIC build (vercel.json
  * points at `dist/`, and the build copies `.vercel/output/static`), and a
  * TanStack server-function call answers `405` there — no Node process to run
@@ -58,6 +69,14 @@ import { supabase, supabaseConfigured } from "@/lib/supabase";
  */
 export const ALREADY_IN_USE = "License key already in use";
 
+/**
+ * Same words as `api/_handlers/activation.ts`'s, deliberately: a store that
+ * cannot answer must never be reported as a problem with the key — that is
+ * exactly what "We could not check that licence key" did to customers whose
+ * key was fine the whole time.
+ */
+const LICENCE_STORE_BUSY = "Licence storage is busy right now. Please try again in a moment.";
+
 const LOCK_PREFIX = "lock:";
 
 export type LockOutcome =
@@ -72,22 +91,101 @@ function lockRowKey(key: string): string {
 }
 
 /**
+ * Claim through `/api/licenses` (the KV lock the server writes), or `null`
+ * when this endpoint could not decide.
+ *
+ * `null` means one of three things — no function on this host, the server
+ * reporting "no KV here", or a network failure after one retry — and every one
+ * of them is the caller's signal to try the `app_settings` row below. A
+ * DECISIVE answer never comes back as `null`: the claim, the refusal with its
+ * holder, or the store's own "busy" verdict.
+ */
+async function claimViaApi(cleanKey: string, address: string): Promise<LockOutcome | null> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    // One re-ask for a request that never got an answer: blips on mobile
+    // networks are measured in hundreds of milliseconds.
+    if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 300));
+    try {
+      const response = await fetch("/api/licenses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "claim", key: cleanKey, email: address }),
+        signal: AbortSignal.timeout(12_000),
+      });
+      // 404/405 is what a static host answers with no function at all.
+      if (response.status === 404 || response.status === 405) return null;
+      const parsed = (await response.json().catch(() => null)) as {
+        ok?: boolean;
+        unavailable?: boolean;
+        alreadyInUse?: boolean;
+        heldBy?: string | null;
+        error?: string;
+      } | null;
+      // HTML where JSON was contracted — this host serves only the static app.
+      if (!parsed || typeof parsed.ok !== "boolean") return null;
+      // The server says there is no KV here — the row below decides.
+      if (parsed.unavailable) return null;
+      if (parsed.ok) return { ok: true, alreadyInUse: false };
+      if (parsed.alreadyInUse) {
+        const heldBy = typeof parsed.heldBy === "string" ? parsed.heldBy.trim().toLowerCase() : "";
+        if (heldBy === address) {
+          /**
+           * THE HOLDER IS THIS VERY ACCOUNT — accept. This lock only runs
+           * when the strong endpoint could not answer at all, so a holder
+           * naming this email is either this device's own claim whose
+           * response was lost on the network, or the fallback doing its job
+           * while the server is unreachable; in both cases the lock is
+           * already this account's, and refusing would strand a customer on
+           * a key they hold — the "could not check" dead end by another
+           * sentence. A DIFFERENT holder still gets the server's own words,
+           * and while the server is reachable it, not this fallback, owns
+           * the spent-key rule.
+           */
+          return { ok: true, alreadyInUse: false };
+        }
+        return { ok: false, error: ALREADY_IN_USE, alreadyInUse: true };
+      }
+      // The store answered and declined (busy, or its own reason) — final.
+      return {
+        ok: false,
+        error: typeof parsed.error === "string" && parsed.error.trim() ? parsed.error : LICENCE_STORE_BUSY,
+        alreadyInUse: false,
+      };
+    } catch (error) {
+      console.warn(
+        "[key-lock] KV claim attempt " + (attempt + 1) + " failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return null;
+}
+
+/**
  * Claim `key` for `email`, or refuse because the key is already activated.
  *
- * Same outcomes and the same wording as the server lock, so the app cannot
- * behave differently depending on which deployment it is running on. A key that
- * is already activated is refused for EVERYONE, including the account that
- * activated it — one activation, one key, one message.
+ * TWO LOCKS, STRONGEST FIRST, with the same words from either when a key is
+ * genuinely taken: the KV claim through `/api/licenses` (the very lock the
+ * server writes — see `claimViaApi` for the one deliberate asymmetry), then
+ * the `app_settings` row, kept only for a deployment with no KV at all.
  */
 export async function claimKeyWithoutServer(key: string, email: string): Promise<LockOutcome> {
-  if (!supabaseConfigured || !supabase) {
-    // No database at all: there is no licence to check either, and the rest of
-    // the app cannot run. Say so rather than pretend the key is free.
-    return { ok: false, error: "Activation is unavailable right now.", alreadyInUse: false };
-  }
   const cleanKey = key.trim().toUpperCase().replace(/\s+/g, "");
   const address = email.trim().toLowerCase();
   if (!cleanKey || !address) return { ok: false, error: "Missing email or key.", alreadyInUse: false };
+
+  // THE KV STORE FIRST. It needs no database in the browser — one POST to the
+  // endpoint — so it answers even when the row store below answers nothing,
+  // which is precisely the state that made every fallback read "We could not
+  // check that licence key" no matter what the customer did.
+  const viaApi = await claimViaApi(cleanKey, address);
+  if (viaApi) return viaApi;
+
+  if (!supabaseConfigured || !supabase) {
+    // Neither store exists here: there is no licence to check either, and the
+    // rest of the app cannot run. Say so rather than pretend the key is free.
+    return { ok: false, error: "Activation is unavailable right now.", alreadyInUse: false };
+  }
 
   // READ FIRST so the account that already owns the key is not refused by its
   // own lock, and so a device holding it can re-enter it safely.
@@ -98,7 +196,7 @@ export async function claimKeyWithoutServer(key: string, email: string): Promise
     .limit(1);
   if (readError) {
     console.warn("[key-lock] read failed:", readError.message);
-    return { ok: false, error: "We could not check that licence key. Please try again.", alreadyInUse: false };
+    return { ok: false, error: LICENCE_STORE_BUSY, alreadyInUse: false };
   }
   const rows = (existing ?? []) as Array<{ value?: string | null }>;
   if (rows.length > 0) {
@@ -123,5 +221,5 @@ export async function claimKeyWithoutServer(key: string, email: string): Promise
     return { ok: false, error: ALREADY_IN_USE, alreadyInUse: true };
   }
   console.warn("[key-lock] claim failed:", claimError.code, claimError.message);
-  return { ok: false, error: "We could not check that licence key. Please try again.", alreadyInUse: false };
+  return { ok: false, error: LICENCE_STORE_BUSY, alreadyInUse: false };
 }

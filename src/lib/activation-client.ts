@@ -75,13 +75,18 @@ function isFunctionReply(value: unknown): value is Required<Pick<ReplyBody, "ok"
   return typeof value === "object" && value !== null && typeof (value as ReplyBody).ok === "boolean";
 }
 
-async function post(payload: Record<string, unknown>): Promise<ActivationOutcome> {
+/**
+ * ONE ATTEMPT. `null` means the request never got an answer at all — it
+ * threw, timed out, or was aborted — which is the single class of failure a
+ * second shot can repair. Every other outcome (including no-function-here)
+ * comes back as the endpoint's own verdict: no retry can turn a 404 or the
+ * static SPA into an answer, and a verdict that DID arrive is final.
+ */
+async function send(payload: Record<string, unknown>): Promise<ActivationOutcome | null> {
   const missing: ActivationOutcome = {
     status: "offline",
     error: "Activation is unavailable right now.",
   };
-  if (typeof window === "undefined") return missing;
-  if (!supabaseConfigured) return missing;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   let response: Response | null = null;
@@ -105,8 +110,8 @@ async function post(payload: Record<string, unknown>): Promise<ActivationOutcome
     response = null;
   }
   if (timer) clearTimeout(timer);
-  // null = threw, timed out, or was aborted.
-  if (!response) return missing;
+  // null = threw, timed out, or was aborted — tell the caller to try again.
+  if (!response) return null;
 
   // 404/405 is what a host serving only `dist/` answers. There is no function
   // to talk to, which is exactly what `offline` means.
@@ -142,6 +147,37 @@ async function post(payload: Record<string, unknown>): Promise<ActivationOutcome
     ok: false,
     error: reason || `The server could not complete this request (HTTP ${response.status}).`,
   };
+}
+
+async function post(payload: Record<string, unknown>): Promise<ActivationOutcome> {
+  const missing: ActivationOutcome = {
+    status: "offline",
+    error: "Activation is unavailable right now.",
+  };
+  if (typeof window === "undefined") return missing;
+  if (!supabaseConfigured) return missing;
+
+  const answered = await send(payload);
+  if (answered) return answered;
+
+  /**
+   * NOTHING ANSWERED — ONE MORE SHOT, for every action except the claim.
+   *
+   * On a mobile network the common failure is a request that reaches the
+   * server with its response dropped on the way back; without this re-ask the
+   * customer sits on "unavailable" for a retry they should never have had to
+   * make. The claim is EXCLUDED on purpose: a claim that reached the server
+   * would find its own lock already written by the re-ask and be told "already
+   * in use" for the key it just claimed. Its recovery path is the offline
+   * lock (`src/lib/license-lock.ts`), which is where an `offline` verdict is
+   * designed to land — and which recognises that account's own holder.
+   */
+  if (payload["action"] !== "claimKey") {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const retried = await send(payload);
+    if (retried) return retried;
+  }
+  return missing;
 }
 
 /**

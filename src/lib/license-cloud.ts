@@ -93,23 +93,39 @@ type ReplyBody = {
  */
 async function post(payload: Record<string, unknown>): Promise<ReplyBody | null> {
   if (typeof window === "undefined") return null;
-  try {
-    const reply = await fetch("/api/licenses", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: AbortSignal.timeout(DEADLINE_MS),
-    });
-    // 404/405 is what a static host answers with no function at all.
-    if (reply.status === 404 || reply.status === 405) return null;
-    const parsed = (await reply.json().catch(() => null)) as ReplyBody | null;
-    if (!parsed || typeof parsed.ok !== "boolean") return null;
-    // `unavailable` is the server saying "no KV here" — the caller's fallback.
-    if (parsed.unavailable) return null;
-    return parsed;
-  } catch {
-    return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    /**
+     * ONE RE-ASK FOR A REQUEST THAT NEVER GOT AN ANSWER — the failure a
+     * flaky mobile network produces most, and the one that made a fine key
+     * look absent: `lookup` returns `enabled: false`, the caller falls into
+     * the legacy path, and the customer is told to pay or told the key does
+     * not exist. Reads and idempotent actions only — `issue` may have
+     * COMMITTED before its answer was lost, and re-sending it would greet the
+     * mentor with a duplicate-key error for their own key.
+     */
+    if (attempt > 0) {
+      if (payload["action"] === "issue") return null;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+    try {
+      const reply = await fetch("/api/licenses", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(DEADLINE_MS),
+      });
+      // 404/405 is what a static host answers with no function at all.
+      if (reply.status === 404 || reply.status === 405) return null;
+      const parsed = (await reply.json().catch(() => null)) as ReplyBody | null;
+      if (!parsed || typeof parsed.ok !== "boolean") return null;
+      // `unavailable` is the server saying "no KV here" — the caller's fallback.
+      if (parsed.unavailable) return null;
+      return parsed;
+    } catch {
+      // Network-level: loop once more, then report "could not be asked".
+    }
   }
+  return null;
 }
 
 function offline<T extends KvAnswer>(fallback: T): T {

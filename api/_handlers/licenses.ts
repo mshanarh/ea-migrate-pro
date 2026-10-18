@@ -337,6 +337,42 @@ export async function claimLicenceKeyForEmail(
   return { ok: false, alreadyInUse: true, heldBy: heldBy || null, error: "License key already in use" };
 }
 
+/**
+ * WHO HOLDS THE CLAIM LOCK, read BEFORE an attempt is made — the witness that
+ * lets a caller tell a lost answer from a spent key.
+ *
+ * `claimLicenceKeyForEmail` answers `alreadyInUse` for both cases and cannot
+ * distinguish them: a claim whose `SET … NX` committed but whose response was
+ * dropped on a mobile network looks identical, from the outcome alone, to a
+ * key this account activated long ago. Answering "already in use" for the
+ * first case strands the customer on their own key forever — every retry
+ * finds their own email in the holder slot.
+ *
+ * /api/activation reads this first: holder EMPTY before the attempt, own
+ * email in the outcome after a failed attempt, means this request's own write
+ * landed and only its answer was lost. It is never a verdict on its own.
+ * Two reads, because one network blip must not collapse the distinction.
+ */
+export async function holderOfClaimLock(
+  key: string,
+): Promise<{ answered: boolean; holder: string | null }> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const holder = await kvCommand(["GET", claimKey(key)]);
+      return {
+        answered: true,
+        holder: typeof holder === "string" && holder.trim() ? normalizeEmail(holder) : null,
+      };
+    } catch (error) {
+      console.warn(
+        "[licenses] claim-holder read attempt " + (attempt + 1) + " failed:",
+        error instanceof Error ? error.message : error,
+      );
+    }
+  }
+  return { answered: false, holder: null };
+}
+
 /** The endpoint's claim action — see `claimLicenceKeyForEmail` for the rule. */
 async function claim(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
   const body = parseBody(request);

@@ -8,6 +8,10 @@ import { mt5OrderComment } from "./utils";
 // SAFETY CRITICAL: No default BUY/SELL - explicit decision or NO TRADE
 // ============================================================================
 
+// OWNER SETTING: auto-trade executes on weak/neutral/conflicting signals.
+// Only genuine order-breakers stay blocked (missing data, invalid SL/TP, invalid price).
+export const FORCE_WEAK_EXECUTION = true;
+
 export type TradeDecision =
   | { type: "BUY"; entry: number; sl: number; tp: number; rrRatio: number; reason: string }
   | { type: "SELL"; entry: number; sl: number; tp: number; rrRatio: number; reason: string }
@@ -517,8 +521,77 @@ export async function resolveTradeDirection(
   const momentumBearish = avgMomentum < -MIN_MOMENTUM_CONFIDENCE;
 
   // ============================================================================
-  // DECISION: Bias + momentum must agree -> trade, otherwise NO_TRADE
+  // DECISION — FORCE_WEAK_EXECUTION: any direction the data supports at all
+  // EXECUTES. Strong confirmation is preferred, never required; only genuine
+  // order-breakers (missing data, proxy symbols, invalid SL/TP, invalid
+  // prices, stale quotes) reach NO_TRADE below. Accuracy is no longer the
+  // blocker — order quality at the broker is.
   // ============================================================================
+
+  /**
+   * Build a forced order on the SAME entry/SL/TP formulas the STRONG branch
+   * uses, so a weak plan is shaped at the broker exactly like a confirmed one.
+   */
+  const forcedOrder = (side: "BUY" | "SELL", orderReason: string): TradeDecision =>
+    side === "BUY"
+      ? {
+          type: "BUY",
+          entry: quoteResult.ask,
+          sl: quoteResult.bid - quoteResult.ask * 0.005,
+          tp: quoteResult.ask + quoteResult.ask * 0.005 * 2,
+          rrRatio: 2,
+          reason: orderReason,
+        }
+      : {
+          type: "SELL",
+          entry: quoteResult.bid,
+          sl: quoteResult.ask + quoteResult.ask * 0.005,
+          tp: quoteResult.bid - quoteResult.ask * 0.005 * 2,
+          rrRatio: 2,
+          reason: orderReason,
+        };
+
+  /**
+   * Deterministic direction for a signal with no agreed bias — the first
+   * step in `order` that CAN decide wins, and the reason names it, so every
+   * forced trade says WHICH fallback sent it.
+   */
+  const forcedFallback = (
+    order: Array<"candle" | "momentum" | "rsi">,
+  ): { side: "BUY" | "SELL"; via: string; detail: string } => {
+    for (const step of order) {
+      if (step === "candle" && (maBullish || maBearish)) {
+        return {
+          side: maBullish ? "BUY" : "SELL",
+          via: "candle structure",
+          detail: `trend=${maBullish ? "bullish" : "bearish"}`,
+        };
+      }
+      if (step === "momentum" && avgMomentum !== 0) {
+        return {
+          side: avgMomentum > 0 ? "BUY" : "SELL",
+          via: "momentum sign",
+          detail: `Momentum=${avgMomentum.toFixed(2)}`,
+        };
+      }
+      if (step === "rsi") {
+        return {
+          side: avgRSI < 50 ? "BUY" : "SELL",
+          via: "RSI level",
+          detail: `RSI=${avgRSI.toFixed(1)}`,
+        };
+      }
+    }
+    // Unreachable in practice ("rsi" always decides) — but never NO_TRADE by omission.
+    return { side: avgRSI < 50 ? "BUY" : "SELL", via: "RSI level", detail: `RSI=${avgRSI.toFixed(1)}` };
+  };
+
+  /** Every forced execution is logged loudly — a weak plan must never hide. */
+  const logForced = (side: "BUY" | "SELL") => {
+    console.warn(
+      `[auto-trade] ${symbol}: FORCED ${side} on weak signal (RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)})`,
+    );
+  };
 
   if (sellBias && momentumBearish && !buyBias) {
     // SELL bias (RSI > 60 or negative MA trend) + momentum confirm - STRONG SELL
@@ -547,45 +620,48 @@ export async function resolveTradeDirection(
     reason = direction.reason;
     console.log(`[auto-trade] ${symbol}: STRONG BUY signal (RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)})`);
   } else if (buyBias && sellBias) {
-    // Conflicting timeframes - refuse rather than guess.
-    direction = {
-      type: "NO_TRADE",
-      reason: `Conflicting signals: RSI=${avgRSI.toFixed(1)} gives both a BUY bias (<${RSI_BUY_BELOW}) and a SELL bias (>${RSI_SELL_ABOVE}) across the 15m/1h reads.`,
-      blocked: true,
-    };
+    // CONFLICTING BIAS — FORCED (FORCE_WEAK_EXECUTION) instead of refused:
+    // momentum sign first, then candle structure, then which side of 50 the
+    // average RSI sits on.
+    const via = forcedFallback(["momentum", "candle", "rsi"]);
+    direction = forcedOrder(
+      via.side,
+      `Conflicting BUY and SELL bias — resolved by ${via.via} fallback (FORCE_WEAK_EXECUTION): ${via.detail}`,
+    );
     strength = "weak";
     reason = direction.reason;
-    console.warn(`[auto-trade] ${symbol}: CONFLICTING bias - BLOCKED`);
+    logForced(via.side);
   } else if (sellBias) {
-    // SELL bias without momentum confirmation - WEAK, block
-    direction = {
-      type: "NO_TRADE",
-      reason: `Weak bearish signal: RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}. Requires both indicators to confirm.`,
-      blocked: true,
-    };
+    // SELL bias without momentum confirmation — FORCED (FORCE_WEAK_EXECUTION),
+    // not refused: accuracy is no longer the blocker.
+    direction = forcedOrder(
+      "SELL",
+      `Weak bearish signal — forced execution (FORCE_WEAK_EXECUTION): RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}`,
+    );
     strength = "weak";
     reason = direction.reason;
-    console.warn(`[auto-trade] ${symbol}: WEAK bearish - BLOCKED (no confirmation)`);
+    logForced("SELL");
   } else if (buyBias) {
-    // BUY bias without momentum confirmation - WEAK, block
-    direction = {
-      type: "NO_TRADE",
-      reason: `Weak bullish signal: RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}. Requires both indicators to confirm.`,
-      blocked: true,
-    };
+    // BUY bias without momentum confirmation — FORCED (FORCE_WEAK_EXECUTION).
+    direction = forcedOrder(
+      "BUY",
+      `Weak bullish signal — forced execution (FORCE_WEAK_EXECUTION): RSI=${avgRSI.toFixed(1)}, Momentum=${avgMomentum.toFixed(2)}`,
+    );
     strength = "weak";
     reason = direction.reason;
-    console.warn(`[auto-trade] ${symbol}: WEAK bullish - BLOCKED (no confirmation)`);
+    logForced("BUY");
   } else {
-    // No clear signal - NEUTRAL, block
-    direction = {
-      type: "NO_TRADE",
-      reason: `No clear direction: RSI=${avgRSI.toFixed(1)} (neutral), Momentum=${avgMomentum.toFixed(2)} (neutral). Waiting for clearer signal.`,
-      blocked: true,
-    };
+    // NO BIAS AT ALL — resolved deterministically (FORCE_WEAK_EXECUTION):
+    // candle structure, then the momentum sign, then which side of 50 the
+    // average RSI sits on. The reason names the fallback that decided.
+    const via = forcedFallback(["candle", "momentum", "rsi"]);
+    direction = forcedOrder(
+      via.side,
+      `No bias — executed via ${via.via} fallback (FORCE_WEAK_EXECUTION): ${via.detail}`,
+    );
     strength = "weak";
     reason = direction.reason;
-    console.warn(`[auto-trade] ${symbol}: NEUTRAL - BLOCKED (no signal)`);
+    logForced(via.side);
   }
 
   // ============================================================================

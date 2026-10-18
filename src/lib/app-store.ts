@@ -764,7 +764,7 @@ async function findSavedLicenseForEmail(key: string, email: string) {
         },
       };
     }
-    return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
+    return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email. If it is an older key, ask your mentor to re-issue it." };
   } catch {
     return { error: "That license key could not be checked. Please try again." };
   }
@@ -840,7 +840,7 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     licenseResult = await findSavedLicenseForEmail(clean, state.email);
   }
   if (licenseResult.error) return { error: licenseResult.error };
-  if (!licenseResult.license) return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email." };
+  if (!licenseResult.license) return { error: "That license key was not found. Confirm the key with your mentor and make sure it was issued to your email. If it is an older key, ask your mentor to re-issue it." };
   /**
    * SINGLE USE — the key is locked to the FIRST phone that activates it.
    *
@@ -869,7 +869,19 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     if (!lock.ok) return { error: lock.error ?? "That licence key could not be activated. Please try again." };
   } else {
     console.warn("[key-activation] no activation endpoint here — using the offline lock:", lock.error);
-    return await claimKeyWithoutServerOrRefuse(clean, state.email);
+    /**
+     * A REFUSAL from the offline lock ends the activation — same words as
+     * the strong one, so the rule reads once. ITS SUCCESS MUST NOT.
+     *
+     * This used to be `return await claimKeyWithoutServerOrRefuse(...)`,
+     * which handed `{}` straight back to the caller the moment the fallback
+     * lock SUCCEEDED: the key was claimed, yet activation ended right there —
+     * success toast, no robot, no paid mark, no cloud proof, and a home
+     * screen with nothing in it. Success falls through to the device bind and
+     * the robot build below, exactly like the strong lock's own success.
+     */
+    const fallback = await claimKeyWithoutServerOrRefuse(clean, state.email);
+    if (fallback.error) return fallback;
   }
   const deviceResult = bindEmailToDevice(state.email, getDeviceId());
   if (deviceResult.error) return { error: deviceResult.error };

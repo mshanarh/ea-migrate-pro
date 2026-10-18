@@ -273,13 +273,10 @@ export function validateAnalysisForExecution(analysis: AnalysisResult): {
     return { valid: false, reason: "Analysis not execution-ready" };
   }
 
-  // MODERATE OR BETTER executes. An engine setup with a confirmed direction
-  // is graded "strong" (→ STRONG/MODERATE at scanner level); "weak"/"none"
-  // are below the bar and stay refused.
-  if (analysis.strength === "weak" || analysis.strength === "none") {
-    return { valid: false, reason: `Analysis strength is ${analysis.strength} — requires MODERATE or better` };
-  }
-
+  // STRENGTH IS NO LONGER A BAR (FORCE_WEAK_EXECUTION): a directional plan
+  // executes even when the signal is weak — only a refusal, a stale quote or
+  // unverified data blocks here. The old `weak/none → refused` check is what
+  // re-created "accuracy is a blocker" for any caller of this validator.
   if (analysis.source !== "mt5_broker") {
     return {
       valid: false,

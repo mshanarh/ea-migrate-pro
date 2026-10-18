@@ -21,9 +21,10 @@ import type { BridgeCredentials } from "../src/lib/auto-trade";
  *  2. `executeAutoTrade` compared the ANALYSIS price against the BROKER'S
  *     live quote in ABSOLUTE terms (0.0005 / 0.05), refusing valid orders as
  *     "Market moved against setup" whenever the two books differed.
- *  3. NO_TRADE verdicts (WEAK/WAIT) surfaced as errors instead of
- *     "NO TRADE (weak setup|no data|stale quote)" with the engine's reason,
- *     and MODERATE-graded plans could not exist for executable setups.
+ *  3. NO_TRADE verdicts surfaced as errors instead of "NO TRADE (…)" with the
+ *     engine's reason (WAIT-class refusals — weak setups now execute under
+ *     FORCE_WEAK_EXECUTION), and MODERATE-graded plans could not exist for
+ *     executable setups.
  *
  * These tests pin the fixed behaviour at the level the trader experiences it:
  * the gate verdict, the refusal wording, the error wording, and the direction
@@ -132,10 +133,10 @@ describe("Execution gate: MODERATE or better on verified data EXECUTES", () => {
 });
 
 // ============================================================================
-// 2. WEAK / WAIT → NO TRADE with a reason, NOT an error
+// 2. Missing data → NO TRADE with a reason, NOT an error — weak now EXECUTES
 // ============================================================================
 
-describe("Refusals are NO TRADE verdicts with their reason, never errors", () => {
+describe("Missing data refuses with a reason; weak setups execute", () => {
   it("a symbol with no verified data returns ok:true — NO TRADE (no data), not an error", async () => {
     const result = await analyzeMarket({ symbol: "UNKNOWN_SYMBOL_XYZ", timeframe: "1h" });
     // The OLD behaviour returned { ok:false } here, which the scanner
@@ -156,19 +157,23 @@ describe("Refusals are NO TRADE verdicts with their reason, never errors", () =>
     expect(gate.reason, "the refusal must say WHY").toContain("Missing or unavailable broker data");
   });
 
-  it("a weak setup returns NO TRADE (weak setup) carrying the engine's reason", async () => {
-    // GBPUSD's fixture sits mid-range with no confirming structure → neutral.
+  it("a weak setup resolves to a DIRECTION and the gate executes it (FORCE_WEAK_EXECUTION)", async () => {
+    // GBPUSD's fixture sits mid-range with no confirming structure. The old
+    // engine refused it as NO TRADE (weak setup); accuracy is no longer a
+    // blocker, so it resolves to a forced direction instead and the scanner
+    // gate — which grades any confirmed direction MODERATE or better — lets
+    // it through.
     const result = await analyzeMarket({ symbol: "GBPUSD", timeframe: "1h" });
     expect(result.ok).toBe(true);
 
     const analysis = result.analysis!;
-    expect(analysis.signal).toBe("NO TRADE");
-    expect(analysis.strength).toBe("WEAK");
+    expect(analysis.signal).toBe("BUY");
+    expect(analysis.executionReady).toBe(true);
+    expect(analysis.strength).toBe("MODERATE");
 
     const gate = executionGate(analysis);
-    expect(gate.allowed).toBe(false);
-    expect(gate.headline).toBe("NO TRADE (weak setup)");
-    expect(gate.reason).toMatch(/No clear direction|neutral/i);
+    expect(gate.allowed, `the gate must let a directional plan through: ${gate.headline}`).toBe(true);
+    expect(gate.headline).toBe("EXECUTE BUY");
   });
 
   it("classifyNoTrade names the cause: weak setup / no data / stale quote", () => {

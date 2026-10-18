@@ -50,19 +50,37 @@ export async function saveVideoBlob(file: Blob): Promise<string> {
   return REF_PREFIX + id;
 }
 
-/** Copies an uploaded video into the cloud store (no-op when unconfigured). */
+/**
+ * Copies an uploaded video into the cloud store (no-op when unconfigured).
+ *
+ * BROWSER-DIRECT FIRST — the deployed site is a STATIC client build where the
+ * `createServerFn` route behind syncSaveEaVideo 404s, so this backup never
+ * landed in production and other devices had nothing to restore. The anon-key
+ * upsert in `@/lib/ea-video-cloud` is the path that must work; the server
+ * function stays as a fallback for deployments that actually run it.
+ */
 async function backupVideoToCloud(id: string, file: Blob): Promise<void> {
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+    reader.readAsDataURL(file);
+  }).catch((error) => {
+    console.warn("[media] video could not be read for cloud backup:", error);
+    return null;
+  });
+  if (!dataUrl) return;
+  try {
+    const { saveEaVideoToCloud } = await import("@/lib/ea-video-cloud");
+    if (await saveEaVideoToCloud(id, dataUrl)) return;
+  } catch (error) {
+    console.warn("[media] browser-direct video backup failed:", error);
+  }
   try {
     const { syncSaveEaVideo } = await import("@/lib/account-sync.server");
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
-      reader.readAsDataURL(file);
-    });
     await syncSaveEaVideo({ data: { videoId: id, dataUrl } });
   } catch {
-    /* offline or cloud not configured — the local copy still works */
+    /* static build: the server route 404s — the local copy still works */
   }
 }
 
@@ -79,13 +97,31 @@ export async function loadVideoUrl(ref: string): Promise<string | null> {
   });
   db.close();
   if (blob) return URL.createObjectURL(blob);
-  // Local blob evicted — silently restore it from the cloud backup (if any)
-  // so the mentor never has to re-upload. Restored blobs are re-cached locally.
+  // Local blob evicted — restore it from the cloud backup (if any) so the
+  // mentor never has to re-upload. Restored blobs are re-cached locally.
+  // BROWSER-DIRECT FIRST: the server function 404s on the static build, so
+  // this restore path was dead in production and never worked on any other
+  // device.
   try {
-    const { syncLoadEaVideo } = await import("@/lib/account-sync.server");
-    const backup = await syncLoadEaVideo({ data: { videoId: id } });
-    if (!backup.enabled || !backup.dataUrl) return null;
-    const response = await fetch(backup.dataUrl);
+    let dataUrl: string | null = null;
+    try {
+      const { loadEaVideoFromCloud } = await import("@/lib/ea-video-cloud");
+      dataUrl = await loadEaVideoFromCloud(id);
+    } catch (error) {
+      console.warn("[media] browser-direct video restore failed:", error);
+    }
+    if (!dataUrl) {
+      // Legacy fallback for deployments that DO run server functions.
+      try {
+        const { syncLoadEaVideo } = await import("@/lib/account-sync.server");
+        const backup = await syncLoadEaVideo({ data: { videoId: id } });
+        if (backup.enabled) dataUrl = backup.dataUrl;
+      } catch {
+        /* static build: the route 404s */
+      }
+    }
+    if (!dataUrl) return null;
+    const response = await fetch(dataUrl);
     const restored = await response.blob();
     const db2 = await openDb();
     await new Promise<void>((resolve) => {
@@ -114,18 +150,31 @@ export async function deleteVideoBlob(ref: string | undefined): Promise<void> {
   });
   db.close();
   // Remove the cloud backup too — only an explicit delete/replace reaches here.
+  // Browser-direct first — the server function 404s on the static build.
+  try {
+    const { deleteEaVideoFromCloud } = await import("@/lib/ea-video-cloud");
+    await deleteEaVideoFromCloud(id);
+  } catch (error) {
+    console.warn("[media] browser-direct video delete failed:", error);
+  }
   try {
     const { syncDeleteEaVideo } = await import("@/lib/account-sync.server");
     await syncDeleteEaVideo({ data: { videoId: id } });
   } catch {
-    /* ignore */
+    /* static build: the route 404s — the local delete already happened */
   }
 }
 
 /* ── Cross-device travel helpers ─────────────────────────────────────────── */
 
-/** Largest video inlined into the cloud mirror (an ~8 MB data URL row). */
-const CLOUD_VIDEO_MAX_BYTES = 8 * 1024 * 1024;
+/**
+ * Largest video inlined into the cloud mirror (a ~20 MB data URL row). A
+ * 50 MB upload is still capped, but normal EA videos travel — at the old
+ * 8 MB this silently dropped EVERY typical demo video, mirrorAccount saved
+ * the EA with no video, and the app honestly reported "no video uploaded"
+ * for a video that existed.
+ */
+const CLOUD_VIDEO_MAX_BYTES = 20 * 1024 * 1024;
 /** Data URLs above this size never ride inside localStorage robots — they are
  * stashed in IndexedDB and the robot keeps a tiny `idb-video:` ref instead. */
 const INLINE_VIDEO_MAX_CHARS = 768 * 1024;
@@ -143,10 +192,22 @@ export async function inlineVideoForCloud(video: string | undefined): Promise<st
   if (!video.startsWith(REF_PREFIX)) return video;
   try {
     const url = await loadVideoUrl(video);
-    if (!url) return undefined;
+    if (!url) {
+      console.warn(
+        `[media] video ${video} could not be read for cloud travel; the app will show no video`,
+      );
+      return undefined;
+    }
     try {
       const blob = await (await fetch(url)).blob();
-      if (blob.size > CLOUD_VIDEO_MAX_BYTES) return undefined;
+      if (blob.size > CLOUD_VIDEO_MAX_BYTES) {
+        // NEVER SILENT — the EA editor shows its own warning for this state,
+        // and the console says exactly what will happen on other devices.
+        console.warn(
+          `[media] video too large to travel to the cloud record (${(blob.size / (1024 * 1024)).toFixed(1)} MB); the app will show no video`,
+        );
+        return undefined;
+      }
       return await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
         reader.onload = () => resolve(String(reader.result));
@@ -156,8 +217,31 @@ export async function inlineVideoForCloud(video: string | undefined): Promise<st
     } finally {
       URL.revokeObjectURL(url);
     }
-  } catch {
+  } catch (error) {
+    console.warn("[media] video cloud travel failed:", error);
     return undefined;
+  }
+}
+
+/**
+ * What the EA editor asks before saving: is this video too large to ride
+ * inside the cloud record? True only for an IndexedDB ref whose blob exceeds
+ * `CLOUD_VIDEO_MAX_BYTES` — the editor shows its visible warning for that
+ * state instead of the mirror dropping the video silently.
+ */
+export async function videoTooLargeForCloud(ref: string | undefined): Promise<boolean> {
+  if (!ref || !ref.startsWith(REF_PREFIX)) return false; // data/http URLs travel as-is
+  try {
+    const url = await loadVideoUrl(ref);
+    if (!url) return false;
+    try {
+      const blob = await (await fetch(url)).blob();
+      return blob.size > CLOUD_VIDEO_MAX_BYTES;
+    } finally {
+      URL.revokeObjectURL(url);
+    }
+  } catch {
+    return false;
   }
 }
 

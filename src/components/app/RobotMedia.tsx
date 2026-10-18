@@ -159,15 +159,16 @@ export function VideoBackdrop({
   if (showImageWhenInactive) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        <img src={image} alt="" className="size-full object-cover opacity-50" />
-        <div className="absolute inset-0 bg-black/45" />
+        {/* THE PICTURE IS THE POINT — full strength, no darkening layers over
+            it. This used to stack opacity-50 + a black/45 wash + a radial
+            scrim to 0.94 + a heavy bottom gradient, so the uploaded EA
+            picture was effectively invisible behind black. */}
+        <img src={image} alt="" className="size-full object-cover opacity-95" />
+        {/* ONE slim gradient keeps bottom navigation and text readable; the
+            accent tint keeps the theme's edge glow. */}
         <div
-          className="absolute inset-0"
-          style={{ background: `radial-gradient(ellipse 90% 55% at 50% 25%, transparent 0%, rgba(0,0,0,0.72) 72%, rgba(0,0,0,0.94) 100%)` }}
-        />
-        <div
-          className="absolute inset-x-0 bottom-0 h-56"
-          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.92) 70%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+          className="absolute inset-x-0 bottom-0 h-24"
+          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55)), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
         />
       </div>
     );

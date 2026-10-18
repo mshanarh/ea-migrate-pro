@@ -104,6 +104,18 @@ const NOT_ENTITLED = "This email is not marked as paid. Contact admin.";
  * describe the same fact two different ways depending on who is asking.
  */
 const ALREADY_IN_USE = "License key already in use";
+/**
+ * WHAT IS SAID WHEN THE LICENCE STORE ITSELF CANNOT ANSWER — never a sentence
+ * about the key.
+ *
+ * "We could not check that licence key" reads like the customer's key is the
+ * problem, and it was the answer for BOTH stores failing: a transient KV blip
+ * that fell through to the legacy database, and that database being gone for
+ * good. The words now name the real situation — the store is busy, the key is
+ * fine, a moment resolves it — so a customer is never sent to their mentor
+ * about a key that was never the issue.
+ */
+const LICENCE_STORE_BUSY = "Licence storage is busy right now. Please try again in a moment.";
 
 /**
  * THE OWNER'S OWN ADDRESSES, hardcoded on purpose.
@@ -255,8 +267,18 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
       if (record) return record.isPaid === true && record.paidAt != null;
       // No KV record yet → fall through to the legacy ledger rather than
       // locking out a paid customer who simply has not been backfilled.
-    } catch (error) {
-      console.warn("[activation] KV paid lookup failed, using legacy ledger:", error);
+    } catch (firstError) {
+      // ONE RETRY BEFORE THE LEGACY LEDGER. A single failed round trip used to
+      // decide it: the fallback below answers nothing on this deployment, so a
+      // blip turned the code step into "Something went wrong on our side" for
+      // an email that is marked paid in the store that was merely asked twice.
+      console.warn("[activation] KV paid lookup failed, retrying:", firstError);
+      try {
+        const record = await getRegistration(email);
+        if (record) return record.isPaid === true && record.paidAt != null;
+      } catch (error) {
+        console.warn("[activation] KV paid lookup failed, using legacy ledger:", error);
+      }
     }
   }
   const { data, error } = await client
@@ -647,20 +669,69 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
    *
    * A REFUSAL FROM KV IS FINAL: `alreadyInUse` is returned as-is, because a key
    * that is taken must not become claimable by falling through to a second
-   * store. Only an UNREACHABLE KV falls through.
+   * store. An UNREACHABLE KV — two failed attempts — answers the customer with
+   * LICENCE_STORE_BUSY instead of falling through, because the store below
+   * lives in the legacy database and its only answer to an outage was the
+   * sentence that blamed the key. It is still what runs when KV is simply not
+   * configured here.
    */
   if (storeConfigured()) {
-    try {
-      const { claimLicenceKeyForEmail } = await import("./licenses.js");
-      const outcome = await claimLicenceKeyForEmail(key, email);
-      if (outcome.ok) return { ok: true };
-      return { ok: false, alreadyInUse: true, error: outcome.error ?? ALREADY_IN_USE };
-    } catch (error) {
-      console.warn(
-        "[activation] KV key claim unavailable, using the users.license_key lock:",
-        error instanceof Error ? error.message : error,
-      );
+    const { claimLicenceKeyForEmail, holderOfClaimLock } = await import("./licenses.js");
+    /**
+     * THE WITNESS READ — taken BEFORE the claim so a lost answer can be told
+     * from a spent key. `alreadyInUse` alone says neither: a `SET … NX` that
+     * committed with its response dropped on a mobile network is
+     * indistinguishable from a key this account activated long ago, and
+     * answering "already in use" to the first case strands the customer on
+     * their own key forever.
+     */
+    const before = await holderOfClaimLock(key);
+    let outcome: Awaited<ReturnType<typeof claimLicenceKeyForEmail>> | null = null;
+    let failure: unknown = null;
+    for (let attempt = 0; attempt < 2 && !outcome; attempt++) {
+      // A brief pause before the second shot: blips on Redis round trips are
+      // measured in hundreds of milliseconds, and an immediate re-ask lands in
+      // the same window often enough to be worthless.
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, 250));
+      try {
+        outcome = await claimLicenceKeyForEmail(key, email);
+      } catch (error) {
+        failure = error;
+        console.warn(
+          "[activation] KV key claim attempt " + (attempt + 1) + " failed:",
+          error instanceof Error ? error.message : error,
+        );
+      }
     }
+    if (!outcome) {
+      /**
+       * KV IS THE CONFIGURED STORE AND BOTH ATTEMPTS FAILED. Falling through
+       * to `users.license_key` is what used to happen — that table lives in
+       * the legacy database, which no longer answers, so every read failed
+       * and the customer saw "We could not check that licence key": words
+       * that blame their key for an outage. This names the truth, and it
+       * resolves when the customer tries again in a moment.
+       */
+      console.warn(
+        "[activation] KV key claim unreachable after retry:",
+        failure instanceof Error ? failure.message : failure,
+      );
+      return { ok: false, error: LICENCE_STORE_BUSY };
+    }
+    if (outcome.ok) return { ok: true };
+    const heldBy = (outcome.heldBy ?? "").trim().toLowerCase();
+    if (outcome.alreadyInUse && heldBy === email && before.answered && before.holder === null) {
+      /**
+       * EMPTY HOLDER BEFORE WE CLAIMED, OUR OWN EMAIL IN THE OUTCOME NOW —
+       * this request's own write committed and only its answer was lost.
+       * The lock is already theirs; accepting it is the only way a dropped
+       * response stops being a permanent refusal. A key whose holder was set
+       * BEFORE this request still refuses (before.holder non-null), spent
+       * key or not — the rule the customer asked for stands.
+       */
+      return { ok: true };
+    }
+    return { ok: false, alreadyInUse: true, error: outcome.error ?? ALREADY_IN_USE };
   }
 
   let mine: string[];
@@ -673,7 +744,7 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
       .limit(1);
     if (error) {
       console.warn("[activation] lock read failed:", error.message);
-      return { ok: false, error: "We could not check that licence key. Please try again." };
+      return { ok: false, error: LICENCE_STORE_BUSY };
     }
     mine = parseKeyList(((data ?? []) as Array<{ license_key?: string | null }>)[0]?.license_key);
     owners = await holdersOf(client, key);
@@ -682,7 +753,7 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
       "[activation] lock lookup failed:",
       error instanceof Error ? error.message : error,
     );
-    return { ok: false, error: "We could not check that licence key. Please try again." };
+    return { ok: false, error: LICENCE_STORE_BUSY };
   }
 
   if (owners.some((owner) => owner !== email)) {
