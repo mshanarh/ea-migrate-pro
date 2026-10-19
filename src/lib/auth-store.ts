@@ -672,34 +672,45 @@ export async function addLicense(
   plan: string,
   key: string,
   details: Partial<Omit<License, "id" | "key" | "plan" | "issuedAt" | "active">> = {},
-  /** The admin panel issues keys by its own authority — limit does not block it. */
-  opts: { bypassLimit?: boolean } = {},
+  opts: {
+    /** The admin panel issues keys by its own authority — limit does not block it. */
+    bypassLimit?: boolean;
+    /**
+     * THE CALLER ALREADY CHECKED THE CAP — do not check it again.
+     *
+     * The Generate License screen enforces the admin's cap itself (and shows
+     * the exact refusal there), so letting `addLicense` repeat the same two
+     * cloud lookups doubled the wait before a key appeared — the second check
+     * could not change the outcome, it only added latency. There is still
+     * exactly one enforcement, and the rules are identical either way.
+     */
+    limitAlreadyChecked?: boolean;
+  } = {},
 ): Promise<{ error?: string; license?: License }> {
   load();
   const account = state.accounts.find((a) => a.id === id);
   if (!account) return { error: "Mentor account not found." };
   if (!details.eaId) return { error: "Choose an Expert Advisor." };
-  if (!opts.bypassLimit) {
+  if (!opts.bypassLimit && !opts.limitAlreadyChecked) {
     // Enforce the cap against the LIVE database value (app_settings
     // limit:<email>), not the local account snapshot — the local
     // licenseLimit field is only a cache and can be 0 while the DB has
-    // 800, which would wrongly block key creation.
+    // 800, which would wrongly block key creation. Both reads carry a hard
+    // deadline, so a dead store delays this call once, not for a minute.
     try {
-      const { getLicenseCapForEmail, countKeysForEmail } = await import(
-        "@/lib/admin-store"
-      );
-      const cap = await getLicenseCapForEmail(account.email);
-      if (cap !== null) {
-        const used = await countKeysForEmail(account.email);
-        if (used >= cap) {
-          return {
-            error:
-              cap === 0
-                ? "The admin has not allowed you any license keys yet."
-                : `You have used all ${cap} of your license keys. Ask your
+      const { licenseAllowanceForEmail } = await import("@/lib/admin-store");
+      const { cap, used } = await licenseAllowanceForEmail({
+        email: account.email,
+        localUsed: account.licenses.length,
+      });
+      if (cap !== null && used >= cap) {
+        return {
+          error:
+            cap === 0
+              ? "The admin has not allowed you any license keys yet."
+              : `You have used all ${cap} of your license keys. Ask your
                    administrator to raise your limit.`,
-          };
-        }
+        };
       }
     } catch {
       /* never block key creation on a limit lookup failure */

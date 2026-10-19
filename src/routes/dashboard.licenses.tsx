@@ -340,34 +340,44 @@ function Licenses() {
     // user; this is where a USER creates one. The cap and the current usage
     // are read live from the database, so the limit the admin set is the
     // limit that actually applies. A cap of 0 means no keys at all.
+    //
+    // FAST BY CONSTRUCTION: both reads run together under a ~4s deadline, so a
+    // dead Upstash cannot hold the button. When the cap read loses that race
+    // the page's own `allowed` value stands in (it is refreshed every 15s and
+    // is what the mentor already sees), and when the count read loses it the
+    // local `used` stands in. The key is never blocked by a lookup failure.
     try {
-      const { getLicenseCapForEmail, countKeysForEmail } = await import("@/lib/admin-store");
+      const { licenseAllowanceForEmail } = await import("@/lib/admin-store");
       // Same three-step resolution the page renders from, so what the button
       // allows can never disagree with the allowance shown above it.
-      const cap = (await getLicenseCapForEmail(account.email)) ?? allowed;
-      if (cap !== null) {
-        const used = await countKeysForEmail(account.email);
-        if (used >= cap) {
-          setFormError(
-            cap === 0
-              ? "Your administrator has not allowed you any license keys yet."
-              : `You have used all ${cap} of your license keys. Ask your administrator to raise your limit.`,
-          );
-          return;
-        }
+      const { cap, used: liveUsed } = await licenseAllowanceForEmail({
+        email: account.email,
+        fallbackCap: allowed,
+        localUsed: used,
+      });
+      if (cap !== null && liveUsed >= cap) {
+        setFormError(
+          cap === 0
+            ? "Your administrator has not allowed you any license keys yet."
+            : `You have used all ${cap} of your license keys. Ask your administrator to raise your limit.`,
+        );
+        return;
       }
     } catch {
       /* never block key creation on a limit lookup failure */
     }
     const key = generateKey();
     const recipient = clientEmail.trim() || account.email;
+    // `limitAlreadyChecked` — this function enforced the cap above. Without
+    // it addLicense would repeat the identical two lookups before writing the
+    // key, doubling the wait for a verdict that cannot change.
     const result2 = await addLicense(account.id, expiry, key, {
       name: keyName.trim(),
       clientEmail: clientEmail.trim() || undefined,
       eaId: selectedEa.id,
       eaNameHash: selectedEa.eaNameHash,
       expiry,
-    });
+    }, { limitAlreadyChecked: true });
     if (result2.error) {
       setFormError(result2.error);
       return;

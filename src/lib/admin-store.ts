@@ -626,6 +626,83 @@ export async function countKeysForEmail(email: string): Promise<number> {
 }
 
 /**
+ * HOW LONG KEY CREATION MAY WAIT ON A CLOUD LOOKUP.
+ *
+ * Upstash KV can be slow or unreachable, and the two lookups above each carry
+ * their own 10–12 second client deadline (with a retry on the count), which
+ * used to leave the Generate button spinning for a minute or more before the
+ * Supabase fallback even started. A cap read is a convenience check, not the
+ * licence itself: four seconds is enough for a healthy single Redis round
+ * trip, and past it the caller must answer from what it already has.
+ */
+export const LICENSE_LOOKUP_DEADLINE_MS = 4_000;
+
+/**
+ * Resolve with `task`'s value, or with `fallback` once `deadlineMs` passes —
+ * whichever happens first. A rejected task is treated exactly like a slow one
+ * (the existing "never block key creation on a lookup failure" rule).
+ *
+ * The abandoned task is NOT cancelled: it is a read, it owns its own client
+ * deadline, and a late answer is simply ignored.
+ */
+export function withinDeadline<T>(
+  task: Promise<T>,
+  fallback: T,
+  deadlineMs: number = LICENSE_LOOKUP_DEADLINE_MS,
+): Promise<T> {
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => resolve(fallback), deadlineMs);
+    const settle = (value: T) => {
+      clearTimeout(timer);
+      resolve(value);
+    };
+    task.then(settle, () => settle(fallback));
+  });
+}
+
+export type LicenseAllowance = {
+  /** The cap that applies, or null when nobody set one (unlimited). */
+  cap: number | null;
+  /** Keys already issued to this email — never lower than the local count. */
+  used: number;
+};
+
+/**
+ * THE CAP AND THE USAGE, READ WITHIN A HARD DEADLINE.
+ *
+ * Both reads run in PARALLEL and each is bounded by `deadlineMs`, so a dead
+ * store costs the caller one deadline in total, never two in sequence. When a
+ * read cannot answer in time:
+ *   • the cap falls back to `fallbackCap` (the page's own `allowed` value —
+ *     what the mentor is already shown), and
+ *   • the count falls back to `localUsed` (the keys this device already knows
+ *     about), which can only make the check stricter, never looser.
+ * The cap rules themselves are unchanged: `cap === null` means no cap, and the
+ * callers keep their own wording for `used >= cap`.
+ */
+export async function licenseAllowanceForEmail(opts: {
+  email: string;
+  fallbackCap?: number | null;
+  localUsed?: number;
+  deadlineMs?: number;
+}): Promise<LicenseAllowance> {
+  const rawLocal = opts.localUsed ?? 0;
+  const localUsed = Number.isFinite(rawLocal) ? Math.max(0, Math.floor(rawLocal)) : 0;
+  const fallbackCap = typeof opts.fallbackCap === "number" ? opts.fallbackCap : null;
+  const clean = opts.email.trim().toLowerCase();
+  if (!clean) return { cap: fallbackCap, used: localUsed };
+  const deadline = opts.deadlineMs ?? LICENSE_LOOKUP_DEADLINE_MS;
+  const [capValue, liveUsed] = await Promise.all([
+    withinDeadline(getLicenseCapForEmail(clean), null, deadline),
+    withinDeadline(countKeysForEmail(clean), localUsed, deadline),
+  ]);
+  return {
+    cap: capValue ?? fallbackCap,
+    used: Math.max(localUsed, liveUsed),
+  };
+}
+
+/**
  * The license cap for one email (0 when the admin never set one). The key
  * creation path calls this so a user cannot mint more keys than allowed.
  * Fails OPEN at `fallback` — the caller passes its existing account limit so
