@@ -308,3 +308,82 @@ describe("the security rules, unchanged by any of this", () => {
     expect(supabase.reads, "the fallback read is the old behaviour, not a new one").toBeGreaterThan(0);
   });
 });
+
+/**
+ * THE GUARD'S FIRST PAINT — `peekAccessVerdict`.
+ *
+ * Every /app route guard reads this before it touches the network. It must
+ * answer the cached verdict SYNCHRONOUSLY (the value, never a promise) and
+ * only return `null` when there is nothing to render — while the security
+ * rules are exactly the ones `requireVerifiedAccess` applies.
+ */
+describe("peekAccessVerdict — synchronous, cache-first guard answers", () => {
+  it("answers from a warm cache with no network call at all", async () => {
+    const { appStore, gate } = await loadGate();
+    seedSession(appStore);
+    await gate.requireVerifiedAccess(EMAIL); // one round trip fills the cache
+    expect(checkAccessCalls()).toBe(1);
+    supabase.reads = 0;
+
+    // Synchronous: this is a verdict, not a promise to await.
+    const verdict = gate.peekAccessVerdict(EMAIL);
+    expect(verdict).not.toBeNull();
+    expect(verdict?.action).toBe("pass");
+    expect(checkAccessCalls(), "a warm tap must not touch the network").toBe(1);
+    expect(supabase.reads, "the binding came with the cached answer").toBe(0);
+  });
+
+  it("returns null with no cached verdict so the guard awaits the cloud once", async () => {
+    const { appStore, gate } = await loadGate();
+    seedSession(appStore);
+
+    expect(gate.peekAccessVerdict(EMAIL)).toBeNull();
+    expect(checkAccessCalls()).toBe(0);
+  });
+
+  it("any cached age still renders instantly and revalidates in the background", async () => {
+    const { appStore, gate } = await loadGate();
+    seedSession(appStore);
+    vi.useFakeTimers({ toFake: ["Date"] });
+    await gate.requireVerifiedAccess(EMAIL);
+    expect(checkAccessCalls()).toBe(1);
+
+    // Well past the five-minute freshness window (and even the stale one).
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+    const verdict = gate.peekAccessVerdict(EMAIL);
+    expect(verdict?.action, "a long-idle tab still paints from the cache").toBe("pass");
+
+    // …and the cloud is asked immediately behind that paint.
+    await vi.waitFor(() => expect(checkAccessCalls()).toBe(2));
+  });
+
+  it("still BLOCKS a cached revoked verdict and ends the session", async () => {
+    const { appStore, gate } = await loadGate();
+    seedSession(appStore);
+    access = {
+      status: 200,
+      payload: {
+        ok: true,
+        isPaid: false,
+        status: "revoked",
+        deviceBinding: { deviceEmail: EMAIL, deviceId: DEVICE },
+      },
+    };
+    expect((await gate.requireVerifiedAccess(EMAIL)).action).toBe("deactivate");
+
+    const verdict = gate.peekAccessVerdict(EMAIL);
+    expect(verdict?.action, "a cached refusal still blocks").toBe("deactivate");
+    expect(appStore.getAppState().email).toBeNull();
+  });
+
+  it("still signs out when the cached binding belongs to ANOTHER device", async () => {
+    const { appStore, gate } = await loadGate();
+    seedSession(appStore);
+    paidAnswer({ deviceEmail: EMAIL, deviceId: "someone-elses-phone" });
+    await gate.requireVerifiedAccess(EMAIL); // ends the session, caches the mismatch
+
+    const verdict = gate.peekAccessVerdict(EMAIL);
+    expect(verdict?.action).toBe("signin");
+    expect(appStore.getAppState().email).toBeNull();
+  });
+});

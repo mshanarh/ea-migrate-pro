@@ -369,13 +369,16 @@ export function peekAccessVerdict(email: string | null | undefined): AppAccessCh
   // No entry (or one the server could not decide) → the caller must await.
   if (!cached || cached.status === null) return null;
   const age = Date.now() - cached.at;
-  // Beyond the stale-while-revalidate window the entry is dead, not stale: ask
-  // the cloud rather than show a verdict this old.
-  if (age >= MAX_STALE_MS) return null;
   const ttl =
     cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
-  // Past its TTL (or missing the binding) → revalidate in the background. The
-  // screen still renders from the answer below; nothing here waits on it.
+  /**
+   * ANY cached verdict renders instantly — including one older than the stale
+   * window. A tab left open for an hour and then tapped is the common case,
+   * and awaiting the cloud there reintroduced exactly the splash this function
+   * removes. The cloud is re-asked IMMEDIATELY behind the paint, and the home
+   * screen's 15s poll plus every later navigation apply the fresh answer — so
+   * a revocation still lands within one round trip, not on the next tap.
+   */
   if (age >= ttl || !cached.bindingKnown) revalidateInBackground(clean);
 
   // The dashboard may have just marked this email paid from another device; a
