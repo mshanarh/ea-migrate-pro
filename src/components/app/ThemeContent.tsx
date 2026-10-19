@@ -1,3 +1,5 @@
+import { useEffect, useRef, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 import { motion } from "framer-motion";
 import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
@@ -318,7 +320,15 @@ export function ThemeContent(props: ThemeContentProps) {
 
   // Read persisted preference
   useEffect(() => {
-    setMediaDim(readMediaDim());
+    const load = async () => {
+      try {
+        const cached = localStorage.getItem("eamp.theme.media-dim");
+        if (cached !== null) setMediaDim(JSON.parse(cached));
+      } catch {
+        // no persisted preference yet; rely on default
+      }
+    };
+    load();
   }, []);
 
   // The HOME double-press video — ONE universal backdrop for every interface
@@ -335,6 +345,7 @@ export function ThemeContent(props: ThemeContentProps) {
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
         videoWhenActive
+        // REMOVE: ThemeContentInner no longer accepts this prop
       />
       <ThemeContentInner {...props} />
     </>
