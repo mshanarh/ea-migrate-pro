@@ -46,6 +46,27 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset", "awaiting", "license"]);
 
 /**
+ * AN ACTIVATED SESSION LANDING ON ?pay=1 — ask the cloud ONCE, not the person.
+ *
+ * /app/home sends an account it believes is unpaid here with ?pay=1. But a
+ * customer whose key just activated (or whose ledger read was simply slow) is
+ * NOT required to type their email and wait for a NEW six-digit code again:
+ * the store on this device already holds the activated robot.
+ *
+ * When that is the case this screen runs ONE fresh resolveCloudAccess instead
+ * of painting the email form. Paid/admin → straight into /app/home. Unpaid or
+ * revoked → exactly today's screen (plans / deactivation notice): those are
+ * the admin's explicit word, and they still own the decision.
+ */
+function activatedSessionOnPayLanding(): boolean {
+  if (typeof window === "undefined") return false;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get("pay") !== "1") return false;
+  const email = getAppState().email;
+  return Boolean(email) && getAppState().robots.length > 0;
+}
+
+/**
  * Support contact shown wherever the customer has to finish something by hand.
  * These are the same addresses the marketing FAQ quotes, so the copy matches
  * what they have been told elsewhere on the site.
@@ -218,6 +239,12 @@ function AppAccess() {
   // while it was signed in. The gate ended the session and sent it here;
   // the notice below is what the person is told.
   const [deactivated, setDeactivated] = useState(false);
+  /**
+   * ?pay=1 ON AN ACTIVATED DEVICE — read ONCE at mount, before the first
+   * paint, so the email form never flashes for a session that already owns a
+   * robot. See `activatedSessionOnPayLanding` above.
+   */
+  const [activatedPayCheck] = useState(activatedSessionOnPayLanding);
   // EMAIL ALREADY USED — the email is bound to another device in the CLOUD.
   // The sign-in form swaps for a blocked card: the user must ask their
   // mentor to release the device (Re-activate Client in the mentor portal).
@@ -310,6 +337,38 @@ function AppAccess() {
     }
     setEpochCleared(true);
   }, []);
+
+  useEffect(() => {
+    if (!activatedPayCheck || !epochCleared) return;
+    const sessionEmail = getAppState().email;
+    if (!sessionEmail) return;
+    let cancelled = false;
+    void (async () => {
+      // FRESH on purpose — this is the one call that decides whether an
+      // already-activated session has to see the door again. Undecided (`null`)
+      // is not a refusal: it falls to today's screen, and the route guard on
+      // /app/home re-runs the decision when they tap through.
+      const status = await withDeadline(resolveCloudAccess(sessionEmail, { fresh: true }), 15_000, null);
+      if (cancelled) return;
+      if (status === "paid" || status === "admin") {
+        // Mirror the verdict locally so the app paints entitled on the way in,
+        // drop the refusal flags from the URL, and open the app.
+        markEmailPaid(sessionEmail);
+        setPayPrompt(false);
+        setDeactivated(false);
+        if (typeof window !== "undefined") window.history.replaceState({}, "", "/app/login");
+        window.location.replace("/app/home");
+        return;
+      }
+      // UNPAID / REVOKED / UNDECIDED — today's behaviour. The existing effects
+      // (the plan card, the deactivation notice, the cloud poll) own the screen
+      // from here; `resuming` is released so they may run.
+      setResuming(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [activatedPayCheck, epochCleared]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -483,6 +542,8 @@ function AppAccess() {
    */
   useEffect(() => {
     if (!epochCleared || !resuming) return;
+    // The activated-session check above owns this decision when it applies.
+    if (activatedPayCheck) return;
     const sessionEmail = getAppState().email;
     if (!sessionEmail) {
       setResuming(false);

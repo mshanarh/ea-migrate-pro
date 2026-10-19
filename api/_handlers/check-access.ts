@@ -164,11 +164,26 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   // Server-side only now — this file never ships KV client code to the browser.
   const { isAdminEmail, getRegistration } = await import("./_registry.js");
 
-  let answer: AccessAnswer;
+  let answer: AccessAnswer | null = null;
   if (isAdminEmail(email)) {
     answer = { ok: true, isPaid: true, status: "admin" };
   } else {
-    const record = await getRegistration(email);
+    /**
+     * THE STORE'S EXPLICIT WORD WINS — paid, revoked and rejected are the
+     * owner's decisions and are never second-guessed below.
+     *
+     * A FAILED READ IS NOT A VERDICT. `getRegistration` throws when the KV REST
+     * call times out, and that used to fail this whole endpoint (the client
+     * reads the failure as "unpaid" and bounces a paying customer to
+     * checkout). A timeout therefore falls THROUGH to the proven fallbacks
+     * instead of deciding anything.
+     */
+    let record: Awaited<ReturnType<typeof getRegistration>> = null;
+    try {
+      record = await getRegistration(email);
+    } catch (error) {
+      console.warn("[check-access] registration store unavailable:", error);
+    }
     if (record) {
       if (record.isPaid && record.paidAt) {
         answer = { ok: true, isPaid: true, status: "paid", paidAt: record.paidAt };
@@ -176,15 +191,28 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
         answer = { ok: true, isPaid: false, status: "revoked" };
       } else if (record.status === "rejected") {
         answer = { ok: true, isPaid: false, status: "rejected" };
+      }
+      // A record that simply has no payment (or an unreadable store) is not a
+      // refusal — fall through to the ledger and the claimed-key proof below.
+    }
+    if (!answer) {
+      // Fallback 1: the same payment ledger the console reads.
+      const paid = await paidEmailInSupabase(email);
+      if (paid) {
+        answer = { ok: true, isPaid: true, status: "paid", paidAt: paid };
+      } else if (await claimedLicenseKeyProof(email, deviceId)) {
+        // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
+        //
+        // api/activation.ts writes `users.license_key` only after the paid
+        // check AND the single-use claim succeeded for THIS account, so the
+        // column is holder-bound server-side proof — never something a browser
+        // can set. Without this, a customer who just activated a key is
+        // answered "unpaid" here (their money lives in the key, not in the
+        // ledger) and is sent back to the email + code form.
+        answer = { ok: true, isPaid: true, status: "paid" };
       } else {
         answer = { ok: true, isPaid: false, status: "unpaid" };
       }
-    } else {
-      // Fallback: the same payment ledger the console reads, when KV has no record.
-      const paid = await paidEmailInSupabase(email);
-      answer = paid
-        ? { ok: true, isPaid: true, status: "paid", paidAt: paid }
-        : { ok: true, isPaid: false, status: "unpaid" };
     }
   }
 
@@ -199,6 +227,35 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
     }
   }
   return answer;
+}
+
+/**
+ * DOES THIS ACCOUNT HOLD A CLAIMED LICENCE KEY?
+ *
+ * Reads the same `users` row the binding comes from and treats a non-empty
+ * `license_key` as proof of access — see the call site for why it cannot be
+ * forged. The device rule is the existing one: when the row is bound to a
+ * device and the caller names a different one, the account is activated on
+ * another phone and must be answered unpaid.
+ */
+async function claimedLicenseKeyProof(email: string, requestDeviceId: string | null): Promise<boolean> {
+  const db = await serviceClient();
+  if (!db) return false;
+  try {
+    const { data, error } = await db
+      .from("users")
+      .select("license_key, device_id")
+      .eq("email", email)
+      .maybeSingle();
+    if (error || !data) return false;
+    const row = data as { license_key?: string | null; device_id?: string | null };
+    const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
+    if (!key) return false;
+    if (row.device_id && requestDeviceId && row.device_id !== requestDeviceId) return false;
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 async function paidEmailInSupabase(email: string): Promise<string | null> {
