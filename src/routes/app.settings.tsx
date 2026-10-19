@@ -10,7 +10,7 @@ import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { usePlatform } from "@/lib/platform";
 import { getAppState, leaveForCheckout } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
 import {
@@ -27,18 +27,29 @@ import {
 
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: () => {
     // Cloud-verified gates: no email → app login; a local "paid" record the
     // database does not confirm → Whop checkout.
-    const access = await requireVerifiedAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    // Access revoked by the owner (Set unpaid) — the gate signed the session
-    // out; hand them the first page with the notice.
-    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
-    if (access.action === "pay") {
-      leaveForCheckout();
-      throw redirect({ href: "/app/login?pay=1" });
+    //
+    // PAINT FIRST — the cached verdict renders synchronously and the cloud is
+    // re-asked behind the screen (see peekAccessVerdict).
+    const apply = (access: AppAccessCheck) => {
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      // Access revoked by the owner (Set unpaid) — the gate signed the session
+      // out; hand them the first page with the notice.
+      if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+      if (access.action === "pay") {
+        leaveForCheckout();
+        throw redirect({ href: "/app/login?pay=1" });
+      }
+    };
+    const email = getAppState().email;
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [

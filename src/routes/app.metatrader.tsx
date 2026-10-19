@@ -6,7 +6,7 @@ import { AlertTriangle, ChevronDown, ChevronsRight, Clock, Database, Eye, EyeOff
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { connectMt, disconnectMt, getAppState, leaveForCheckout, useAppState, type MtAccount } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
@@ -16,18 +16,29 @@ import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.serv
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: () => {
     // Cloud-verified gates: no email → app login; a local "paid" record the
     // database does not confirm → Whop checkout.
-    const access = await requireVerifiedAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    // Access revoked by the owner (Set unpaid) — the gate signed the session
-    // out; hand them the first page with the notice.
-    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
-    if (access.action === "pay") {
-      leaveForCheckout();
-      throw redirect({ href: "/app/login?pay=1" });
+    //
+    // PAINT FIRST — the cached verdict renders synchronously and the cloud is
+    // re-asked behind the screen (see peekAccessVerdict).
+    const apply = (access: AppAccessCheck) => {
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      // Access revoked by the owner (Set unpaid) — the gate signed the session
+      // out; hand them the first page with the notice.
+      if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+      if (access.action === "pay") {
+        leaveForCheckout();
+        throw redirect({ href: "/app/login?pay=1" });
+      }
+    };
+    const email = getAppState().email;
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [

@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
 import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
 import { supabaseConfigured } from "@/lib/supabase";
@@ -28,20 +28,31 @@ async function withAnonFallback<T>(serverCall: () => Promise<T>, anonCall: () =>
 
 export const Route = createFileRoute("/app/admin")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: () => {
     // Same gates as the rest of the app, cloud-verified: no email →
     // /app/login; an unpaid one → the checkout card on that page. An
     // external URL is not a valid router location, so the hop to Whop is
     // done by the login page itself.
-    const access = await requireVerifiedAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    // Access revoked by the owner (Set unpaid) — the gate signed the session
-    // out; hand them the first page with the notice.
-    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
-    if (access.action === "pay") {
-      leaveForCheckout();
-      throw redirect({ href: "/app/login?pay=1" });
+    //
+    // PAINT FIRST — the cached verdict renders synchronously and the cloud is
+    // re-asked behind the screen (see peekAccessVerdict).
+    const apply = (access: AppAccessCheck) => {
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      // Access revoked by the owner (Set unpaid) — the gate signed the session
+      // out; hand them the first page with the notice.
+      if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+      if (access.action === "pay") {
+        leaveForCheckout();
+        throw redirect({ href: "/app/login?pay=1" });
+      }
+    };
+    const email = getAppState().email;
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [

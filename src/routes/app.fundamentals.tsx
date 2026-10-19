@@ -9,33 +9,43 @@ import {
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
 
 export const Route = createFileRoute("/app/fundamentals")({
   ssr: false,
-  beforeLoad: async () => {
-    try {
-      // Cloud-verified gates: no email → app login; a local "paid" record the
-      // database does not confirm → Whop checkout.
-      const access = await requireVerifiedAccess(getAppState().email);
-      if (access.action === "signin") throw redirect({ href: "/app/login" });
-      // Access revoked by the owner (Set unpaid) — the gate signed the session
-      // out; hand them the first page with the notice.
-      if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
-      if (access.action === "pay") {
-        leaveForCheckout();
-        throw redirect({ href: "/app/login?pay=1" });
+  beforeLoad: () => {
+    // PAINT FIRST — a warm access cache answers synchronously and the cloud is
+    // re-asked behind the screen (see peekAccessVerdict).
+    const apply = (access: AppAccessCheck) => {
+      try {
+        // Cloud-verified gates: no email → app login; a local "paid" record the
+        // database does not confirm → Whop checkout.
+        if (access.action === "signin") throw redirect({ href: "/app/login" });
+        // Access revoked by the owner (Set unpaid) — the gate signed the session
+        // out; hand them the first page with the notice.
+        if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+        if (access.action === "pay") {
+          leaveForCheckout();
+          throw redirect({ href: "/app/login?pay=1" });
+        }
+      } catch (error) {
+        // A gated redirect is normal control flow; anything else must never
+        // take the whole page down — the calendar renders for everyone.
+        //
+        // `isRedirect` (not `"href" in error`): `redirect()` returns a Response
+        // whose `href` sits on `.options`, so the old test never matched and the
+        // gate's own redirect was swallowed.
+        if (isRedirect(error)) throw error;
       }
-    } catch (error) {
-      // A gated redirect is normal control flow; anything else must never
-      // take the whole page down — the calendar renders for everyone.
-      //
-      // `isRedirect` (not `"href" in error`): `redirect()` returns a Response
-      // whose `href` sits on `.options`, so the old test never matched and the
-      // gate's own redirect was swallowed.
-      if (isRedirect(error)) throw error;
+    };
+    const email = getAppState().email;
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [

@@ -99,7 +99,19 @@ export type CloudAccess = "admin" | "paid" | "unpaid" | "revoked";
  * moment the ledger agrees — which is what "I activated a key and it asked me
  * for my email and code all over again" was really about.
  */
-export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
+export type AppAccessCheck = {
+  action: "pass" | "signin" | "pay" | "deactivate";
+  /**
+   * TRUE only when the cloud gave NO verdict at all (timeout, network error,
+   * unconfigured). A `pay` action with `undecided` is "we could not ask", while
+   * a `pay` without it is the ledger's POSITIVE "this email never paid".
+   *
+   * The route guards treat the two differently for an account that already has
+   * an activated robot on this device: an undecided cloud must not eject it,
+   * while a positive refusal still does. Everywhere else they are identical.
+   */
+  undecided?: boolean;
+};
 
 /**
  * DOES THIS DEVICE REMEMBER A **PAYMENT** FOR THIS EMAIL?
@@ -314,6 +326,95 @@ function consumeStaleSession(): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * THE GUARD'S FIRST ANSWER — SYNCHRONOUS, FROM THE CACHE ABOVE.
+ *
+ * Every `/app` route guard used to `await requireVerifiedAccess(...)` even when
+ * a cached verdict was sitting in memory, and with the KV store slow the wait
+ * could last several hundred milliseconds — long enough for the router's
+ * pending presentation (150ms) to replace the screen with the full-screen
+ * "Loading…" splash on EVERY in-app tap. A navigation must be a first-paint
+ * event, not a network event.
+ *
+ * This answers from the stale-while-revalidate cache the gate already holds,
+ * with the SAME decision rules as `requireVerifiedAccess`:
+ *
+ *   • no cached verdict (cold boot / just invalidated) → `null`, so the caller
+ *     awaits the cloud exactly once, as before;
+ *   • a cached verdict, fresh or stale, is applied immediately — including a
+ *     refusal, which still BLOCKS the screen (the security rule is unchanged);
+ *   • a stale entry is re-asked in the BACKGROUND, and the answer overwrites
+ *     the cache for the next tap;
+ *   • the session-version kick and the device-binding check still run. A kick
+ *     clears the entry and returns `null`, so the very next decision is the
+ *     cloud's — never a cached one.
+ *
+ * It never awaits anything, so a guard that receives an answer renders on the
+ * first paint while the revalidation continues behind it.
+ */
+export function peekAccessVerdict(email: string | null | undefined): AppAccessCheck | null {
+  // A stale session is not trusted at all: sign out, drop the entry, and let
+  // the caller ask the cloud (the same one-time kick requireVerifiedAccess
+  // performs, just performed synchronously here).
+  if (consumeStaleSession()) {
+    appSignOut();
+    invalidateAccessCache(email);
+    return null;
+  }
+  if (!email) return { action: "signin" };
+  const clean = email.trim().toLowerCase();
+  const cached = cache.get(clean);
+  // No entry (or one the server could not decide) → the caller must await.
+  if (!cached || cached.status === null) return null;
+  const age = Date.now() - cached.at;
+  // Beyond the stale-while-revalidate window the entry is dead, not stale: ask
+  // the cloud rather than show a verdict this old.
+  if (age >= MAX_STALE_MS) return null;
+  const ttl =
+    cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
+  // Past its TTL (or missing the binding) → revalidate in the background. The
+  // screen still renders from the answer below; nothing here waits on it.
+  if (age >= ttl || !cached.bindingKnown) revalidateInBackground(clean);
+
+  // The dashboard may have just marked this email paid from another device; a
+  // cached refusal must not hide that. Same upgrade `readBundle` performs.
+  let status: CloudAccess = cached.status;
+  if (status !== "paid" && status !== "admin") {
+    const local = paymentStatusForEmail(clean);
+    if (local === "paid") status = "paid";
+    else if (local === "admin") status = "admin";
+  }
+
+  // DEVICE BINDING — from the answer the cloud already gave for this device
+  // (or this device's own memoised read). An unreadable binding fails OPEN,
+  // exactly as the awaiting path does: a network hiccup must not kick anyone.
+  const deviceId = getDeviceId();
+  const binding = cached.bindingKnown ? cached.binding : (localBindings.get(clean)?.value ?? cached.binding);
+  if (binding?.deviceId && binding.deviceId !== deviceId) {
+    appSignOut();
+    return { action: "signin" };
+  }
+
+  if (status === "paid" || status === "admin") {
+    markEmailPaid(email);
+    // Binding is best-effort and is never what opens the app, so it runs behind
+    // the render instead of in front of it.
+    void bindIfNeeded(clean, deviceId, binding);
+    return { action: "pass" };
+  }
+  if (status === "revoked") {
+    appSignOut();
+    return { action: "deactivate" };
+  }
+  // A local PAYMENT record beside an unpaid verdict means the owner revoked a
+  // paid account — same rule as requireVerifiedAccess.
+  if (remembersLedgerPayment(email)) {
+    appSignOut();
+    return { action: "deactivate" };
+  }
+  return { action: "pay" };
 }
 
 /**
@@ -663,7 +764,11 @@ export async function requireVerifiedAccess(
   // an undecidable account is treated exactly like an unpaid one and sent to
   // checkout — recoverable if the person really has paid, and a hole closed if
   // they have not. The in-app UI reconciles from the cloud, never from here.
-  return { action: "pay" };
+  //
+  // `undecided` marks this as "no verdict", not "the ledger said no". The only
+  // caller that treats the two differently is /app/home, and only for a device
+  // that already holds an activated robot (see the guard there).
+  return { action: "pay", undecided: true };
 }
 
 /**

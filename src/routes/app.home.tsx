@@ -14,15 +14,36 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
-import { invalidateAccessCache, requireVerifiedAccess } from "@/lib/payment-gate";
+import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 
+/**
+ * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
+ *
+ * The cloud gave NO verdict (timeout / error). That is not the ledger saying
+ * "unpaid", so this device keeps the screen and asks once more a few seconds
+ * later instead of ejecting a customer who has already activated a key. The
+ * re-check warms the gate's cache; a POSITIVE refusal after it still ejects on
+ * the very next navigation, and the mid-session poll below re-runs the same
+ * decision anyway.
+ */
+let activatedRetryScheduled = false;
+function scheduleActivatedRetry(email: string | null): void {
+  if (activatedRetryScheduled || typeof window === "undefined") return;
+  activatedRetryScheduled = true;
+  window.setTimeout(() => {
+    activatedRetryScheduled = false;
+    invalidateAccessCache(email);
+    void requireVerifiedAccess(email).catch(() => undefined);
+  }, 5_000);
+}
+
 export const Route = createFileRoute("/app/home")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: () => {
     const email = getAppState().email;
     if (email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
       throw redirect({ href: "/app/login?license=1" });
@@ -41,19 +62,42 @@ export const Route = createFileRoute("/app/home")({
     // while an account the ledger has simply never marked paid keeps its
     // session and lands on the plans, so the app can walk in by itself the
     // moment the ledger agrees.
-    const access = await requireVerifiedAccess(email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    // Access revoked by the owner (Mark unpaid) — the gate signed the session
-    // out; hand them the first page with the notice. The cached verdict is
-    // dropped first, so the next ask reads the cloud and never this refusal.
-    if (access.action === "deactivate") {
-      invalidateAccessCache(email);
-      throw redirect({ href: "/app/login?deactivated=1" });
+    /**
+     * FIRST PAINT, NOT A NETWORK WAIT.
+     *
+     * `peekAccessVerdict` answers synchronously from the gate's
+     * stale-while-revalidate cache (the cloud is re-asked behind the render).
+     * Only a genuinely cold cache (fresh boot, or one this gate just dropped)
+     * falls through to the one awaited round trip — so an in-app tap can never
+     * sit behind a slow KV read again.
+     */
+    const apply = (access: AppAccessCheck) => {
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      // Access revoked by the owner (Mark unpaid) — the gate signed the session
+      // out; hand them the first page with the notice. The cached verdict is
+      // dropped first, so the next ask reads the cloud and never this refusal.
+      if (access.action === "deactivate") {
+        invalidateAccessCache(email);
+        throw redirect({ href: "/app/login?deactivated=1" });
+      }
+      if (access.action === "pay") {
+        // AN ACTIVATED DEVICE IS NOT EJECTED BY A CLOUD THAT DID NOT ANSWER.
+        // Only a positive unpaid/revoked verdict sends them to checkout; a
+        // timeout keeps the dashboard on screen and asks again quietly.
+        if (access.undecided && getAppState().robots.length > 0) {
+          scheduleActivatedRetry(email);
+          return;
+        }
+        invalidateAccessCache(email);
+        throw redirect({ href: "/app/login?pay=1" });
+      }
+    };
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
-    if (access.action === "pay") {
-      invalidateAccessCache(email);
-      throw redirect({ href: "/app/login?pay=1" });
-    }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [
@@ -261,11 +305,13 @@ function AppHome() {
     const verify = async () => {
       if (cancelled || running) return;
       running = true;
-      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
+      let result: AppAccessCheck;
       try {
         result = await requireVerifiedAccess(app.email);
       } catch {
-        result = { action: "pay" };
+        // NO VERDICT IS NOT A REFUSAL. A thrown check is re-tried quietly
+        // below rather than ejecting an activated session.
+        result = { action: "pay", undecided: true };
       }
       running = false;
       if (cancelled) return;
@@ -278,6 +324,10 @@ function AppHome() {
         return;
       }
       if (result.action === "pay") {
+        if (result.undecided && app.robots.length > 0) {
+          scheduleActivatedRetry(app.email);
+          return;
+        }
         window.location.replace("/app/login?pay=1");
         return;
       }

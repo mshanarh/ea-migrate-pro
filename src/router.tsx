@@ -37,14 +37,18 @@ if (typeof window !== "undefined") {
 }
 
 /**
- * THE GUARD SPLASH — what a route shows while its `beforeLoad` is still
- * waiting on the access check.
+ * THE COLD-BOOT SPLASH — the ONLY moment this is allowed on screen.
  *
- * Without this the router has nothing to render while the guard runs: the
- * previous screen just sits there frozen (or the page is blank on a cold
- * start), which reads as "the app hung" even when the check is healthy. The
- * splash appears as soon as a navigation is pending for `defaultPendingMs`
- * and is replaced by the screen the moment the guard answers.
+ * On a cold start nothing has rendered yet, so the alternative is a blank
+ * page while the first guard runs. That is the one case where a splash is
+ * honest: there is no screen behind it to keep.
+ *
+ * It is never shown over a renderable screen: after the first navigation
+ * resolves, `defaultPendingMs` is raised to Infinity (see `getRouter` below),
+ * which makes the router keep presenting the CURRENT screen while the next
+ * one loads. A tap therefore never replaces what the person is looking at —
+ * with a cached access verdict the guard answers synchronously, so the new
+ * screen arrives on the same frame anyway.
  */
 function RoutePending() {
   return (
@@ -75,15 +79,37 @@ export const getRouter = () => {
     // chunk starts downloading, so the tap itself renders from an in-memory
     // module instead of a network round trip.
     defaultPreload: "intent",
-    // GUARDS MUST FEEL ALIVE. `defaultPendingMs` is how long a route may be
-    // pending before the splash above renders (the router's default is 1000ms,
-    // which is a full second of frozen screen). The minimum used to be 400ms,
-    // which FORCED the full-screen splash on every single navigation even when
-    // the warm access cache answered instantly — with the minimum at 0, the
-    // splash only appears when a check is genuinely slow (>150ms).
+    // COLD BOOT may show the splash after this long (the router's default is
+    // 1000ms — a full second of blank screen). The minimum is 0, so a fast
+    // first load never flashes it.
     defaultPendingMs: 150,
     defaultPendingMinMs: 0,
     defaultPendingComponent: RoutePending,
+  });
+
+  /**
+   * NEVER COVER A RENDERED SCREEN WITH THE SPLASH.
+   *
+   * `offerPending` only swaps the presented lane for a pending one when the
+   * delay is a finite number; `Infinity` makes it return without presenting,
+   * so the PREVIOUS screen stays on screen until the new lane is ready —
+   * exactly what an instant-feeling tap means. It is raised only after the
+   * first navigation has resolved, so the cold-boot splash above is kept for
+   * a genuinely empty first paint.
+   */
+  let paintedOnce = false;
+  const stopWatching = router.subscribe("onResolved", () => {
+    if (paintedOnce) return;
+    paintedOnce = true;
+    stopWatching();
+    try {
+      router.update({ ...router.options, defaultPendingMs: Infinity });
+    } catch (error) {
+      // A failed options update must never break navigation — the guards are
+      // synchronous on a warm cache anyway, so the splash stays cold-boot-only
+      // in practice.
+      console.warn("[router] could not disable the pending splash:", error);
+    }
   });
 
   return router;

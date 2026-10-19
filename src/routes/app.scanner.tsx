@@ -10,7 +10,7 @@ import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { getAppState, leaveForCheckout } from "@/lib/app-store";
-import { requireVerifiedAccess } from "@/lib/payment-gate";
+import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
@@ -19,18 +19,30 @@ import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
   ssr: false,
-  beforeLoad: async () => {
+  beforeLoad: () => {
     // Cloud-verified gates: no email → app login; a local "paid" record the
     // database does not confirm → Whop checkout.
-    const access = await requireVerifiedAccess(getAppState().email);
-    if (access.action === "signin") throw redirect({ href: "/app/login" });
-    // Access revoked by the owner (Set unpaid) — the gate signed the session
-    // out; hand them the first page with the notice.
-    if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
-    if (access.action === "pay") {
-      leaveForCheckout();
-      throw redirect({ href: "/app/login?pay=1" });
+    //
+    // PAINT FIRST. A warm access cache answers synchronously and the cloud is
+    // re-asked in the background, so a tap never waits on the network (and
+    // never shows the "Loading…" splash) while the verdict is unchanged.
+    const apply = (access: AppAccessCheck) => {
+      if (access.action === "signin") throw redirect({ href: "/app/login" });
+      // Access revoked by the owner (Set unpaid) — the gate signed the session
+      // out; hand them the first page with the notice.
+      if (access.action === "deactivate") throw redirect({ href: "/app/login?deactivated=1" });
+      if (access.action === "pay") {
+        leaveForCheckout();
+        throw redirect({ href: "/app/login?pay=1" });
+      }
+    };
+    const email = getAppState().email;
+    const cached = peekAccessVerdict(email);
+    if (cached) {
+      apply(cached);
+      return;
     }
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [

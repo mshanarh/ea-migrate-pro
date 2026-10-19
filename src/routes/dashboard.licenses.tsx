@@ -1,9 +1,16 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { ArrowLeft, Check, Copy, KeyRound, Mail, Plus, Trash2 } from "lucide-react";
+import { AlertCircle, ArrowLeft, Check, Copy, KeyRound, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { addLicense, generateKey, removeLicense, useCurrentAccount } from "@/lib/auth-store";
+import {
+  addLicense,
+  generateKey,
+  removeLicense,
+  useCurrentAccount,
+  type ExpertAdvisor,
+  type License,
+} from "@/lib/auth-store";
 import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
 import { issueLicenseKeyInKv, removeLicenseKeyInKv } from "@/lib/license-cloud";
 import { inlineVideoForCloud } from "@/lib/media-store";
@@ -20,6 +27,13 @@ const EXPIRY_OPTIONS = ["Lifetime", "1 Year", "6 Months", "3 Months", "1 Month",
  */
 const DEFAULT_LICENSE_LIMIT = 2000;
 
+/**
+ * ONE BACKGROUND STEP OF A CREATED KEY — saving it to the cloud, or emailing
+ * it to the client. The key itself is ALREADY created when the result screen
+ * appears; these two run behind it and report live on the card.
+ */
+type StepState = "pending" | "done" | "error";
+
 type KeyResult = {
   key: string;
   clientName: string;
@@ -29,8 +43,77 @@ type KeyResult = {
   imageUrl: string | null;
   emailed: boolean;
   /** Set when the key email failed — the exact reason shows on the result card. */
-  deliveryError?: string;
+  deliveryError?: string | undefined;
+  /** "Saving key to cloud…" — pending while the write is in flight. */
+  cloud: StepState;
+  /** The cloud write's failure reason (shown as a retry note). */
+  cloudError?: string | undefined;
+  /** "Emailing key to client…" — pending while the send is in flight. */
+  mail: StepState;
 };
+
+/**
+ * A BACKGROUND STEP'S LIVE STATUS — spinner → green tick, or a red retry note.
+ *
+ * Nothing here blocks the result: the key is already in the mentor's hands
+ * (shown in full above) while these two land, and a failure keeps the copy on
+ * screen with the exact reason and a Retry button instead of hiding the key or
+ * claiming it was delivered.
+ */
+function StepRow({
+  pendingLabel,
+  doneLabel,
+  step,
+  error,
+  onRetry,
+}: {
+  pendingLabel: string;
+  doneLabel: string;
+  step: StepState;
+  error?: string | undefined;
+  onRetry?: (() => void) | undefined;
+}) {
+  const tone =
+    step === "error"
+      ? "border-red-400/40 bg-red-400/10"
+      : step === "done"
+        ? "border-emerald-400/30 bg-emerald-400/10"
+        : "border-white/10 bg-white/[0.03]";
+  return (
+    <div className={`flex items-start gap-3 rounded-2xl border p-4 text-left ${tone}`} role="status" aria-live="polite">
+      <span className="mt-0.5 flex size-5 shrink-0 items-center justify-center">
+        {step === "pending" ? (
+          <Loader2 className="size-4 animate-spin text-primary" aria-hidden="true" />
+        ) : step === "done" ? (
+          <Check className="size-4 text-emerald-300" aria-hidden="true" />
+        ) : (
+          <AlertCircle className="size-4 text-red-300" aria-hidden="true" />
+        )}
+      </span>
+      <div className="min-w-0 flex-1">
+        <p
+          className={`text-sm font-bold ${
+            step === "error" ? "text-red-200" : step === "done" ? "text-emerald-200" : "text-white/85"
+          }`}
+        >
+          {step === "pending" ? pendingLabel : step === "done" ? doneLabel : `${pendingLabel.replace(/…$/, "")} failed`}
+        </p>
+        {step === "error" && error ? (
+          <p className="mt-1 break-words text-xs leading-relaxed text-red-200/90">{error}</p>
+        ) : null}
+      </div>
+      {step === "error" && onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 rounded-lg border border-red-300/40 bg-red-400/10 px-3 py-1.5 text-[11px] font-black uppercase tracking-wide text-red-100 hover:bg-red-400/20"
+        >
+          Retry
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 function Pill({ children }: { children: ReactNode }) {
   return (
@@ -51,7 +134,19 @@ function Licenses() {
   const account = useCurrentAccount();
   const [mode, setMode] = useState<"list" | "form" | "result">("list");
   const [result, setResult] = useState<KeyResult | null>(null);
-  const [sending, setSending] = useState(false);
+  /**
+   * THE FORM'S OWN BUSY FLAG — set synchronously on submit, before the cap
+   * lookups, the key generation or any write. The button says "Generating the
+   * key…" from that first click, not from whichever await finishes first.
+   */
+  const [submitting, setSubmitting] = useState(false);
+  /**
+   * WHAT THE BACKGROUND STEPS NEED TO RETRY: the created licence and its EA.
+   * The result screen keeps the key when a step fails, and its Retry button
+   * re-runs only that step — recreating a key to retry a send would spend
+   * another key from the mentor's allowance.
+   */
+  const backgroundRef = useRef<{ license: License; ea: ExpertAdvisor } | null>(null);
   const [copied, setCopied] = useState(false);
   const [keyName, setKeyName] = useState("");
   const [clientEmail, setClientEmail] = useState("");
@@ -123,9 +218,116 @@ function Licenses() {
     setFormError("");
   };
 
+  /**
+   * SAVE THE KEY TO THE CLOUD — a BACKGROUND step of the result screen.
+   *
+   * Upstash KV is the primary store (see src/lib/license-cloud.ts) and is what
+   * the app resolves the key from. The Supabase mirror is attempted only when
+   * KV cannot answer, so nothing regresses on a deployment without KV. Either
+   * way the outcome lands on the result card, not in front of it.
+   */
+  const saveKeyToCloud = async (license: License, ea: ExpertAdvisor, keyExpiry: string) => {
+    setResult((current) => (current ? { ...current, cloud: "pending", cloudError: undefined } : current));
+    const fail = (message: string) => {
+      setResult((current) => (current ? { ...current, cloud: "error", cloudError: message } : current));
+      toast.error(message);
+    };
+    const done = () =>
+      setResult((current) => (current ? { ...current, cloud: "done", cloudError: undefined } : current));
+    try {
+      const kv = await issueLicenseKeyInKv({
+        key: license.key,
+        mentorEmail: account.email,
+        clientEmail: license.clientEmail ?? "",
+        clientName: license.name ?? "",
+        eaName: ea.name,
+        eaId: ea.id,
+        expiry: keyExpiry,
+        // The EA's symbols travel with the key so the robot this activates
+        // gets its real Quotes list even though nothing read Supabase.
+        ...(ea.symbols?.length ? { symbols: ea.symbols } : {}),
+        ...(ea.image ? { image: ea.image } : {}),
+      });
+      if (kv.enabled) {
+        if (kv.ok) {
+          done();
+          return;
+        }
+        fail(
+          `The key was NOT saved to the cloud: ${kv.error ?? "unknown error"}. It may not activate on the app until this succeeds.`,
+        );
+        return;
+      }
+      // No KV here — carry the EA PICTURE (and video) into the legacy cloud
+      // record, which is how the client's phone gets the robot's real image
+      // even when the full account mirror has not run there yet.
+      const video = await inlineVideoForCloud(ea.video);
+      const push = await portalUpsertLicense(account.email, license, {
+        ...(ea.image ? { image: ea.image } : {}),
+        ...(video ? { video } : {}),
+      });
+      if (push.enabled && !push.ok) {
+        fail(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
+        return;
+      }
+      done();
+    } catch (error) {
+      fail(
+        `The key was NOT saved to the cloud: ${
+          error instanceof Error ? error.message : "network error"
+        }. It may not activate on the app until this succeeds.`,
+      );
+    }
+  };
+
+  /**
+   * EMAIL THE KEY — the second BACKGROUND step. The exact delivery failure is
+   * shown on the result card (with a Retry) instead of a blocking alert: the
+   * key is already created and visible, so nothing is lost by failing here.
+   */
+  const emailKeyToClient = async (licenseKey: string, recipient: string, eaName: string, keyExpiry: string) => {
+    setResult((current) =>
+      current ? { ...current, mail: "pending", emailed: false, deliveryError: undefined } : current,
+    );
+    const fail = (message: string) => {
+      setResult((current) =>
+        current ? { ...current, mail: "error", emailed: false, deliveryError: message } : current,
+      );
+      toast.error(message, { duration: 10000 });
+    };
+    try {
+      const send = await sendPortalEmail({
+        data: {
+          type: "license_approved",
+          email: recipient,
+          licenseKey,
+          eaName,
+          expiry: keyExpiry,
+        },
+      });
+      if (!send.success) {
+        fail(send.error ?? "Email could not be sent — the key is still saved.");
+        return;
+      }
+      setResult((current) =>
+        current ? { ...current, mail: "done", emailed: true, deliveryError: undefined } : current,
+      );
+    } catch (sendError) {
+      fail(
+        sendError instanceof Error ? sendError.message : "Email could not be sent — the key is still saved.",
+      );
+    }
+  };
+
   const submitLicense = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setFormError("");
+    /**
+     * IMMEDIATE, SYNCHRONOUS FEEDBACK — before the cap lookups, the key
+     * generation or any write. The button and the form react to the TAP.
+     */
+    setSubmitting(true);
+    try {
     if (!keyName.trim()) {
       setFormError("Client name is required.");
       return;
@@ -184,86 +386,53 @@ function Licenses() {
     // (no store configured / unreachable), so nothing regresses on a deployment
     // without KV and no failure message can be raised over a key that IS saved.
     const created = result2.license;
-    if (created) {
-      void (async () => {
-        const kv = await issueLicenseKeyInKv({
-          key: created.key,
-          mentorEmail: account.email,
-          clientEmail: created.clientEmail ?? "",
-          clientName: created.name ?? keyName.trim(),
-          eaName: selectedEa.name,
-          eaId: selectedEa.id,
-          expiry,
-          // The EA's symbols travel with the key so the robot this activates
-          // gets its real Quotes list even though nothing read Supabase.
-          ...(selectedEa.symbols?.length ? { symbols: selectedEa.symbols } : {}),
-          ...(selectedEa.image ? { image: selectedEa.image } : {}),
-        });
-        if (kv.enabled) {
-          if (kv.ok) return;
-          toast.error(
-            `The key was NOT saved to the cloud: ${kv.error ?? "unknown error"}. It may not activate on the app until this succeeds.`,
-          );
-          return;
-        }
-        // No KV here — carry the EA PICTURE (and video) into the legacy cloud
-        // record, which is how the client's phone gets the robot's real image
-        // even when the full account mirror has not run there yet.
-        const video = await inlineVideoForCloud(selectedEa.video);
-        const push = await portalUpsertLicense(account.email, created, {
-          ...(selectedEa.image ? { image: selectedEa.image } : {}),
-          ...(video ? { video } : {}),
-        });
-        if (push.enabled && !push.ok) {
-          toast.error(`The key was NOT saved to the cloud: ${push.error ?? "unknown error"}. It may not activate on the app until this succeeds.`);
-        }
-      })();
+    if (!created) {
+      setFormError("Could not create the key — please try again.");
+      return;
     }
-    // Email the key immediately — awaited so "Emailed to client" is real.
-    // The license_approved flow also saves the key into the Supabase
-    // license_keys table (server-side) before sending.
-    setSending(true);
-    let emailed = false;
-    let deliveryError: string | null = null;
-    try {
-      const send = await sendPortalEmail({
-        data: {
-          type: "license_approved",
-          email: recipient,
-          licenseKey: key,
-          eaName: selectedEa.name,
-          expiry,
-        },
-      });
-      emailed = send.success;
-      if (!send.success) {
-        // Surface the EXACT delivery failure on screen — the admin must see
-        // the real reason (missing key, Brevo rejection, network) right away.
-        deliveryError = send.error ?? "Email could not be sent — the key is still saved.";
-        toast.error(deliveryError, { duration: 10000 });
-        window.alert(`Email delivery failed:\n\n${deliveryError}\n\nThe license key itself was created and is shown below.`);
-      }
-    } catch (sendError) {
-      deliveryError = sendError instanceof Error ? sendError.message : "Email could not be sent — the key is still saved.";
-      toast.error(deliveryError, { duration: 10000 });
-      window.alert(`Email delivery failed:\n\n${deliveryError}\n\nThe license key itself was created and is shown below.`);
-    } finally {
-      setSending(false);
-    }
+    /**
+     * THE KEY EXISTS — SHOW IT NOW.
+     *
+     * The cloud write and the email used to be awaited HERE, so the mentor sat
+     * on the form until the last round trip finished and never saw the key
+     * while a slow KV/email call was in flight. Both now run behind the result
+     * screen and report their own status on it (StepRow below): the key is in
+     * the mentor's hands the instant `addLicense` returns.
+     */
+    backgroundRef.current = { license: created, ea: selectedEa };
+    const clientName = keyName.trim();
+    const keyExpiry = expiry;
     setResult({
       key,
-      clientName: keyName.trim(),
+      clientName,
       email: recipient,
       eaName: selectedEa.name,
-      expiry,
+      expiry: keyExpiry,
       imageUrl: selectedEa.image ?? null,
-      emailed,
-      ...(deliveryError ? { deliveryError } : {}),
+      emailed: false,
+      cloud: "pending",
+      mail: "pending",
     });
     setMode("result");
     setCopied(false);
     resetForm();
     toast.success("License key created");
+    void saveKeyToCloud(created, selectedEa, keyExpiry);
+    void emailKeyToClient(key, recipient, selectedEa.name, keyExpiry);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const retryCloudSave = () => {
+    const background = backgroundRef.current;
+    if (!background || !result) return;
+    void saveKeyToCloud(background.license, background.ea, result.expiry);
+  };
+
+  const retryEmail = () => {
+    if (!result) return;
+    void emailKeyToClient(result.key, result.email, result.eaName, result.expiry);
   };
 
   /**
@@ -367,16 +536,24 @@ function Licenses() {
             <Pill>{result.eaName}</Pill>
           </div>
 
-          <p className={`mt-6 flex items-center justify-center gap-2 text-sm font-bold ${result.emailed ? "text-primary" : "text-amber-400"}`}>
-            <Mail className="size-4" />
-            {result.emailed ? "Emailed to client" : "Saved — email delivery failed"}
-          </p>
-          {result.deliveryError && (
-            <div className="mt-3 rounded-2xl border border-red-400/40 bg-red-400/10 p-4 text-left" role="alert">
-              <p className="text-xs font-black uppercase tracking-wide text-red-300">Delivery failure reason</p>
-              <p className="mt-1 break-words text-sm leading-relaxed text-red-200">{result.deliveryError}</p>
-            </div>
-          )}
+          {/* LIVE BACKGROUND STATUS — the key above is already created; these
+              two steps report as they land, or name the reason and offer Retry. */}
+          <div className="mt-6 space-y-3">
+            <StepRow
+              pendingLabel="Saving key to cloud…"
+              doneLabel="Key saved to cloud"
+              step={result.cloud}
+              error={result.cloudError}
+              onRetry={retryCloudSave}
+            />
+            <StepRow
+              pendingLabel="Emailing key to client…"
+              doneLabel="Key emailed to client"
+              step={result.mail}
+              error={result.deliveryError}
+              onRetry={retryEmail}
+            />
+          </div>
 
           <Button
             type="button"
@@ -417,6 +594,7 @@ function Licenses() {
           <form className="mt-8 space-y-4" onSubmit={(event) => void submitLicense(event)}>
             <input
               required
+              disabled={submitting}
               value={keyName}
               onChange={(event) => setKeyName(event.target.value)}
               placeholder="Client name"
@@ -424,6 +602,7 @@ function Licenses() {
             />
             <input
               type="email"
+              disabled={submitting}
               value={clientEmail}
               onChange={(event) => setClientEmail(event.target.value)}
               placeholder={`Client email (optional — defaults to ${account.email})`}
@@ -431,6 +610,7 @@ function Licenses() {
             />
             <select
               required
+              disabled={submitting}
               value={eaId}
               onChange={(event) => setEaId(event.target.value)}
               className="h-16 w-full appearance-none rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base outline-none focus:border-primary/60"
@@ -447,6 +627,7 @@ function Licenses() {
                 <button
                   type="button"
                   key={option}
+                  disabled={submitting}
                   onClick={() => setExpiry(option)}
                   className={`h-12 rounded-2xl px-5 text-sm font-bold transition-colors ${
                     expiry === option ? "bg-primary text-primary-foreground glow-ring" : "border border-white/10 bg-white/[0.04] text-white/70 hover:border-primary/40"
@@ -468,10 +649,17 @@ function Licenses() {
             {formError && <p className="text-sm text-destructive">{formError}</p>}
             <button
               type="submit"
-              disabled={remaining === 0 || account.eas.length === 0 || sending}
-              className="h-16 w-full rounded-2xl bg-gradient-to-b from-[#38bdf8] to-[#0284c7] text-lg font-black text-white shadow-[0_0_40px_rgba(0,168,255,0.35)] transition-transform active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={remaining === 0 || account.eas.length === 0 || submitting}
+              className="flex h-16 w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-b from-[#38bdf8] to-[#0284c7] text-lg font-black text-white shadow-[0_0_40px_rgba(0,168,255,0.35)] transition-transform active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-50"
             >
-              {sending ? "Creating & emailing key…" : "Generate Key"}
+              {submitting ? (
+                <>
+                  <Loader2 className="size-5 animate-spin" aria-hidden="true" />
+                  Generating the key…
+                </>
+              ) : (
+                "Generate Key"
+              )}
             </button>
           </form>
           <p className="mt-6 text-center text-sm text-white/55">
