@@ -128,6 +128,7 @@ export function VideoBackdrop({
   accent,
   showImageWhenInactive = true,
   videoWhenActive = true,
+  mediaDim = false,
 }: {
   image: string;
   video?: string | undefined;
@@ -146,12 +147,14 @@ export function VideoBackdrop({
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
         <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-95" loop muted playsInline preload="auto" />
-        {/* Legibility scrims over the media */}
-        <div className="absolute inset-0 bg-black/10" />
-        <div
-          className="absolute inset-x-0 bottom-0 h-40"
-          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55) 85%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
-        />
+        {/* Legibility scrims over the media — reduced when mediaDim is on */}
+        {mediaDim ? null : <div className="absolute inset-0 bg-black/10" />}
+        {mediaDim ? null : (
+          <div
+            className="absolute inset-x-0 bottom-0 h-40"
+            style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55) 85%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+          />
+        )}
       </div>
     );
   }
@@ -160,16 +163,14 @@ export function VideoBackdrop({
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
         {/* THE PICTURE IS THE POINT — full strength, no darkening layers over
-            it. This used to stack opacity-50 + a black/45 wash + a radial
-            scrim to 0.94 + a heavy bottom gradient, so the uploaded EA
-            picture was effectively invisible behind black. */}
-        <img src={image} alt="" className="size-full object-cover opacity-95" />
-        {/* ONE slim gradient keeps bottom navigation and text readable; the
-            accent tint keeps the theme's edge glow. */}
-        <div
-          className="absolute inset-x-0 bottom-0 h-24"
-          style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55)), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
-        />
+            it. When mediaDim is on, remove the scrim so the picture is clearly visible. */}
+        <img src={image} alt="" className={mediaDim ? 'size-full object-cover opacity-95' : 'size-full object-cover opacity-95'} />
+        {mediaDim ? null : (
+          <div
+            className="absolute inset-x-0 bottom-0 h-24"
+            style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55)), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
+          />
+        )}
       </div>
     );
   }

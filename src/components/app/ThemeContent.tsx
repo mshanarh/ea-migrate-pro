@@ -313,6 +313,14 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 
 export function ThemeContent(props: ThemeContentProps) {
   const { theme, color } = useCustomization();
+  const accent = accentColorValue(color);
+  const [mediaDim, setMediaDim] = useState(false);
+
+  // Read persisted preference
+  useEffect(() => {
+    setMediaDim(readMediaDim());
+  }, []);
+
   // The HOME double-press video — ONE universal backdrop for every interface
   // style. When stopped this renders nothing (the slots keep the picture);
   // when playing, the video runs edge-to-edge behind the theme's content.
@@ -323,6 +331,7 @@ export function ThemeContent(props: ThemeContentProps) {
         video={props.robot?.video}
         accent={accentColorValue(color)}
         showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
+        mediaDim={mediaDim}
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
         videoWhenActive

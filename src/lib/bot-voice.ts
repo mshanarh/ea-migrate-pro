@@ -91,3 +91,30 @@ export function warmBotVoice(): void {
     /* ignore */
   }
 }
+
+
+/** Unified speak helper that works in both Android WebView and browsers. */
+export function speak(text: string): void {
+  if (typeof window === "undefined") return;
+  // FIRST: try native Android TTS via AndroidTTS API (works in Android WebView)
+  if ((window as any).AndroidTTS?.speak) {
+    ;(window as any).AndroidTTS.speak(text);
+    return;
+  }
+  // FALL BACK: browser speechSynthesis
+  if (!("speechSynthesis" in window)) return;
+  try {
+    const synth = window.speechSynthesis;
+    synth.cancel();
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voice = pickVoice();
+    if (voice) utterance.voice = voice;
+    utterance.lang = voice?.lang ?? "en-US";
+    utterance.rate = 0.98;
+    utterance.pitch = 0.85; // deeper, smooth male tone
+    utterance.volume = 1;
+    synth.speak(utterance);
+  } catch {
+    /* unsupported — silent */
+  }
+}

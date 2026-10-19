@@ -78,6 +78,13 @@ const ROWS: EffectRow[] = [
     kind: "overlay",
   },
   {
+    id: "background-picture",
+    emoji: "🖼️",
+    name: "Background Picture",
+    subtitle: "Show/hide home background picture",
+    kind: "backgroundPicture",
+  },
+  {
     id: "robot-video",
     emoji: "🎞️",
     name: "Robot Video",
@@ -201,15 +208,35 @@ export function BackAnimationSection() {
   const [robotVideoAuto, setRobotVideoAutoState] = useState(false);
   const [hasRobotVideo, setHasRobotVideo] = useState(false);
   const [overlay, setOverlayState] = useState(false);
+  const [mediaDim, setMediaDim] = useState(false);
 
   useEffect(() => {
     setCanvas(readCanvasConfig());
     setMatrix(readMatrix());
     setOverlayState(readOverlay());
     setVoice(isBotVoiceEnabled());
+    setMediaDim(readMediaDim());
     setRobotVideoAutoState(isRobotVideoAuto());
     warmBotVoice();
   }, []);
+
+function readMediaDim(): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return localStorage.getItem("mediaDim") === "true";
+  } catch {
+    return false;
+  }
+}
+
+function writeMediaDim(on: boolean) {
+  try {
+    localStorage.setItem("mediaDim", on ? "true" : "false");
+  } catch {
+    /* ignore */
+  }
+  window.dispatchEvent(new Event("eamp:bg-effects"));
+}
 
   /**
    * THE UNLOCK FOLLOWS THE APP STATE — reading `eamp.app.v3` once on mount
@@ -283,6 +310,12 @@ export function BackAnimationSection() {
       const next = !voice;
       setVoice(next);
       setBotVoiceEnabled(next);
+      return;
+    }
+    if (row.kind === "backgroundPicture") {
+      const next = !mediaDim;
+      setMediaDim(next);
+      writeMediaDim(next);
       return;
     }
     if (row.kind === "robotVideo") {

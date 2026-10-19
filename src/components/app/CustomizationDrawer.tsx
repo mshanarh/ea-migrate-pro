@@ -59,7 +59,7 @@ function PillRow({
     onToggle?.();
   };
   return (
-    <section className="w-full max-w-full">
+    <section className="w-full max-w-full rounded-full overflow-hidden">
       <button
         type="button"
         onClick={handle}
