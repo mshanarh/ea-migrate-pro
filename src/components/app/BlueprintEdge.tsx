@@ -47,7 +47,7 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
   );
 }
 
-export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
+export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot, mediaDim }: BlueprintEdgeProps & { mediaDim?: boolean }) {
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
   const eaName = robot?.name ?? "YOUR ROBOT";
@@ -60,7 +60,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* The black console's static image background — when the HOME
           double-press starts the video, the universal backdrop in ThemeContent
           plays it, so this layer never runs a second <video> decoder. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} />
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} mediaDim={mediaDim} />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section
@@ -125,7 +125,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                   <span className="absolute inset-0" style={{ backgroundColor: accent }} />
                 )}
                 {/* Dark scrim so the name overlay reads on any picture */}
-                <span className="absolute inset-0 bg-black/35" />
+                <span className={mediaDim ? "" : "absolute inset-0 bg-black/35"} />
                 {selected && (
                   <span
                     className="relative px-4 text-center text-base font-black uppercase tracking-wide"

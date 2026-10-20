@@ -1,5 +1,6 @@
-import { useEffect, useRef, useMemo, useState } from "react";
+import { useEffect, useRef, useMemo } from "react";
 import { supabase } from "@/lib/supabase";
+import { useMediaDim } from "@/lib/use-media-dim";
 import { motion } from "framer-motion";
 import { ChartLine, Info, MessageCircle, Pause, Play, Plus, ScanLine, Trash2, Waves } from "lucide-react";
 import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customization";
@@ -72,6 +73,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
 
 function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
+  const bgClass = mediaDim ? "" : "absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.22)_36%,rgba(0,0,0,0.88)_78%,rgba(0,0,0,0.96)_100%)]";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -83,7 +85,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.5)_0%,rgba(0,0,0,0.22)_36%,rgba(0,0,0,0.88)_78%,rgba(0,0,0,0.96)_100%)]" />
+        <div className={bgClass} />
         <div className="relative flex h-full flex-col items-center justify-end px-4 pb-8 pt-4">
           <h1
             className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
@@ -124,10 +126,11 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
 
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
+  const bgClass = mediaDim ? "" : "absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(0,0,0,0)_0%,rgba(0,0,0,0.72)_58%,rgba(0,0,0,0.94)_100%)]";
   return (
     <div className="relative flex min-h-[62vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-black px-5 py-10">
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover opacity-45" />
-      <div className="absolute inset-0 bg-[radial-gradient(circle_at_50%_28%,rgba(0,0,0,0)_0%,rgba(0,0,0,0.72)_58%,rgba(0,0,0,0.94)_100%)]" />
+      <div className={bgClass} />
 
       <div className="relative flex flex-col items-center">
         <motion.span
@@ -184,6 +187,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
 
 function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenScanner: () => void }) {
   const image = robot?.image || "/logo.png";
+  const bgClass = mediaDim ? "" : "absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_40%,rgba(0,0,0,0.9)_92%)]";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -194,7 +198,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-[#0a0a0a]"
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.35)_0%,rgba(0,0,0,0.1)_40%,rgba(0,0,0,0.9)_92%)]" />
+        <div className={bgClass} />
         <div className="relative flex h-full flex-col items-center justify-end pb-9">
           <h1
             className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black leading-tight text-white sm:text-3xl"
@@ -247,6 +251,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
 
 function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
+  const bgClass = mediaDim ? "" : "absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0.25)_38%,rgba(0,0,0,0.86)_78%,rgba(0,0,0,0.95)_100%)]";
   return (
     <div className="flex flex-col gap-6">
       <motion.section
@@ -258,7 +263,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(0,0,0,0.55)_0%,rgba(0,0,0,0.25)_38%,rgba(0,0,0,0.86)_78%,rgba(0,0,0,0.95)_100%)]" />
+        <div className={bgClass} />
 
         <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
           <div className="absolute top-4 left-4 flex flex-col items-center gap-3">
@@ -316,20 +321,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 export function ThemeContent(props: ThemeContentProps) {
   const { theme, color } = useCustomization();
   const accent = accentColorValue(color);
-  const [mediaDim, setMediaDim] = useState(false);
-
-  // Read persisted preference
-  useEffect(() => {
-    const load = async () => {
-      try {
-        const cached = localStorage.getItem("eamp.theme.media-dim");
-        if (cached !== null) setMediaDim(JSON.parse(cached));
-      } catch {
-        // no persisted preference yet; rely on default
-      }
-    };
-    load();
-  }, []);
+  const mediaDim = useMediaDim();
 
   // The HOME double-press video — ONE universal backdrop for every interface
   // style. When stopped this renders nothing (the slots keep the picture);
@@ -356,6 +348,7 @@ function ThemeContentInner(props: ThemeContentProps) {
   const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
+  const mediaDim = useMediaDim();
 
   if (!props.robot) {
     return (
@@ -408,6 +401,7 @@ function ThemeContentInner(props: ThemeContentProps) {
         onOpenSymbols={props.onOpenSymbols ?? props.onOpenScanner}
         onOpenAdd={props.onOpenAdd}
         onSelectRobot={props.onSelectRobot ?? (() => {})}
+        mediaDim={mediaDim}
       />
     );
   }
