@@ -44,7 +44,10 @@ function RobotPortrait({ robot, accent, size = 44 }: { robot: Robot | undefined;
 function RobotHeading({ robot, accent }: { robot: Robot | undefined; accent: string }) {
   return (
     <div className="text-center">
-      <p className="text-xl font-bold text-white/65">You&apos;re Trading With</p>
+      {/* Contrast lives on the TEXT (shadow), never as a layer over the picture. */}
+      <p className="text-xl font-bold text-white/65" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>
+        You&apos;re Trading With
+      </p>
       <h1
         className="mx-auto mt-3 max-w-[22rem] break-words text-4xl font-black uppercase leading-[0.98] text-white sm:text-5xl"
         style={{ fontFamily: "'Teko', 'Arial Black', sans-serif", textShadow: "0 2px 0 rgba(255,255,255,.18)" }}
@@ -107,11 +110,6 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   const image = robot?.image || "/logo.png";
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:px-5 sm:pt-7">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[38rem]"
-        style={{ background: `radial-gradient(ellipse at 50% 20%, ${accent}38 0%, ${accent}13 38%, transparent 72%)` }}
-      />
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
@@ -127,7 +125,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
         </div>
 
         <section className="w-full pt-1">
-          <h2 className="mb-4 text-xl font-bold text-white/65">Connected Robots:</h2>
+          <h2 className="mb-4 text-xl font-bold text-white/65" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>Connected Robots:</h2>
           <div
             className="flex min-h-24 items-center gap-4 rounded-full border-2 bg-black px-7"
             style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}66` }}
@@ -160,11 +158,6 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
   const image = robot?.image || "/logo.png";
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:pt-7">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-x-0 top-0 h-[43rem]"
-        style={{ background: `radial-gradient(ellipse at 50% 24%, ${accent}42 0%, ${accent}12 44%, transparent 75%)` }}
-      />
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
@@ -193,7 +186,7 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
         </div>
 
         <section className="w-full pt-3">
-          <h2 className="mb-5 text-2xl font-black">Robots List:</h2>
+          <h2 className="mb-5 text-2xl font-black" style={{ textShadow: "0 2px 12px rgba(0,0,0,.85)" }}>Robots List:</h2>
           <div className="space-y-4">
             <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 18%" />
             <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 46%" />

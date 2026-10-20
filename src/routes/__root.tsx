@@ -113,7 +113,8 @@ const PLATFORM_PREPAINT_SCRIPT = `
 `;
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
-import { ColourCycleTap } from "@/components/ColourCycleTap";
+import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
+import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -274,6 +275,10 @@ function RootComponent() {
       <BackgroundEffects />
       {/* Invisible centre-tap surface for the interface colour cycle. */}
       <ColourCycleTap />
+      {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
+      <AccentVarSync />
+      {/* The app-wide background picture layer — under the content wrapper below. */}
+      <AppBackground />
       <div style={{ position: "relative", zIndex: 1 }}>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Music2, Pause, Play, Plus, Search, Volume2, X } from "lucide-react";
 import { loadAudioUrl } from "@/lib/media-store";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import {
   removeMusicTrack,
   setBuiltinTrack,
@@ -75,7 +76,11 @@ function ExplicitBadge() {
   );
 }
 
-export function MusicSettingsSection({ accent = "#22d3ee" }: { accent?: string }) {
+export function MusicSettingsSection({ accent: accentProp }: { accent?: string }) {
+  // Live theme accent (honours the colour cycle) when the caller doesn't
+  // pass one — alpha-suffixed styles below need a real hex, not var().
+  const { color } = useCustomization();
+  const accent = accentProp ?? accentColorValue(color);
   const { track, playing, volume } = useMusic();
 
   const fileInputRef = useRef<HTMLInputElement>(null);

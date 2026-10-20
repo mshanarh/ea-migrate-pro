@@ -63,7 +63,8 @@ export const Route = createFileRoute("/app/settings")({
   component: AppSettings,
 });
 
-const CYAN = "#00e5ff";
+/** The interface accent as a live CSS token (theme + colour cycle driven). */
+const ACCENT_TOKEN = "var(--accent)";
 
 /** Pill section header — tap the pill (or the >) to expand, like the screenshots. */
 function PillSection({
@@ -109,7 +110,7 @@ function PillSection({
             aria-label={`Toggle ${label}`}
             onClick={onSwitch}
             className="relative h-7 w-12 shrink-0 rounded-full transition-colors"
-            style={{ backgroundColor: switchOn ? CYAN : "rgba(255,255,255,0.15)" }}
+            style={{ backgroundColor: switchOn ? ACCENT_TOKEN : "rgba(255,255,255,0.15)" }}
           >
             <span
               className="absolute top-1 size-5 rounded-full bg-white shadow transition-all"

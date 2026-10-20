@@ -162,7 +162,9 @@ export function applyColourMatrixFromStorage() {
   }
   document.body.classList.toggle(MATRIX_KEY, on);
   const glow = getComputedStyle(document.body).getPropertyValue("--eamp-glow").trim();
-  if (!glow) document.body.style.setProperty("--eamp-glow", "#ff2d78");
+  // Fall back to the live interface accent (tracks the theme and the colour
+  // cycle) instead of a hardcoded pink.
+  if (!glow) document.body.style.setProperty("--eamp-glow", "var(--accent)");
 }
 
 function Toggle({

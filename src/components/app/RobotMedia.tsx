@@ -127,7 +127,7 @@ export function VideoBackdrop({
   video,
   showImageWhenInactive = true,
   videoWhenActive = true,
-  mediaDim = false,
+  mediaDim = true,
 }: {
   image: string;
   video?: string | undefined;
@@ -138,11 +138,10 @@ export function VideoBackdrop({
   /** Set false when the theme's big screen plays the video in the card. */
   videoWhenActive?: boolean;
   /**
-   * The "Background Picture" preference. OFF (the default): this backdrop
-   * renders NOTHING — the interface keeps a clean solid black background with
-   * no dim layer, no blur and no gradient. ON: the media shows clearly, with
-   * no scrim layers on top of it either. Small cards/thumbnails never route
-   * through this backdrop, so they are unaffected.
+   * The "Background Picture" gate. The SCOPE decision (which screens honour
+   * the toggle, which always show) lives in AppBackground; this backdrop
+   * renders the media CLEARLY — no dim, no blur, no gradient on top of it.
+   * Small cards/thumbnails never route through this backdrop.
    */
   mediaDim?: boolean | undefined;
 }) {
@@ -153,11 +152,14 @@ export function VideoBackdrop({
   // BACKGROUND PICTURE OFF → no media at all, just the clean black behind it.
   if (!mediaDim) return null;
 
+  // THE PICTURE IS THE POINT — full strength: no opacity, no scrim, no blur.
+  // Readability contrast belongs to the text on top (shadows), never to a
+  // layer over the whole picture.
   const playing = Boolean(active && video && playableSrc && videoWhenActive);
   if (playing) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-95" loop muted playsInline preload="auto" />
+        <video ref={videoRef} src={playableSrc} className="size-full object-cover" loop muted playsInline preload="auto" />
       </div>
     );
   }
@@ -165,7 +167,7 @@ export function VideoBackdrop({
   if (showImageWhenInactive) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        <img src={image} alt="" className="size-full object-cover opacity-95" />
+        <img src={image} alt="" className="size-full object-cover" />
       </div>
     );
   }

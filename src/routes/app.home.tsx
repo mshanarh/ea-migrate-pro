@@ -141,7 +141,7 @@ function HomeErrorFallback({ error, reset }: ErrorComponentProps) {
             router.invalidate();
             reset();
           }}
-          className="plat-pressable plat-control h-11 rounded-2xl bg-gradient-to-b from-[#FFA500] to-[#CC7A00] px-6 text-sm font-black text-black"
+          className="plat-pressable plat-control h-11 rounded-2xl bg-gradient-to-b from-[var(--accent)] to-[var(--accent-deep)] px-6 text-sm font-black text-black"
         >
           Try again
         </button>
@@ -201,12 +201,12 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
             onChange={(event) => setKey(event.target.value.toUpperCase())}
             placeholder="EMP-XXXXXXXXXXXX"
             aria-label="Host robot key"
-            className="plat-field h-14 w-full border border-white/10 bg-white/[0.05] px-5 font-mono text-sm tracking-[0.18em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-white/30 focus:border-[#FFA500]/70"
+            className="plat-field h-14 w-full border border-white/10 bg-white/[0.05] px-5 font-mono text-sm tracking-[0.18em] text-white outline-none placeholder:font-sans placeholder:tracking-normal placeholder:text-white/30 focus:border-[var(--accent)]"
           />
           <button
             type="submit"
             disabled={submitting}
-            className="plat-pressable h-14 w-full bg-gradient-to-b from-[#FFA500] to-[#CC7A00] text-base font-black text-black shadow-[0_0_36px_rgba(255,165,0,0.35)] disabled:cursor-wait disabled:opacity-70"
+            className="plat-pressable h-14 w-full bg-gradient-to-b from-[var(--accent)] to-[var(--accent-deep)] text-base font-black text-black shadow-[0_0_36px_var(--accent-soft)] disabled:cursor-wait disabled:opacity-70"
           >
             {submitting ? "ACTIVATING…" : "ACTIVATE ROBOT"}
           </button>

@@ -65,7 +65,7 @@ export const Route = createFileRoute("/app/fundamentals")({
 /** Live fallback: the real Investing.com weekly economic calendar widget. */
 function FundamentalsErrorFallback() {
   return (
-    <div className="min-h-screen w-full bg-[#0a0a0a] pb-32 text-white">
+    <div data-eamp-bg-host className="min-h-screen w-full bg-[#0a0a0a] pb-32 text-white">
       <p className="pt-10 text-center text-[15px] font-bold uppercase tracking-[0.35em] text-white/90">FUNDAMENTALS</p>
       <p className="mt-2 text-center text-[15px] text-white/55">This week's economic calendar</p>
       <main className="mx-auto w-full max-w-md px-5">
@@ -375,7 +375,7 @@ function FundamentalsPage() {
   }, [filtered]);
 
   return (
-    <div className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-safe-nav text-white">
+    <div data-eamp-bg-host className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-safe-nav text-white">
       {/* ── top bar ── */}
       <div className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-safe">
         <button

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { toggleColourCycle } from "@/lib/color-cycle";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 /**
  * Centre-tap surface for the interface colour cycle.
@@ -50,6 +51,43 @@ function inCentreZone(x: number, y: number): boolean {
     Math.abs(x - window.innerWidth / 2) <= window.innerWidth * 0.35 &&
     Math.abs(y - window.innerHeight / 2) <= window.innerHeight * 0.3
   );
+}
+
+/** Mix a hex towards black — the "deep" companion stop for gradients. */
+function shadeHex(hex: string, amount: number): string {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const n = Number.parseInt(full, 16);
+  if (!Number.isFinite(n)) return hex;
+  const r = Math.round(((n >> 16) & 255) * (1 - amount));
+  const g = Math.round(((n >> 8) & 255) * (1 - amount));
+  const b = Math.round((n & 255) * (1 - amount));
+  return `#${((1 << 24) | (r << 16) | (g << 8) | b).toString(16).slice(1)}`;
+}
+
+/**
+ * Publishes the LIVE accent as root CSS variables — the shared theme tokens
+ * any screen can use without prop drilling:
+ *
+ *   --accent        the accent itself
+ *   --accent-deep   darkened accent (gradient partners, pressed states)
+ *   --accent-soft   the accent at ~35% alpha (glows, soft shadows)
+ *
+ * It reads `useCustomization()`, which already honours the tap-to-cycle
+ * override, so the variables update on every cycle step AND on normal theme
+ * changes — live, with nothing cached on mount. Screens opened mid-cycle
+ * pick the current values up immediately.
+ */
+export function AccentVarSync() {
+  const { color } = useCustomization();
+  useEffect(() => {
+    const accent = accentColorValue(color);
+    const root = document.documentElement;
+    root.style.setProperty("--accent", accent);
+    root.style.setProperty("--accent-deep", shadeHex(accent, 0.35));
+    root.style.setProperty("--accent-soft", `${accent}59`);
+  }, [color]);
+  return null;
 }
 
 export function ColourCycleTap() {

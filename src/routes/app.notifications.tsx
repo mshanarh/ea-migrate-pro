@@ -73,9 +73,11 @@ function NotificationsPage() {
   }, [email]);
 
   return (
-    <div className="mx-auto min-h-dvh w-full max-w-md bg-[#0A0A0C] px-5 pb-24 pt-12 text-white">
+    // data-eamp-bg-host: steps this screen's own background aside while the
+    // app-wide background picture layer is showing (AppBackground).
+    <div data-eamp-bg-host className="mx-auto min-h-dvh w-full max-w-md bg-[#0A0A0C] px-5 pb-24 pt-12 text-white">
       <div className="mb-6 flex items-center gap-3">
-        <Bell className="size-6 text-[#38BDF8]" />
+        <Bell className="size-6 text-[var(--accent)]" />
         <h1 className="text-2xl font-black tracking-tight">Trade alerts</h1>
       </div>
       {state === "loading" && (

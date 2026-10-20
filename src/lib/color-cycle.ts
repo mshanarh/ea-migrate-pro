@@ -27,8 +27,8 @@ const CYCLE_ACCENT_IDS = [
   "solar-orange", // orange
 ] as const;
 
-/** How long each colour is shown — smooth and light on the battery. */
-const STEP_MS = 3500;
+/** How long each colour is shown — brisk (2s) and light on the battery. */
+const STEP_MS = 2000;
 /** Body flag while running — styles.css eases the colour shift under it. */
 const BODY_CLASS = "eamp-colour-cycle";
 

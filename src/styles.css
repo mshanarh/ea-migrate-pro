@@ -404,20 +404,31 @@ body.eamp-bg-on .app-fullscreen.bg-black {
 }
 
 /* Interface colour cycle (tap the centre — see color-cycle.ts): while the
-   effect runs, colour tokens ease into the next scheme instead of snapping.
-   Only colour-ish properties are eased, so transforms (press/tap feedback)
-   and opacity stay instant. The class is removed the moment the cycle stops,
+   effect runs, colour tokens ease into the next scheme with a short 0.4s
+   shift — quick enough to feel like a 2s rotation, not a slow fade. Only
+   colour-ish properties are eased, so transforms (press/tap feedback) and
+   opacity stay instant. The class is removed the moment the cycle stops,
    which returns the interface to the user's real theme. */
 body.eamp-colour-cycle *,
 body.eamp-colour-cycle *::before,
 body.eamp-colour-cycle *::after {
   transition:
-    background-color 900ms ease,
-    border-color 900ms ease,
-    color 900ms ease,
-    box-shadow 900ms ease,
-    fill 900ms ease,
-    stroke 900ms ease !important;
+    background-color 400ms ease,
+    border-color 400ms ease,
+    color 400ms ease,
+    box-shadow 400ms ease,
+    fill 400ms ease,
+    stroke 400ms ease !important;
+}
+
+/* The app-wide background picture layer (AppBackground) sits behind the route
+   content; while it shows, the screens' own solid backgrounds step aside so
+   the picture reads clearly — no dim, no blur, no gradient on top of it. The
+   class lives and dies with the layer. Screens that don't use the standard
+   .app-fullscreen shell opt in with [data-eamp-bg-host]. */
+body.eamp-app-bg .app-fullscreen,
+body.eamp-app-bg [data-eamp-bg-host] {
+  background-color: transparent;
 }
 
 /* Lock the body only while a native-shell screen is actually mounted with the

@@ -47,7 +47,7 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
   );
 }
 
-export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot, mediaDim }: BlueprintEdgeProps & { mediaDim?: boolean }) {
+export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
   const eaName = robot?.name ?? "YOUR ROBOT";
@@ -60,7 +60,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* The black console's static image background — when the HOME
           double-press starts the video, the universal backdrop in ThemeContent
           plays it, so this layer never runs a second <video> decoder. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} mediaDim={mediaDim} />
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section
