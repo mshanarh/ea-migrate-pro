@@ -113,6 +113,7 @@ const PLATFORM_PREPAINT_SCRIPT = `
 `;
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
+import { ColourCycleTap } from "@/components/ColourCycleTap";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -271,6 +272,8 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {/* Animated background sits behind everything; content lifts above it. */}
       <BackgroundEffects />
+      {/* Invisible centre-tap surface for the interface colour cycle. */}
+      <ColourCycleTap />
       <div style={{ position: "relative", zIndex: 1 }}>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />

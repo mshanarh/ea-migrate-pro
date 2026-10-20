@@ -108,30 +108,26 @@ describe("MT5 order comment — app request to the bridge", () => {
 
     const filled = results.find((trade) => trade.status === "executed");
     expect(filled?.meta?.requestedComment).toBe(EA_NAME);
-    // The bridge echoed no comment, so nothing changed — the name stands.
+    // What we sent is what the record keeps — the name stands.
     expect(filled?.meta?.actualComment).toBe(EA_NAME);
-    expect(filled?.meta?.commentChanged).toBeUndefined();
   });
 
-  it("surfaces (and logs) the broker's own comment instead of claiming the full name was applied", async () => {
+  it("never compares or warns about the broker's own echoed comment", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    // The broker applied a different comment than the one requested.
+    // The broker echoed its own comment instead of the requested name —
+    // brokers do this constantly, so the app must not treat it as a problem.
     const { results } = await runOneLiveTrade({
       payload: { retcode: 10009, order: 555123, comment: "sniper killer ea v2" },
     });
 
     const filled = results.find((trade) => trade.status === "executed");
-    expect(filled?.meta?.commentChanged).toBe(true);
-    expect(filled?.meta?.requestedComment).toBe(EA_NAME);
-    expect(filled?.meta?.actualComment).toBe("sniper killer ea v2");
-    // The limitation is stated on the trade itself, not hidden.
-    expect(filled?.message).toContain("sniper killer ea v2");
-    expect(filled?.message).toContain(EA_NAME);
-    // …and both values are logged.
+    expect(filled?.status).toBe("executed");
+    // The fill line is the plain success message — no ⚠, no comment text.
+    expect(filled?.message).toBe("Trade 1/1 executed on MetaTrader");
+    expect(filled?.message).not.toContain("broker applied the comment");
+    // Nothing about a comment mismatch is ever logged as a warning.
     const logged = warn.mock.calls.map((call) => call.join(" ")).join("\n");
-    expect(logged).toContain(EA_NAME);
-    expect(logged).toContain("sniper killer ea v2");
-    expect(logged).toContain("COMMENT");
+    expect(logged).not.toMatch(/comment/i);
     warn.mockRestore();
   });
 

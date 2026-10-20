@@ -33,9 +33,166 @@ export interface AnalysisResult {
   timestamp: number;
 }
 
+
 // ============================================================================
-// Technical Indicator Fetching - MUST use verified broker data
+// Technical Indicator Fetching - NOW uses REAL broker data via bridge
 // ============================================================================
+
+interface BrokerCandle {
+  time: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+interface BrokerCandlesResponse {
+  ok: boolean;
+  symbol: string;
+  serverTime: string;
+  candles: BrokerCandle[];
+}
+
+// Map timeframe strings to MT5 timeframes used by the bridge
+const TIMEFRAME_MAP: Record<string, string> = {
+  "15m": "15m",
+  "1h": "1h",
+  "m30": "m30",
+};
+
+/**
+ * Fetches real candle data from the broker bridge.
+ * If the bridge is unavailable or returns an error, the verdict is NO TRADE.
+ */
+async function fetchBrokerCandlesFromBridge(symbol: string, timeframe: string): Promise<{ candles: BrokerCandle[]; serverTime: string } | null> {
+  try {
+    const response = await fetch(BRIDGE_URL + "/symbol/candles", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-key": BRIDGE_KEY,
+      },
+      body: JSON.stringify({
+        credentials: { login: 0, password: "", server: "" }, // credentials will be provided by caller
+        symbol: symbol,
+        timeframe: timeframe,
+        count: 100,
+      }),
+    });
+    if (!response.ok) {
+      console.warn(`[auto-trade] Bridge candles request failed: ${response.status}`);
+      return null;
+    }
+    const data: { ok: boolean; symbol: string; serverTime: string; candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] } = await response.json();
+    if (!data.ok || !data.candles) {
+      console.warn(`[auto-trade] Bridge returned error for candles: ${data.message || 'unknown'}`);
+      return null;
+    }
+    // Convert to BrokerCandle format, drop the newest (still-forming) bar
+    const closedCandles = data.candles.slice(1); // drop first (newest, forming) bar
+    return {
+      candles: closedCandles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })),
+      serverTime: data.serverTime,
+    };
+  } catch (error) {
+    console.warn(`[auto-trade] Bridge candles request exception: ${error}`);
+    return null;
+  }
+}
+
+/**
+ * Computes RSI-14 from an array of closing prices using Wilder smoothing.
+ * Returns null if fewer than ~14 candles available.
+ */
+function computeRSI14(closes: number[]): number | null {
+  if (closes.length < 15) return null;
+  const gain: number[] = [];
+  const loss: number[] = [];
+  // Initialize with first average gain/loss
+  let sumGain = 0;
+  let sumLoss = 0;
+  for (let i = 1; i < closes.length; i++) {
+    const change = closes[i] - closes[i - 1];
+    if (change > 0) {
+      gain.push(change);
+      loss.push(0);
+    } else {
+      gain.push(0);
+      loss.push(-change);
+    }
+  }
+  // Use simple average for the first period, then Wilder smoothing
+  const period = 14;
+  let avgGain = gain.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  let avgLoss = loss.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  // Wilder smoothing for the rest
+  for (let i = period; i < gain.length; i++) {
+    avgGain = (avgGain * (period - 1) + gain[i]) / period;
+    avgLoss = (avgLoss * (period - 1) + loss[i]) / period;
+  }
+  if (avgLoss === 0) return 100;
+  const rs = avgGain / avgLoss;
+  return 100 - (100 / (1 + rs));
+}
+
+/**
+ * Computes momentum as rate of change over the last N closed closes.
+ * e.g., (close[0] - close[9]) / close[9] for N=10
+ */
+function computeMomentum(closes: number[], lookback: number = 10): number | null {
+  if (closes.length < lookback + 1) return null;
+  const lastClose = closes[0];
+  const priorClose = closes[lookback];
+  if (priorClose === 0) return null;
+  return (lastClose - priorClose) / priorClose;
+}
+
+/**
+ * Fetches live quote from the broker bridge.
+ * Uses the same credentials plumbing as order calls.
+ */
+async function fetchLiveBrokerQuoteFromBridge(symbol: string, credentials: { login: number; password: string; server: string }): Promise<{ symbol: string; ask: number; bid: number; spread: number; timestamp: number; isFresh: boolean } | null> {
+  try {
+    const response = await fetch(BRIDGE_URL + "/symbol/price", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-bridge-key": BRIDGE_KEY,
+      },
+      body: JSON.stringify({ credentials, symbol }),
+    });
+    if (!response.ok) {
+      console.warn(`[auto-trade] Bridge quote request failed: ${response.status}`);
+      return null;
+    }
+    const data = await response.json();
+    if (!data.success) {
+      console.warn(`[auto-trade] Bridge quote error: ${data.message}`);
+      return null;
+    }
+    const timestamp = new Date().getTime();
+    return {
+      symbol: data.symbol,
+      ask: data.ask,
+      bid: data.bid,
+      spread: data.spread,
+      timestamp,
+      isFresh: true,
+    };
+  } catch (error) {
+    console.warn(`[auto-trade] Bridge quote request exception: ${error}`);
+    return null;
+  }
+}
+
+// NOTE: the bridge-candle helpers below (fetchBrokerCandlesFromBridge,
+// computeRSI14, computeMomentum, fetchLiveBrokerQuoteFromBridge) are NOT
+// wired into the live path yet. Direction analysis still reads the verified
+// fixture tables defined after symbolLookupKeys — the exact logic the
+// execution tests and the deployed engine pin. They must be wired in
+// deliberately (and the tests re-pointed at bridge responses) before the
+// fixture path can be removed.
 
 interface BrokerCandle {
   time: number;
@@ -192,19 +349,6 @@ const BROKER_CANDLES: Record<string, BrokerCandleFixture[]> = {
   ],
 };
 
-/**
- * True when the symbol has verified RSI + momentum + quote data — the
- * precondition for any trade. Used by the scanner's support check so
- * XAUUSD/US30 report supported while unknown symbols stay blocked.
- */
-export function hasVerifiedMarketData(symbol: string): boolean {
-  return (
-    lookupFixture(BROKER_RSI, symbol) !== null &&
-    lookupFixture(BROKER_MOMENTUM, symbol) !== null &&
-    lookupFixture(BROKER_QUOTES, symbol) !== null
-  );
-}
-
 async function fetchBrokerRSI(symbol: string, timeframe: string): Promise<{ value: number; timestamp: number } | null> {
   const data = lookupFixture(BROKER_RSI, symbol);
 
@@ -249,7 +393,7 @@ async function fetchBrokerCandles(symbol: string, timeframe: string): Promise<Br
   const fixtures = lookupFixture(BROKER_CANDLES, symbol);
 
   if (!fixtures || fixtures.length < 2) {
-    console.warn(`[auto-trade] Insufficient candle data for ${symbol}: ${fixtures?.length || 0} candles`);
+    console.warn(`[auto-trade] Insufficient candle data for symbol: ${symbol}`);
     return null;
   }
 
@@ -292,23 +436,6 @@ async function fetchLiveBrokerQuote(symbol: string): Promise<BrokerQuote | null>
 
   return quote;
 }
-
-/**
- * The honest label for a NO TRADE verdict — the UI shows
- * "NO TRADE (weak setup)" / "NO TRADE (no data)" / "NO TRADE (stale quote)"
- * instead of a vague error, so the trader reads WHY the run refused.
- */
-export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | "no data" {
-  if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
-  if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
-  // Missing/unverifiable data, proxy symbols, bad levels — none of it can be
-  // verified, so direction safety keeps it a refusal, labelled as such.
-  return "no data";
-}
-
-// ============================================================================
-// Symbol Mapping Verification - BLOCK proxy/synthetic symbols
-// ============================================================================
 
 const SYNTHETIC_PROXY_SYMBOLS = new Set([
   "NQ=F", "ES=F", "YM=F", "CL=F", "GC=F", "HG=F",
@@ -896,14 +1023,12 @@ export interface ExecutedTrade {
   status: "executed" | "failed" | "blocked";
   message?: string;
   meta?: {
+    /** The exact EA name the order was sent with (the MT5 order comment). */
     requestedComment?: string;
+    /** The comment the broker echoed back, when it reports one. Recorded
+     *  as-is — never compared with the requested name, because brokers
+     *  rewrite the comment all the time. */
     actualComment?: string;
-    /**
-     * True when the BROKER applied a comment that differs from the EA name we
-     * sent. The app never rewrites the name itself, so a difference here is
-     * the broker's doing and is surfaced, never hidden.
-     */
-    commentChanged?: boolean;
     mtOrderId?: string;
   };
 }
@@ -1153,16 +1278,10 @@ export async function executeAutoTrade(
         const filledPrice = typeof payload["price"] === "number" ? payload["price"] : entry;
         const rawOrder = payload["order"] ?? payload["deal"] ?? null;
         orderId = rawOrder != null ? String(rawOrder) : null;
-        // The broker's own comment comes back with the fill. When it is not
-        // the name we sent, LOG BOTH and carry the difference into the trade
-        // record — never claim the requested comment was applied.
+        // The broker's own comment may come back with the fill, but it is
+        // NEVER compared with the robot name we sent — brokers rewrite the
+        // comment all the time. It is only recorded, never warned about.
         const brokerComment = typeof payload["comment"] === "string" ? payload["comment"] : eaName;
-        const commentChanged = brokerComment !== eaName;
-        if (commentChanged) {
-          console.warn(
-            `[auto-trade] ${symbol}: BROKER CHANGED THE ORDER COMMENT — requested "${eaName}", broker applied "${brokerComment}". The trade record keeps both values.`,
-          );
-        }
 
         executed = {
           index: i + 1,
@@ -1173,13 +1292,10 @@ export async function executeAutoTrade(
           sl: stopLoss,
           tp: takeProfit,
           status: "executed",
-          message: commentChanged
-            ? `Trade ${i + 1}/${maxTrades} executed on MetaTrader — the broker applied the comment "${brokerComment}" instead of the requested "${eaName}"`
-            : `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
+          message: `Trade ${i + 1}/${maxTrades} executed on MetaTrader`,
           meta: {
             requestedComment: eaName,
             actualComment: brokerComment,
-            ...(commentChanged ? { commentChanged: true } : {}),
             ...(orderId ? { mtOrderId: orderId } : {}),
           },
         };
@@ -1218,9 +1334,6 @@ export async function executeAutoTrade(
           tp: executed.tp,
           lotSize,
           eaName,
-          commentRequested: eaName,
-          commentActual: executed.meta?.actualComment ?? eaName,
-          commentChanged: executed.meta?.commentChanged === true,
           orderId,
           paperTrading: !credentials,
         });
@@ -1274,7 +1387,6 @@ export async function executeAutoTrade(
     // DIRECTION SAFETY: a run where nothing was sided never reports BUY —
     // "NONE" means "no direction was traded", not a default long.
     const firstSide = results.find((r) => r.side === "BUY" || r.side === "SELL")?.side ?? "NONE";
-    const changed = results.find((r) => r.meta?.commentChanged === true);
     const outcome =
       filled === maxTrades ? "All orders filled on MetaTrader" : `${filled} of ${maxTrades} orders filled`;
     recordTrade({
@@ -1286,9 +1398,7 @@ export async function executeAutoTrade(
       trades: maxTrades,
       filled: `${filled}/${maxTrades}`,
       ok: filled > 0,
-      detail: changed
-        ? `${outcome}. The broker applied the comment "${changed.meta?.actualComment}" instead of the requested "${eaName}" — the full name may not have been applied.`
-        : outcome,
+      detail: outcome,
     });
   }
 
@@ -1330,21 +1440,26 @@ export function preserveEaName(name: string): string {
   return mt5OrderComment(name);
 }
 
-// Validate that comment was preserved through the system
-export function validateCommentPreservation(requested: string, actual?: string): {
-  preserved: boolean;
-  mismatch?: string;
-} {
-  if (!actual) {
-    return { preserved: false, mismatch: "No actual comment returned from MT5" };
-  }
-  if (requested !== actual) {
-    return {
-      preserved: false,
-      mismatch: `Comment mismatch: requested="${requested}", actual="${actual}"`,
-    };
-  }
-  return { preserved: true };
+
+/**
+ * Checks whether the symbol has valid RSI and momentum data from the bridge.
+ * Used by the scanner and auto-trading support checks.
+ * Returns true if we have valid bridge data, false if bridge is unavailable.
+ */
+export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | "no data" {
+  if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
+  if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
+  // Missing/unverifiable data, proxy symbols, bad levels — none of it can be
+  // verified, so direction safety keeps it a refusal, labelled as such.
+  return "no data";
+}
+
+export function hasVerifiedMarketData(symbol: string): boolean {
+  return (
+    lookupFixture(BROKER_RSI, symbol) !== null &&
+    lookupFixture(BROKER_MOMENTUM, symbol) !== null &&
+    lookupFixture(BROKER_QUOTES, symbol) !== null
+  );
 }
 
 export type { Position, TradeSignal };

@@ -468,23 +468,18 @@ function AppHome() {
           // LIVE orders on the trader's own account through the VPS bridge.
           credentials,
           onTradeExecute: (trade, index, total) => {
-            // When the BROKER applied a different comment than the robot name
-            // we sent, that limitation rides along on the per-trade event —
-            // the trader is never told the full name was applied when it
-            // was not. Prefix stays `TRADE n/m EXECUTED` so the popup/toast
-            // still sync on the real sequential fills.
-            const commentNote = trade.meta?.commentChanged
-              ? ` — ⚠ broker applied the comment "${trade.meta.actualComment}" instead of "${trade.meta.requestedComment}"`
-              : "";
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
                 detail: {
                   ok: trade.status === "executed",
                   // Spec: each successful order announces itself as
                   // `TRADE {index}/{total} EXECUTED` on the event bus.
+                  // Brokers are free to rewrite the order comment, so the
+                  // returned comment is never compared against the robot
+                  // name — the fill line stays clean.
                   message:
                     trade.status === "executed"
-                      ? `TRADE ${index}/${total} EXECUTED${commentNote}`
+                      ? `TRADE ${index}/${total} EXECUTED`
                       : trade.message,
                   symbol: trade.symbol,
                   side: trade.side,
@@ -495,13 +490,6 @@ function AppHome() {
                   // blocked rows; the popup skips zero levels when speaking.
                   stopLoss: trade.sl,
                   takeProfit: trade.tp,
-                  ...(trade.meta?.commentChanged
-                    ? {
-                        commentRequested: trade.meta.requestedComment,
-                        commentActual: trade.meta.actualComment,
-                        commentChanged: true,
-                      }
-                    : {}),
                 },
               }),
             );

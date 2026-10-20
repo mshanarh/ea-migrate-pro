@@ -417,31 +417,10 @@ function AppScanner() {
         firstPayload["stops_removed"] === true
           ? " ⚠ Broker rejected the SL/TP levels — position opened WITHOUT them. Set stop-loss and take-profit manually in MT5."
           : "";
-      // The broker echoes the comment it actually applied. When it is not the
-      // EA name we sent, LOG BOTH and say so in the run report — the app never
-      // rewrites the name itself, so any difference is the broker's doing and
-      // must not be presented as "the full comment was applied".
-      // The bridge may echo the applied comment at the top level or nested
-      // under `result`. An empty/absent value means "not reported", not "the
-      // broker wiped the comment" — never raise a false alarm on it.
-      const nestedResult = (firstPayload["result"] ?? {}) as Record<string, unknown>;
-      const echoedComment =
-        typeof firstPayload["comment"] === "string" && firstPayload["comment"]
-          ? (firstPayload["comment"] as string)
-          : typeof nestedResult["comment"] === "string" && nestedResult["comment"]
-            ? (nestedResult["comment"] as string)
-            : null;
-      const appliedComment = echoedComment;
-      const commentChanged = appliedComment !== null && appliedComment !== orderComment;
-      if (commentChanged) {
-        console.warn(
-          `[scanner] ${symbol}: BROKER CHANGED THE ORDER COMMENT — requested "${orderComment}", broker applied "${appliedComment}". The trade record keeps both values.`,
-        );
-      }
-      const commentWarning = commentChanged
-        ? ` ⚠ Broker applied the comment "${appliedComment}" instead of your robot name "${orderComment}" — the full name may not have been applied.`
-        : "";
-      const finalMessage = `${message}${stopsWarning}${commentWarning}`;
+      // NOTE: the broker's echoed order comment is intentionally NOT compared
+      // against the robot name — brokers rewrite the comment all the time, so
+      // a mismatch means nothing and must never be surfaced as a warning.
+      const finalMessage = `${message}${stopsWarning}`;
       onProgress("Disconnecting...");
       recordTrade({
         symbol,

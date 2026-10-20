@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { colourCycleAccentId, subscribeColourCycle } from "@/lib/color-cycle";
 
 export const ACCENT_COLORS = [
   { id: "inferno-red", name: "Inferno Red", value: "#FF2D2D" },
@@ -162,7 +163,16 @@ function subscribe(listener: () => void) {
 const serverSnapshot: Customization = { ...defaults };
 
 export function useCustomization() {
-  return useSyncExternalStore(
+  // Tap-to-cycle interface colours (session-only, see color-cycle.ts): while
+  // the effect runs, the theme's accent is the cycling one, so every screen
+  // that derives colours from this hook shifts together. Nothing else in the
+  // theme (or the stored preference) is touched.
+  const cycleAccentId = useSyncExternalStore(
+    subscribeColourCycle,
+    colourCycleAccentId,
+    () => null,
+  );
+  const base = useSyncExternalStore(
     subscribe,
     () => {
       load();
@@ -170,6 +180,7 @@ export function useCustomization() {
     },
     () => serverSnapshot,
   );
+  return cycleAccentId ? { ...base, color: cycleAccentId as AccentColorId } : base;
 }
 
 export function setAccentColor(id: AccentColorId) {

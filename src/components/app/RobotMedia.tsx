@@ -125,36 +125,39 @@ export function RobotMedia({ image, video, variant = "hero", className, preferIm
 export function VideoBackdrop({
   image,
   video,
-  accent,
   showImageWhenInactive = true,
   videoWhenActive = true,
   mediaDim = false,
 }: {
   image: string;
   video?: string | undefined;
-  accent: string;
+  /** Kept for call-site compatibility — the backdrop itself no longer paints accent layers. */
+  accent?: string;
   /** Inactive state: keep the static image layer (theme backgrounds) or nothing. */
   showImageWhenInactive?: boolean;
   /** Set false when the theme's big screen plays the video in the card. */
   videoWhenActive?: boolean;
+  /**
+   * The "Background Picture" preference. OFF (the default): this backdrop
+   * renders NOTHING — the interface keeps a clean solid black background with
+   * no dim layer, no blur and no gradient. ON: the media shows clearly, with
+   * no scrim layers on top of it either. Small cards/thumbnails never route
+   * through this backdrop, so they are unaffected.
+   */
+  mediaDim?: boolean | undefined;
 }) {
   const active = useVideoActive();
   const playableSrc = usePlayableVideo(video);
   const videoRef = useEnsurePlaying(active, playableSrc);
+
+  // BACKGROUND PICTURE OFF → no media at all, just the clean black behind it.
+  if (!mediaDim) return null;
 
   const playing = Boolean(active && video && playableSrc && videoWhenActive);
   if (playing) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
         <video ref={videoRef} src={playableSrc} className="size-full object-cover opacity-95" loop muted playsInline preload="auto" />
-        {/* Legibility scrims over the media — reduced when mediaDim is on */}
-        {mediaDim ? null : <div className="absolute inset-0 bg-black/10" />}
-        {mediaDim ? null : (
-          <div
-            className="absolute inset-x-0 bottom-0 h-40"
-            style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55) 85%), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
-          />
-        )}
       </div>
     );
   }
@@ -162,15 +165,7 @@ export function VideoBackdrop({
   if (showImageWhenInactive) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        {/* THE PICTURE IS THE POINT — full strength, no darkening layers over
-            it. When mediaDim is on, remove the scrim so the picture is clearly visible. */}
-        <img src={image} alt="" className={mediaDim ? 'size-full object-cover opacity-95' : 'size-full object-cover opacity-95'} />
-        {mediaDim ? null : (
-          <div
-            className="absolute inset-x-0 bottom-0 h-24"
-            style={{ background: `linear-gradient(180deg, transparent, rgba(0,0,0,0.55)), linear-gradient(0deg, ${accent}14, transparent 60%)` }}
-          />
-        )}
+        <img src={image} alt="" className="size-full object-cover opacity-95" />
       </div>
     );
   }

@@ -124,8 +124,11 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                 ) : (
                   <span className="absolute inset-0" style={{ backgroundColor: accent }} />
                 )}
-                {/* Dark scrim so the name overlay reads on any picture */}
-                <span className={mediaDim ? "" : "absolute inset-0 bg-black/35"} />
+                {/* Dark scrim so the name overlay reads on any picture —
+                    robot-list cards keep their readability layer in both
+                    Background Picture states (only full-screen backdrops
+                    follow the preference). */}
+                <span className="absolute inset-0 bg-black/35" />
                 {selected && (
                   <span
                     className="relative px-4 text-center text-base font-black uppercase tracking-wide"

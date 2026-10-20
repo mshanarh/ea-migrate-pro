@@ -4,7 +4,6 @@ import {
   executeAutoTrade,
   safeTradeCount,
   preserveEaName,
-  validateCommentPreservation,
   type AnalysisResult,
 } from "../src/lib/auto-trade";
 import {
@@ -346,33 +345,6 @@ describe("Trade Comment Preservation", () => {
       const preserved = preserveEaName(name);
       expect(preserved).toBe(name);
     }
-  });
-
-  it("should validate comment preservation returns correct result", () => {
-    const requested = "sniper killer ea v2+";
-    const actual = "sniper killer ea v2+";
-
-    const result = validateCommentPreservation(requested, actual);
-    expect(result.preserved).toBe(true);
-    expect(result.mismatch).toBeUndefined();
-  });
-
-  it("should detect comment mismatch", () => {
-    const requested = "sniper killer ea v2+";
-    const actual = "sniper killer ea v2";
-
-    const result = validateCommentPreservation(requested, actual);
-    expect(result.preserved).toBe(false);
-    expect(result.mismatch).toContain("requested");
-    expect(result.mismatch).toContain("actual");
-  });
-
-  it("should detect missing actual comment", () => {
-    const requested = "sniper killer ea v2+";
-
-    const result = validateCommentPreservation(requested, undefined);
-    expect(result.preserved).toBe(false);
-    expect(result.mismatch).toContain("No actual comment");
   });
 
   it("should pass exact comment through execution", async () => {

@@ -6,7 +6,7 @@ import { isRobotVideoAuto, setRobotVideoAuto, setVideoActive } from "@/lib/video
 import { useAppState } from "@/lib/app-store";
 import { loadVideoUrl } from "@/lib/media-store";
 
-type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice";
+type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice" | "backgroundPicture";
 
 type EffectRow = {
   id: string;

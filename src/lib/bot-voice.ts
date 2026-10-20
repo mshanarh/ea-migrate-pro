@@ -47,19 +47,43 @@ function pickVoice(): SpeechSynthesisVoice | null {
   return cachedMaleVoice;
 }
 
-/** Announce a phrase in the bot's smooth male voice. No-op when disabled. */
+/**
+ * Announce a phrase in the bot's smooth male voice — THE single speak
+ * helper every announcement routes through (welcome, execution start, each
+ * executed trade):
+ *
+ *   1. NATIVE ANDROID TTS FIRST: window.AndroidTTS when the wrapper injects
+ *      it, otherwise the window.EAMigrate bridge the app actually ships.
+ *      When either is present it owns speech completely — return without
+ *      touching speechSynthesis, so nothing is ever spoken twice (the
+ *      WebView's own speechSynthesis is silent on Android anyway). An older
+ *      APK without speak() degrades to silence — never to the web path —
+ *      and the updated APK carries the method.
+ *   2. Otherwise: browser speechSynthesis (on-device, no network).
+ *
+ * No-op when the Bot Voice setting is off. No delays: the line is spoken at
+ * the same moment the caller renders it.
+ */
 export function speakBot(text: string): void {
-  if (!isBotVoiceEnabled()) return;
+  if (!isBotVoiceEnabled()) return; // voice off → say nothing
   if (typeof window === "undefined") return;
-  // INSIDE THE ANDROID APP the native TextToSpeech owns speech: the WebView's
-  // speechSynthesis never speaks there (the "voice works in the browser but
-  // not on the phone" bug). Same bridge check the rest of the app uses. An
-  // older APK without speak() degrades to silence — never to the web path —
-  // and the updated APK carries the method.
+  // 1. Native Android TTS — AndroidTTS (spec) or the injected EAMigrate bridge.
+  const androidTts = (
+    window as unknown as { AndroidTTS?: { speak?: (value: string) => void } }
+  ).AndroidTTS;
+  if (typeof androidTts?.speak === "function") {
+    try {
+      androidTts.speak(text);
+    } catch {
+      /* native engine unavailable — stay silent rather than double-speak */
+    }
+    return;
+  }
   if (hasNativeBridge()) {
     callNative("speak", text);
     return;
   }
+  // 2. Browser fallback.
   if (!("speechSynthesis" in window)) return;
   try {
     const synth = window.speechSynthesis;
@@ -89,32 +113,5 @@ export function warmBotVoice(): void {
     }
   } catch {
     /* ignore */
-  }
-}
-
-
-/** Unified speak helper that works in both Android WebView and browsers. */
-export function speak(text: string): void {
-  if (typeof window === "undefined") return;
-  // FIRST: try native Android TTS via AndroidTTS API (works in Android WebView)
-  if ((window as any).AndroidTTS?.speak) {
-    ;(window as any).AndroidTTS.speak(text);
-    return;
-  }
-  // FALL BACK: browser speechSynthesis
-  if (!("speechSynthesis" in window)) return;
-  try {
-    const synth = window.speechSynthesis;
-    synth.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    const voice = pickVoice();
-    if (voice) utterance.voice = voice;
-    utterance.lang = voice?.lang ?? "en-US";
-    utterance.rate = 0.98;
-    utterance.pitch = 0.85; // deeper, smooth male tone
-    utterance.volume = 1;
-    synth.speak(utterance);
-  } catch {
-    /* unsupported — silent */
   }
 }

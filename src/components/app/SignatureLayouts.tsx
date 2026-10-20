@@ -106,7 +106,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/20 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:px-5 sm:pt-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:px-5 sm:pt-7">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[38rem]"
@@ -159,7 +159,7 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden bg-black/15 px-4 pb-10 pt-6 text-white backdrop-blur-[1px] sm:pt-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:pt-7">
       <div
         aria-hidden
         className="pointer-events-none absolute inset-x-0 top-0 h-[43rem]"

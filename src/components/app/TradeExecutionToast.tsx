@@ -63,9 +63,6 @@ export function TradeExecutionToast({
   const [stepIndex, setStepIndex] = useState(0);
   const [typed, setTyped] = useState("");
   const [currentTrade, setCurrentTrade] = useState(0);
-  /** Set when the broker applied a different order comment than the robot
-   *  name that was sent — shown so a silent substitution is never implied. */
-  const [commentWarning, setCommentWarning] = useState("");
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -85,7 +82,6 @@ export function TradeExecutionToast({
     setStepIndex(0);
     setTyped("");
     setCurrentTrade(0);
-    setCommentWarning("");
     return clearTimers;
   }, [isOpen]);
 
@@ -184,10 +180,6 @@ export function TradeExecutionToast({
         playBeep();
         setPhase("trade");
         setCurrentTrade(Number(perTrade[1]));
-        // A note rides along when the broker applied a comment other than
-        // the configured robot name. Keep it on screen — "completed
-        // successfully" alone would imply the full name was applied.
-        setCommentWarning(/broker applied the comment/i.test(result.message) ? result.message : "");
         return;
       }
       if (/TRADE \d+ REFUSED/i.test(result.message)) {
@@ -256,15 +248,6 @@ export function TradeExecutionToast({
           {phase === "done" && (
             <p className="truncate text-[13px] font-bold text-white">
               {typed || `🎉 All ${totalTrades} trades executed on MetaTrader!`}
-            </p>
-          )}
-          {commentWarning &&
-            (phase === "trade" || phase === "done") &&
-            // The final summary line already carries the note on the scanner
-            // path — don't print it twice.
-            !/broker applied the comment/i.test(typed) && (
-            <p className="mt-1 line-clamp-2 text-[11px] font-medium leading-snug text-amber-300" title={commentWarning}>
-              ⚠️ {commentWarning}
             </p>
           )}
           {totalTrades > 0 &&

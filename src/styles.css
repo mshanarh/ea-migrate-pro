@@ -403,6 +403,23 @@ body.eamp-bg-on .app-fullscreen.bg-black {
   background-color: transparent;
 }
 
+/* Interface colour cycle (tap the centre — see color-cycle.ts): while the
+   effect runs, colour tokens ease into the next scheme instead of snapping.
+   Only colour-ish properties are eased, so transforms (press/tap feedback)
+   and opacity stay instant. The class is removed the moment the cycle stops,
+   which returns the interface to the user's real theme. */
+body.eamp-colour-cycle *,
+body.eamp-colour-cycle *::before,
+body.eamp-colour-cycle *::after {
+  transition:
+    background-color 900ms ease,
+    border-color 900ms ease,
+    color 900ms ease,
+    box-shadow 900ms ease,
+    fill 900ms ease,
+    stroke 900ms ease !important;
+}
+
 /* Lock the body only while a native-shell screen is actually mounted with the
    locked variant — the mentor portal still scrolls normally. */
 body:has(.app-shell-locked) {

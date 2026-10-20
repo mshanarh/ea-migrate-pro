@@ -218,13 +218,10 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
       results.push(...rest);
     }
     const executed = results.filter((item) => item.success).length;
-    // The broker is free to truncate or rewrite the comment. When it did, the
-    // run report says so with both values instead of a clean "opened" that
-    // implies the trader's own name was applied.
-    const changed = results.find((item) => item.commentChanged === true);
-    const commentWarning = changed
-      ? ` ⚠ The broker applied the comment "${changed.actualComment}" instead of the requested "${changed.requestedComment}" — the full name may not have been applied.`
-      : "";
+    // NOTE: the comment echoed back by the broker is intentionally NOT
+    // compared with the EA name we sent — brokers rewrite the comment all
+    // the time, so a mismatch means nothing and must never be surfaced as
+    // a warning in the run report.
     if (executed === total) {
       const summary =
         total > 1
@@ -234,7 +231,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
         ok: true,
         executed,
         total,
-        message: `${summary}${commentWarning}`,
+        message: summary,
       };
     }
     const reason = results.find((item) => !item.success)?.error ?? "The bridge did not accept the order.";
@@ -243,7 +240,7 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
       ok: false,
       executed,
       total,
-      message: `${base}${commentWarning}`,
+      message: base,
     };
   });
 
@@ -262,9 +259,6 @@ async function executeVpsTradeInternal(input: {
   success: boolean;
   error?: string;
   transportDown?: boolean;
-  requestedComment?: string;
-  actualComment?: string;
-  commentChanged?: boolean;
 }> {
   // Preserve EA name EXACTLY — no sanitization, no stripping, no truncation.
   // The app's trade record contains the exact name as saved in the robot
@@ -293,35 +287,11 @@ async function executeVpsTradeInternal(input: {
     return { success: false, error: res.detail || res.message || `Trade execution failed (HTTP ${result.status})` };
   }
 
-  // Surface any comment truncation/change the bridge/broker echoed back. A
-  // difference is never silently swallowed: BOTH values are logged and travel
-  // with the result, so the caller can tell the trader what actually landed on
-  // the order instead of implying the full name was applied.
-  let actualComment = requestedComment;
-  if (result.data && typeof result.data === "object") {
-    const data = result.data as Record<string, unknown>;
-    // Only a non-empty echoed comment counts as the broker's own value — a
-    // missing/empty field means it was simply not reported.
-    if (typeof data["comment"] === "string" && data["comment"] && data["comment"] !== requestedComment) {
-      actualComment = data["comment"];
-    }
-  }
-  const commentChanged = actualComment !== requestedComment;
-  console.log(
-    `[mt5-bridge] order comment — requested "${requestedComment}", applied "${actualComment}"${commentChanged ? " (BROKER CHANGED IT)" : ""}`,
-  );
-  if (commentChanged) {
-    console.warn(
-      `[mt5-bridge] BROKER CHANGED THE ORDER COMMENT — requested "${requestedComment}", broker applied "${actualComment}". The full name may not have been applied.`,
-    );
-  }
-
-  return {
-    success: true,
-    requestedComment,
-    actualComment,
-    ...(commentChanged ? { commentChanged: true } : {}),
-  };
+  // NOTE: the comment echoed back by the bridge/broker is intentionally NOT
+  // compared with the EA name we sent — brokers rewrite the comment all the
+  // time, so a mismatch means nothing and must never be surfaced as a
+  // warning. The name still travels to the bridge verbatim above.
+  return { success: true };
 }
 
 /** \n * 5. Execute Trade Directly to MT5 — explicit-credentials server function. */

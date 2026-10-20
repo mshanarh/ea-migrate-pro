@@ -877,24 +877,13 @@ export const executeLiveTrade = createServerFn({ method: "POST" })
               : `Broker rejected the order (${humanized}).`;
           break;
         }
-        // When the provider echoes back the comment it applied, compare it
-        // with the exact EA name we sent. A difference is the broker's doing —
-        // log both and say so in the result instead of reporting a clean
-        // "executed" that implies the full name was applied.
-        // Only a non-empty echoed comment counts — a missing field means the
-        // provider did not report one, not that the comment was wiped.
-        const appliedComment = typeof result?.comment === "string" && result.comment ? result.comment : null;
-        const commentChanged = appliedComment !== null && appliedComment !== comment;
-        if (commentChanged) {
-          console.warn(
-            `[metaapi] BROKER CHANGED THE ORDER COMMENT — requested "${comment}", applied "${appliedComment}".`,
-          );
-        }
+        // NOTE: the comment echoed back by the broker is intentionally NOT
+        // compared with the EA name we sent — brokers rewrite the comment
+        // all the time, so a mismatch means nothing and must never be
+        // surfaced as a warning in the executed message.
         return {
           ok: true,
-          message: commentChanged
-            ? `${data.direction} ${volume} ${data.symbol} executed — the broker applied the comment "${appliedComment}" instead of the requested "${comment}"`
-            : `${data.direction} ${volume} ${data.symbol} executed`,
+          message: `${data.direction} ${volume} ${data.symbol} executed`,
           ...(result?.orderId || result?.positionId
             ? { orderId: result.orderId ?? result.positionId }
             : {}),
