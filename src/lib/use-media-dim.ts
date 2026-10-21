@@ -1,41 +1,13 @@
-import { useEffect, useState } from "react";
-
-const KEY = "mediaDim";
-/** The Settings toggle dispatches this so open screens refresh with no reload. */
-const REFRESH_EVENT = "eamp:bg-effects";
-
-function readMediaDim(): boolean {
-  try {
-    return window.localStorage.getItem(KEY) === "true";
-  } catch {
-    return false;
-  }
-}
+import { useBackgroundPicture } from "./background-picture";
 
 /**
- * The persisted "Background Picture" preference. DEFAULT OFF: when off, the
- * full-screen interfaces keep a clean solid black background and the
- * background picture/video is not rendered at all; when on, the media shows
- * clearly (no dim, blur or gradient layers on top of it). Small cards and
- * thumbnails are never affected — only the full-screen backdrops read this.
+ * The persisted "Background Picture" preference, now served from ONE shared
+ * store (`background-picture.ts`) so every screen reads the same live value.
  *
- * Live-updates when the Settings toggle changes it (the toggle writes the
- * key and dispatches the background-effects refresh event), so turning it on
- * shows the picture immediately — no app restart.
+ * Kept as a named export because the background layer was written against it;
+ * the implementation no longer reads localStorage on mount, which is what made
+ * the Settings toggle invisible to screens that were already open.
  */
 export function useMediaDim(): boolean {
-  const [mediaDim, setMediaDim] = useState(false);
-
-  useEffect(() => {
-    const refresh = () => setMediaDim(readMediaDim());
-    refresh();
-    window.addEventListener(REFRESH_EVENT, refresh);
-    window.addEventListener("storage", refresh);
-    return () => {
-      window.removeEventListener(REFRESH_EVENT, refresh);
-      window.removeEventListener("storage", refresh);
-    };
-  }, []);
-
-  return mediaDim;
+  return useBackgroundPicture();
 }

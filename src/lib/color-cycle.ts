@@ -2,32 +2,30 @@
  * Tap-to-cycle INTERFACE colours — a session-only theme effect (never
  * persisted; a reload starts back in the user's normal theme).
  *
- * Tapping the plain centre/background area (see ColourCycleTap) starts the
- * accent cycling red → blue → green → purple → orange every few seconds;
- * tapping again stops it and the interface returns to the stored theme. The
- * BACKGROUND (picture / black) is not touched — only interface colours.
+ * Tapping the plain background (see ColourCycleTap) starts the cycle through
+ * EVERY colour Settings offers — the full Color palette, in the order the
+ * picker shows it — and tapping again stops it, restoring the stored theme.
  *
- * The override lives at the theme source: `useCustomization()` reads this
- * store and returns the cycling accent INSTEAD of the stored one while the
- * effect runs, so every screen that derives its accent from the theme
- * changes together — one interval, one store, no per-screen colour code and
- * no re-render storms (the interval fires once every few seconds).
+ * The override lives at the theme source: `useCustomization()` returns the
+ * cycling accent INSTEAD of the stored one while the effect runs, so every
+ * screen and every colour token derived from the theme (buttons, borders,
+ * glows, text accents, active nav item, charts, progress bars, popup borders
+ * and the root CSS variables applied by AccentVarSync) shifts together from
+ * ONE interval. The BACKGROUND (picture / black) is not touched.
  */
 
-/**
- * The route the accent travels — real accent ids from ACCENT_COLORS, so every
- * token derived from the theme (accents, borders, glows, text accents,
- * canvas tint) shifts together.
- */
-const CYCLE_ACCENT_IDS = [
-  "inferno-red", // red
-  "electric-blue", // blue
-  "neon-green", // green
-  "royal-purple", // purple
-  "solar-orange", // orange
-] as const;
+import { ACCENT_COLORS } from "./app-customization";
 
-/** How long each colour is shown — brisk (2s) and light on the battery. */
+/** Every colour the Color section offers, in picker order (resolved lazily:
+ *  app-customization imports this module, so the palette is read at call time,
+ *  after both modules have finished initialising). */
+let cachedIds: string[] | null = null;
+function cycleIds(): string[] {
+  if (!cachedIds) cachedIds = ACCENT_COLORS.map((entry) => entry.id);
+  return cachedIds;
+}
+
+/** How long each colour is shown — 2s, with a ~0.4s ease between steps. */
 const STEP_MS = 2000;
 /** Body flag while running — styles.css eases the colour shift under it. */
 const BODY_CLASS = "eamp-colour-cycle";
@@ -49,10 +47,11 @@ export function isColourCycling(): boolean {
 /** The cycling accent id, or null when the effect is off (normal theme). */
 export function colourCycleAccentId(): string | null {
   if (!active) return null;
-  return CYCLE_ACCENT_IDS[step % CYCLE_ACCENT_IDS.length] ?? CYCLE_ACCENT_IDS[0] ?? null;
+  const ids = cycleIds();
+  return ids[step % ids.length] ?? ids[0] ?? null;
 }
 
-/** Start/stop the cycle. Called by the centre-tap handler. */
+/** Start/stop the cycle. Called by the global tap handler. */
 export function toggleColourCycle(): void {
   active = !active;
   step = 0;
@@ -61,7 +60,7 @@ export function toggleColourCycle(): void {
       document.body.classList.add(BODY_CLASS);
     }
     timer = setInterval(() => {
-      step = (step + 1) % CYCLE_ACCENT_IDS.length;
+      step = (step + 1) % cycleIds().length;
       notify();
     }, STEP_MS);
   } else {
