@@ -536,6 +536,45 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * Speak a phrase at a chosen level (0…1) through the same native
+         * engine. The app's voice setting trims the announcement on top of
+         * the device's own media volume. A missing or invalid level falls
+         * back to the device default.
+         */
+        @JavascriptInterface
+        public void speakWithVolume(final String text, final double volume) {
+            if (text == null || text.trim().isEmpty()) {
+                return;
+            }
+            final float level = (volume < 0.0d || volume > 1.0d || Double.isNaN(volume))
+                    ? 1.0f
+                    : (float) volume;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        if (tts == null) {
+                            tts = new TextToSpeech(MainActivity.this, new TextToSpeech.OnInitListener() {
+                                @Override
+                                public void OnInit(int status) {
+                                    ttsReady = status == TextToSpeech.SUCCESS;
+                                    if (ttsReady && tts != null) {
+                                        tts.setLanguage(Locale.US);
+                                    }
+                                }
+                            });
+                        }
+                        if (ttsReady && tts != null) {
+                            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "eamigrate", level);
+                        }
+                    } catch (Throwable t) {
+                        android.util.Log.e("EAMIGRATE", "speakWithVolume bridge failed: " + t);
+                    }
+                }
+            });
+        }
+
+        /**
          * May this app post notifications right now? The web app asks before it
          * promises the user an alert, so a blocked permission shows an honest
          * "turn on notifications" path instead of silently doing nothing.

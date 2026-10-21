@@ -241,7 +241,7 @@ export function TradeExecutionToast({
             phase === "trade" && (
               <p className="truncate text-[13px] font-bold text-white">
                 <span className="text-green-400">✅</span> Trade {currentTrade}{" "}
-                opened — EA Migrate ({currentTrade}/{totalTrades})
+                opened
               </p>
             )
           )}

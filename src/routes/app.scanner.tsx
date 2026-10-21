@@ -7,6 +7,7 @@ import ChartScanner from "@/components/app/ChartScanner";
 import type { ExecutionOutcome, ExecutionPlan } from "@/components/app/ChartScanner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
+import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { getAppState, leaveForCheckout } from "@/lib/app-store";
@@ -15,6 +16,7 @@ import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/l
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
+import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -59,6 +61,10 @@ function AppScanner() {
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
+  // The AI trade analysis card has its OWN open flag: the execution toast
+  // closes itself when its sequence ends, but the analysis card stays on
+  // screen with the confirmed trade until the trader dismisses it.
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
   const unlimited = isUnlimitedScanner(app.email);
@@ -95,14 +101,22 @@ function AppScanner() {
       toast.error("Save your MT5 details first — MetaTrader page.");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
-          detail: { ok: false, message: "No saved MT5 details — save them on the MetaTrader page" },
+          detail: {
+            ok: false,
+            message: "No saved MT5 details — save them on the MetaTrader page",
+            status: "failed",
+          },
         }),
       );
       return { ok: false, message: "No saved MT5 details — save them on the MetaTrader page first." };
     }
     if (!app.email) {
       const message = "Sign in to the portal so your saved MT5 account can be used for execution.";
-      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+      window.dispatchEvent(
+        new CustomEvent("eamp:execution-result", {
+          detail: { ok: false, message, status: "failed" },
+        }),
+      );
       return { ok: false, message };
     }
 
@@ -118,6 +132,19 @@ function AppScanner() {
     setToastTrades(Math.max(1, Math.min(trades, 20)));
     setToastSymbol(symbol);
     setToastOpen(true);
+    // The AI trade analysis card opens with the run's REAL plan — symbol,
+    // direction, lot size and trade count as the scanner analysed them.
+    setAnalysisOpen(true);
+    startExecution({
+      symbol,
+      direction,
+      ...(Number.isFinite(Number(lot)) ? { lotSize: Number(lot) } : {}),
+      totalTrades: Math.max(1, Math.min(trades, 20)),
+      robotName: robot?.name ?? "",
+      ...(typeof entry === "number" ? { entry } : {}),
+      ...(typeof stopLoss === "number" ? { stopLoss } : {}),
+      ...(typeof takeProfit === "number" ? { takeProfit } : {}),
+    });
     onProgress("Connecting to broker...");
     window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message: "CONNECTING TO BROKER..." } }));
 
@@ -131,7 +158,11 @@ function AppScanner() {
       if (!password) {
         const message =
           "MT5 password not found on this device — re-save your MT5 details on the MetaTrader page.";
-        window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: { ok: false, message, status: "failed" },
+          }),
+        );
         return { ok: false, message };
       }
       const loginNumber = Number(app.mt.loginId);
@@ -158,6 +189,11 @@ function AppScanner() {
       const planTp = Number(takeProfit) || 0;
       let stopLossValue = estimated ? 0 : planStop;
       let takeProfitValue = estimated ? 0 : planTp;
+      // The levels are anchored to the LIVE price before the order goes out.
+      setExecutionStage("Setting TP and SL...");
+      // The broker's own decimal count for this symbol — used to print the
+      // confirmed entry / stop / target exactly as the broker did.
+      let brokerDigits: number | null = null;
       if (planStop > 0 || planTp > 0) {
         try {
           const priceResponse = await fetch(`${BRIDGE_URL}/symbol/price`, {
@@ -169,6 +205,7 @@ function AppScanner() {
           const bid = typeof pricePayload["bid"] === "number" ? pricePayload["bid"] : 0;
           const ask = typeof pricePayload["ask"] === "number" ? pricePayload["ask"] : 0;
           const digits = typeof pricePayload["digits"] === "number" ? pricePayload["digits"] : null;
+          brokerDigits = digits;
           const point = typeof pricePayload["point"] === "number" && pricePayload["point"] > 0 ? pricePayload["point"] : 10 ** -(digits ?? 2);
           const stopsLevelPoints = typeof pricePayload["stops_level"] === "number" ? pricePayload["stops_level"] : 0;
           if (pricePayload["success"] === true && bid > 0 && ask > 0 && digits !== null && planEntry > 0) {
@@ -202,6 +239,14 @@ function AppScanner() {
       const withStops = stopLossValue > 0 || takeProfitValue > 0;
       const total = Math.max(1, Math.min(trades, 20));
       let useStops = withStops;
+      // The card now knows the REAL plan levels the orders will carry.
+      updateExecutionPlan({
+        ...(stopLossValue > 0 ? { stopLoss: stopLossValue } : {}),
+        ...(takeProfitValue > 0 ? { takeProfit: takeProfitValue } : {}),
+        ...(brokerDigits !== null ? { digits: brokerDigits } : {}),
+      });
+      setExecutionStage(`Executing ${total} trades one by one...`);
+
       const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
         const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
           method: "POST",
@@ -308,6 +353,27 @@ function AppScanner() {
       // Each order is announced on the event bus ("TRADE N EXECUTED") the
       // moment its broker confirmation arrives, so the top toast and the
       // floating bot popup narrate the run together, in order.
+      //
+      // The REAL values of one confirmed order, read from the broker's own
+      // response: the price it filled at, the volume that went out and the
+      // levels that were really attached to the position. Nothing here is
+      // estimated — a value the bridge did not report stays missing.
+      const describeFill = (payload: Record<string, unknown>) => {
+        const stopsRemoved = payload["stops_removed"] === true;
+        const price = typeof payload["price"] === "number" ? payload["price"] : 0;
+        const volume = typeof payload["volume"] === "number" ? payload["volume"] : 0;
+        const rawOrder = payload["order"] ?? payload["deal"] ?? null;
+        return {
+          ...(price > 0 ? { entry: price } : {}),
+          ...(volume > 0 ? { lotSize: volume } : { lotSize: lot }),
+          // A broker that refused the stops filled WITHOUT them — the
+          // position really has no stop loss / take profit, so none is shown.
+          ...(stopsRemoved ? {} : stopLossValue > 0 ? { stopLoss: stopLossValue } : {}),
+          ...(stopsRemoved ? {} : takeProfitValue > 0 ? { takeProfit: takeProfitValue } : {}),
+          ...(brokerDigits !== null ? { digits: brokerDigits } : {}),
+          ...(rawOrder !== null && rawOrder !== undefined ? { orderId: String(rawOrder) } : {}),
+        };
+      };
       let opened = 0;
       let firstPayload: Record<string, unknown> | null = null;
       let stopRetried = false;
@@ -317,10 +383,23 @@ function AppScanner() {
           const payload = await executeWithSymbolFallback();
           opened += 1;
           if (index === 1) firstPayload = payload;
-          // Per-trade announcement — toast + popup + native bubble all update.
+          // Per-trade announcement — toast + popup + native bubble all update,
+          // and the card/voice get the broker's OWN numbers for this order.
           const perTrade = `TRADE ${opened}/${total} EXECUTED`;
           window.dispatchEvent(
-            new CustomEvent("eamp:execution-result", { detail: { ok: true, message: perTrade } }),
+            new CustomEvent("eamp:execution-result", {
+              detail: {
+                ok: true,
+                message: perTrade,
+                status: "executed",
+                symbol,
+                side: direction,
+                robotName: robot?.name,
+                index: opened,
+                total,
+                ...describeFill(payload),
+              },
+            }),
           );
           // Give the broker a beat between orders — avoids rate-limit
           // rejections on fast consecutive market orders.
@@ -349,7 +428,17 @@ function AppScanner() {
               if (index === 1) firstPayload = payload;
               window.dispatchEvent(
                 new CustomEvent("eamp:execution-result", {
-                  detail: { ok: true, message: `TRADE ${opened}/${total} EXECUTED` },
+                  detail: {
+                    ok: true,
+                    message: `TRADE ${opened}/${total} EXECUTED`,
+                    status: "executed",
+                    symbol,
+                    side: direction,
+                    robotName: robot?.name,
+                    index: opened,
+                    total,
+                    ...describeFill(payload),
+                  },
                 }),
               );
               if (index < total) await new Promise((resolve) => setTimeout(resolve, 2000));
@@ -367,7 +456,17 @@ function AppScanner() {
                 : (error instanceof Error ? error.message : "Execution failed.");
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
-                detail: { ok: false, message: `${lastError.toUpperCase()} — CONNECTION CLOSED` },
+                detail: {
+                  ok: false,
+                  message: `${lastError.toUpperCase()} — CONNECTION CLOSED`,
+                  status: "failed",
+                  symbol,
+                  side: direction,
+                  lotSize: lot,
+                  robotName: robot?.name,
+                  index,
+                  total,
+                },
               }),
             );
             return { ok: false, message: lastError };
@@ -376,7 +475,17 @@ function AppScanner() {
           const refused = error instanceof Error ? error.message : "Order refused.";
           window.dispatchEvent(
             new CustomEvent("eamp:execution-result", {
-              detail: { ok: false, message: `TRADE ${index} REFUSED — ${refused.toUpperCase()}` },
+              detail: {
+                ok: false,
+                message: `TRADE ${index} REFUSED — ${refused.toUpperCase()}`,
+                status: "failed",
+                symbol,
+                side: direction,
+                lotSize: lot,
+                robotName: robot?.name,
+                index,
+                total,
+              },
             }),
           );
         }
@@ -434,9 +543,19 @@ function AppScanner() {
         ...(plan.strength ? { strength: plan.strength } : {}),
         detail: finalMessage,
       });
+      // The closing line of the run — a SUMMARY, not another trade. It says
+      // how many orders really opened and never repeats a price.
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
-          detail: { ok: true, message: finalMessage.toUpperCase() },
+          detail: {
+            ok: true,
+            message: finalMessage.toUpperCase(),
+            summary: true,
+            symbol,
+            robotName: robot?.name,
+            filled: opened,
+            total,
+          },
         }),
       );
       return { ok: true, message: finalMessage };
@@ -445,7 +564,11 @@ function AppScanner() {
         error instanceof TypeError
           ? "Could not reach the execution bridge — check your connection and try again."
           : (error instanceof Error ? error.message : "Could not reach the execution service.");
-      window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail: { ok: false, message } }));
+      window.dispatchEvent(
+        new CustomEvent("eamp:execution-result", {
+          detail: { ok: false, message, status: "failed" },
+        }),
+      );
       return { ok: false, message };
     }
   };
@@ -463,7 +586,12 @@ function AppScanner() {
         />
       </div>
       <FixedBottomNav />
-      <DraggableBotPopup />
+      <DraggableBotPopup />        <TradeAnalysisPopup
+          isOpen={analysisOpen}
+          onClose={() => setAnalysisOpen(false)}
+          robot={robot as import("@/lib/app-store").Robot | undefined}
+          scannerMode={true}
+        />
       <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">

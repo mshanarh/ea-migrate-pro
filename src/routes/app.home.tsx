@@ -13,11 +13,13 @@ import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
+import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
+import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 
 /**
@@ -281,6 +283,10 @@ function AppHome() {
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
+  // The AI trade analysis card has its OWN open flag — the execution toast
+  // closes itself when its sequence ends, the analysis card stays with the
+  // confirmed trade until the trader dismisses it.
+  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
   const touchStartX = useRef<number | null>(null);
@@ -406,6 +412,16 @@ function AppHome() {
     setToastTrades(totalTrades);
     setToastSymbol(pairs[0]?.symbol ?? "");
     setToastOpen(true);
+    // The AI trade analysis card opens with the run's REAL plan.
+    setAnalysisOpen(true);
+    const firstLot = Number(pairs[0]?.lotSize);
+    startExecution({
+      symbol: pairs[0]?.symbol ?? "",
+      ...(Number.isFinite(firstLot) ? { lotSize: firstLot } : {}),
+      totalTrades,
+      robotName: target.name,
+    });
+    setExecutionStage("Analyzing chart trend...");
 
     // The floating bot popup narrates the same four steps (spec: the popup's
     // initial log lines stay in sync with the toast sequence).
@@ -429,6 +445,9 @@ function AppHome() {
     let opened = 0;
     let blocked = 0;
     let refused = 0;
+    // The run-wide trade counter — the card and the voice say "trade 3 of 7"
+    // for the WHOLE run, not per symbol.
+    let tradeNumber = 0;
 
     for (const pair of pairs) {
       const symbol = pair.symbol.trim();
@@ -447,6 +466,9 @@ function AppHome() {
               detail: {
                 ok: false,
                 message: `${symbol.toUpperCase()} NO TRADE (${kind}) — ${analysis.direction.reason}`,
+                status: "blocked",
+                symbol,
+                robotName: target.name,
                 blocked: true,
                 reason: analysis.direction.reason,
               },
@@ -460,6 +482,20 @@ function AppHome() {
 
         if (trades === 0) continue;
 
+        // The analysed direction and levels are now KNOWN — the card shows
+        // them until the broker's confirmed fill replaces them.
+        const pairLot = Number(pair.lotSize);
+        updateExecutionPlan({
+          symbol: analysis.symbol,
+          direction: direction.type,
+          entry: direction.entry,
+          stopLoss: direction.sl,
+          takeProfit: direction.tp,
+          ...(Number.isFinite(pairLot) ? { lotSize: pairLot } : {}),
+        });
+        setExecutionStage("Setting TP and SL...");
+        setExecutionStage(`Executing ${trades} trades one by one...`);
+
         const result = await executeAutoTrade({
           symbol: analysis.symbol,
           lotSize: Number(pair.lotSize) || 0.01,
@@ -468,6 +504,8 @@ function AppHome() {
           // LIVE orders on the trader's own account through the VPS bridge.
           credentials,
           onTradeExecute: (trade, index, total) => {
+            tradeNumber += 1;
+            const runIndex = tradeNumber;
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
                 detail: {
@@ -479,17 +517,23 @@ function AppHome() {
                   // name — the fill line stays clean.
                   message:
                     trade.status === "executed"
-                      ? `TRADE ${index}/${total} EXECUTED`
+                      ? `TRADE ${runIndex}/${totalTrades} EXECUTED`
                       : trade.message,
+                  status: trade.status,
                   symbol: trade.symbol,
-                  side: trade.side,
-                  index,
-                  total,
+                  side: trade.side === "BLOCKED" ? undefined : trade.side,
+                  lotSize: trade.lotSize,
+                  // The broker's own fill price for this order.
+                  entry: trade.entry,
                   // Exact SL/TP executeAutoTrade sent to the bridge for this
                   // trade (read-only surfacing — no logic change). 0 on
                   // blocked rows; the popup skips zero levels when speaking.
                   stopLoss: trade.sl,
                   takeProfit: trade.tp,
+                  robotName: target.name,
+                  index: runIndex,
+                  total: totalTrades,
+                  ...(trade.meta?.mtOrderId ? { orderId: trade.meta.mtOrderId } : {}),
                 },
               }),
             );
@@ -510,6 +554,9 @@ function AppHome() {
             detail: {
               ok: false,
               message: `${symbol.toUpperCase()} FAILED — ${error instanceof Error ? error.message.toUpperCase() : "UNKNOWN ERROR"}`,
+              status: "failed",
+              symbol,
+              robotName: target.name,
             },
           }),
         );
@@ -603,7 +650,12 @@ function AppHome() {
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
 
       <WelcomeMaster />
-      <DraggableBotPopup />
+      <DraggableBotPopup />        <TradeAnalysisPopup
+          isOpen={analysisOpen}
+          onClose={() => setAnalysisOpen(false)}
+          robot={robot as Robot | undefined}
+          scannerMode={false}
+        />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
 

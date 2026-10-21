@@ -39,6 +39,12 @@ type NativeBridge = {
    */
   speak?: (text: string) => void;
   /**
+   * Speak text at a given level (0…1). Present on the current wrapper; an
+   * older APK without it falls back to plain speak(), where the device's own
+   * media volume applies.
+   */
+  speakWithVolume?: (text: string, volume: number) => void;
+  /**
    * False when Android 13+ has notifications switched off for this app, in which
    * case showTradeNotification is silently dropped by the OS. Callers use this
    * to tell the user WHY no alert arrived instead of appearing to be broken.

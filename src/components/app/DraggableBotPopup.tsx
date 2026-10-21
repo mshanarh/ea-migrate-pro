@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
-import { speakBot } from "@/lib/bot-voice";
 import { callNative, hasNativeBridge, queryNative, toNativeImage } from "@/lib/native-bridge";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
@@ -289,52 +288,24 @@ export function DraggableBotPopup() {
     prevRunning.current = running;
   }, [running]);
 
-  // Scanner Execute → stream the trade logs into the popup.
+  // Scanner Execute → stream trade data into the popup.
   useEffect(() => {
     window.triggerExecutionToast = (name?: string, _image?: string, pairData?: { symbol: string; lot_size: string | number; max_trades: number; direction?: string; stopLoss?: string | number; takeProfit?: string | number }) => {
       const p = pairData ?? { symbol: "XAUUSD", lot_size: 0.01, max_trades: 5 };
-      // The scanner ALWAYS sends a direction and SL/TP with the plan — no
-      // placeholder signal text here; fall back only if a caller omits them.
-      // `name` is the caller-supplied EA name — shown exactly as it is,
-      // with nothing appended.
       const eaDisplay = name || eaComment;
-      const direction = p.direction === "SELL" ? "SELL" : "BUY";
-      // NO fake fills here — the scanner dispatches a REAL per-trade event
-      // ("TRADE N EXECUTED — EA MIGRATE ✓") after each broker confirmation,
-      // and those arrive via onExecutionResult below, keeping this popup,
-      // the top toast and the native floating bubble perfectly in sync.
-      const stream: LogLine[] = [
-        { text: `Checking selected symbol: ${p.symbol}`, kind: "cmd" },
-        { text: `Analyzing chart trend & technical levels...`, kind: "cmd" },
-        { text: `Lot size configured: ${p.lot_size}`, kind: "cmd" },
-        { text: `Executing ${p.max_trades} trades one by one...`, kind: "cmd" },
-      ];
-      // VOICE: ONE clear sentence from the real plan — direction, symbol and
-      // the levels the caller passed (scanner Execute and auto trade both
-      // send them now). A missing level is skipped word-by-word rather than
-      // announced as "undefined".
-      const levelWords = (label: string, value: string | number | undefined) =>
-        value !== undefined && `${value}`.trim() !== "" && Number(value) > 0
-          ? `${label} ${value}.`
-          : "";
-      speakBot(
-        [`${direction === "SELL" ? "Sell" : "Buy"} ${p.symbol}.`, levelWords("Take profit", p.takeProfit), levelWords("Stop loss", p.stopLoss)]
-          .filter(Boolean)
-          .join(" "),
-      );
+      // NO fake fills here — the scanner dispatches REAL per-trade events
+      // ("TRADE N EXECUTED" with broker fill data) via the event bus after each
+      // broker confirmation, keeping this popup, the top toast and the native
+      // floating bubble perfectly in sync.
       setState("executed");
       setLogs([]);
       setOpen(true);
-      // Announce the EA name itself, without overwriting the caller's name.
       const announcement = eaDisplay;
       toast(announcement, { className: "text-sm" });
-      stream.forEach((line, index) => {
-        window.setTimeout(() => setLogs((prev) => (prev.some((existing) => existing.text === line.text && existing.kind === line.kind) ? prev : [...prev, line])), index * 500);
-      });
     };
     window.closeExecutionToast = () => setOpen(false);
     // Live MT5 outcome — arrives on the event bus so this popup shows the real
-    // result alongside the top execution toast (no single-slot overwrite).
+    // result alongside the top execution toast.
     const onExecutionResult = (event: Event) => {
       const result = (event as CustomEvent<{
         ok: boolean;
@@ -345,57 +316,40 @@ export function DraggableBotPopup() {
         takeProfit?: number | string;
       }>).detail;
       setLogs((prev) => {
-        // The log BUILDS UP: each executed trade stays as its own line
-        // ("TRADE 1 EXECUTED", then "TRADE 2 EXECUTED", …) — only the bold
-        // "latest" highlight moves. The native bubble mirrors the newest line.
+        // Build the log from real fills: each executed trade stays as its own line
+        // showing the executed trade number, symbol, direction, lot, entry, SL, TP.
         const demoted = prev.map((line) => (line.kind === "last" ? { ...line, kind: "ok" as const } : line));
-        return [...demoted, { text: result.ok ? result.message.toUpperCase() : `✖ ${result.message.toUpperCase()}`, kind: result.ok ? ("last" as const) : ("info" as const) }];
+        if (result.ok && /EXECUTED/.test(result.message)) {
+          // Parse real trade data from the execution result message
+          const tradeMatch = /TRADE (\d+)\/(\d+) EXECUTED/.exec(result.message);
+          if (tradeMatch) {
+            const tradeNum = tradeMatch[1];
+            const total = tradeMatch[2];
+            const side = result.side ?? "-";
+            const sym = result.symbol ?? "-";
+            const entry = result.entry ?? "-";
+            const sl = result.stopLoss ?? "-";
+            const tp = result.takeProfit ?? "-";
+            const lot = result.lotSize ?? "-";
+            return [...demoted, {
+              text: `TRADE ${tradeNum}/${total} EXECUTED — ${sym} ${side} · ${lot} lot · Entry ${entry} · SL ${sl} · TP ${tp}`,
+              kind: "last" as const
+            }];
+          }
+        }
+        // Refusals and connection chatter would only buzz the phone for
+        // something that never happened — suppress those.
+        if (!/REFUSED|CONNECTING|STALE|NO TRADE/i.test(result.message)) {
+          return [...demoted, { text: result.message.toUpperCase(), kind: "info" as const }];
+        }
+        return demoted;
       });
-      // Speak only milestone lines (per-trade fills + the final summary),
-      // not every refusal — the voice would otherwise stack up.
-      if (/TRADE \d+(?:\/\d+)? EXECUTED|TRADES (OPENED|EXECUTED)|TRADE OPENED/.test(result.message)) {
-        // A CONFIRMED FILL SAYS ITS PLAN FIRST — "Buy XAUUSD, take profit
-        // 3350, stop loss 3336" — then the trade count, as ONE utterance:
-        // bot-voice cancels before every speak, so two calls would drop the
-        // plan sentence, and native TTS queues this single string in order.
-        // Missing/zero levels (blocked rows, older events) fall back to the
-        // count line alone — never the word "undefined".
-        const fill = result.ok && /TRADE \d+(?:\/\d+)? EXECUTED/.test(result.message);
-        const plan =
-          fill &&
-          !!result.side &&
-          !!result.symbol &&
-          result.takeProfit !== undefined &&
-          Number(result.takeProfit) > 0 &&
-          result.stopLoss !== undefined &&
-          Number(result.stopLoss) > 0;
-        speakBot(
-          plan
-            ? `${result.side === "SELL" ? "Sell" : "Buy"} ${result.symbol}, take profit ${result.takeProfit}, stop loss ${result.stopLoss}. ${result.message}`
-            : result.message,
-        );
-      }
-
-      // Phone heads-up: the native Android layer shows a foreground
-      // "Trade executed" notification using the Algohost red/amber/green
-      // palette (red on loss, amber on pending, green on win).
-      //
-      // THE MESSAGE IS PASSED THROUGH, NOT REWRITTEN. This used to send a
-      // hardcoded "TRADE 1 EXECUTED" for every fill, so a five-trade run put
-      // five identical notifications on the phone and the trader could not tell
-      // how many had actually gone through. `result.message` is the same string
-      // the in-app log shows and already carries the real trade number and
-      // symbol, so the notification and the log can no longer disagree.
-      //
-      // Only fills are worth a heads-up. Refusals and connection chatter
-      // ("EXECUTING…", "TRADE 2 REFUSED — INSUFFICIENT MARGIN") would buzz the
-      // phone for something that never happened, which trains users to swipe
-      // the alerts away without reading them.
-      if (result.ok && /EXECUTED|SUMMARY|OPENED/.test(result.message)) {
-        // callNative, not window.EAMigrate directly: it re-resolves the bridge
-        // every call and swallows the "non-injected object" throw that a
-        // recreated activity produces, so a stale bridge can never break the
-        // trade log it is being called from.
+      // THE VOICE LIVES IN ONE PLACE: the app-wide listener in @/routes/__root
+      // announces every CONFIRMED execution once, with the broker's own
+      // numbers, and refuses to repeat itself. This popup only narrates the
+      // log — speaking here as well would stack two utterances on top of
+      // every fill.
+      if (result.ok && /EXECUTED|SUMMARY/.test(result.message)) {
         callNative("showTradeNotification", eaName, result.message);
       }
     };

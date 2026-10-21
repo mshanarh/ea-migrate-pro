@@ -116,6 +116,8 @@ import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
+import { speakTradeExecution } from "@/lib/bot-voice";
+import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
 
@@ -257,6 +259,21 @@ function RootComponent() {
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
     applyColourMatrixFromStorage();
+  }, []);
+
+  // DYNAMIC TRADE VOICE — one listener for the whole app.
+  //
+  // Every confirmed execution on the shared bus is announced once, with the
+  // broker's own symbol, direction, lot size, entry, stop loss and take
+  // profit. The announcer itself decides what counts as a trade (a signal
+  // or a request is never spoken) and refuses to repeat one, so the voice
+  // stays accurate no matter which screen the run started from.
+  useEffect(() => {
+    const handler = (event: Event) => {
+      speakTradeExecution((event as CustomEvent).detail);
+    };
+    window.addEventListener(EXECUTION_EVENT, handler);
+    return () => window.removeEventListener(EXECUTION_EVENT, handler);
   }, []);
 
   // DEFERRED UNTIL AFTER FIRST PAINT — see PushPermissionBanner above. The
