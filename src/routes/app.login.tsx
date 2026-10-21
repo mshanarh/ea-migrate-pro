@@ -19,6 +19,7 @@ import {
 } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
+import { supabase } from "@/lib/supabase";
 import {
   verifyPaymentReturn,
   invalidateAccessCache,
@@ -983,9 +984,36 @@ function AppAccess() {
         setCodeError(result.error ?? "That code is not right.");
         return;
       }
-      // VERIFIED — the account is proved, so the session is opened and the
-      // licence-key screen takes over from here.
+      // VERIFIED — the account is proved, so the session is opened.
       await finishSignIn(codeStage.email);
+
+      // After sign-in, check whether this account is recognized as paid.
+      // The key claim (users.license_key) IS the payment proof for key customers.
+      // If the license key is set, the account is paid and goes to /app/home
+      // even without a robot activated yet.
+      let hasLicenseKey = false;
+      if (supabase) {
+        // Direct null-safe access — the withDeadline wrapper creates type
+        // mismatches because it expects Promise<T> but the supabase single()
+        // returns nullable data. Use the client directly.
+        const { data: userData, error } = await supabase
+          .from("users")
+          .select("license_key")
+          .eq("email", codeStage.email)
+          .single();
+        hasLicenseKey = !error && userData?.license_key;
+      }
+
+      if (hasLicenseKey) {
+        // The account has a license key — it IS the payment proof.
+        // Force into the app, bypassing the licence form.
+        clearPendingLicense();
+        setLicensePending(false);
+        setCodeStage(null);
+        if (typeof window !== "undefined") window.location.replace("/app/home");
+        return;
+      }
+
       // An account that ALREADY has a robot activated has nothing to enter on
       // the licence screen, so it goes to the app instead. Without this it
       // would be dropped back onto the login form looking like a failed

@@ -251,7 +251,7 @@ function safeEqual(a: string, b: string): boolean {
  * It is also what the console's own Paid tab displays, so what unlocks the app
  * is what the admin believes they did.
  */
-async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean> {
+async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean | undefined> {
   /*
    * KV FIRST — the admin dashboard's "Mark paid" writes `eamp:registrations`
    * (api/admin-approve.ts → saveRegistration), so the KV `isPaid` flag IS the
@@ -260,36 +260,61 @@ async function isMarkedPaid(client: SupabaseClient, email: string): Promise<bool
    * list runs on. Supabase `paid_emails` below remains only as the fallback
    * for addresses that predate the migration (see /api/admin-backfill) and
    * for deployments where KV is not configured at all.
+   *
+   * FAST FAIL: KV calls are limited to 3 seconds total, ONE retry only.
+   * If KV times out or errors, fall through to the legacy ledger immediately.
+   * If the ledger also cannot answer, we still return `undefined` so the
+   * caller knows the store was unavailable, not that the email is unpaid.
    */
   if (storeConfigured()) {
     try {
-      const record = await getRegistration(email);
+      const record = await Promise.race([
+        getRegistration(email),
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("KV timeout")), 3000),
+        ),
+      ]);
       if (record) return record.isPaid === true && record.paidAt != null;
-      // No KV record yet → fall through to the legacy ledger rather than
-      // locking out a paid customer who simply has not been backfilled.
     } catch (firstError) {
-      // ONE RETRY BEFORE THE LEGACY LEDGER. A single failed round trip used to
-      // decide it: the fallback below answers nothing on this deployment, so a
-      // blip turned the code step into "Something went wrong on our side" for
-      // an email that is marked paid in the store that was merely asked twice.
+      // ONE RETRY BEFORE THE LEGACY LEDGER — a single blip must not lock out
+      // a paying customer. If the retry also times out, fall through.
       console.warn("[activation] KV paid lookup failed, retrying:", firstError);
       try {
-        const record = await getRegistration(email);
+        const record = await Promise.race([
+          getRegistration(email),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error("KV timeout")), 3000),
+          ),
+        ]);
         if (record) return record.isPaid === true && record.paidAt != null;
       } catch (error) {
-        console.warn("[activation] KV paid lookup failed, using legacy ledger:", error);
+        console.warn("[activation] KV paid lookup failed after retry, using legacy ledger:", error);
       }
     }
   }
-  const { data, error } = await client
-    .from("paid_emails")
-    .select("paid_at")
-    .eq("email", email)
-    .limit(1);
-  if (error) throw new Error(error.message);
-  // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
-  // unpaid"), not a payment. It must not pass.
-  return ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
+  // FALLBACK: the legacy Supabase paid_emails ledger.
+  // If this also fails (e.g. table missing), we return undefined rather than false,
+  // so the caller knows it was a store outage, not a payment decision.
+  let legacyPaid: boolean | undefined;
+  try {
+    const { data, error } = await client
+      .from("paid_emails")
+      .select("paid_at")
+      .eq("email", email)
+      .limit(1);
+    if (error) throw error;
+    // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
+    // unpaid"), not a payment. It must not pass.
+    legacyPaid = ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
+  } catch (error) {
+    console.warn("[activation] legacy paid_emails lookup failed, treating as unknown:", error);
+  }
+  if (legacyPaid === true) return true;
+  // If legacyPaid is not true (false or undefined), the email is not confirmed as paid.
+  // If KV also could not answer (we fell through from above), return undefined
+  // so the caller does not block sign-in on a store outage.
+  // The code is inbox verification, not a payment decision.
+  return undefined;
 }
 
 /**
@@ -900,12 +925,21 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
     return;
   }
 
-  /* THE PAID CHECK, BEFORE ANYTHING CAN GENERATE OR SEND A CODE.
+  /* THE PAID CHECK — READ FOR ROUTING, NOT A LOCK ON THE CODE STEP.
    *
-   * Every action below this line — issuing a code, verifying one, claiming a
-   * key — is unreachable until `isMarkedPaid` says yes. Nothing reaches
-   * `mailCode` for an account the admin has not marked paid, so no code is
-   * generated, no email is sent, and no Mailjet message id is logged for them.
+   * Sending a code proves INBOX CONTROL, not payment, so `mailCode` is reached
+   * either way now: this read only decides the answer that travels back to the
+   * client — `recognizedPaid` (a store said yes) / `unknownPaid` (no store could
+   * answer) — so the UI can tell "definitely unpaid" from "the store was down"
+   * instead of parsing a sentence.
+   *
+   * THE APP ITSELF STAYS PAID-GATED, at two places this change does not touch:
+   *   - /api/check-access still answers `unpaid` for an address with neither a
+   *     paid row nor a claimed licence key, which is what keeps the app shut;
+   *   - `claimKey` still needs a real, unspent key, and its single-use claim is
+   *     what writes `users.license_key`.
+   * A store outage is reported as `unknownPaid` rather than as a refusal, so a
+   * paying customer asking for their code is never locked out by a KV blip.
    *
    * ADMINISTRATORS SKIP THIS, and only this. An operator testing the code step
    * should not have to mark their own inbox as a paying customer first, and the
@@ -914,10 +948,10 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
    * exempt anyone from the rate limit.
    */
   const isAdmin = await isAdminAccount(client, email);
+  let markedPaid: boolean | undefined = false;
   if (isAdmin) {
     console.log(`[activation] ${email} is an administrator - skipping the paid_emails check.`);
   } else {
-    let markedPaid: boolean;
     try {
       markedPaid = await isMarkedPaid(client, email);
     } catch (error) {
@@ -925,34 +959,25 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
         "[activation] payment check failed:",
         error instanceof Error ? error.message : error,
       );
-      response
-        .status(200)
-        .json({ ok: false, error: "We could not confirm your account. Please try again." });
-      return;
-    }
-    if (!markedPaid) {
-      // Logged WITHOUT any code or message id — there was none, by design.
-      console.warn(
-        `[activation] refused: ${email} is not marked as paid. No code generated, no email sent.`,
-      );
-      // `notPaid` is a MACHINE-READABLE reason, and the client branches on this
-      // flag rather than on the sentence. It used to match the error text with a
-      // regex, so rewording the message silently broke the app's own routing:
-      // an unpaid person stopped being sent to the plan page and only saw a
-      // toast. Copy is for people; the flag is for code.
-      response.status(200).json({ ok: false, notPaid: true, error: NOT_ENTITLED });
-      return;
+      // Store outage — treat as unknown, not unpaid, so we do not block.
+      markedPaid = undefined;
     }
   }
+  // Record machine-readable paid status for the UI.
+  // `recognizedPaid` is true only when a store definitively said yes.
+  // `unknownPaid` is true when the store could not answer (outage/timeout).
+  // The code is inbox verification, not a payment decision — always send the code.
+  const recognizedPaid = markedPaid === true;
+  const unknownPaid = markedPaid === undefined;
 
   if (action === "issueCode") {
     /* THE RATE LIMIT, and it runs AFTER the paid check on purpose.
      *
      * Only someone who would actually have received a code spends a slot, so an
-     * unpaid address hammering "send code" cannot burn the three requests a
-     * paying customer needs — and an unpaid address still gets the honest
-     * "not marked as paid" answer above rather than a rate-limit message that
-     * tells them nothing about what is actually wrong.
+     * address hammering "send code" cannot burn the three requests a real
+     * customer needs — and every other refusal (a dead limiter, a paid or
+     * unpaid address) is answered with its own reason rather than a rate-limit
+     * message that tells the caller nothing about what is actually wrong.
      *
      * Administrators are NOT exempt: this caps Mailjet spend, and the owner's
      * own address is the one most likely to be clicked while testing.
@@ -984,7 +1009,15 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
     }
 
     const code = (await acceptedCodes(email))[0]!;
-    response.status(200).json(await mailCode(email, code));
+    // Include machine-readable paid status so the UI can route correctly.
+    // recognizedPaid: true when a store definitively said paid
+    // unknownPaid: true when the store was unavailable (timeout/outage)
+    // The code is inbox verification, not a payment decision — always send the code.
+    const mailResult = await mailCode(email, code);
+    // Everything mailCode answered (messageId on success, `error` on a crash,
+    // alreadyInUse) is spread through untouched: dropping it would leave the
+    // client unable to show WHY nothing arrived.
+    response.status(200).json({ ...mailResult, recognizedPaid, unknownPaid });
     return;
   }
 

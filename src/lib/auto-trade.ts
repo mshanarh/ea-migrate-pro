@@ -84,7 +84,21 @@ async function fetchBrokerCandlesFromBridge(symbol: string, timeframe: string): 
       console.warn(`[auto-trade] Bridge candles request failed: ${response.status}`);
       return null;
     }
-    const data: { ok: boolean; symbol: string; serverTime: string; candles: { time: number; open: number; high: number; low: number; close: number; volume: number }[] } = await response.json();
+    const data: {
+      ok: boolean;
+      /** Present only when `ok` is false — the bridge's own reason. */
+      message?: string;
+      symbol: string;
+      serverTime: string;
+      candles: {
+        time: number;
+        open: number;
+        high: number;
+        low: number;
+        close: number;
+        volume: number;
+      }[];
+    } = await response.json();
     if (!data.ok || !data.candles) {
       console.warn(`[auto-trade] Bridge returned error for candles: ${data.message || 'unknown'}`);
       return null;
@@ -113,7 +127,8 @@ function computeRSI14(closes: number[]): number | null {
   let sumGain = 0;
   let sumLoss = 0;
   for (let i = 1; i < closes.length; i++) {
-    const change = closes[i] - closes[i - 1];
+    // Both indexes are inside `closes` (i runs 1..length-1).
+    const change = closes[i]! - closes[i - 1]!;
     if (change > 0) {
       gain.push(change);
       loss.push(0);
@@ -128,8 +143,9 @@ function computeRSI14(closes: number[]): number | null {
   let avgLoss = loss.slice(0, period).reduce((a, b) => a + b, 0) / period;
   // Wilder smoothing for the rest
   for (let i = period; i < gain.length; i++) {
-    avgGain = (avgGain * (period - 1) + gain[i]) / period;
-    avgLoss = (avgLoss * (period - 1) + loss[i]) / period;
+    // i runs from `period` to gain.length - 1, so both entries exist.
+    avgGain = (avgGain * (period - 1) + gain[i]!) / period;
+    avgLoss = (avgLoss * (period - 1) + loss[i]!) / period;
   }
   if (avgLoss === 0) return 100;
   const rs = avgGain / avgLoss;
@@ -142,8 +158,9 @@ function computeRSI14(closes: number[]): number | null {
  */
 function computeMomentum(closes: number[], lookback: number = 10): number | null {
   if (closes.length < lookback + 1) return null;
-  const lastClose = closes[0];
-  const priorClose = closes[lookback];
+  // The length guard above guarantees both entries exist.
+  const lastClose = closes[0]!;
+  const priorClose = closes[lookback]!;
   if (priorClose === 0) return null;
   return (lastClose - priorClose) / priorClose;
 }

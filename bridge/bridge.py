@@ -194,6 +194,71 @@ def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
         disconnect()
 
 
+class CandlesRequest(BaseModel):
+    credentials: Credentials
+    symbol: str
+    timeframe: str  # "15m", "1h", "m30"
+    count: int = 100  # number of candles to retrieve
+
+
+@app.post("/symbol/candles")
+def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Historical candle data for one symbol — used for RSI, momentum and other technical analysis."""
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    try:
+        trade_symbol, select_error = select_broker_symbol(req.symbol)
+        if trade_symbol is None:
+            return {"success": False, "message": select_error}
+        # Map timeframe strings to MT5 timeframes
+        timeframe_map = {
+            "15m": mt5.TIMEFRAME_M15,
+            "1h": mt5.TIMEFRAME_H1,
+            "m30": mt5.TIMEFRAME_M30,
+        }
+        mt5_tf = timeframe_map.get(req.timeframe)
+        if mt5_tf is None:
+            disconnect()
+            return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
+        # Fetch candles from MT5
+        rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
+        if rates is None:
+            disconnect()
+            return {
+                "success": False,
+                "message": f"No candle data for {req.symbol} ({req.timeframe})",
+            }
+        # Convert to list of dicts, newest first (copy_rates returns newest first)
+        candles = []
+        for i, row in enumerate(rates):
+            candle_time = int(row[0])  # timestamp in seconds
+            candle = {
+                "time": candle_time,
+                "open": float(row[1]),
+                "high": float(row[2]),
+                "low": float(row[3]),
+                "close": float(row[4]),
+                "volume": int(row[5]),
+                "spread": int(row[6]) if len(row) > 6 else 0,
+            }
+            candles.append(candle)
+        # Build response
+        result = {
+            "ok": True,
+            "symbol": trade_symbol,
+            "serverTime": __import__("datetime").datetime.utcnow().isoformat(),
+            "candles": candles,
+        }
+        disconnect()
+        return result
+    except Exception as e:
+        disconnect()
+        return {"success": False, "message": f"Error fetching candles: {str(e)}"}
+
+
 class TradeRequest(BaseModel):
     credentials: Credentials
     symbol: str

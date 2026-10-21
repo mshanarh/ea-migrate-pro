@@ -200,18 +200,58 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
       const paid = await paidEmailInSupabase(email);
       if (paid) {
         answer = { ok: true, isPaid: true, status: "paid", paidAt: paid };
-      } else if (await claimedLicenseKeyProof(email, deviceId)) {
-        // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
-        //
-        // api/activation.ts writes `users.license_key` only after the paid
-        // check AND the single-use claim succeeded for THIS account, so the
-        // column is holder-bound server-side proof — never something a browser
-        // can set. Without this, a customer who just activated a key is
-        // answered "unpaid" here (their money lives in the key, not in the
-        // ledger) and is sent back to the email + code form.
-        answer = { ok: true, isPaid: true, status: "paid" };
       } else {
-        answer = { ok: true, isPaid: false, status: "unpaid" };
+        // Fallback 1b: read the Supabase `users` row for `license_key`.
+        // This is holder-bound proof: the column is only written after the
+        // single-use claim and paid check succeeded for THIS account.
+        // If KV was absent or unreadable and paid_emails has no row, the license_key
+        // from the users table IS the payment proof for key customers.
+        const db = await serviceClient();
+        let licenseKeyProof = false;
+        let deviceMismatch = false;
+        if (db) {
+          try {
+            const { data, error } = await db
+              .from("users")
+              .select("license_key, device_id")
+              .eq("email", email)
+              .maybeSingle();
+            if (!error && data) {
+              const row = data as { license_key?: string | null; device_id?: string | null };
+              const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
+              if (key) {
+                // If the row has a device_id and the request carries a deviceId,
+                // require them to match; a mismatch answers unpaid.
+                if (row.device_id && deviceId && row.device_id !== deviceId) {
+                  deviceMismatch = true;
+                } else {
+                  licenseKeyProof = true;
+                }
+              }
+            }
+          } catch {
+            // DB read failure — continue to next fallback.
+          }
+        }
+        if (deviceMismatch) {
+          answer = { ok: true, isPaid: false, status: "unpaid" };
+        } else if (licenseKeyProof) {
+          // license_key IS the payment proof — even when KV and paid_emails
+          // both cannot answer, a set license_key means the account is paid.
+          answer = { ok: true, isPaid: true, status: "paid" };
+        } else if (await claimedLicenseKeyProof(email, deviceId)) {
+          // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
+          //
+          // api/activation.ts writes `users.license_key` only after the paid
+          // check AND the single-use claim succeeded for THIS account, so the
+          // column is holder-bound server-side proof — never something a browser
+          // can set. Without this, a customer who just activated a key is
+          // answered "unpaid" here (their money lives in the key, not in the
+          // ledger) and is sent back to the email + code form.
+          answer = { ok: true, isPaid: true, status: "paid" };
+        } else {
+          answer = { ok: true, isPaid: false, status: "unpaid" };
+        }
       }
     }
   }
