@@ -327,10 +327,10 @@ export function DraggableBotPopup() {
             const total = tradeMatch[2];
             const side = result.side ?? "-";
             const sym = result.symbol ?? "-";
-            const entry = result.entry ?? "-";
-            const sl = result.stopLoss ?? "-";
-            const tp = result.takeProfit ?? "-";
-            const lot = result.lotSize ?? "-";
+            const entry = (result as { entry?: number | null }).entry ?? "-";
+            const sl = (result as { stopLoss?: number | null }).stopLoss ?? "-";
+            const tp = (result as { takeProfit?: number | null }).takeProfit ?? "-";
+            const lot = (result as { lotSize?: number | null }).lotSize ?? "-";
             return [...demoted, {
               text: `TRADE ${tradeNum}/${total} EXECUTED — ${sym} ${side} · ${lot} lot · Entry ${entry} · SL ${sl} · TP ${tp}`,
               kind: "last" as const

@@ -31,7 +31,7 @@ type TradeAnalysisPopupProps = {
   /** Dismiss the card. */
   onClose: () => void;
   /** The robot the run belongs to. When omitted the active robot is used. */
-  robot?: Robot;
+  robot?: Robot | undefined;
   /** True on the scanner screen, false on the home dashboard. */
   scannerMode?: boolean;
   /** The id of the active robot, so the card can resolve "ready" without a

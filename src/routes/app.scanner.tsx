@@ -589,8 +589,9 @@ function AppScanner() {
       <DraggableBotPopup />        <TradeAnalysisPopup
           isOpen={analysisOpen}
           onClose={() => setAnalysisOpen(false)}
-          robot={robot as import("@/lib/app-store").Robot | undefined}
+          robot={robot}
           scannerMode={true}
+          activeRobotId={app.activeRobotId ?? ""}
         />
       <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>

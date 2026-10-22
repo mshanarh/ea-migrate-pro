@@ -14,8 +14,8 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
-import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -653,8 +653,9 @@ function AppHome() {
       <DraggableBotPopup />        <TradeAnalysisPopup
           isOpen={analysisOpen}
           onClose={() => setAnalysisOpen(false)}
-          robot={robot as Robot | undefined}
+          robot={robot}
           scannerMode={false}
+          activeRobotId={app.activeRobotId ?? ""}
         />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
