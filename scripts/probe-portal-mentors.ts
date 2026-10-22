@@ -15,7 +15,6 @@ const CANDIDATES = [
   "ntobekotraders.official@gmail.com",
   "biyasentobeko222@gmail.com",
   "eamigratepro@gmail.com",
-  "lwethunkandi3@gmail.com",
   "admin@eamigrate.pro",
 ];
 for (const email of CANDIDATES) {

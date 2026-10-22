@@ -134,7 +134,6 @@ const LICENCE_STORE_BUSY = "Licence storage is busy right now. Please try again 
  */
 const OWNER_ADMIN_EMAILS = [
   "biyasentobeko222@gmail.com",
-  "eamigratepro@gmail.com",
   "ntobekotraders.official@gmail.com",
 ];
 
@@ -159,7 +158,7 @@ const ADMIN_EMAILS = [
   ]),
 ];
 
-type Action = "issueCode" | "verifyCode" | "claimKey";
+type Action = "issueCode" | "verifyCode" | "claimKey" | "reactivate";
 
 type Reply =
   | {
@@ -827,6 +826,44 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
 }
 
 /**
+ * Clear the device binding for a paid email so the user can sign in again.
+ * Does NOT mark an unpaid email as paid — only clears used/bound state.
+ */
+async function reactivateEmailInDb(client: SupabaseClient, email: string): Promise<{
+  ok: boolean;
+  error?: string;
+  clearedAt?: string;
+}> {
+  const address = email.trim().toLowerCase();
+  // Verify the email exists
+  const { data: existing, error: readError } = await client
+    .from("users")
+    .select("id, email, is_paid, device_id")
+    .eq("email", address)
+    .maybeSingle();
+  if (readError) {
+    if (readError.code === "42703") return { ok: false, error: "Device binding columns not found." };
+    return { ok: false, error: readError.message };
+  }
+  if (!existing) {
+    return { ok: false, error: "That email is not registered." };
+  }
+  // Clear the device binding — this is what lets the user sign in again.
+  // Payment state is NOT touched. Reactivation only clears the used/bound
+  // state of an already-paid account.
+  const clearedAt = new Date().toISOString();
+  const { error } = await client
+    .from("users")
+    .update({ device_email: null, device_id: null })
+    .eq("email", address);
+  if (error?.code === "42703") {
+    return { ok: false, error: "Device binding columns not found." };
+  }
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, clearedAt };
+}
+
+/**
  * THE PUBLIC ENTRYPOINT, AND THE ONE PLACE AN UNCAUGHT CRASH BECOMES AN ANSWER.
  *
  * Everything below can throw — a Supabase timeout, a Mailjet response in a
@@ -906,7 +943,7 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
     key?: string;
   } | null;
   const action = body?.action;
-  if (action !== "issueCode" && action !== "verifyCode" && action !== "claimKey") {
+  if (action !== "issueCode" && action !== "verifyCode" && action !== "claimKey" && action !== "reactivate") {
     response.status(400).json({ ok: false, error: "Unknown action" });
     return;
   }
@@ -1044,6 +1081,26 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
     return;
   }
   response.status(200).json(await claimKey(client, key, email));
+
+  // ── reactivate ──────────────────────────────────────────────────────
+  // Clear the device binding for a paid email so the user can sign in again.
+  // ADMIN ONLY — the route guard on /app/admin/reactivate checks this, but the
+  // server also verifies here so a direct API call cannot bypass it.
+  if (action === "reactivate") {
+    const requester = (body?.adminEmail ?? "").trim().toLowerCase();
+    if (!requester) {
+      response.status(200).json({ ok: false, error: "Admin email is required." });
+      return;
+    }
+    const isAdmin = await isAdminAccount(client, requester);
+    if (!isAdmin) {
+      response.status(200).json({ ok: false, error: "Only an administrator can reactivate accounts." });
+      return;
+    }
+    const result = await reactivateEmailInDb(client, email);
+    response.status(200).json(result);
+    return;
+  }
 }
 
 /** A malformed body must not take the function down with a 500. */

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
-import { Check, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
+import { Check, RotateCcw, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
@@ -274,13 +274,21 @@ function AppAdmin() {
             or grant admin, straight from the database.
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          className="h-11 shrink-0 rounded-full border border-primary/40 bg-primary/10 px-5 text-sm font-bold text-primary transition-colors hover:bg-primary/20"
-        >
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="/app/admin/reactivate"
+            className="inline-flex h-10 items-center gap-1.5 rounded-full border border-primary/40 bg-primary/10 px-4 text-xs font-bold text-primary transition-colors hover:bg-primary/20"
+          >
+            <RotateCcw className="size-3.5" /> Reactivate
+          </a>
+          <button
+            type="button"
+            onClick={() => void refresh()}
+            className="h-11 shrink-0 rounded-full border border-primary/40 bg-primary/10 px-5 text-sm font-bold text-primary transition-colors hover:bg-primary/20"
+          >
+            Refresh
+          </button>
+        </div>
       </div>
 
       {error && (

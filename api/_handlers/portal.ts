@@ -119,7 +119,6 @@ const OWNER_EMAILS = [
   "biyasentobeko222@gmail.com",
   "biyasentobeko222@gmail",
   "admin@eamigrate.pro",
-  "lwethunkandi3@gmail.com",
   "ntobekotraders.official@gmail.com",
 ];
 

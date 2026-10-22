@@ -440,7 +440,12 @@ function normalizeEmail(email: string): string {
   return email.trim().toLowerCase();
 }
 
-/** Per-mentor permission to release a client's device. */
+/** Per-mentor permission to release a client's device.
+ *
+ * When disabling (enabled=false) this ALSO clears the device_id binding so
+ * the client can sign in again on a fresh device — a disabled reactivation
+ * flag with a stale device_id is a dead end for the customer.
+ */
 export async function setUserReactivation(
   email: string,
   enabled: boolean,
@@ -448,9 +453,15 @@ export async function setUserReactivation(
   const clean = normalizeEmail(email);
   if (!supabase) return { ok: false, error: "Database not configured" };
   if (!clean) return { ok: false, error: "Missing email" };
+  const patch: Record<string, unknown> = { reactivation_enabled: enabled };
+  if (!enabled) {
+    // Releasing the device lets the customer sign in again on this device.
+    patch.device_id = null;
+    patch.device_email = null;
+  }
   const { error } = await supabase
     .from("users")
-    .upsert({ email: clean, reactivation_enabled: enabled }, { onConflict: "email" });
+    .upsert({ email: clean, ...patch }, { onConflict: "email" });
   if (error) {
     const described = describeAdminError(error.message);
     return { ok: false, error: described.error, needsAttention: described.needsAttention };

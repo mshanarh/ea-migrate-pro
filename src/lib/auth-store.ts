@@ -222,8 +222,6 @@ export const OWNER_EMAILS = [
   "biyasentobeko222@gmail.com",
   "biyasentobeko222@gmail",
   "admin@eamigrate.pro",
-  "lwethunkandi3@gmail.com",
-  "ntobekotraders.official@gmail.com",
 ];
 
 /**
@@ -236,8 +234,6 @@ export const MENTOR_ONLY_EMAILS = ["ntobekotraders.official@gmail.com"];
 export const PAYMENT_EXEMPT_EMAILS = [
   "biyasentobeko222@gmail",
   "biyasentobeko222@gmail.com",
-  // Restored platform owner — same admin exemption as the owner list.
-  "lwethunkandi3@gmail.com",
 ];
 
 /**
@@ -272,7 +268,13 @@ export function paymentStatusForEmail(email: string): PaymentStatus {
   const clean = cleanEmail(email);
   // Revoked emails always require payment — stale records cannot help them.
   if (isRevokedEmail(clean)) return "unpaid";
-  if (isPaymentExemptEmail(clean)) return "admin";
+  // Payment-exempt emails are always admin in the local store, but their
+  // status still reflects whether they have a payment record: an exempt email
+  // with a ledger row is "paid", one without is "admin" (treated as entitled
+  // but without a payment timestamp).
+  if (isPaymentExemptEmail(clean)) {
+    return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "admin";
+  }
   return state.payments.some((payment) => payment.email === clean && payment.paid) ? "paid" : "unpaid";
 }
 
@@ -637,6 +639,7 @@ export function register(
   }
   // Platform owners are admins the moment they sign up — no pending gate,
   // no admin approval loop, on any device.
+  // Only biyasentobeko222@gmail.com (and its bare-domain variant) is the platform owner.
   const isOwner = OWNER_EMAILS.includes(email);
   const account: Account = {
     ...data,

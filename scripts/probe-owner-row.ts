@@ -14,7 +14,6 @@ const db = createClient(url, anon, { auth: { persistSession: false, autoRefreshT
 const TARGETS = [
   "ntobekotraders.official@gmail.com",
   "biyasentobeko222@gmail.com",
-  "lwethunkandi3@gmail.com",
   "eamigratepro@gmail.com",
 ];
 

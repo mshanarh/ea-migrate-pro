@@ -50,8 +50,7 @@ $$;
 -- ── 2) Seed the owners (no-op when already present) ─────────────────────
 insert into public.admin_emails (email) values
   ('ntobekotraders.official@gmail.com'),
-  ('eamigratepro@gmail.com'),
-  ('lwethunkandi3@gmail.com')
+  ('eamigratepro@gmail.com')
 on conflict (email) do nothing;
 
 -- ── 3) Broadcast history as a real table ────────────────────────────────

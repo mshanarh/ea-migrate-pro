@@ -861,6 +861,45 @@ function AppAccess() {
       } catch {
         /* unreachable cloud — fall through to the normal sign-in path */
       }
+
+      // NO OTP FOR PAID EMAILS.
+      // If this email is MARKED PAID (or admin) and NOT bound to another device,
+      // skip the 6-digit code entirely: sign in the session and go straight to
+      // the license key entry screen. The account is entitled; the user just
+      // needs to enter their licence key.
+      //
+      // If the account IS already bound to another device, show the blocked
+      // message and do not open the app — the admin must reactivate it.
+      const paidStatus = paymentStatusForEmail(clean);
+      if (paidStatus === "admin" || paidStatus === "paid") {
+        // Already bound to a different device — blocked, no self-service unlock.
+        // The admin must reactivate the account before this email can sign in.
+        if (binding?.boundToOtherDevice) {
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+        // Paid/admin and NOT bound — skip the code, sign in, go to license key.
+        // The account is entitled; no six-digit code is sent or required.
+        const signIn = appSignIn(clean);
+        if (signIn.error) {
+          toast.error(signIn.error);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+        console.log("[app-login] Paid email, no code — signed in:", clean);
+        // Arm the WELCOME MASTER gate — the home screen plays it (with voice) on arrival.
+        window.sessionStorage.setItem("eamp_pending_welcome", "1");
+        // Remember that a licence key is still owed — the form stays until one is entered.
+        markPendingLicense(clean);
+        setLicensePending(true);
+        setBusy(false);
+        setRedirecting(false);
+        return;
+      }
+
       /**
        * THE SIX-DIGIT CODE — nobody enters the app without it.
        *

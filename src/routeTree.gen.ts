@@ -40,6 +40,7 @@ import { Route as DashboardStatsRouteImport } from './routes/dashboard.stats'
 import { Route as DashboardWalletRouteImport } from './routes/dashboard.wallet'
 import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website'
 import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
+import { Route as AppAdminReactivateRouteImport } from './routes/app.admin.reactivate'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -196,6 +197,11 @@ const MentorSlugRoute = MentorSlugRouteImport.update({
   path: '/mentor/$slug',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AppAdminReactivateRoute = AppAdminReactivateRouteImport.update({
+  id: '/reactivate',
+  path: '/reactivate',
+  getParentRoute: () => AppAdminRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -207,7 +213,7 @@ export interface FileRoutesByFullPath {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
-  '/app/admin': typeof AppAdminRoute
+  '/app/admin': typeof AppAdminRouteWithChildren
   '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
@@ -229,6 +235,7 @@ export interface FileRoutesByFullPath {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/app/admin/reactivate': typeof AppAdminReactivateRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -239,7 +246,7 @@ export interface FileRoutesByTo {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
-  '/app/admin': typeof AppAdminRoute
+  '/app/admin': typeof AppAdminRouteWithChildren
   '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
@@ -261,6 +268,7 @@ export interface FileRoutesByTo {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app': typeof AppIndexRoute
   '/dashboard': typeof DashboardIndexRoute
+  '/app/admin/reactivate': typeof AppAdminReactivateRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -273,7 +281,7 @@ export interface FileRoutesById {
   '/signup': typeof SignupRoute
   '/support': typeof SupportRoute
   '/app/activate': typeof AppActivateRoute
-  '/app/admin': typeof AppAdminRoute
+  '/app/admin': typeof AppAdminRouteWithChildren
   '/app/fundamentals': typeof AppFundamentalsRoute
   '/app/home': typeof AppHomeRoute
   '/app/login': typeof AppLoginRoute
@@ -295,6 +303,7 @@ export interface FileRoutesById {
   '/mentor/$slug': typeof MentorSlugRoute
   '/app/': typeof AppIndexRoute
   '/dashboard/': typeof DashboardIndexRoute
+  '/app/admin/reactivate': typeof AppAdminReactivateRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -330,6 +339,7 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
+    | '/app/admin/reactivate'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -362,6 +372,7 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app'
     | '/dashboard'
+    | '/app/admin/reactivate'
   id:
     | '__root__'
     | '/'
@@ -395,6 +406,7 @@ export interface FileRouteTypes {
     | '/mentor/$slug'
     | '/app/'
     | '/dashboard/'
+    | '/app/admin/reactivate'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -407,7 +419,7 @@ export interface RootRouteChildren {
   SignupRoute: typeof SignupRoute
   SupportRoute: typeof SupportRoute
   AppActivateRoute: typeof AppActivateRoute
-  AppAdminRoute: typeof AppAdminRoute
+  AppAdminRoute: typeof AppAdminRouteWithChildren
   AppFundamentalsRoute: typeof AppFundamentalsRoute
   AppHomeRoute: typeof AppHomeRoute
   AppLoginRoute: typeof AppLoginRoute
@@ -639,6 +651,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MentorSlugRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/app/admin/reactivate': {
+      id: '/app/admin/reactivate'
+      path: '/reactivate'
+      fullPath: '/app/admin/reactivate'
+      preLoaderRoute: typeof AppAdminReactivateRouteImport
+      parentRoute: typeof AppAdminRoute
+    }
   }
 }
 
@@ -674,6 +693,18 @@ const DashboardRouteWithChildren = DashboardRoute._addFileChildren(
   DashboardRouteChildren,
 )
 
+interface AppAdminRouteChildren {
+  AppAdminReactivateRoute: typeof AppAdminReactivateRoute
+}
+
+const AppAdminRouteChildren: AppAdminRouteChildren = {
+  AppAdminReactivateRoute: AppAdminReactivateRoute,
+}
+
+const AppAdminRouteWithChildren = AppAdminRoute._addFileChildren(
+  AppAdminRouteChildren,
+)
+
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
@@ -684,7 +715,7 @@ const rootRouteChildren: RootRouteChildren = {
   SignupRoute: SignupRoute,
   SupportRoute: SupportRoute,
   AppActivateRoute: AppActivateRoute,
-  AppAdminRoute: AppAdminRoute,
+  AppAdminRoute: AppAdminRouteWithChildren,
   AppFundamentalsRoute: AppFundamentalsRoute,
   AppHomeRoute: AppHomeRoute,
   AppLoginRoute: AppLoginRoute,

@@ -11,7 +11,7 @@
 --   the same admin-checked function as Approve / Save limit / Mark paid.
 --
 --   This file also seeds the admin_emails allow-list with the current
---   operators (biyasentobeko222@gmail.com and lwethunkandi3@gmail.com),
+--   operators (biyasentobeko222@gmail.com),
 --   stops the public anon key from reading that list, and removes the
 --   throwaway rows used to verify the RPC path.
 -- ============================================================
@@ -58,7 +58,6 @@ grant execute on function public.admin_set_reactivation(text, boolean) to anon, 
 -- anything on its own — every write still re-checks the signed-in address.
 insert into public.admin_emails (email) values
   ('biyasentobeko222@gmail.com'),
-  ('lwethunkandi3@gmail.com'),
   ('ntobekotraders.official@gmail.com'),
   ('eamigratepro@gmail.com')
 on conflict (email) do nothing;
