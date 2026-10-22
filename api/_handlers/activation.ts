@@ -160,6 +160,12 @@ const ADMIN_EMAILS = [
 
 type Action = "issueCode" | "verifyCode" | "claimKey" | "reactivate";
 
+type ReactivateBody = {
+  action: "reactivate";
+  email: string;
+  adminEmail: string;
+};
+
 type Reply =
   | {
       ok: true;
@@ -941,6 +947,7 @@ async function runActivation(request: ApiRequest, response: ApiResponse): Promis
     email?: string;
     code?: string;
     key?: string;
+    adminEmail?: string;
   } | null;
   const action = body?.action;
   if (action !== "issueCode" && action !== "verifyCode" && action !== "claimKey" && action !== "reactivate") {

@@ -456,8 +456,8 @@ export async function setUserReactivation(
   const patch: Record<string, unknown> = { reactivation_enabled: enabled };
   if (!enabled) {
     // Releasing the device lets the customer sign in again on this device.
-    patch.device_id = null;
-    patch.device_email = null;
+    patch["device_id"] = null;
+    patch["device_email"] = null;
   }
   const { error } = await supabase
     .from("users")

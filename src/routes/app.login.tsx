@@ -848,18 +848,25 @@ function AppAccess() {
       // phone, do NOT sign in — show the blocked card ("account already used,
       // please tell your mentor to reactivate"). There is no self-service
       // unlock. This is reachable ONLY for a verified paid/admin account.
+      //
+      // For paid/admin emails: check the binding FIRST, then decide whether
+      // to skip the code or show the blocked message.
+      let binding: { boundToOtherDevice: boolean } | null = null;
       try {
-        const binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), {
+        binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), {
           boundToOtherDevice: false,
         });
-        if (binding.boundToOtherDevice) {
-          setBlockedEmail(clean);
-          setBusy(false);
-          setRedirecting(false);
-          return;
-        }
       } catch {
         /* unreachable cloud — fall through to the normal sign-in path */
+      }
+
+      if (binding?.boundToOtherDevice) {
+        // Already bound to a different device — blocked, no self-service unlock.
+        // The admin must reactivate the account before this email can sign in.
+        setBlockedEmail(clean);
+        setBusy(false);
+        setRedirecting(false);
+        return;
       }
 
       // NO OTP FOR PAID EMAILS.
@@ -867,9 +874,6 @@ function AppAccess() {
       // skip the 6-digit code entirely: sign in the session and go straight to
       // the license key entry screen. The account is entitled; the user just
       // needs to enter their licence key.
-      //
-      // If the account IS already bound to another device, show the blocked
-      // message and do not open the app — the admin must reactivate it.
       const paidStatus = paymentStatusForEmail(clean);
       if (paidStatus === "admin" || paidStatus === "paid") {
         // Already bound to a different device — blocked, no self-service unlock.

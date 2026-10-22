@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { ArrowLeft, RotateCcw, ShieldCheck, Loader2 } from "lucide-react";
@@ -58,7 +58,7 @@ function ReactivationPage() {
   // Verify this is an admin — only OWNER_EMAILS (biyasentobeko222@gmail.com) may access.
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null);
 
-  useState(() => {
+  useEffect(() => {
     let cancelled = false;
     const boot = async () => {
       const me = app.email ? await getUserByEmail(app.email) : null;
