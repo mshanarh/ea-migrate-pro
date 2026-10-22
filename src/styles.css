@@ -618,6 +618,18 @@ html.platform-ios .plat-sheet-grabber {
   height: calc(var(--plat-nav-h) + var(--sa-bottom));
   padding-bottom: calc(var(--sa-bottom) + 8px);
 }
+.plat-nav-icons {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: calc(var(--sa-bottom) + 8px);
+}
+.plat-nav-classic {
+  height: calc(var(--plat-nav-h) + var(--sa-bottom));
+  padding-bottom: calc(var(--sa-bottom));
+}
+.plat-nav-compact {
+  height: calc(44px + var(--sa-bottom));
+  padding-bottom: calc(var(--sa-bottom) + 4px);
+}
 .plat-nav-indicator {
   width: 56px;
   height: 30px;

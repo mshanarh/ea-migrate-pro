@@ -5,11 +5,43 @@ import { House, Server, ScanLine } from "lucide-react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 
-const tabs = [
+export type BottomNavStyle =
+  | "floating-pill"
+  | "icon-pill"
+  | "classic-tabs"
+  | "compact-dots";
+
+export const BOTTOM_NAV_STYLES: Array<{
+  id: BottomNavStyle;
+  name: string;
+  description: string;
+}> = [
+  { id: "floating-pill", name: "Floating Pill", description: "Rounded glass bar with icons and labels" },
+  { id: "icon-pill", name: "Icon Pill", description: "Floating pill with icons only" },
+  { id: "classic-tabs", name: "Classic Tabs", description: "Tab bar with labels below icons" },
+  { id: "compact-dots", name: "Compact Dots", description: "Compact bar with icons and dot indicator" },
+];
+
+const TABS = [
   { to: "/app/metatrader", label: "METATRADER", icon: Server },
   { to: "/app/home", label: "HOME", icon: House },
   { to: "/app/scanner", label: "SCANNER", icon: ScanLine },
 ] as const;
+
+function getNavClass(style: BottomNavStyle): string {
+  switch (style) {
+    case "floating-pill":
+      return "plat-nav-ios";
+    case "icon-pill":
+      return "plat-nav-icons";
+    case "classic-tabs":
+      return "plat-nav-classic";
+    case "compact-dots":
+      return "plat-nav-compact";
+    default:
+      return "plat-nav-ios";
+  }
+}
 
 /** Any mounted robot video ref (idb-video:*, data:, http:) we can detect. */
 function robotHasVideo(): boolean {
@@ -34,11 +66,14 @@ function robotHasVideo(): boolean {
  * HOME keeps its special gesture: pressing it twice starts the robot's
  * uploaded video playing (the tap itself unlocks mobile autoplay).
  */
-export function FixedBottomNav() {
+export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
   const path = useRouterState({ select: (s) => s.location.pathname });
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const lastHomeTap = useRef<number>(0);
+  const navStyle = style ?? (
+    (typeof window !== "undefined" ? (window.localStorage.getItem("eamp.bottomNavStyle") as BottomNavStyle | null) : null) ?? "floating-pill"
+  );
 
   const handleHomeClick = () => {
     // The Link's SPA navigation still runs — module state (the request
@@ -62,50 +97,150 @@ export function FixedBottomNav() {
     }
   };
 
-  // ── Floating capsule tab bar (iPhone style, all platforms) ─────────────
+  const isActive = (to: string) => path === to;
+
+  // ── Bottom nav with style support ───────────────────────────────────────
   return (
     <nav
       aria-label="App navigation"
-      className="fixed bottom-0 left-1/2 z-50 w-[min(92%,26rem)] -translate-x-1/2 plat-nav-ios"
+      className={`fixed bottom-0 left-1/2 z-50 w-[min(92%,26rem)] -translate-x-1/2 transition-all duration-300 ${getNavClass(navStyle)}`}
     >
-      <div
-        className="flex w-full items-stretch justify-around rounded-[28px] px-2 pt-1.5"
-        style={{
-          backgroundColor: "rgba(18,18,20,0.88)",
-          backdropFilter: "blur(24px) saturate(1.6)",
-          WebkitBackdropFilter: "blur(24px) saturate(1.6)",
-          border: "1px solid rgba(255,255,255,0.10)",
-          boxShadow: "0 10px 34px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)",
-        }}
-      >
-        {tabs.map(({ to, label, icon: Icon }) => {
-          const active = path === to;
-          return (
+      {navStyle === "floating-pill" && (
+        <div
+          className="flex w-full items-stretch justify-around rounded-[28px] px-2 pt-1.5"
+          style={{
+            backgroundColor: "rgba(18,18,20,0.88)",
+            backdropFilter: "blur(24px) saturate(1.6)",
+            WebkitBackdropFilter: "blur(24px) saturate(1.6)",
+            border: "1px solid rgba(255,255,255,0.10)",
+            boxShadow: "0 10px 34px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)",
+          }}
+        >
+          {TABS.map(({ to, label, icon: Icon }) => (
             <Link
               key={to}
               to={to}
               onClick={label === "HOME" ? handleHomeClick : undefined}
-              aria-current={active ? "page" : undefined}
+              aria-current={isActive(to) ? "page" : undefined}
               className="plat-pressable flex min-w-[64px] flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl py-2"
-              style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}
+              style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
             >
               <Icon
                 className="size-[22px]"
-                strokeWidth={active ? 2.5 : 2}
-                // iOS tab bars fill the icon of the active tab.
-                fill={active ? "currentColor" : "none"}
-                fillOpacity={active ? 0.18 : 0}
+                strokeWidth={isActive(to) ? 2.5 : 2}
+                fill={isActive(to) ? "currentColor" : "none"}
+                fillOpacity={isActive(to) ? 0.18 : 0}
               />
               <span
                 className="text-[10px] font-semibold tracking-[0.06em]"
-                style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}
+                style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
               >
                 {label.charAt(0) + label.slice(1).toLowerCase()}
               </span>
             </Link>
-          );
-        })}
-      </div>
+          ))}
+        </div>
+      )}
+      {navStyle === "icon-pill" && (
+        <div
+          className="flex items-center justify-around rounded-full px-4 py-2"
+          style={{
+            backgroundColor: "rgba(18,18,20,0.85)",
+            backdropFilter: "blur(16px)",
+            WebkitBackdropFilter: "blur(16px)",
+            border: "1px solid rgba(255,255,255,0.08)",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+          }}
+        >
+          {TABS.map(({ to, label, icon: Icon }) => (
+            <Link
+              key={to}
+              to={to}
+              onClick={label === "HOME" ? handleHomeClick : undefined}
+              aria-current={isActive(to) ? "page" : undefined}
+              className="flex flex-col items-center justify-center gap-0.5"
+            >
+              <Icon
+                className="size-[20px]"
+                strokeWidth={isActive(to) ? 2.5 : 2}
+                fill={isActive(to) ? "currentColor" : "none"}
+                fillOpacity={isActive(to) ? 0.2 : 0}
+                style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
+              />
+            </Link>
+          ))}
+        </div>
+      )}
+      {navStyle === "classic-tabs" && (
+        <div
+          className="flex w-full items-stretch justify-around rounded-none px-2"
+          style={{
+            backgroundColor: "rgba(18,18,20,0.95)",
+            borderTop: "1px solid rgba(255,255,255,0.10)",
+            boxShadow: "0 -4px 12px rgba(0,0,0,0.3)",
+          }}
+        >
+          {TABS.map(({ to, label, icon: Icon }) => (
+            <Link
+              key={to}
+              to={to}
+              onClick={label === "HOME" ? handleHomeClick : undefined}
+              aria-current={isActive(to) ? "page" : undefined}
+              className="flex flex-col items-center justify-center flex-1 h-full py-2"
+            >
+              <Icon
+                className="size-[20px]"
+                strokeWidth={isActive(to) ? 2.5 : 2}
+                fill={isActive(to) ? "currentColor" : "none"}
+                fillOpacity={isActive(to) ? 0.15 : 0}
+                style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
+              />
+              <span
+                className="mt-1 text-[11px] font-semibold tracking-wide"
+                style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
+              >
+                {label.charAt(0) + label.slice(1).toLowerCase()}
+              </span>
+            </Link>
+          ))}
+        </div>
+      )}
+      {navStyle === "compact-dots" && (
+        <div
+          className="flex items-center justify-around rounded-[50px] py-1.5"
+          style={{
+            backgroundColor: "rgba(18,18,20,0.80)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            border: "1px solid rgba(255,255,255,0.06)",
+          }}
+        >
+          {TABS.map(({ to, label, icon: Icon }) => (
+            <Link
+              key={to}
+              to={to}
+              onClick={label === "HOME" ? handleHomeClick : undefined}
+              aria-current={isActive(to) ? "page" : undefined}
+              className="flex flex-col items-center justify-center"
+            >
+              <div
+                className={`relative flex size-8 items-center justify-center rounded-full transition-colors ${
+                  isActive(to) ? "bg-white/10" : ""
+                }`}
+                style={{ color: isActive(to) ? accent : "rgba(255,255,255,0.45)" }}
+              >
+                <Icon className="size-[16px]" strokeWidth={isActive(to) ? 2.5 : 2} />
+                {isActive(to) && (
+                  <span
+                    className="absolute -bottom-0.5 left-1/2 -translate-x-1/2 size-1 rounded-full"
+                    style={{ backgroundColor: accent }}
+                  />
+                )}
+              </div>
+            </Link>
+          ))}
+        </div>
+      )}
     </nav>
   );
 }

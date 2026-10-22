@@ -8,6 +8,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
 import { BrandLogo } from "@/components/BrandLogo";
+import { BottomNavStyles } from "@/components/app/BottomNavStyles";
 import { usePlatform } from "@/lib/platform";
 import { getAppState, leaveForCheckout } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
@@ -24,6 +25,23 @@ import {
   setInterfaceTheme,
   useCustomization,
 } from "@/lib/app-customization";
+
+export type BottomNavStyle =
+  | "floating-pill"
+  | "icon-pill"
+  | "classic-tabs"
+  | "compact-dots";
+
+export const BOTTOM_NAV_STYLES: Array<{
+  id: BottomNavStyle;
+  name: string;
+  description: string;
+}> = [
+  { id: "floating-pill", name: "Floating Pill", description: "Rounded glass bar with icons and labels" },
+  { id: "icon-pill", name: "Icon Pill", description: "Floating pill with icons only" },
+  { id: "classic-tabs", name: "Classic Tabs", description: "Tab bar with labels below icons" },
+  { id: "compact-dots", name: "Compact Dots", description: "Compact bar with icons and dot indicator" },
+];
 
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
@@ -343,6 +361,15 @@ function AppSettings() {
               onToggle={() => toggleSection("logo")}
             >
               <AppLogoSection />
+            </PillSection>
+
+            <PillSection
+              icon="🧭"
+              label="Bottom Nav"
+              open={!!openSections["bottomNav"]}
+              onToggle={() => toggleSection("bottomNav")}
+            >
+              <BottomNavStyles />
             </PillSection>
           </div>
         </main>

@@ -751,12 +751,11 @@ function AppAccess() {
     // exit below that is not "go to checkout" puts it back.
     setBusy(true);
     setCheckoutDismissed(false);
-    // ONE shared budget for the whole decision. Each call below may only
-    // spend what is left of it, so however badly the network behaves the
-    // door still opens inside ~20s instead of showing "Redirecting to
-    // Whop…" forever.
+    // ONE shared budget for the whole decision — capped at ~4 seconds.
+    // Each call below may only spend what is left of it, so the door
+    // opens fast instead of hanging.
     const budgetStartedAt = Date.now();
-    const left = () => Math.max(2_000, 20_000 - (Date.now() - budgetStartedAt));
+    const left = () => Math.max(1_000, 4_000 - (Date.now() - budgetStartedAt));
     try {
       // PAYMENT IS DECIDED FIRST, BEFORE ANYTHING ELSE.
       //
@@ -845,12 +844,11 @@ function AppAccess() {
 
       // ENTITLED — the database has positively confirmed this account. Only
       // NOW do the device rules apply: if this email is bound to another
-      // phone, do NOT sign in — show the blocked card ("account already used,
-      // please tell your mentor to reactivate"). There is no self-service
-      // unlock. This is reachable ONLY for a verified paid/admin account.
+      // phone, do NOT sign in — show the blocked card ("Account already used.
+      // Contact admin for reactivation."). There is no self-service unlock.
+      // This is reachable ONLY for a verified paid/admin account.
       //
-      // For paid/admin emails: check the binding FIRST, then decide whether
-      // to skip the code or show the blocked message.
+      // STEP 1: Check the device binding FIRST (fast local check).
       let binding: { boundToOtherDevice: boolean } | null = null;
       try {
         binding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), left(), {
@@ -860,32 +858,49 @@ function AppAccess() {
         /* unreachable cloud — fall through to the normal sign-in path */
       }
 
-      if (binding?.boundToOtherDevice) {
-        // Already bound to a different device — blocked, no self-service unlock.
-        // The admin must reactivate the account before this email can sign in.
-        setBlockedEmail(clean);
-        setBusy(false);
-        setRedirecting(false);
-        return;
+      // STEP 2: Determine if this email is PAID using the same stores login uses.
+      // Check the cloud (server) AND the local store. If EITHER says paid, treat as paid.
+      // This must complete BEFORE any code screen decision.
+      let isPaid = false;
+      let isAdmin = false;
+      try {
+        // Fast check: use resolveCloudAccess with a short timeout to get the cloud verdict
+        const cloudStatus = await withDeadline(
+          resolveCloudAccess(clean, { fresh: true }),
+          left(),
+          null,
+        );
+        if (cloudStatus === "paid" || cloudStatus === "admin") {
+          isPaid = true;
+          isAdmin = cloudStatus === "admin";
+        }
+      } catch {
+        // Cloud check failed — fall back to local store
+        console.warn("[app-login] Cloud paid check failed, using local store:", clean);
+      }
+      // Also check local store as backup (same stores the reactivation uses)
+      if (!isPaid) {
+        const localStatus = paymentStatusForEmail(clean);
+        if (localStatus === "paid" || localStatus === "admin") {
+          isPaid = true;
+          isAdmin = localStatus === "admin";
+        }
       }
 
-      // NO OTP FOR PAID EMAILS.
-      // If this email is MARKED PAID (or admin) and NOT bound to another device,
-      // skip the 6-digit code entirely: sign in the session and go straight to
-      // the license key entry screen. The account is entitled; the user just
-      // needs to enter their licence key.
-      const paidStatus = paymentStatusForEmail(clean);
-      if (paidStatus === "admin" || paidStatus === "paid") {
-        // Already bound to a different device — blocked, no self-service unlock.
-        // The admin must reactivate the account before this email can sign in.
+      // STEP 3: Decide based on paid status + binding.
+      if (isPaid || isAdmin) {
+        // Paid/admin email — check binding and decide:
         if (binding?.boundToOtherDevice) {
+          // Paid BUT already bound to another device — blocked.
+          // Show the specific message for paid accounts.
           setBlockedEmail(clean);
           setBusy(false);
           setRedirecting(false);
           return;
         }
-        // Paid/admin and NOT bound — skip the code, sign in, go to license key.
-        // The account is entitled; no six-digit code is sent or required.
+        // Paid/admin and NOT bound — skip the code entirely!
+        // Sign in the session and go straight to the license key screen.
+        // No 6-digit code is sent or required for paid emails.
         const signIn = appSignIn(clean);
         if (signIn.error) {
           toast.error(signIn.error);
@@ -903,6 +918,7 @@ function AppAccess() {
         setRedirecting(false);
         return;
       }
+      // Unpaid email — fall through to the code screen (existing behavior).
 
       /**
        * THE SIX-DIGIT CODE — nobody enters the app without it.
