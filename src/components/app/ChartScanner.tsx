@@ -524,15 +524,15 @@ export default function ChartScanner({
               MARKET FEED LIVE
             </span>
           </div>
-          <h1 className="if-header if-header-rule mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
-          <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
+          <h1 className="if-header if-header-rule if-text mt-2 text-3xl font-black tracking-tight sm:text-4xl">Market scanner</h1>
+          <p className="if-muted mt-1 max-w-md text-sm leading-relaxed">
             Public market data builds executable trade plans with entry, stop-loss and take-profit. Execute sends the order to your saved MT5 account.
           </p>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
           <span
             data-testid="text-scans-remaining"
-            className="rounded-[var(--plat-radius-control)] border border-white/15 px-3 py-2 text-xs font-bold text-white/65 sm:px-4 sm:text-sm"
+            className="if-chip rounded-[var(--plat-radius-control)] border px-3 py-2 text-xs font-bold sm:px-4 sm:text-sm"
           >
             {scansLeft === Infinity ? "∞ UNLIMITED" : `${scansLeft}/5`}
           </span>
@@ -554,7 +554,7 @@ export default function ChartScanner({
 
       {/* Recent trades dialog — full execution log, newest first. */}
       <Dialog open={historyOpen} onOpenChange={setHistoryOpen}>
-        <DialogContent className="max-h-[85vh] overflow-y-auto rounded-3xl border border-white/10 bg-[#0b0f13] p-5 text-white sm:max-w-md">
+        <DialogContent className="if-card max-h-[85vh] overflow-y-auto rounded-3xl border p-5 sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="text-xl font-black tracking-tight">Recent trades</DialogTitle>
             <DialogDescription className="text-sm text-white/50">
@@ -570,7 +570,7 @@ export default function ChartScanner({
               {history.map((trade) => (
                 <li
                   key={trade.id}
-                  className="rounded-2xl border border-white/8 bg-white/[0.03] p-3"
+                  className="if-well rounded-2xl border p-3"
                   style={{ borderLeft: `3px solid ${trade.ok ? "#22c55e" : "#f87171"}` }}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -617,7 +617,7 @@ export default function ChartScanner({
                 clearTradeHistory();
                 toast.success("Trade history cleared");
               }}
-              className="mt-3 h-11 w-full rounded-full border border-white/10 text-[12px] font-bold text-white/50 hover:text-white/80"
+              className="if-chip mt-3 h-11 w-full rounded-full border text-[12px] font-bold"
             >
               Clear history
             </button>
@@ -638,7 +638,7 @@ export default function ChartScanner({
               {PHASE_META[phase].label}
             </span>
           </span>
-          <span className="text-right text-[11px] text-white/50">{PHASE_META[phase].hint}</span>
+          <span className="if-muted text-right text-[11px]">{PHASE_META[phase].hint}</span>
         </div>
       )}
 
@@ -682,8 +682,8 @@ export default function ChartScanner({
                 <path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M5 15v4h14v-4" />
               </svg>
             </span>
-            <span className="text-[18px] font-black text-white">Attach chart screenshots</span>
-            <span className="text-[13px] text-white/45">The timeframe is detected automatically from the screenshot</span>
+            <span className="if-text text-[18px] font-black">Attach chart screenshots</span>
+            <span className="if-muted text-[13px]">The timeframe is detected automatically from the screenshot</span>
           </button>
         ) : (
           <img src={chartSrc} alt={`Chart on ${timeframe}`} className="absolute inset-0 size-full object-cover" />
@@ -730,13 +730,13 @@ export default function ChartScanner({
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="plat-pressable flex h-12 w-full items-center justify-center gap-2 border border-white/10 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:bg-white/[0.08]"
+                className="if-chip plat-pressable flex h-12 w-full items-center justify-center gap-2 border text-sm font-bold transition-colors"
                 style={{ borderRadius: "var(--plat-radius-control)" }}
               >
                 {chartSrc ? "Add / replace screenshot" : "Attach chart screenshot"}
               </button>
               {attachedTimeframes.length > 0 && (
-                <p className="mt-2 text-[12px] text-white/45">
+                <p className="if-muted mt-2 text-[12px]">
                   Attached: {attachedTimeframes.map((tf) => tf.toUpperCase()).join(" · ")}
                 </p>
               )}
@@ -766,10 +766,10 @@ export default function ChartScanner({
 
           {/* NO-DATA panel — analysis completed but no broker/public data */}
           {analysis && !scanning && analysis.dataStatus === "no-data" && (
-            <div className="mx-3 mt-3 rounded-[24px] border border-white/10 bg-[#151a20] p-4 sm:mx-6">
-              <p className="text-[13px] font-bold text-white/80">No market data for {analysis.symbol}</p>
+            <div className="if-well mx-3 mt-3 rounded-[24px] border p-4 sm:mx-6">
+              <p className="if-text text-[13px] font-bold">No market data for {analysis.symbol}</p>
               {analysis.reasons.map((reason, index) => (
-                <p key={index} className="mt-2 flex gap-2 text-[12px] leading-relaxed text-white/50">
+                <p key={index} className="if-muted mt-2 flex gap-2 text-[12px] leading-relaxed">
                   <span className="mt-1.5 size-1.5 shrink-0 rounded-full" style={{ background: accent }} aria-hidden="true" />
                   <span>{reason}</span>
                 </p>
@@ -779,9 +779,9 @@ export default function ChartScanner({
 
           {/* SYMBOL — exactly the mentor's EA symbols; the user picks one.
               LIVE QUOTES toggle: the same EA symbols with real-time prices. */}
-          <div className={`mx-3 mt-4 border border-white/8 bg-[#151a20] p-4 sm:mx-6 ${cardRadius}`}>
+          <div className={`if-well mx-3 mt-4 border p-4 sm:mx-6 ${cardRadius}`}>
             <div className="mb-3 flex items-center justify-between">
-              <p className="plat-uppercase-label text-[10px] tracking-[0.28em] text-white/30">SYMBOL</p>
+              <p className="if-muted plat-uppercase-label text-[10px] tracking-[0.28em]">SYMBOL</p>
               <button
                 type="button"
                 onClick={() => setQuotesOpen(true)}
@@ -823,22 +823,22 @@ export default function ChartScanner({
           </div>
 
           {/* Trades + lot size */}
-          <div className={`mx-3 mt-3 divide-y divide-white/5 border border-white/8 bg-[#151a20] sm:mx-6 ${cardRadius}`}>
+          <div className={`if-well mx-3 mt-3 divide-y divide-white/5 border sm:mx-6 ${cardRadius}`}>
             <div className="flex items-center justify-between p-4">
               <div>
-                <p className="font-bold text-white">Trades</p>
-                <p className="text-[11px] text-white/30">Max 20 per scan · set before scanning</p>
+                <p className="if-text font-bold">Trades</p>
+                <p className="if-muted text-[11px]">Max 20 per scan · set before scanning</p>
               </div>
               <div className="flex items-center gap-3">
                 <button
                   type="button"
                   aria-label="Fewer trades"
                   onClick={() => setTrades((value) => Math.max(1, value - 1))}
-                  className="size-10 rounded-full bg-[#222] text-white"
+                  className="if-chip size-10 rounded-full"
                 >
                   −
                 </button>
-                <span className="w-6 text-center font-bold text-white">{trades}</span>
+                <span className="if-text w-6 text-center font-bold">{trades}</span>
                 <button
                   type="button"
                   aria-label="More trades"
@@ -852,15 +852,15 @@ export default function ChartScanner({
             </div>
             <div className="flex items-center justify-between p-4">
               <div>
-                <p className="font-bold text-white">Lot size</p>
-                <p className="text-[11px] text-white/30">Volume per trade</p>
+                <p className="if-text font-bold">Lot size</p>
+                <p className="if-muted text-[11px]">Volume per trade</p>
               </div>
               <input
                 value={lot}
                 onChange={(event) => setLot(event.target.value)}
                 inputMode="decimal"
                 aria-label="Lot size"
-                className="h-[42px] w-[110px] rounded-full border border-white/10 bg-[#222] text-center text-white outline-none focus:border-white/30"
+                className="if-field h-[42px] w-[110px] rounded-full border text-center outline-none focus:border-white/30"
               />
             </div>
           </div>
@@ -877,16 +877,16 @@ export default function ChartScanner({
             <span className="size-1.5 rounded-full bg-current" aria-hidden="true" /> {scanning ? "SCANNING..." : `Scan ${symbol || "market"}`}
           </button>
           {scanLocked && !scanning && lockReason && (
-            <p className="mx-6 mt-2 text-center text-[12px] font-semibold text-white/40">Scanning locked · {lockReason}</p>
+            <p className="if-muted mx-6 mt-2 text-center text-[12px] font-semibold">Scanning locked · {lockReason}</p>
           )}
         </>
       ) : (
         /* ---------- RESULT VIEW ---------- */
         <div className="mx-3 mt-3 space-y-3 sm:mx-6">
           {/* LIVE MARKET DATA — real broker values only */}
-          <div className={`if-card border border-white/8 bg-[#151a20] p-4 ${cardRadius}`}>
+          <div className={`if-card border p-4 ${cardRadius}`}>
             <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] text-white/35">
+              <p className="if-muted flex items-center gap-2 text-[10px] font-bold tracking-[0.2em]">
                 <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
                 LIVE MARKET DATA
               </p>
@@ -901,13 +901,13 @@ export default function ChartScanner({
               </span>
             </div>
             <div className="mt-3 flex items-end justify-between">
-              <p data-testid="text-live-price" className="text-[30px] font-black leading-none text-white">
+              <p data-testid="text-live-price" className="if-num if-text text-[30px] font-black leading-none">
                 {analysis.livePrice > 0 ? fmtPrice(analysis.livePrice) : "—"}
               </p>
-              <p className="text-[11px] font-semibold text-white/45">{analysis.dataSource}</p>
+              <p className="if-muted text-[11px] font-semibold">{analysis.dataSource}</p>
             </div>
             {analysis.lastCandle && (
-              <p className="mt-2 text-[11px] text-white/40">
+              <p className="if-muted mt-2 text-[11px]">
                 Latest candle ({analysis.timeframe}): O {fmtPrice(analysis.lastCandle.open)} · H{" "}
                 {fmtPrice(analysis.lastCandle.high)} · L {fmtPrice(analysis.lastCandle.low)} · C{" "}
                 {fmtPrice(analysis.lastCandle.close)} · {analysis.candleCount} candles loaded
@@ -916,7 +916,7 @@ export default function ChartScanner({
             <div className="mt-3 space-y-2">
               {analysis.readouts.map((readout) => (
                 <div key={readout.label} className="flex items-center justify-between text-[12px]">
-                  <span className="text-white/40">{readout.label}</span>
+                  <span className="if-muted">{readout.label}</span>
                   <span
                     className="font-bold"
                     style={{
@@ -934,7 +934,7 @@ export default function ChartScanner({
               stays visible with the plan instead of vanishing after the scan. */}
           {chartSrc && (
             <div
-              className={`relative overflow-hidden border-2 bg-[#151a20] ${cardRadius}`}
+              className={`if-well relative overflow-hidden border-2 ${cardRadius}`}
               style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}
             >
               <img
@@ -949,7 +949,7 @@ export default function ChartScanner({
           )}
 
           {/* TRADE PLAN — real calculated levels */}
-          <div className={`if-card border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
+          <div className={`if-card border-2 p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
@@ -965,28 +965,28 @@ export default function ChartScanner({
                 >
                   {analysis.signal}
                 </span>
-                <span className="text-[10px] font-bold text-white/40">CONFIDENCE {analysis.confidence}%</span>
+                <span className="if-muted text-[10px] font-bold">CONFIDENCE {analysis.confidence}%</span>
               </div>
             </div>
 
             <div className="mt-4 grid grid-cols-3 gap-2">
-              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+              <div className="if-well rounded-[16px] border p-3 text-center">
                 <p className="text-[10px]" style={{ color: accent }}>
                   ENTRY
                 </p>
-                <p data-testid="text-analysis-entry" className="if-num mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-entry" className="if-num if-text mt-1 text-[13px] font-bold">
                   {fmtSignalLevel(analysis.entry)}
                 </p>
               </div>
-              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+              <div className="if-well rounded-[16px] border p-3 text-center">
                 <p className="text-[10px] text-red-400">STOP-LOSS</p>
-                <p data-testid="text-analysis-stop-loss" className="if-num mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-stop-loss" className="if-num if-text mt-1 text-[13px] font-bold">
                   {fmtSignalLevel(analysis.stopLoss)}
                 </p>
               </div>
-              <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
+              <div className="if-well rounded-[16px] border p-3 text-center">
                 <p className="text-[10px] text-green-400">TAKE-PROFIT</p>
-                <p data-testid="text-analysis-take-profit" className="if-num mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-take-profit" className="if-num if-text mt-1 text-[13px] font-bold">
                   {fmtSignalLevel(analysis.takeProfit)}
                 </p>
               </div>
@@ -1161,7 +1161,7 @@ export default function ChartScanner({
 
       {/* Confirmation popup — symbol, direction, entry, SL, TP and lot */}
       <Dialog open={confirmOpen} onOpenChange={(open) => (open ? setConfirmOpen(true) : setConfirmOpen(false))}>
-        <DialogContent className="max-w-sm border border-white/10 bg-[#0b0b0d] pt-safe text-white sm:max-w-sm">
+        <DialogContent className="if-card max-w-sm border pt-safe sm:max-w-sm">
           <DialogHeader>
             <DialogTitle className="text-xl font-black">Confirm trade</DialogTitle>
             <DialogDescription className="text-sm text-white/55">
@@ -1169,7 +1169,7 @@ export default function ChartScanner({
             </DialogDescription>
           </DialogHeader>
           {analysis && (
-            <div className="mt-2 space-y-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 text-[13px]">
+            <div className="if-well mt-2 space-y-2 rounded-2xl border p-4 text-[13px]">
               <div className="flex justify-between">
                 <span className="text-white/45">Symbol</span>
                 <span className="font-bold text-white">{analysis.symbol}</span>

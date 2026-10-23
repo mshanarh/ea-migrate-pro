@@ -70,7 +70,7 @@ function PillRow({
         type="button"
         onClick={handle}
         aria-expanded={to ? undefined : open}
-        className="flex w-full items-center justify-between gap-3 rounded-full border px-5 py-4 text-left transition-transform active:scale-[0.98]"
+        className="if-control flex w-full items-center justify-between gap-3 rounded-full border px-5 py-4 text-left transition-transform active:scale-[0.98]"
         style={{
           borderColor: `${accent}66`,
           background: "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
@@ -81,7 +81,7 @@ function PillRow({
           <span className="shrink-0" style={{ color: accent }} aria-hidden>
             {icon}
           </span>
-          <span className="truncate text-base font-bold text-white">{label}</span>
+          <span className="if-text truncate text-base font-bold">{label}</span>
         </span>
         {to ? (
           <ChevronDown
@@ -142,7 +142,7 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setInterfaceTheme(option.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: theme === option.id ? accent : "rgba(255,255,255,0.1)",
                   backgroundColor: theme === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
@@ -150,10 +150,10 @@ export function CustomizationPanel() {
                 }}
               >
                 <span>
-                  <span className="block text-sm font-black tracking-wide text-white">
+                  <span className="if-text block text-sm font-black tracking-wide">
                     {option.name}
                   </span>
-                  <span className="block text-xs text-white/50">{option.description}</span>
+                  <span className="if-muted block text-xs">{option.description}</span>
                 </span>
                 {theme === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
@@ -176,7 +176,7 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setAccentColor(option.id)}
-                className={`flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"}`}
+                className={`if-control flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"}`}
               >
                 <span
                   className="relative flex size-10 items-center justify-center rounded-full border border-white/20"
@@ -184,7 +184,7 @@ export function CustomizationPanel() {
                 >
                   {color === option.id && <Check className="size-5 text-black" strokeWidth={3} />}
                 </span>
-                <span className="text-center text-[10px] font-bold text-white/70">
+                <span className="if-muted text-center text-[10px] font-bold">
                   {option.name}
                 </span>
               </button>
@@ -205,19 +205,19 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setFontOption(option.id)}
-                className="flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                className="if-control flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: font === option.id ? accent : "rgba(255,255,255,0.1)",
                   backgroundColor: font === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
                 }}
               >
                 <span
-                  className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white/5 text-xl font-black text-white"
+                  className="if-chip flex size-12 shrink-0 items-center justify-center rounded-xl text-xl font-black"
                   style={{ fontFamily: fontStack(option.id) }}
                 >
                   Aa
                 </span>
-                <span className="flex-1 text-sm font-bold text-white/85">{option.name}</span>
+                <span className="if-text flex-1 text-sm font-bold">{option.name}</span>
                 {font === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
                 )}
@@ -239,7 +239,7 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setBottomNavStyle(option.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: bottomNavStyle === option.id ? accent : "rgba(255,255,255,0.1)",
                   backgroundColor:
@@ -249,10 +249,10 @@ export function CustomizationPanel() {
                 aria-pressed={bottomNavStyle === option.id}
               >
                 <span className="min-w-0">
-                  <span className="block text-sm font-black tracking-wide text-white">
+                  <span className="if-text block text-sm font-black tracking-wide">
                     {option.name}
                   </span>
-                  <span className="block text-xs text-white/50">{option.description}</span>
+                  <span className="if-muted block text-xs">{option.description}</span>
                 </span>
                 {bottomNavStyle === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />

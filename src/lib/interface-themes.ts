@@ -8,6 +8,12 @@
  * texture and the bottom nav that ships with it — published as CSS custom
  * properties on <html> and applied by `InterfaceThemeSync`.
  *
+ * THE TOKENS ARE THE ONLY SOURCE OF COLOUR. Every screen (Home, Metatrader,
+ * Quotes, Scanner, Settings, the popups and the bottom nav) reads
+ * `--if-*` through the shared `.if-*` classes in styles.css. Nothing keeps a
+ * colour of its own, which is what makes switching an interface a whole-app
+ * change instead of a label change.
+ *
  * The interactive accent stays the user's own Colour choice (`--accent`), so
  * Select Colour, the tap-to-cycle and the background switch keep working on
  * every interface. The interface supplies the signature hue used for the page
@@ -38,6 +44,8 @@ export type InterfaceDefinition = {
   surface: string;
   /** Secondary/two-tone surface. */
   surfaceAlt: string;
+  /** Inset wells: inputs, sub-panels, list rows inside a card. */
+  well: string;
   border: string;
   borderWidth: string;
   /** Card radius. */
@@ -47,6 +55,10 @@ export type InterfaceDefinition = {
   shadow: string;
   /** Frosted cards (glassy surfaces). */
   glass?: boolean;
+  /** Primary text colour on the interface's own surfaces. */
+  text: string;
+  /** Secondary text colour — labels, hints, captions. */
+  muted: string;
   header: {
     weight: number;
     tracking: string;
@@ -70,6 +82,11 @@ export type InterfaceDefinition = {
   navCentre?: string;
   /** Dock background override (two-tone / red chrome). */
   navBg?: string;
+  /** The nav's own border / radius / shadow / blur. */
+  navBorder?: string;
+  navRadius?: string;
+  navShadow?: string;
+  navBlur?: string;
 };
 
 const MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace';
@@ -86,15 +103,23 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
       "radial-gradient(120% 85% at 50% -10%, #33060c 0%, #17040a 45%, #050203 100%)",
     surface: "linear-gradient(180deg, rgba(225,29,46,0.17), rgba(225,29,46,0.05))",
     surfaceAlt: "rgba(225,29,46,0.09)",
+    well: "rgba(0,0,0,0.38)",
     border: "rgba(255,122,133,0.26)",
     borderWidth: "1px",
     radius: "24px",
     controlRadius: "999px",
     shadow: "0 18px 40px rgba(0,0,0,0.55), 0 0 0 1px rgba(255,122,133,0.06)",
+    text: "#FFF1F3",
+    muted: "rgba(255,214,219,0.62)",
     header: { weight: 800, tracking: "0.01em", transform: "none", size: "1.9rem" },
     numbers: { font: INHERIT, tabular: true },
     decor: "wave",
     navStyle: "floating-pill",
+    navBg: "linear-gradient(180deg, rgba(62,8,15,0.94), rgba(20,4,8,0.98))",
+    navBorder: "rgba(255,122,133,0.26)",
+    navRadius: "28px",
+    navShadow: "0 16px 40px rgba(0,0,0,0.6)",
+    navBlur: "22px",
   },
 
   "NAVIGATOR PLUS": {
@@ -106,17 +131,24 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     background: "linear-gradient(165deg, #4a0208 0%, #220206 45%, #0a0102 100%)",
     surface: "rgba(255,255,255,0.06)",
     surfaceAlt: "rgba(255,255,255,0.10)",
+    well: "rgba(0,0,0,0.32)",
     border: "rgba(255,255,255,0.20)",
     borderWidth: "1px",
     radius: "12px",
     controlRadius: "10px",
     shadow: "0 12px 30px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.12)",
+    text: "#FFFFFF",
+    muted: "rgba(255,255,255,0.70)",
     header: { weight: 900, tracking: "0.02em", transform: "uppercase", size: "1.7rem", rule: true },
     numbers: { font: INHERIT, tabular: true },
     decor: "circle",
     navStyle: "circle-dock",
     navCentre: "#FFFFFF",
     navBg: "linear-gradient(180deg, rgba(140,8,18,0.95), rgba(34,2,6,0.98))",
+    navBorder: "rgba(255,255,255,0.24)",
+    navRadius: "999px",
+    navShadow: "0 18px 44px rgba(0,0,0,0.65)",
+    navBlur: "18px",
   },
 
   "PABLO CRIMSON": {
@@ -128,11 +160,14 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     background: "linear-gradient(180deg, #20050f 0%, #0d0206 100%)",
     surface: "linear-gradient(180deg, rgba(216,162,74,0.15), rgba(193,18,58,0.10))",
     surfaceAlt: "rgba(216,162,74,0.09)",
+    well: "rgba(24,3,9,0.55)",
     border: "rgba(216,162,74,0.34)",
     borderWidth: "1px",
     radius: "22px",
     controlRadius: "999px",
     shadow: "0 16px 38px rgba(0,0,0,0.5), 0 0 0 1px rgba(216,162,74,0.10)",
+    text: "#FFF6EC",
+    muted: "rgba(255,228,196,0.66)",
     header: {
       weight: 600,
       tracking: "0.08em",
@@ -144,6 +179,11 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     numbers: { font: INHERIT, tabular: true },
     decor: "serif",
     navStyle: "floating-pill",
+    navBg: "linear-gradient(180deg, rgba(46,8,22,0.95), rgba(14,2,7,0.98))",
+    navBorder: "rgba(216,162,74,0.38)",
+    navRadius: "999px",
+    navShadow: "0 18px 44px rgba(0,0,0,0.65), 0 0 0 1px rgba(216,162,74,0.12)",
+    navBlur: "20px",
   },
 
   "PABLO ELITE": {
@@ -155,15 +195,23 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     background: "#040405",
     surface: "rgba(255,255,255,0.022)",
     surfaceAlt: "rgba(255,255,255,0.04)",
+    well: "rgba(255,255,255,0.015)",
     border: "rgba(255,59,48,0.32)",
     borderWidth: "1px",
     radius: "10px",
     controlRadius: "8px",
     shadow: "none",
+    text: "#F5F5F7",
+    muted: "rgba(245,245,247,0.45)",
     header: { weight: 700, tracking: "0.12em", transform: "uppercase", size: "1.45rem", rule: true },
     numbers: { font: INHERIT, tabular: true },
     decor: "hairline",
     navStyle: "compact-dots",
+    navBg: "rgba(3,3,4,0.97)",
+    navBorder: "rgba(255,59,48,0.30)",
+    navRadius: "6px",
+    navShadow: "none",
+    navBlur: "10px",
   },
 
   "QUANTUM BLUE": {
@@ -176,16 +224,24 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
       "radial-gradient(120% 90% at 50% -10%, #07344a 0%, #041722 55%, #02070c 100%)",
     surface: "linear-gradient(180deg, rgba(34,211,238,0.17), rgba(34,211,238,0.05))",
     surfaceAlt: "rgba(34,211,238,0.10)",
+    well: "rgba(2,20,28,0.55)",
     border: "rgba(165,243,252,0.30)",
     borderWidth: "1px",
     radius: "26px",
     controlRadius: "999px",
     shadow: "0 0 34px rgba(34,211,238,0.20), 0 16px 40px rgba(0,0,0,0.5)",
     glass: true,
+    text: "#EAFBFF",
+    muted: "rgba(201,246,255,0.62)",
     header: { weight: 800, tracking: "0.03em", transform: "none", size: "1.9rem" },
     numbers: { font: INHERIT, tabular: true },
     decor: "ice",
     navStyle: "glass-bar",
+    navBg: "linear-gradient(180deg, rgba(9,58,78,0.62), rgba(3,16,24,0.88))",
+    navBorder: "rgba(165,243,252,0.32)",
+    navRadius: "24px",
+    navShadow: "0 0 34px rgba(34,211,238,0.22), 0 18px 44px rgba(0,0,0,0.55)",
+    navBlur: "30px",
   },
 
   "DARKWEB AI": {
@@ -199,15 +255,23 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
       "repeating-linear-gradient(0deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 28px), repeating-linear-gradient(90deg, rgba(255,255,255,0.05) 0 1px, transparent 1px 28px)",
     surface: "rgba(255,255,255,0.03)",
     surfaceAlt: "rgba(255,255,255,0.055)",
+    well: "#050506",
     border: "rgba(255,255,255,0.16)",
     borderWidth: "1px",
     radius: "8px",
     controlRadius: "999px",
     shadow: "none",
+    text: "#F2F5F8",
+    muted: "rgba(242,245,248,0.42)",
     header: { weight: 700, tracking: "0.18em", transform: "uppercase", size: "1.45rem" },
     numbers: { font: MONO, tabular: true },
     decor: "grid",
     navStyle: "outlined-pill",
+    navBg: "rgba(0,0,0,0.96)",
+    navBorder: "rgba(255,255,255,0.30)",
+    navRadius: "999px",
+    navShadow: "0 0 0 1px rgba(255,255,255,0.04)",
+    navBlur: "0px",
   },
 
   "SUPREME EQUINOX": {
@@ -219,17 +283,24 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     background: "linear-gradient(100deg, #1c0408 0%, #0a0a0c 50%, #0c1118 100%)",
     surface: "linear-gradient(100deg, rgba(225,29,72,0.18), rgba(201,210,222,0.08))",
     surfaceAlt: "linear-gradient(100deg, rgba(201,210,222,0.10), rgba(225,29,72,0.14))",
+    well: "rgba(6,8,12,0.60)",
     border: "rgba(255,255,255,0.16)",
     borderWidth: "1px",
     radius: "18px",
     controlRadius: "999px",
     shadow: "0 14px 34px rgba(0,0,0,0.5)",
+    text: "#F7FAFF",
+    muted: "rgba(226,232,240,0.58)",
     header: { weight: 800, tracking: "0.02em", transform: "none", size: "1.8rem", rule: true },
     numbers: { font: INHERIT, tabular: true },
     decor: "split",
     navStyle: "circle-dock",
     navCentre: "#E2E8F0",
     navBg: "linear-gradient(90deg, rgba(159,18,57,0.92), rgba(148,163,184,0.35))",
+    navBorder: "rgba(255,255,255,0.20)",
+    navRadius: "999px",
+    navShadow: "0 16px 40px rgba(0,0,0,0.6)",
+    navBlur: "18px",
   },
 
   "ULTRON MEGA": {
@@ -241,16 +312,24 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     background: "linear-gradient(180deg, #23272c 0%, #14171b 45%, #0a0c0f 100%)",
     surface: "linear-gradient(180deg, rgba(168,178,190,0.22), rgba(84,92,102,0.14))",
     surfaceAlt: "linear-gradient(180deg, rgba(214,222,232,0.16), rgba(84,92,102,0.10))",
+    well: "linear-gradient(180deg, rgba(9,11,14,0.90), rgba(20,24,28,0.90))",
     border: "rgba(198,208,220,0.38)",
     borderWidth: "2px",
     radius: "4px",
     controlRadius: "4px",
     shadow:
       "inset 0 1px 0 rgba(255,255,255,0.22), inset 0 -2px 0 rgba(0,0,0,0.6), 0 12px 26px rgba(0,0,0,0.55)",
+    text: "#F2F5F9",
+    muted: "rgba(214,222,232,0.58)",
     header: { weight: 900, tracking: "0.06em", transform: "uppercase", size: "1.8rem" },
     numbers: { font: INHERIT, tabular: true },
     decor: "metal",
     navStyle: "square-tiles",
+    navBg: "linear-gradient(180deg, #3a4048, #1b1f24)",
+    navBorder: "rgba(198,208,220,0.45)",
+    navRadius: "0px",
+    navShadow: "inset 0 1px 0 rgba(255,255,255,0.22), 0 -6px 18px rgba(0,0,0,0.6)",
+    navBlur: "0px",
   },
 };
 
@@ -274,6 +353,7 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
   if (!definition) {
     root.removeAttribute("data-if-styled");
     root.removeAttribute("data-interface");
+    root.removeAttribute("data-if-accent");
     const neutral: Record<string, string> = {
       "--if-signature": "#ffffff",
       "--if-signature-2": "#ffffff",
@@ -281,6 +361,9 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
       "--if-texture": "none",
       "--if-surface": "rgba(255,255,255,0.03)",
       "--if-surface-alt": "rgba(255,255,255,0.06)",
+      "--if-well": "rgba(0,0,0,0.35)",
+      "--if-text": "#ffffff",
+      "--if-muted": "rgba(255,255,255,0.55)",
       "--if-border": "rgba(255,255,255,0.10)",
       "--if-border-width": "1px",
       "--if-radius": "16px",
@@ -296,13 +379,20 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
       "--if-font-variant": "normal",
       "--if-nav-bg": "rgba(16,16,18,0.92)",
       "--if-nav-centre": "var(--accent)",
+      "--if-nav-border": "rgba(255,255,255,0.10)",
+      "--if-nav-radius": "999px",
+      "--if-nav-shadow": "0 16px 40px rgba(0,0,0,0.55)",
+      "--if-nav-blur": "18px",
     };
     for (const [name, value] of Object.entries(neutral)) root.style.setProperty(name, value);
+    console.debug("[interface] ACTIVE = legacy layout (no definition) | accent = --accent");
     return;
   }
 
   root.setAttribute("data-if-styled", "true");
   root.setAttribute("data-interface", definition.id);
+  // Inspectable proof of what is live — `document.documentElement.dataset.ifAccent`.
+  root.setAttribute("data-if-accent", definition.signature);
 
   const vars: Record<string, string> = {
     "--if-signature": definition.signature,
@@ -311,6 +401,9 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
     "--if-texture": definition.texture ?? "none",
     "--if-surface": definition.surface,
     "--if-surface-alt": definition.surfaceAlt,
+    "--if-well": definition.well,
+    "--if-text": definition.text,
+    "--if-muted": definition.muted,
     "--if-border": definition.border,
     "--if-border-width": definition.borderWidth,
     "--if-radius": definition.radius,
@@ -326,8 +419,17 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
     "--if-font-variant": definition.header.smallCaps ? "small-caps" : "normal",
     "--if-nav-bg": definition.navBg ?? "rgba(16,16,18,0.92)",
     "--if-nav-centre": definition.navCentre ?? "var(--accent)",
+    "--if-nav-border": definition.navBorder ?? "rgba(255,255,255,0.10)",
+    "--if-nav-radius": definition.navRadius ?? "999px",
+    "--if-nav-shadow": definition.navShadow ?? "0 16px 40px rgba(0,0,0,0.55)",
+    "--if-nav-blur": definition.navBlur ?? "18px",
   };
   for (const [name, value] of Object.entries(vars)) root.style.setProperty(name, value);
+
+  // Temporary verification line: which interface is live, and its accent.
+  console.debug(
+    `[interface] ACTIVE = ${definition.id} | accent = ${definition.signature} | card radius = ${definition.radius} | nav = ${definition.navStyle}`,
+  );
 }
 
 /** The Home hero decoration values for one definition. */

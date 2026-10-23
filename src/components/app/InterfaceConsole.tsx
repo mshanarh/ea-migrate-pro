@@ -121,15 +121,15 @@ export function InterfaceConsole({
             />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="if-header text-[10px] tracking-[0.28em] text-white/45 uppercase">
+            <p className="if-header if-muted text-[10px] tracking-[0.28em] uppercase">
               {definition.brief}
             </p>
-            <h1 className="if-header mt-1 truncate text-white" style={{ fontSize: definition.header.size }}>
+            <h1 className="if-header if-text mt-1 truncate" style={{ fontSize: definition.header.size }}>
               {robot?.name ?? "No robot yet"}
             </h1>
             <p className="mt-1.5 flex flex-wrap items-center gap-2 text-xs">
               <span
-                className="inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-black tracking-[0.12em] uppercase"
+                className="if-chip inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 font-black tracking-[0.12em] uppercase"
                 style={{
                   borderColor: running ? `${definition.signature}88` : "rgba(255,255,255,0.18)",
                   color: running ? definition.signature : "rgba(255,255,255,0.55)",
@@ -141,11 +141,11 @@ export function InterfaceConsole({
                 />
                 {running ? "Running" : "Idle"}
               </span>
-              <span className="if-num text-white/50">
+              <span className="if-num if-muted">
                 {symbols.length} {symbols.length === 1 ? "symbol" : "symbols"}
               </span>
-              <span className="if-num text-white/35">·</span>
-              <span className="if-num text-white/50">
+              <span className="if-num if-muted">·</span>
+              <span className="if-num if-muted">
                 {pairs.length} {pairs.length === 1 ? "pair" : "pairs"} configured
               </span>
             </p>
@@ -158,11 +158,11 @@ export function InterfaceConsole({
               key={label}
               type="button"
               onClick={onClick}
-              className="if-control if-card-alt plat-pressable flex flex-col items-center gap-1.5 border py-3"
+              className="if-control if-card-alt if-text plat-pressable flex flex-col items-center gap-1.5 border py-3"
               style={{ borderColor: `${definition.signature}44` }}
             >
               <Icon className="size-5" style={{ color: definition.signature }} strokeWidth={2.3} />
-              <span className="if-header text-[10px] tracking-[0.14em] text-white/80">{label}</span>
+              <span className="if-header text-[10px] tracking-[0.14em]">{label}</span>
             </button>
           ))}
         </div>
@@ -184,14 +184,14 @@ export function InterfaceConsole({
           <Plus className="size-6" style={{ color: accent }} strokeWidth={2.6} />
         </span>
         <span className="min-w-0">
-          <span className="if-header block text-base text-white">ADD ROBOT</span>
-          <span className="block text-xs text-white/50">HOST ROBOT KEY</span>
+          <span className="if-header if-text block text-base">ADD ROBOT</span>
+          <span className="if-muted block text-xs">HOST ROBOT KEY</span>
         </span>
         <ScanLine className="ml-auto size-5" style={{ color: `${accent}99` }} />
       </button>
 
       {!robot && (
-        <p className="px-2 text-center text-xs leading-relaxed text-white/45">
+        <p className="if-muted px-2 text-center text-xs leading-relaxed">
           No robot is active on this device yet. Add your host robot key to bring your EA here.
         </p>
       )}

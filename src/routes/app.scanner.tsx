@@ -616,7 +616,7 @@ function AppScanner() {
         />
       <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
-        <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
+        <DialogContent className="if-card max-w-sm rounded-3xl border p-6 text-center sm:max-w-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">
             <span className="text-xl font-black">!</span>
           </div>

@@ -448,6 +448,9 @@ body.eamp-app-bg [data-eamp-bg-host] {
   --if-texture: none;
   --if-surface: rgba(255, 255, 255, 0.03);
   --if-surface-alt: rgba(255, 255, 255, 0.06);
+  --if-well: rgba(0, 0, 0, 0.35);
+  --if-text: #ffffff;
+  --if-muted: rgba(255, 255, 255, 0.55);
   --if-border: rgba(255, 255, 255, 0.1);
   --if-border-width: 1px;
   --if-radius: 16px;
@@ -463,12 +466,30 @@ body.eamp-app-bg [data-eamp-bg-host] {
   --if-font-variant: normal;
   --if-nav-bg: rgba(16, 16, 18, 0.92);
   --if-nav-centre: var(--accent);
+  --if-nav-border: rgba(255, 255, 255, 0.1);
+  --if-nav-radius: 999px;
+  --if-nav-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  --if-nav-blur: 18px;
 }
 
 /* The screen wash (deep red console, ice-blue glow, studio grid, steel). */
 html[data-if-styled] .if-screen.if-screen {
   background: var(--if-bg) !important;
   background-image: var(--if-texture) !important;
+}
+
+/* A thin signature rail at the very top of every screen — the interface's two
+   hues, always visible, never covering content or the owner's background. */
+html[data-if-styled] .if-screen.if-screen::after {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--if-signature), var(--if-signature-2));
+  z-index: 45;
+  pointer-events: none;
 }
 
 /* The background picture / background animation is the owner's switch: while
@@ -479,14 +500,66 @@ body.eamp-bg-on .if-screen.if-screen {
   background-image: none !important;
 }
 
+/* With the ANIMATED background on, the interface still owns the screen: a thin
+   signature tint (and the interface's own texture) sits over the animation, so
+   switching Crimson Navigator → Quantum Blue is obvious without hiding the
+   owner's effect. The picture mode above is untouched — no tint over a photo. */
+html[data-if-styled] body.eamp-bg-on:not(.eamp-app-bg) .if-screen.if-screen {
+  background: color-mix(in srgb, var(--if-signature) 20%, transparent) !important;
+  background-image: var(--if-texture) !important;
+}
+
 /* Cards, sheets and the popup shells. */
 html[data-if-styled] .if-card.if-card {
   background: var(--if-surface) !important;
   border: var(--if-border-width) solid var(--if-border) !important;
   border-radius: var(--if-radius) !important;
   box-shadow: var(--if-shadow) !important;
+  color: var(--if-text) !important;
   backdrop-filter: var(--if-blur);
   -webkit-backdrop-filter: var(--if-blur);
+}
+
+/* Inset wells — inputs, sub-panels and rows inside a card. */
+html[data-if-styled] .if-well.if-well {
+  background: var(--if-well) !important;
+  border: var(--if-border-width) solid var(--if-border) !important;
+  border-radius: calc(var(--if-radius) * 0.7) !important;
+  color: var(--if-text) !important;
+}
+
+/* Editable fields. */
+html[data-if-styled] .if-field.if-field {
+  background: var(--if-well) !important;
+  border: var(--if-border-width) solid var(--if-border) !important;
+  border-radius: var(--if-control-radius) !important;
+  color: var(--if-text) !important;
+}
+
+/* Chips, status pills and small badges. */
+html[data-if-styled] .if-chip.if-chip {
+  background: var(--if-surface-alt) !important;
+  border: var(--if-border-width) solid var(--if-border) !important;
+  border-radius: var(--if-control-radius) !important;
+  color: var(--if-text) !important;
+}
+
+/* Text: primary and secondary, interface coloured on every screen. */
+html[data-if-styled] .if-text.if-text {
+  color: var(--if-text) !important;
+}
+html[data-if-styled] .if-muted.if-muted {
+  color: var(--if-muted) !important;
+}
+
+/* The bottom nav chrome the interface ships with. */
+html[data-if-styled] .if-nav.if-nav {
+  background: var(--if-nav-bg) !important;
+  border-color: var(--if-nav-border) !important;
+  border-radius: var(--if-nav-radius) !important;
+  box-shadow: var(--if-nav-shadow) !important;
+  backdrop-filter: blur(var(--if-nav-blur));
+  -webkit-backdrop-filter: blur(var(--if-nav-blur));
 }
 html[data-if-styled] .if-card-alt.if-card-alt {
   background: var(--if-surface-alt) !important;
@@ -522,9 +595,38 @@ html[data-if-styled] .if-accent {
   color: var(--if-signature) !important;
 }
 
+/* Active tab / selected row keeps the interactive accent (Select Colour and
+   the colour cycle), but its shape follows the interface. */
+html[data-if-styled] .if-nav .if-nav-active.if-nav-active {
+  border-radius: var(--if-control-radius) !important;
+}
+
+/* Laid-back red console: a soft red halo inside every card. */
+html[data-interface="CRIMSON NAVIGATOR"] .if-card.if-card {
+  background-image: linear-gradient(180deg, rgba(225, 29, 46, 0.16), rgba(225, 29, 46, 0.04));
+}
+
+/* Mentor favourite: warm gold rule on the top edge of every card. */
+html[data-interface="PABLO CRIMSON"] .if-card.if-card {
+  border-top: 2px solid var(--if-signature-2) !important;
+}
+
+/* Ice-blue: a glass sheen across the top half of each card. */
+html[data-interface="QUANTUM BLUE"] .if-card.if-card {
+  background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.10), transparent 55%);
+}
+
+/* Black sniper studio: pure black slabs instead of a lifted surface. */
+html[data-interface="DARKWEB AI"] .if-card.if-card {
+  background: #060607 !important;
+}
+
 /* Heavy-metal bevel: strong highlights on the top edge, shadow underneath. */
 html[data-interface="ULTRON MEGA"] .if-card.if-card {
   position: relative;
+  background-image:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.035) 0 2px, transparent 2px 7px),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(0, 0, 0, 0.4));
 }
 html[data-interface="ULTRON MEGA"] .if-header.if-header {
   text-shadow: 0 1px 0 rgba(255, 255, 255, 0.22), 0 -1px 0 rgba(0, 0, 0, 0.7);

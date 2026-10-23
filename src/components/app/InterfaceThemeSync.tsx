@@ -11,13 +11,33 @@ import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interfac
  *
  * Legacy layouts (NOVA CORE, SNIPPER, PHOENIX, …) resolve to null, which puts
  * the tokens back to neutral and leaves their bespoke styling alone.
+ *
+ * While testing, the small badge below (and the `[interface] ACTIVE = …`
+ * console line) shows exactly which definition the real UI is reading.
  */
 export function InterfaceThemeSync() {
   const { theme } = useCustomization();
+  const definition = interfaceDefinitionFor(theme);
 
   useEffect(() => {
-    applyInterfaceDefinition(interfaceDefinitionFor(theme));
-  }, [theme]);
+    applyInterfaceDefinition(definition);
+  }, [definition]);
 
-  return null;
+  if (!definition) return null;
+
+  return (
+    <div
+      data-testid="interface-debug-badge"
+      aria-hidden
+      className="pointer-events-none fixed left-2 z-[60] rounded-md border px-1.5 py-0.5 text-[9px] font-bold tracking-[0.14em] uppercase"
+      style={{
+        bottom: "calc(var(--sa-bottom) + 96px)",
+        borderColor: `${definition.signature}66`,
+        color: definition.signature,
+        background: "rgba(0,0,0,0.62)",
+      }}
+    >
+      {definition.name} · {definition.signature}
+    </div>
+  );
 }

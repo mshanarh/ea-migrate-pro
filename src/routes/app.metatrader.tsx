@@ -76,7 +76,7 @@ const labelClass = "plat-uppercase-label text-[11px] font-bold tracking-[0.28em]
  * and typography are shared — this is the same input on both platforms.
  */
 const fieldClass =
-  "plat-field w-full border border-white/[0.07] bg-[#141414] px-5 text-base text-white outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25 focus:bg-[#181818] focus:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]";
+  "if-field plat-field w-full border px-5 text-base outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25";
 
 /** Select styled like the screenshot's dark dropdowns (native = reliable on mobile). */
 function DarkSelect({ value, onChange, placeholder, options, ariaLabel, hint }: {
@@ -706,7 +706,7 @@ function AppMetatrader() {
   const lastVerified = (() => {
     try { return window.localStorage.getItem("mt5_last_verified"); } catch { return null; }
   })();
-  const field = "flex h-16 items-center gap-4 rounded-full border border-white/10 bg-black/40 px-6 focus-within:border-white/30";
+  const field = "if-field flex h-16 items-center gap-4 rounded-full border px-6 focus-within:border-white/30";
 
   return (
     <div className="app-fullscreen if-screen relative bg-[#070d10] text-white">
@@ -715,10 +715,10 @@ function AppMetatrader() {
         <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 pt-safe pb-safe-nav">
           <motion.header initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mt-4 flex items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-bold tracking-[0.35em] text-white/50 uppercase">EA Migrate</p>
-              <h1 className="if-header if-header-rule mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
+              <p className="if-muted text-xs font-bold tracking-[0.35em] uppercase">EA Migrate</p>
+              <h1 className="if-header if-header-rule if-text mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
             </div>
-            <span className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300" : "border-red-400/50 bg-red-500/15 text-red-300"}`}>
+            <span className={`if-chip flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "text-emerald-300" : "text-red-300"}`}>
               <span className={`size-2 rounded-full ${online ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
               {online ? "ONLINE" : "OFFLINE"}
             </span>
@@ -726,7 +726,7 @@ function AppMetatrader() {
 
           <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-bold tracking-[0.3em] text-white/60 uppercase">MT5 Status</p>
+              <p className="if-muted text-xs font-bold tracking-[0.3em] uppercase">MT5 Status</p>
               {mt && (
                 <button type="button" onClick={() => void checkStatus()} disabled={testing} className="flex items-center gap-1.5 text-sm text-white/60 disabled:opacity-50">
                   <RefreshCw className={`size-4 ${testing ? "animate-spin" : ""}`} /> {testing ? "testing" : "test"}
@@ -734,18 +734,18 @@ function AppMetatrader() {
               )}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><ShieldCheck className="size-3.5" /> Connection</p>
-                <p className={`mt-1 text-lg font-black ${online ? "text-emerald-300" : "text-white/70"}`}>{online ? "Linked" : "Not linked"}</p>
+              <div className="if-well rounded-3xl border p-4">
+                <p className="if-muted flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] uppercase"><ShieldCheck className="size-3.5" /> Connection</p>
+                <p className={`mt-1 text-lg font-black ${online ? "text-emerald-300" : "if-text"}`}>{online ? "Linked" : "Not linked"}</p>
               </div>
-              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><Clock className="size-3.5" /> Last verified</p>
-                <p className="if-num mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
+              <div className="if-well rounded-3xl border p-4">
+                <p className="if-muted flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] uppercase"><Clock className="size-3.5" /> Last verified</p>
+                <p className="if-num if-text mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
               </div>
             </div>
             {mt && (
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-full border border-white/10 bg-black/40 px-5 py-3 text-sm">
-                <span className="truncate text-white/80">{mt.loginId} · {mt.server}</span>
+              <div className="if-well mt-3 flex items-center justify-between gap-3 rounded-full border px-5 py-3 text-sm">
+                <span className="if-text truncate">{mt.loginId} · {mt.server}</span>
                 <button type="button" onClick={() => void removeConnection()} className="shrink-0 text-xs font-bold text-white/50 hover:text-red-300">REMOVE</button>
               </div>
             )}
@@ -775,8 +775,8 @@ function AppMetatrader() {
               <input value={server} onChange={(e) => { clearError(); setServer(e.target.value); }} placeholder="Broker server only MT5" aria-label="Broker server" list="mt5-server-suggestions" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
               <datalist id="mt5-server-suggestions">{servers.map((item) => <option key={item} value={item} />)}</datalist>
             </label>
-            <p className="px-1 text-sm leading-relaxed text-white/50">
-              Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="text-white/80">File → Login to Trade Account</span>.
+            <p className="if-muted px-1 text-sm leading-relaxed">
+              Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="if-text">File → Login to Trade Account</span>.
             </p>
             <button type="submit" disabled={saving} className="if-control flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
               <Fingerprint className="size-7" style={{ color: accent }} />

@@ -46,7 +46,8 @@ function tabLabel(label: string): string {
   return label.charAt(0) + label.slice(1).toLowerCase();
 }
 
-const INACTIVE = "rgba(255,255,255,0.45)";
+/** Inactive tabs follow the active interface's muted text token. */
+const INACTIVE = "var(--if-muted, rgba(255,255,255,0.45))";
 
 /** One destination. Every style renders this, so all three always exist. */
 function NavLink({
@@ -160,11 +161,12 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex w-full items-stretch justify-around rounded-[28px] px-2 pt-1.5"
           style={{
-            backgroundColor: "rgba(18,18,20,0.88)",
-            backdropFilter: "blur(24px) saturate(1.6)",
-            WebkitBackdropFilter: "blur(24px) saturate(1.6)",
-            border: "1px solid rgba(255,255,255,0.10)",
-            boxShadow: "0 10px 34px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.08)",
+            background: "var(--if-nav-bg, rgba(18,18,20,0.88))",
+            backdropFilter: "blur(var(--if-nav-blur, 18px)) saturate(1.6)",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 18px)) saturate(1.6)",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            borderRadius: "var(--if-nav-radius, 28px)",
+            boxShadow: "var(--if-nav-shadow, 0 10px 34px rgba(0,0,0,0.55))",
           }}
         >
           {TABS.map((tab) => {
@@ -188,11 +190,12 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex items-center justify-around rounded-full px-4 py-2"
           style={{
-            backgroundColor: "rgba(18,18,20,0.85)",
-            backdropFilter: "blur(16px)",
-            WebkitBackdropFilter: "blur(16px)",
-            border: "1px solid rgba(255,255,255,0.08)",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.5)",
+            background: "var(--if-nav-bg, rgba(18,18,20,0.85))",
+            backdropFilter: "blur(var(--if-nav-blur, 16px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 16px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.08))",
+            borderRadius: "var(--if-nav-radius, 999px)",
+            boxShadow: "var(--if-nav-shadow, 0 8px 24px rgba(0,0,0,0.5))",
           }}
         >
           {TABS.map((tab) => (
@@ -214,9 +217,9 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex w-full items-stretch justify-around rounded-none px-2"
           style={{
-            backgroundColor: "rgba(18,18,20,0.95)",
-            borderTop: "1px solid rgba(255,255,255,0.10)",
-            boxShadow: "0 -4px 12px rgba(0,0,0,0.3)",
+            background: "var(--if-nav-bg, rgba(18,18,20,0.95))",
+            borderTop: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            boxShadow: "var(--if-nav-shadow, 0 -4px 12px rgba(0,0,0,0.3))",
           }}
         >
           {TABS.map((tab) => (
@@ -238,10 +241,11 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex items-center justify-around rounded-[50px] py-1.5"
           style={{
-            backgroundColor: "rgba(18,18,20,0.80)",
-            backdropFilter: "blur(12px)",
-            WebkitBackdropFilter: "blur(12px)",
-            border: "1px solid rgba(255,255,255,0.06)",
+            background: "var(--if-nav-bg, rgba(18,18,20,0.80))",
+            backdropFilter: "blur(var(--if-nav-blur, 12px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 12px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.06))",
+            borderRadius: "var(--if-nav-radius, 50px)",
           }}
         >
           {TABS.map((tab) => {
@@ -274,11 +278,12 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex w-full items-stretch justify-around rounded-3xl px-2 pt-1.5"
           style={{
-            backgroundColor: "rgba(255,255,255,0.045)",
-            backdropFilter: "blur(30px) saturate(1.9)",
-            WebkitBackdropFilter: "blur(30px) saturate(1.9)",
-            border: "1px solid rgba(255,255,255,0.14)",
-            boxShadow: "0 18px 50px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.16)",
+            background: "var(--if-nav-bg, rgba(255,255,255,0.045))",
+            backdropFilter: "blur(var(--if-nav-blur, 30px)) saturate(1.9)",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 30px)) saturate(1.9)",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.14))",
+            borderRadius: "var(--if-nav-radius, 24px)",
+            boxShadow: "var(--if-nav-shadow, 0 18px 50px rgba(0,0,0,0.55))",
           }}
         >
           {TABS.map((tab) => (
@@ -300,8 +305,9 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
           className="flex items-center justify-around rounded-full px-3 py-2"
           style={{
             backgroundColor: "transparent",
-            border: "1.5px solid rgba(255,255,255,0.28)",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.45)",
+            border: "1.5px solid var(--if-nav-border, rgba(255,255,255,0.28))",
+            borderRadius: "var(--if-nav-radius, 999px)",
+            boxShadow: "var(--if-nav-shadow, 0 10px 30px rgba(0,0,0,0.45))",
           }}
         >
           {TABS.map((tab) => (
@@ -325,10 +331,11 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
             // The interface definition supplies the dock chrome and the centre
             // button (white circle on red, split silver/red, …).
             background: "var(--if-nav-bg, rgba(16,16,18,0.92))",
-            backdropFilter: "blur(18px)",
-            WebkitBackdropFilter: "blur(18px)",
-            border: "1px solid rgba(255,255,255,0.10)",
-            boxShadow: "0 14px 40px rgba(0,0,0,0.6), inset 0 1px 0 rgba(255,255,255,0.08)",
+            backdropFilter: "blur(var(--if-nav-blur, 18px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 18px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            borderRadius: "var(--if-nav-radius, 999px)",
+            boxShadow: "var(--if-nav-shadow, 0 14px 40px rgba(0,0,0,0.6))",
           }}
         >
           {TABS.map((tab) => {
@@ -375,8 +382,9 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex w-full items-stretch gap-1.5 p-1.5"
           style={{
-            backgroundColor: "rgba(12,12,14,0.96)",
-            borderTop: "1px solid rgba(255,255,255,0.10)",
+            background: "var(--if-nav-bg, rgba(12,12,14,0.96))",
+            borderTop: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            boxShadow: "var(--if-nav-shadow, none)",
           }}
         >
           {TABS.map((tab) => {
@@ -406,8 +414,8 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex w-full items-stretch justify-around"
           style={{
-            backgroundColor: "rgba(10,10,12,0.94)",
-            borderTop: "1px solid rgba(255,255,255,0.08)",
+            background: "var(--if-nav-bg, rgba(10,10,12,0.94))",
+            borderTop: "1px solid var(--if-nav-border, rgba(255,255,255,0.08))",
           }}
         >
           {TABS.map((tab) => {

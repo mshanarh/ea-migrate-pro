@@ -110,6 +110,39 @@ describe("applying an interface", () => {
     expect(root().style.getPropertyValue("--if-radius")).toBe(definition.radius);
     expect(root().style.getPropertyValue("--if-border")).toBe(definition.border);
     expect(root().style.getPropertyValue("--if-nav-centre")).toBe("var(--accent)");
+    // The complete token set reaches the real UI, not just the wash/radius.
+    expect(root().style.getPropertyValue("--if-surface")).toBe(definition.surface);
+    expect(root().style.getPropertyValue("--if-well")).toBe(definition.well);
+    expect(root().style.getPropertyValue("--if-text")).toBe(definition.text);
+    expect(root().style.getPropertyValue("--if-muted")).toBe(definition.muted);
+    expect(root().style.getPropertyValue("--if-nav-bg")).toBe(definition.navBg);
+    expect(root().style.getPropertyValue("--if-nav-border")).toBe(definition.navBorder);
+    expect(root().style.getPropertyValue("--if-control-radius")).toBe(definition.controlRadius);
+    expect(root().style.getPropertyValue("--if-shadow")).toBe(definition.shadow);
+    // The debug proof of which definition is live.
+    expect(root().getAttribute("data-if-accent")).toBe(definition.signature);
+  });
+
+  it("gives every interface its own text, well and nav chrome", () => {
+    const texts = new Set<string>();
+    const wells = new Set<string>();
+    const navBgs = new Set<string>();
+    for (const id of EIGHT) {
+      const definition = interfaceDefinitionFor(id)!;
+      expect(definition.text).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      expect(definition.muted.length).toBeGreaterThan(6);
+      expect(definition.well.length).toBeGreaterThan(4);
+      expect(definition.navBorder).toBeTruthy();
+      expect(definition.navRadius).toBeTruthy();
+      expect(definition.navShadow).toBeTruthy();
+      texts.add(definition.text);
+      wells.add(definition.well);
+      navBgs.add(definition.navBg ?? "none");
+    }
+    // Not one shared skin: the text, the wells and the nav all move.
+    expect(texts.size).toBeGreaterThanOrEqual(7);
+    expect(wells.size).toBeGreaterThanOrEqual(7);
+    expect(navBgs.size).toBe(EIGHT.length);
   });
 
   it("puts the tokens back when a legacy layout is selected", () => {

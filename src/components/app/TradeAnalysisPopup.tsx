@@ -161,7 +161,7 @@ export function TradeAnalysisPopup({
       <div
         role="status"
         aria-live="polite"
-        className="if-card animate-[slideDown_0.3s_ease-out] rounded-[20px] border bg-[#0f0f0f]/95 p-4 shadow-2xl backdrop-blur"
+        className="if-card animate-[slideDown_0.3s_ease-out] rounded-[20px] border p-4 shadow-2xl backdrop-blur"
         style={{
           borderColor: `${accent}44`,
           boxShadow: `0 18px 40px rgba(0,0,0,0.55), 0 0 26px ${accent}1f`,
@@ -176,7 +176,7 @@ export function TradeAnalysisPopup({
             {side ?? "—"}
           </span>
           {symbol ? (
-            <span className="text-[15px] font-black text-white">{symbol}</span>
+            <span className="if-text text-[15px] font-black">{symbol}</span>
           ) : null}
           <span className="flex-1" />
           {ready ? (
@@ -202,16 +202,16 @@ export function TradeAnalysisPopup({
 
         {/* The bot's real stage */}
         {execution.stage ? (
-          <p className="mt-1.5 flex items-start gap-1.5 text-[12px] font-semibold leading-snug text-white/70">
+          <p className="if-text mt-1.5 flex items-start gap-1.5 text-[12px] font-semibold leading-snug">
             <span aria-hidden style={{ color: accent }}>✓</span>
             <span className="min-w-0 break-words">{execution.stage}</span>
           </p>
         ) : (
-          <p className="mt-1.5 text-[12px] font-semibold text-white/45">Waiting for the broker…</p>
+          <p className="if-muted mt-1.5 text-[12px] font-semibold">Waiting for the broker…</p>
         )}
 
         {/* The analysis box */}
-        <div className="mt-3 overflow-hidden rounded-[14px] border border-white/10 bg-black/45">
+        <div className="if-well mt-3 overflow-hidden rounded-[14px] border">
           <p
             className="border-b border-white/10 px-3 py-1.5 text-[10px] font-black tracking-[0.16em] text-white/45"
             style={{ color: `${accent}cc` }}
@@ -223,7 +223,7 @@ export function TradeAnalysisPopup({
               {symbol || "—"} {side ?? ""}
             </p>
             {entryText || stopText || targetText ? (
-              <p className="if-num font-mono text-[12px] font-bold text-white/85">
+              <p className="if-num if-text text-[12px] font-bold">
                 {entryText ? `Entry ${entryText}` : "Entry —"}
                 {" · "}
                 {stopText ? `SL ${stopText}` : "SL —"}
@@ -231,17 +231,17 @@ export function TradeAnalysisPopup({
                 {targetText ? `TP ${targetText}` : "TP —"}
               </p>
             ) : (
-              <p className="text-[12px] text-white/45">
+              <p className="if-muted text-[12px]">
                 Waiting for the broker&apos;s own levels — nothing is shown until they arrive.
               </p>
             )}
             {lotText ? (
-              <p className="text-[12px] text-white/60">Lot size {lotText}</p>
+              <p className="if-muted text-[12px]">Lot size {lotText}</p>
             ) : null}
             {totalTrades ? (
-              <p className="text-[12px] text-white/60">Trades in this run: {totalTrades}</p>
+              <p className="if-muted text-[12px]">Trades in this run: {totalTrades}</p>
             ) : null}
-            <p className="text-[11px] leading-snug text-white/55">
+            <p className="if-muted text-[11px] leading-snug">
               {stopText ? `SL: ${stopText}, ` : ""}
               {targetText ? `TP: ${targetText}. ` : ""}
               Use proper position sizing.
