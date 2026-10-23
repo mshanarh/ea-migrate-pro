@@ -14,8 +14,10 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
-import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -293,8 +295,11 @@ function AppHome() {
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
   useEffect(() => {
+    // The mentor's LOCAL store (empty on a client phone) and the REAL server
+    // config, resolved by the activated licence key. The server is the source
+    // of truth for symbols — the local store is only a fallback.
     void syncRobotsFromPortal();
-    void syncRobotsFromCloudPortal();
+    void refreshRobotConfigs();
   }, []);
 
   // Paint instantly: the route's own beforeLoad already awaited
@@ -368,10 +373,14 @@ function AppHome() {
 
   if (access !== "ok") return <AccessSplash />;
 
+  // PULL DOWN → re-read the EA config from the server.
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
   const onTouchStart = (event: React.TouchEvent) => {
+    pull.handlers.onTouchStart(event as React.TouchEvent<HTMLElement>);
     touchStartX.current = event.touches[0]?.clientX ?? null;
   };
   const onTouchEnd = (event: React.TouchEvent) => {
+    pull.handlers.onTouchEnd();
     if (touchStartX.current === null) return;
     const endX = event.changedTouches[0]?.clientX ?? null;
     if (endX !== null && touchStartX.current - endX > 70) setDrawerOpen(true);
@@ -619,6 +628,7 @@ function AppHome() {
     <div
       className="app-fullscreen if-screen flex w-full flex-col bg-black text-white"
       onTouchStart={onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {
         if (touchStartX.current !== null && event.changedTouches?.length === 1) {
           const touchEnd = event.changedTouches?.[0];
@@ -635,6 +645,7 @@ function AppHome() {
     >
       <div className="app-scroll-area">
         <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
+          <EaConfigNote className="pt-1" />
           <ThemeContent
             robot={robot}
             robots={app.robots}

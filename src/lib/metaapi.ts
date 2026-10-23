@@ -563,7 +563,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         return {
           ok: false,
           message: created.error
-            ? `MetaApi could not connect the account: ${created.error}. Check the login, password and exact server name (e.g. Headway-Demo).`
+            ? `MetaApi could not connect the account: ${created.error}. Check the login, password and exact server name (e.g. YourBroker-Demo).`
             : "MetaApi is still detecting this broker's connection settings — press Connect Account again in a minute and it will link instantly.",
         };
       }
@@ -617,7 +617,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
         message:
           billing ||
           g1.message ||
-          "The broker's server did not accept the cloud trading terminal (tried both infrastructure types). Double-check the password and exact server name (e.g. Headway-Demo). If they are right, this broker server blocks cloud terminals — try the same broker's live or demo server, or another broker. Your details are saved; press Connect again in a few minutes in case the broker was briefly offline.",
+          "The broker's server did not accept the cloud trading terminal (tried both infrastructure types). Double-check the password and exact server name (e.g. YourBroker-Demo). If they are right, this broker server blocks cloud terminals — try the same broker's live or demo server, or another broker. Your details are saved; press Connect again in a few minutes in case the broker was briefly offline.",
       };
     }
     return {
@@ -625,7 +625,7 @@ export const connectMt5Account = createServerFn({ method: "POST" })
       code: "failed",
       message:
         g1.message ||
-        "MetaApi could not connect the account. Check the login, password and exact server name (e.g. Headway-Demo).",
+        "MetaApi could not connect the account. Check the login, password and exact server name (e.g. YourBroker-Demo).",
     };
   });
 
@@ -1020,7 +1020,7 @@ export const saveMt5Connection = createServerFn({ method: "POST" })
         ok: false,
         code: "failed",
         message: message
-          ? `MetaApi could not prepare the connection: ${message}. Check the login, password and exact server name (e.g. Headway-Demo).`
+          ? `MetaApi could not prepare the connection: ${message}. Check the login, password and exact server name (e.g. YourBroker-Demo).`
           : `MetaApi could not prepare the connection (HTTP ${status}).`,
       };
     }

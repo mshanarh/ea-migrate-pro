@@ -81,6 +81,14 @@ export type Robot = {
   video?: string;
   eaId?: string;
   running: boolean;
+  /**
+   * WHEN the symbol list last came from the SERVER, and whether that last
+   * fetch failed. The symbols themselves are no longer frozen at activation:
+   * they are refreshed by license key (see refreshRobotConfigs), so the local
+   * copy is only an offline fallback and is labelled with its date.
+   */
+  configUpdatedAt?: string;
+  configStale?: boolean;
 };
 
 export type PairSetting = {
@@ -97,6 +105,8 @@ export type MtAccount = {
   server: string;
   accountType: string;
   loginId: string;
+  /** The broker's own name from MT5's account_info (`company`). Absent until verified. */
+  company?: string;
   /** The user's own MetaApi account id (created under the platform token). */
   mcAccountId?: string;
   /** MetaApi region returned at connect time (used to pick the trade API host). */
@@ -897,6 +907,11 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     name: savedEa?.name || licenseResult.license.eaName || "Private EA",
     ...(savedEa?.version ? { version: savedEa.version } : {}),
     symbols,
+    // Dated and marked STALE: this is the snapshot the licence carried at
+    // activation, not a promise about the EA's current symbols. The server
+    // refresh replaces it on the next screen load (see refreshRobotConfigs).
+    configUpdatedAt: new Date().toISOString(),
+    configStale: true,
     // All symbols start under Selected Quotes. Only the symbol the user
     // configures is moved into pairs (Allowed Quotes) — press Configure.
     pairs: [],
@@ -1265,6 +1280,111 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
     console.warn("[app-store] cloud robot sync failed", error);
     return 0;
   }
+}
+
+/**
+ * THE LIVE EA CONFIG REFRESH — the fix for "my mentor added a symbol but I
+ * only see it after a new key".
+ *
+ * The robot's symbol list is resolved from the SERVER by the licence key the
+ * robot already holds (the same record the mentor portal writes when an EA is
+ * saved). Calling this on the bot screen, Quotes and Scanner — and from the
+ * refresh control / pull-to-refresh — makes the server the source of truth.
+ *
+ * FAILURE IS SHOWN, NOT HIDDEN: when the server cannot answer, the last known
+ * list stays on the robot and `configStale` is set, so the UI can print the
+ * "last updated" note instead of pretending the snapshot is current.
+ */
+
+/** One in-flight refresh shared by every screen that mounts at once. */
+let configRefresh: Promise<{ ok: boolean; updated: number; at: string | null; error?: string }> | null = null;
+
+export function refreshRobotConfigs(): Promise<{ ok: boolean; updated: number; at: string | null; error?: string }> {
+  load();
+  if (typeof window === "undefined") {
+    return Promise.resolve({ ok: false, updated: 0, at: null, error: "not in a browser" });
+  }
+  if (state.robots.length === 0) {
+    return Promise.resolve({ ok: true, updated: 0, at: null });
+  }
+  if (configRefresh) return configRefresh;
+
+  const run = (async () => {
+    const { fetchEaConfigsInKv } = await import("@/lib/license-cloud");
+    const answer = await fetchEaConfigsInKv(state.robots.map((robot) => robot.key));
+
+    if (!answer.enabled || !answer.ok) {
+      // Keep every symbol we already have — an unreachable server must never
+      // wipe the trader's Quotes — but mark it as an offline copy.
+      state = {
+        ...state,
+        robots: state.robots.map((robot) => ({ ...robot, configStale: true })),
+      };
+      persist();
+      return {
+        ok: false,
+        updated: 0,
+        at: null,
+        ...(answer.error ? { error: answer.error } : {}),
+      };
+    }
+
+    const at = new Date().toISOString();
+    const byKey = new Map(
+      answer.configs.map((config) => [config.key.trim().toUpperCase(), config] as const),
+    );
+    let updated = 0;
+    const robots = await Promise.all(
+      state.robots.map(async (robot) => {
+        const config = byKey.get(robot.key.trim().toUpperCase());
+        if (!config) {
+          // The server answered but holds no record for this key — the local
+          // snapshot is all we have, so it stays and is marked stale.
+          return robot.configStale ? robot : { ...robot, configStale: true };
+        }
+        // `null` = the record predates stored symbols (keep the known list);
+        // `[]` = the mentor removed every symbol (drop them).
+        const symbols = config.symbols === null ? robot.symbols : config.symbols;
+        const symbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
+        const oldPairs = robot.pairs ?? [];
+        const pairs = oldPairs.filter((pair) => symbolKeys.has(pair.symbol.trim().toUpperCase()));
+        const name = config.eaName || robot.name;
+        const image = config.image ? await travelSizedImage(config.image) : robot.image;
+        const sameSymbols =
+          symbols.length === robot.symbols.length &&
+          symbols.every((symbol, index) => symbol === robot.symbols[index]);
+        const stamped = config.updatedAt || at;
+        if (
+          sameSymbols &&
+          pairs.length === oldPairs.length &&
+          name === robot.name &&
+          image === robot.image &&
+          robot.configUpdatedAt === stamped &&
+          robot.configStale === false
+        ) {
+          return robot;
+        }
+        updated += 1;
+        return {
+          ...robot,
+          symbols,
+          pairs,
+          name,
+          ...(image ? { image } : {}),
+          configUpdatedAt: stamped,
+          configStale: false,
+        };
+      }),
+    );
+    state = { ...state, robots };
+    persist();
+    return { ok: true, updated, at };
+  })();
+
+  configRefresh = run;
+  return run.finally(() => {
+    configRefresh = null;
+  });
 }
 
 export function setRobotPairs(id: string, pairs: PairSetting[]) {

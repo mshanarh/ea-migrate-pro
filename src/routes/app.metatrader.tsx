@@ -13,6 +13,7 @@ import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
 import { friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
+import { brokerLogoUrl, companyFromBridgeReply, serverFromBridgeReply } from "@/lib/broker-identity";
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
@@ -132,6 +133,32 @@ function Mt5Logo() {
   );
 }
 
+/**
+ * THE BROKER'S OWN LOGO, WITH A GUARANTEED FALLBACK.
+ *
+ * The domain is derived from the company name the bridge reported (see
+ * broker-identity.ts) and the image comes from logo.dev with the publishable
+ * key from the environment. An unknown broker, a missing key or an image that
+ * fails to load all fall back to the existing MetaTrader mark — a broken
+ * image is never shown.
+ */
+function BrokerLogo({ company, server, accent }: { company: string; server: string; accent: string }) {
+  const [failed, setFailed] = useState(false);
+  const url = company ? brokerLogoUrl(company, server) : null;
+  if (!url || failed) {
+    return <span className="block scale-75"><Mt5Logo /></span>;
+  }
+  return (
+    <img
+      src={url}
+      alt={company}
+      onError={() => setFailed(true)}
+      className="size-32 rounded-[28px] bg-white object-contain p-2"
+      style={{ boxShadow: `0 10px 30px rgba(0,0,0,0.6), 0 0 0 1px ${accent}44` }}
+    />
+  );
+}
+
 /** The four steps the connect overlay narrates, in order. */
 const SYNC_STEP_LABELS = [
   "Checking broker details",
@@ -143,7 +170,14 @@ const SYNC_STEP_LABELS = [
 type SyncStepState = "idle" | "active" | "done" | "failed";
 type SyncPhase = "syncing" | "connected" | "failed";
 type SyncState = {
+  /**
+   * The broker's OWN name — MT5's `company`, known only after the bridge
+   * answers. Empty until then: the overlay shows nothing rather than guessing.
+   */
   brokerLabel: string;
+  /** The account login and server from the real reply/form. */
+  login: string;
+  server: string;
   phase: SyncPhase;
   steps: SyncStepState[];
   detail: string | null;
@@ -200,11 +234,32 @@ function Mt5SyncOverlay({
           className={state.phase === "syncing" ? "animate-pulse" : ""}
           style={{ filter: `drop-shadow(0 0 26px ${accent}88)` }}
         >
-          <span className="block scale-75"><Mt5Logo /></span>
+          <BrokerLogo
+            key={`${state.brokerLabel}|${state.server}`}
+            company={state.brokerLabel}
+            server={state.server}
+            accent={accent}
+          />
         </span>
       </div>
 
-      <p className="mt-5 text-center text-3xl font-black tracking-tight text-white">{state.brokerLabel}</p>
+      {/* Broker name — the bridge's `company`, never a guess. Until it answers,
+          the space is reserved but empty. */}
+      {state.brokerLabel ? (
+        <p
+          data-testid="text-sync-broker"
+          className="mt-5 max-w-[20rem] text-center text-3xl font-black tracking-tight text-white"
+        >
+          {state.brokerLabel}
+        </p>
+      ) : (
+        <div aria-hidden className="mt-5 h-9" />
+      )}
+      <p data-testid="text-sync-account" className="mt-1 text-center text-[12px] font-semibold text-white/45">
+        {state.login ? `Account ${state.login}` : ""}
+        {state.login && state.server ? " · " : ""}
+        {state.server}
+      </p>
       <p
         className="mt-2 text-center text-[13px] font-black uppercase tracking-[0.35em]"
         style={{
@@ -454,7 +509,10 @@ function AppMetatrader() {
       setSync((prev) => (prev ? { ...prev, ...next } : prev));
 
     setSync({
-      brokerLabel: details.brokerLabel,
+      // NOTHING IS GUESSED: the broker name arrives with the bridge answer.
+      brokerLabel: "",
+      login: details.login,
+      server: details.server,
       phase: "syncing",
       steps: ["active", "idle", "idle", "idle"],
       detail: null,
@@ -470,11 +528,16 @@ function AppMetatrader() {
       let ok = false;
       let summary = "";
       let failure = "";
+      let company = "";
+      let liveServer = details.server;
       try {
         const payload = await verifyViaBridge(details.login, details.password, details.server);
         if (payload["__httpOk"] === true && payload["success"] === true) {
           ok = true;
           summary = accountSummary(payload["account"]);
+          // THE REAL BROKER IDENTITY — `company` from MT5, `server` beside it.
+          company = companyFromBridgeReply(payload);
+          liveServer = serverFromBridgeReply(payload) || details.server;
         } else {
           const raw =
             (typeof payload["detail"] === "string" && payload["detail"]) ||
@@ -493,6 +556,13 @@ function AppMetatrader() {
       if (!ok) {
         patch({ phase: "failed", steps: ["done", "failed", "idle", "idle"], detail: failure });
         return;
+      }
+
+      // The bridge has answered — show the broker it named (or nothing).
+      patch({ brokerLabel: company, server: liveServer });
+      if (company) {
+        const saved = getAppState().mt;
+        if (saved) connectMt({ ...saved, company });
       }
 
       // Success — tick the remaining steps one at a time so the sequence is
@@ -576,7 +646,9 @@ function AppMetatrader() {
       login: account.loginId,
       password: typedPassword,
       server: account.server,
-      brokerLabel: derivedBroker,
+      // Deliberately empty: the overlay names the broker only after the
+      // bridge reports its `company`.
+      brokerLabel: "",
     });
 
     // 3. Cloud copy in the background — persisted best-effort; its own
@@ -667,14 +739,22 @@ function AppMetatrader() {
       const marginFree = num("margin_free") ?? num("equity") ?? num("balance");
       const balance = num("balance");
       const equity = num("equity");
+      // Persist the broker's real company name from this verification.
+      const company = companyFromBridgeReply(payload);
+      if (company) {
+        const saved = getAppState().mt;
+        if (saved) connectMt({ ...saved, company });
+      }
       try { window.localStorage.setItem("mt5_last_verified", new Date().toLocaleTimeString()); } catch { /* ignore */ }
-      toast.success(`Connected ✓ — Account ${mt.loginId} · ${mt.server}`);
+      toast.success(`Connected ✓ — ${company ? `${company} · ` : ""}Account ${mt.loginId} · ${mt.server}`);
       if (marginFree === null && balance === null && equity === null) {
-        setTestResult(`Connected ✓ — Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
+        setTestResult(
+          `Connected ✓ — ${company ? `${company} · ` : ""}Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`,
+        );
         return;
       }
       setTestResult(
-        `Connected ✓ — Free margin available: ${fmt(marginFree)}` +
+        `Connected ✓ — ${company ? `${company} · ` : ""}Free margin available: ${fmt(marginFree)}` +
           (balance !== null ? ` · Balance: ${fmt(balance)}` : "") +
           (equity !== null ? ` · Equity: ${fmt(equity)}` : "") +
           " — ready to execute.",
@@ -745,7 +825,11 @@ function AppMetatrader() {
             </div>
             {mt && (
               <div className="if-well mt-3 flex items-center justify-between gap-3 rounded-full border px-5 py-3 text-sm">
-                <span className="if-text truncate">{mt.loginId} · {mt.server}</span>
+                {/* The broker's own name comes from MT5's `company`; until a
+                    verification has reported it, only the real login/server show. */}
+                <span className="if-text truncate">
+                  {mt.company ? `${mt.company} · ${mt.loginId}` : mt.loginId} · {mt.server}
+                </span>
                 <button type="button" onClick={() => void removeConnection()} className="shrink-0 text-xs font-bold text-white/50 hover:text-red-300">REMOVE</button>
               </div>
             )}

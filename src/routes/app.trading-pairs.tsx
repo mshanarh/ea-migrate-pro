@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { getAppState, leaveForCheckout, setRobotPairs, useAppState } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, refreshRobotConfigs, setRobotPairs, useAppState } from "@/lib/app-store";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -97,6 +99,13 @@ function TradingPairsScreen() {
   const [typeOpen, setTypeOpen] = useState(false);
 
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+
+  // Quotes always reads the CURRENT EA config from the server (by licence
+  // key), so a symbol the mentor added or removed is here without a new key.
+  useEffect(() => {
+    void refreshRobotConfigs();
+  }, []);
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
 
   // The EA's own symbol universe — set while the EA was created in the portal,
   // displayed exactly as the bot added it.
@@ -198,7 +207,12 @@ function TradingPairsScreen() {
   const hasRobot = Boolean(robot);
 
   return (
-    <div className="app-fullscreen if-screen bg-black text-white">
+    <div
+      className="app-fullscreen if-screen bg-black text-white"
+      onTouchStart={pull.handlers.onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
+      onTouchEnd={pull.handlers.onTouchEnd}
+    >
       <div className="app-scroll-area">
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-4 pt-safe pb-safe-nav">
           {/* Header — back, robot avatar, name, accent subtitle */}
@@ -228,6 +242,8 @@ function TradingPairsScreen() {
               </p>
             </div>
           </div>
+
+          <EaConfigNote className="mt-3 px-0" />
 
           {/* Tabs */}
           <div className="mt-5 flex gap-3">

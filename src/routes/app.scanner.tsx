@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,7 +10,9 @@ import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { getAppState, leaveForCheckout } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, refreshRobotConfigs } from "@/lib/app-store";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
@@ -58,6 +60,12 @@ export const Route = createFileRoute("/app/scanner")({
 
 function AppScanner() {
   const app = useAppState();
+  // The scanner's symbol universe is the EA's CURRENT list, fetched by licence
+  // key every time this screen opens (and on pull-to-refresh).
+  useEffect(() => {
+    void refreshRobotConfigs();
+  }, []);
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
@@ -595,8 +603,14 @@ function AppScanner() {
   };
 
   return (
-    <div className="app-fullscreen if-screen bg-[#07090b] text-white">
+    <div
+      className="app-fullscreen if-screen bg-[#07090b] text-white"
+      onTouchStart={pull.handlers.onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
+      onTouchEnd={pull.handlers.onTouchEnd}
+    >
       <div className="app-scroll-area">
+        <EaConfigNote className="pt-2" />
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades, ...(pair.direction ? { direction: pair.direction } : {}) }))}

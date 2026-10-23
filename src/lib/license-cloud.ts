@@ -49,6 +49,23 @@ export type LicencedKey = {
   symbols?: string[];
   /** The EA picture, when it fit under the store's size cap. */
   image?: string;
+  /** When the EA config last changed (issue, or a mentor EA edit). */
+  updatedAt?: string;
+};
+
+/**
+ * ONE EA'S LIVE CONFIG, resolved by the licence key the app holds.
+ *
+ * `symbols: null` = this record predates stored symbols (keep the local list);
+ * `symbols: []` = the mentor removed every symbol (the app must drop them).
+ */
+export type EaConfigEntry = {
+  key: string;
+  eaId?: string;
+  eaName?: string;
+  symbols: string[] | null;
+  image?: string;
+  updatedAt?: string;
 };
 
 /** Every answer this store gives. `enabled` is the fallback signal. */
@@ -64,6 +81,8 @@ export type KvCountAnswer = KvAnswer & { count: number };
 export type KvListAnswer = KvAnswer & { licenses: LicencedKey[] };
 export type KvClaimAnswer = KvAnswer & { alreadyInUse?: boolean; heldBy?: string | null };
 export type KvLookupAnswer = KvAnswer & { found: boolean; license?: LicencedKey; wrongEmail?: boolean };
+export type KvEaConfigAnswer = KvAnswer & { configs: EaConfigEntry[] };
+export type KvEaUpdateAnswer = KvAnswer & { updated?: number; updatedAt?: string };
 
 /** A slow answer is a dead one — the store is a single Redis round trip. */
 const DEADLINE_MS = 12_000;
@@ -81,6 +100,9 @@ type ReplyBody = {
   wrongEmail?: boolean;
   alreadyInUse?: boolean;
   heldBy?: string | null;
+  configs?: EaConfigEntry[];
+  updated?: number;
+  updatedAt?: string;
 };
 
 /**
@@ -198,6 +220,51 @@ export async function lookupLicenseInKv(key: string, email: string): Promise<KvL
     ...(answer.error ? { error: answer.error } : {}),
   };
   return result;
+}
+
+/**
+ * THE LIVE EA CONFIG FOR THESE KEYS — what the bot screen, Quotes and the
+ * Scanner read instead of the snapshot saved at activation. `enabled: false`
+ * means the server store could not answer, so the caller shows its last known
+ * list with a "last updated" note rather than pretending it is current.
+ */
+export async function fetchEaConfigsInKv(keys: string[]): Promise<KvEaConfigAnswer> {
+  const clean = Array.from(new Set(keys.map((key) => key.trim().toUpperCase()).filter(Boolean))).slice(0, 50);
+  if (clean.length === 0) return offline({ enabled: true, ok: true, configs: [] });
+  const answer = await post({ action: "ea-config", keys: clean });
+  if (!answer) return offline({ enabled: false, ok: false, configs: [] });
+  const configs = Array.isArray(answer.configs)
+    ? answer.configs.filter((entry): entry is EaConfigEntry => Boolean(entry) && typeof entry.key === "string")
+    : [];
+  return {
+    enabled: true,
+    ok: answer.ok === true,
+    configs,
+    ...(answer.error ? { error: answer.error } : {}),
+  };
+}
+
+/**
+ * MENTOR EA EDIT → the SAME server config the app reads. Called by the portal
+ * when an EA is saved, so a symbol added or removed appears on the client's
+ * phone at the next refresh — no new key, no re-activation, no re-login.
+ */
+export async function updateEaConfigInKv(input: {
+  mentorEmail: string;
+  eaId?: string;
+  eaName?: string;
+  symbols: string[];
+  image?: string;
+}): Promise<KvEaUpdateAnswer> {
+  const answer = await post({ action: "update-ea", ...input });
+  if (!answer) return offline({ enabled: false, ok: false });
+  return {
+    enabled: true,
+    ok: answer.ok === true,
+    ...(typeof answer.updated === "number" ? { updated: answer.updated } : {}),
+    ...(typeof answer.updatedAt === "string" ? { updatedAt: answer.updatedAt } : {}),
+    ...(answer.error ? { error: answer.error } : {}),
+  };
 }
 
 /** DELETE a key: the record, both indexes and its claim lock. */

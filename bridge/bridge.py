@@ -144,10 +144,16 @@ def verify_account(creds: Credentials, x_bridge_key: Optional[str] = Header(None
     if account is None:
         disconnect()
         return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    # `company` is the BROKER'S OWN name from MT5's account_info — the app
+    # shows it (and derives the broker logo from it) instead of guessing from
+    # the server string or hardcoding one broker. `name` is the account
+    # holder's name and travels too so the client can be identified.
     data = {
         "success": True,
         "account": {
             "login": account.login,
+            "name": getattr(account, "name", ""),
+            "company": getattr(account, "company", ""),
             "server": account.server,
             "currency": account.currency,
             "balance": account.balance,
