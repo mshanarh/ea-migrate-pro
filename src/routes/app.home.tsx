@@ -17,7 +17,7 @@ import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { EaConfigNote } from "@/components/app/EaConfigNote";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
-import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -299,7 +299,11 @@ function AppHome() {
     // config, resolved by the activated licence key. The server is the source
     // of truth for symbols — the local store is only a fallback.
     void syncRobotsFromPortal();
+    // The server config (symbols) is authoritative…
     void refreshRobotConfigs();
+    // …and the legacy cloud mirror still fills in EA media for keys issued
+    // before the picture travelled with the licence record.
+    void syncRobotsFromCloudPortal();
   }, []);
 
   // Paint instantly: the route's own beforeLoad already awaited
