@@ -454,7 +454,9 @@ function AppHome() {
       if (!symbol) continue;
 
       try {
-        const analysis = await resolveTradeDirection(symbol);
+        // Credentialled analysis: the direction comes from the broker's own
+        // candles (oldest→newest), not the fixture tables.
+        const analysis = await resolveTradeDirection(symbol, { credentials });
 
         if (analysis.direction.type === "NO_TRADE") {
           blocked += 1;

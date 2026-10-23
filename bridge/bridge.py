@@ -231,7 +231,10 @@ def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(Non
                 "success": False,
                 "message": f"No candle data for {req.symbol} ({req.timeframe})",
             }
-        # Convert to list of dicts, newest first (copy_rates returns newest first)
+        # Convert to list of dicts, ORDERED OLDEST-FIRST exactly as MT5 returns
+        # them (copy_rates_from_pos: index 0 = oldest bar, last = forming bar).
+        # Do NOT reverse this: the app normalises the series to oldest→newest
+        # and reads the LAST entry as the latest close.
         candles = []
         for i, row in enumerate(rates):
             candle_time = int(row[0])  # timestamp in seconds

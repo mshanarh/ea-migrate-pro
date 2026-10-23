@@ -17,6 +17,7 @@ import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
+import { verifyDirectionAgainstTrend } from "@/lib/auto-trade";
 import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -171,6 +172,26 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
+      // DIRECTION GUARD — the side about to be sent must agree with the
+      // broker's OWN 1h candles (newest close vs the close five bars ago).
+      // A mismatch is refused with the real closes instead of sending a
+      // wrong-way order; the no-stops fallback never bypasses this.
+      const directionGuard = await verifyDirectionAgainstTrend(symbol, direction, credentials);
+      if (!directionGuard.ok) {
+        onProgress("Direction mismatch — trade blocked");
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: {
+              ok: false,
+              status: "blocked",
+              symbol,
+              side: direction,
+              message: directionGuard.reason,
+            },
+          }),
+        );
+        return { ok: false, message: directionGuard.reason };
+      }
       // The order comment is the CURRENT BOT'S NAME EXACTLY AS CONFIGURED —
       // spaces, version text, plus signs and every other character included
       // ("sniper killer ea v2+" is sent as "sniper killer ea v2+"). Nothing

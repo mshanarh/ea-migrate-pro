@@ -62,10 +62,56 @@ const TIMEFRAME_MAP: Record<string, string> = {
 };
 
 /**
- * Fetches real candle data from the broker bridge.
- * If the bridge is unavailable or returns an error, the verdict is NO TRADE.
+ * ── CANDLE ORDERING: THE RULE THIS FILE MUST NEVER BREAK ───────────────────
+ *
+ * `bridge.py` fills `/symbol/candles` from `mt5.copy_rates_from_pos(...)`,
+ * which returns rates OLDEST-FIRST: index 0 is the oldest bar and the last
+ * index is the still-forming bar. The old helper here assumed the opposite —
+ * it dropped index 0 as "the newest, forming bar" and callers read index 0 as
+ * the latest close — so "the last candle" was really the OLDEST one. Slope,
+ * momentum, RSI trend and price-vs-MA all came out inverted, which is why
+ * auto-trading sold into rallies and bought into sell-offs.
+ *
+ * Every bridge series is therefore normalised to strictly increasing time
+ * (oldest → newest), the order is ASSERTED, and only then is the forming bar
+ * dropped — from the END, where it actually is.
  */
-async function fetchBrokerCandlesFromBridge(symbol: string, timeframe: string): Promise<{ candles: BrokerCandle[]; serverTime: string } | null> {
+function normalizeBridgeCandles(raw: readonly BrokerCandle[]): BrokerCandle[] {
+  if (!Array.isArray(raw) || raw.length === 0) return [];
+  const ascending = [...raw].sort((a, b) => a.time - b.time);
+  for (let i = 1; i < ascending.length; i += 1) {
+    if (!(ascending[i]!.time > ascending[i - 1]!.time)) {
+      console.error(
+        `[auto-trade] CANDLE ORDER ASSERTION FAILED: timestamp ${ascending[i]!.time} is not greater than the previous ${ascending[i - 1]!.time} — refusing this series`,
+      );
+      return [];
+    }
+  }
+  const newest = ascending[ascending.length - 1]!;
+  const previous = ascending[ascending.length - 2];
+  if (previous) {
+    console.log(
+      `[auto-trade] candle order OK: newest ${new Date(newest.time * 1000).toISOString()} > previous ${new Date(previous.time * 1000).toISOString()}`,
+    );
+  }
+  // Newest = LAST entry. Drop it (still forming) and keep the closed bars.
+  return ascending.slice(0, -1);
+}
+
+const CANDLES_TIMEOUT_MS = 8000;
+
+/**
+ * Real candles for one timeframe, signed with the caller's OWN MT5
+ * credentials. Returns `null` when the bridge cannot answer — the caller
+ * decides what a missing series means; this helper never guesses.
+ */
+async function fetchBridgeCandles(
+  credentials: BridgeCredentials,
+  symbol: string,
+  timeframe: string,
+): Promise<BrokerCandle[] | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), CANDLES_TIMEOUT_MS);
   try {
     const response = await fetch(BRIDGE_URL + "/symbol/candles", {
       method: "POST",
@@ -73,45 +119,31 @@ async function fetchBrokerCandlesFromBridge(symbol: string, timeframe: string): 
         "Content-Type": "application/json",
         "x-bridge-key": BRIDGE_KEY,
       },
-      body: JSON.stringify({
-        credentials: { login: 0, password: "", server: "" }, // credentials will be provided by caller
-        symbol: symbol,
-        timeframe: timeframe,
-        count: 100,
-      }),
+      body: JSON.stringify({ credentials, symbol, timeframe, count: 120 }),
+      signal: controller.signal,
     });
     if (!response.ok) {
       console.warn(`[auto-trade] Bridge candles request failed: ${response.status}`);
       return null;
     }
-    const data: {
-      ok: boolean;
-      /** Present only when `ok` is false — the bridge's own reason. */
+    const data = (await response.json().catch(() => ({}))) as {
+      ok?: boolean;
+      success?: boolean;
+      /** Present only on refusal — the bridge's own reason. */
       message?: string;
-      symbol: string;
-      serverTime: string;
-      candles: {
-        time: number;
-        open: number;
-        high: number;
-        low: number;
-        close: number;
-        volume: number;
-      }[];
-    } = await response.json();
-    if (!data.ok || !data.candles) {
-      console.warn(`[auto-trade] Bridge returned error for candles: ${data.message || 'unknown'}`);
+      candles?: BrokerCandle[];
+    };
+    if ((data.ok !== true && data.success !== true) || !Array.isArray(data.candles)) {
+      console.warn(`[auto-trade] Bridge returned no candles: ${data.message ?? "unknown"}`);
       return null;
     }
-    // Convert to BrokerCandle format, drop the newest (still-forming) bar
-    const closedCandles = data.candles.slice(1); // drop first (newest, forming) bar
-    return {
-      candles: closedCandles.map((c) => ({ time: c.time, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })),
-      serverTime: data.serverTime,
-    };
+    const normalized = normalizeBridgeCandles(data.candles);
+    return normalized.length > 0 ? normalized : null;
   } catch (error) {
     console.warn(`[auto-trade] Bridge candles request exception: ${error}`);
     return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
@@ -154,13 +186,15 @@ function computeRSI14(closes: number[]): number | null {
 
 /**
  * Computes momentum as rate of change over the last N closed closes.
- * e.g., (close[0] - close[9]) / close[9] for N=10
+ *
+ * `closes` is OLDEST-FIRST (the order normalizeBridgeCandles guarantees), so
+ * the latest close is the LAST entry — not index 0. Reading index 0 here was
+ * the other half of the inverted-direction bug.
  */
 function computeMomentum(closes: number[], lookback: number = 10): number | null {
   if (closes.length < lookback + 1) return null;
-  // The length guard above guarantees both entries exist.
-  const lastClose = closes[0]!;
-  const priorClose = closes[lookback]!;
+  const lastClose = closes[closes.length - 1]!;
+  const priorClose = closes[closes.length - 1 - lookback]!;
   if (priorClose === 0) return null;
   return (lastClose - priorClose) / priorClose;
 }
@@ -203,13 +237,13 @@ async function fetchLiveBrokerQuoteFromBridge(symbol: string, credentials: { log
   }
 }
 
-// NOTE: the bridge-candle helpers below (fetchBrokerCandlesFromBridge,
-// computeRSI14, computeMomentum, fetchLiveBrokerQuoteFromBridge) are NOT
-// wired into the live path yet. Direction analysis still reads the verified
-// fixture tables defined after symbolLookupKeys — the exact logic the
-// execution tests and the deployed engine pin. They must be wired in
-// deliberately (and the tests re-pointed at bridge responses) before the
-// fixture path can be removed.
+// WIRING: a credentialled run (the live auto-trading path) reads the REAL
+// broker candles through fetchBridgeCandles and derives RSI / momentum / MA
+// structure from them, so the direction follows the market instead of a
+// static table. The verified fixtures below remain the fallback for callers
+// with no MT5 credentials to sign a bridge request (the public scanner server
+// function) and for a bridge that cannot answer — never as a substitute for
+// live candles when they ARE available.
 
 interface BrokerCandle {
   time: number;
@@ -414,7 +448,13 @@ async function fetchBrokerCandles(symbol: string, timeframe: string): Promise<Br
     return null;
   }
 
-  return fixtures.map((fixture) => ({ time: Date.now() - fixture.ageMs, ...fixture }));
+  // ONE ORDER EVERYWHERE: oldest → newest, exactly like the bridge series.
+  // The fixtures are declared newest-first (ascending ageMs), which is why
+  // reading index 0 as "latest" used to look correct here and only failed
+  // against real broker data.
+  return fixtures
+    .map((fixture) => ({ time: Date.now() - fixture.ageMs, ...fixture }))
+    .sort((a, b) => a.time - b.time);
 }
 
 async function fetchLiveBrokerQuote(symbol: string): Promise<BrokerQuote | null> {
@@ -517,24 +557,124 @@ const RSI_BUY_BELOW = 40; // Spec: any timeframe RSI < 40 → BUY bias
 const RSI_SELL_ABOVE = 60; // Spec: any timeframe RSI > 60 → SELL bias
 const MIN_MOMENTUM_CONFIDENCE = 0.05; // Momentum must exceed this threshold
 
+/**
+ * Sign of (newest close − close five candles ago) on an OLDEST→NEWEST series.
+ * +1 rising, −1 falling, 0 unchanged, null when fewer than 6 bars exist (there
+ * is nothing honest to compare, so the guard stays out of the way).
+ */
+export function fiveBarTrendSign(candles: ReadonlyArray<{ close: number }>): -1 | 0 | 1 | null {
+  if (candles.length < 6) return null;
+  const newest = candles[candles.length - 1]!.close;
+  const fiveAgo = candles[candles.length - 6]!.close;
+  if (newest === fiveAgo) return 0;
+  return newest > fiveAgo ? 1 : -1;
+}
+
+export type DirectionGuardVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * THE DIRECTION GUARD — a chosen side must agree with the last six CLOSED
+ * candles (newest close vs the close five bars earlier). The refusal names the
+ * real closes so the trader sees WHY instead of a wrong-way entry.
+ */
+function checkDirectionAgainstCandles(
+  side: "BUY" | "SELL",
+  candles: ReadonlyArray<BrokerCandle>,
+): DirectionGuardVerdict {
+  const recent = candles.slice(-6);
+  const trendSign = fiveBarTrendSign(recent);
+  if (trendSign === null || trendSign === 0) return { ok: true };
+  const agrees = side === "BUY" ? trendSign > 0 : trendSign < 0;
+  if (agrees) return { ok: true };
+  const newest = recent[recent.length - 1]!;
+  const fiveAgo = recent[0]!;
+  const closesText = recent
+    .map((candle) => `${new Date(candle.time * 1000).toISOString()} = ${candle.close}`)
+    .join(" → ");
+  return {
+    ok: false,
+    reason: `Direction guard: ${side} disagrees with the 1h trend — newest close ${newest.close} vs ${fiveAgo.close} five candles ago (${trendSign > 0 ? "rising" : "falling"}). Recent closes: ${closesText}`,
+  };
+}
+
+/**
+ * Guard for callers that already hold a direction from somewhere else
+ * (the scanner's executed plan): re-read the broker's own 1h candles and
+ * refuse when the side contradicts the last five bars. Without credentials
+ * there is nothing to verify against, so the verdict stays open.
+ */
+export async function verifyDirectionAgainstTrend(
+  symbol: string,
+  side: "BUY" | "SELL",
+  credentials: BridgeCredentials | null,
+): Promise<DirectionGuardVerdict> {
+  if (!credentials) return { ok: true };
+  const candles = await fetchBridgeCandles(credentials, symbol, "1h");
+  if (!candles || candles.length < 6) {
+    console.warn(`[auto-trade] ${symbol}: direction guard skipped — fewer than 6 closed 1h candles from the bridge`);
+    return { ok: true };
+  }
+  return checkDirectionAgainstCandles(side, candles);
+}
+
 export async function resolveTradeDirection(
   symbol: string,
-  options: { requireExecutionReady?: boolean; rejectProxyData?: boolean } = {},
+  options: {
+    requireExecutionReady?: boolean;
+    rejectProxyData?: boolean;
+    /**
+     * The caller's OWN MT5 account. When present, the direction is derived from
+     * live bridge candles (oldest→newest) instead of the verified fixtures.
+     */
+    credentials?: BridgeCredentials | null;
+  } = {},
 ): Promise<AnalysisResult> {
-  const { requireExecutionReady = true, rejectProxyData = true } = options;
+  const { requireExecutionReady = true, rejectProxyData = true, credentials = null } = options;
   const timestamp = Date.now();
 
   console.log(`[auto-trade] Analyzing direction for ${symbol}...`);
 
-  // Fetch all indicators in parallel
-  const [rsi15mResult, rsi1hResult, mom15mResult, mom1hResult, quoteResult, candlesResult] = await Promise.all([
+  // Fetch all indicators in parallel. Live candles are requested ONLY when we
+  // can sign the bridge call with real credentials.
+  const [
+    rsi15mResult,
+    rsi1hResult,
+    mom15mResult,
+    mom1hResult,
+    quoteResult,
+    candlesResult,
+    liveCandles15m,
+    liveCandles1h,
+  ] = await Promise.all([
     fetchBrokerRSI(symbol, "15m"),
     fetchBrokerRSI(symbol, "1h"),
     fetchBrokerMomentum(symbol, "15m"),
     fetchBrokerMomentum(symbol, "1h"),
     fetchLiveBrokerQuote(symbol),
     rejectProxyData ? fetchBrokerCandles(symbol, "1h") : Promise.resolve(null),
+    credentials ? fetchBridgeCandles(credentials, symbol, "15m") : Promise.resolve(null),
+    credentials ? fetchBridgeCandles(credentials, symbol, "1h") : Promise.resolve(null),
   ]);
+
+  // ── LIVE CANDLES ARE THE SOURCE OF TRUTH WHENEVER WE CAN READ THEM.
+  // `fetchBridgeCandles` returns them OLDEST→NEWEST with the forming bar
+  // already dropped, so the newest CLOSED candle is the LAST entry. Reading
+  // index 0 as "latest" is exactly what inverted the direction before.
+  const liveCloses15m = liveCandles15m?.map((candle) => candle.close) ?? null;
+  const liveCloses1h = liveCandles1h?.map((candle) => candle.close) ?? null;
+  const liveRsi15m = liveCloses15m ? computeRSI14(liveCloses15m) : null;
+  const liveRsi1h = liveCloses1h ? computeRSI14(liveCloses1h) : null;
+  const liveMomentum15m = liveCloses15m ? computeMomentum(liveCloses15m) : null;
+  const liveMomentum1h = liveCloses1h ? computeMomentum(liveCloses1h) : null;
+  const usingLiveCandles = liveRsi15m !== null || liveRsi1h !== null;
+
+  // Live values win; the verified fixtures only cover what live data cannot.
+  const rsi15mValue = liveRsi15m ?? rsi15mResult?.value ?? null;
+  const rsi1hValue = liveRsi1h ?? rsi1hResult?.value ?? null;
+  const momentum15mValue = liveMomentum15m ?? mom15mResult?.value ?? null;
+  const momentum1hValue = liveMomentum1h ?? mom1hResult?.value ?? null;
+  // The trading-timeframe series used for structure and the direction guard.
+  const tradingCandles: BrokerCandle[] | null = liveCandles1h ?? candlesResult ?? null;
 
   // ============================================================================
   // VALIDATION: All broker data must be present and fresh
@@ -542,10 +682,10 @@ export async function resolveTradeDirection(
 
   const missingData: string[] = [];
 
-  if (!rsi15mResult) missingData.push("15m RSI");
-  if (!rsi1hResult) missingData.push("1h RSI");
-  if (!mom15mResult) missingData.push("15m momentum");
-  if (!mom1hResult) missingData.push("1h momentum");
+  if (rsi15mValue === null) missingData.push("15m RSI");
+  if (rsi1hValue === null) missingData.push("1h RSI");
+  if (momentum15mValue === null) missingData.push("15m momentum");
+  if (momentum1hValue === null) missingData.push("1h momentum");
   if (!quoteResult) missingData.push("live quote");
 
   if (missingData.length > 0) {
@@ -555,13 +695,13 @@ export async function resolveTradeDirection(
     return {
       symbol,
       direction: { type: "NO_TRADE", reason, blocked: true },
-      rsi15m: rsi15mResult?.value ?? null,
-      rsi1h: rsi1hResult?.value ?? null,
-      momentum15m: mom15mResult?.value ?? null,
-      momentum1h: mom1hResult?.value ?? null,
+      rsi15m: rsi15mValue,
+      rsi1h: rsi1hValue,
+      momentum15m: momentum15mValue,
+      momentum1h: momentum1hValue,
       source: "unavailable",
       timeframe: "1h",
-      candleTimestamp: candlesResult?.[0]?.time ?? null,
+      candleTimestamp: tradingCandles ? tradingCandles[tradingCandles.length - 1]!.time : null,
       strength: "none",
       executionReady: false,
       reason,
@@ -571,19 +711,25 @@ export async function resolveTradeDirection(
 
   // The block above returns whenever any read is missing; repeat the check as
   // an explicit narrowing step so the strict checks below see defined values.
-  if (!rsi15mResult || !rsi1hResult || !mom15mResult || !mom1hResult || !quoteResult) {
+  if (
+    rsi15mValue === null ||
+    rsi1hValue === null ||
+    momentum15mValue === null ||
+    momentum1hValue === null ||
+    !quoteResult
+  ) {
     const reason = "Broker data became unavailable mid-analysis. Cannot make trade decision.";
     console.warn(`[auto-trade] BLOCKED ${symbol}: ${reason}`);
     return {
       symbol,
       direction: { type: "NO_TRADE", reason, blocked: true },
-      rsi15m: rsi15mResult?.value ?? null,
-      rsi1h: rsi1hResult?.value ?? null,
-      momentum15m: mom15mResult?.value ?? null,
-      momentum1h: mom1hResult?.value ?? null,
+      rsi15m: rsi15mValue,
+      rsi1h: rsi1hValue,
+      momentum15m: momentum15mValue,
+      momentum1h: momentum1hValue,
       source: "unavailable",
       timeframe: "1h",
-      candleTimestamp: candlesResult?.[0]?.time ?? null,
+      candleTimestamp: tradingCandles ? tradingCandles[tradingCandles.length - 1]!.time : null,
       strength: "none",
       executionReady: false,
       reason,
@@ -602,13 +748,13 @@ export async function resolveTradeDirection(
     return {
       symbol,
       direction: { type: "NO_TRADE", reason, blocked: true },
-      rsi15m: rsi15mResult.value,
-      rsi1h: rsi1hResult.value,
-      momentum15m: mom15mResult.value,
-      momentum1h: mom1hResult.value,
+      rsi15m: rsi15mValue,
+      rsi1h: rsi1hValue,
+      momentum15m: momentum15mValue,
+      momentum1h: momentum1hValue,
       source: "proxy",
       timeframe: "1h",
-      candleTimestamp: candlesResult?.[0]?.time ?? null,
+      candleTimestamp: tradingCandles ? tradingCandles[tradingCandles.length - 1]!.time : null,
       strength: "none",
       executionReady: false,
       reason,
@@ -625,27 +771,29 @@ export async function resolveTradeDirection(
   // structure biases SELL (spec: "positive/negative moving average trend").
   let maBullish = false;
   let maBearish = false;
-  if (candlesResult && candlesResult.length > 1) {
-    // Verify candles show the expected direction
-    const recentCandle = candlesResult[0];
-    const prevCandle = candlesResult[1];
-    if (recentCandle && prevCandle) {
-      // Check for bearish structure (lower lows, lower highs)
-      maBearish = recentCandle.close < prevCandle.close && recentCandle.low < prevCandle.low;
+  if (tradingCandles && tradingCandles.length > 1) {
+    // The series is oldest→newest, so "recent" is the LAST candle and the one
+    // before it is second-to-last. Indexing [0]/[1] compared the two OLDEST
+    // bars and inverted this structure read.
+    const recentCandle = tradingCandles[tradingCandles.length - 1]!;
+    const prevCandle = tradingCandles[tradingCandles.length - 2]!;
+    // Check for bearish structure (lower lows, lower highs)
+    maBearish = recentCandle.close < prevCandle.close && recentCandle.low < prevCandle.low;
 
-      // Check for bullish structure (higher highs, higher closes)
-      maBullish = recentCandle.close > prevCandle.close && recentCandle.high > prevCandle.high;
+    // Check for bullish structure (higher highs, higher closes)
+    maBullish = recentCandle.close > prevCandle.close && recentCandle.high > prevCandle.high;
 
-      console.log(`[auto-trade] ${symbol} candle structure: ${maBearish ? "BEARISH" : maBullish ? "BULLISH" : "NEUTRAL"}`);
-    }
+    console.log(
+      `[auto-trade] ${symbol} candle structure (${usingLiveCandles ? "live 1h" : "fixture 1h"}): ${maBearish ? "BEARISH" : maBullish ? "BULLISH" : "NEUTRAL"}`,
+    );
   }
 
   // ============================================================================
   // ANALYSIS: Calculate direction based on verified indicators
   // ============================================================================
 
-  const avgRSI = (rsi15mResult.value + rsi1hResult.value) / 2;
-  const avgMomentum = (mom15mResult.value + mom1hResult.value) / 2;
+  const avgRSI = (rsi15mValue + rsi1hValue) / 2;
+  const avgMomentum = (momentum15mValue + momentum1hValue) / 2;
 
   let direction: TradeDecision;
   let strength: "strong" | "weak" | "none" = "none";
@@ -654,8 +802,8 @@ export async function resolveTradeDirection(
   // DIRECTION BIAS (spec): RSI < 40 on either timeframe → BUY bias,
   // RSI > 60 on either timeframe → SELL bias; the moving-average/candle trend
   // is an equivalent trigger in each direction.
-  const rsiBuyBias = rsi15mResult.value < RSI_BUY_BELOW || rsi1hResult.value < RSI_BUY_BELOW;
-  const rsiSellBias = rsi15mResult.value > RSI_SELL_ABOVE || rsi1hResult.value > RSI_SELL_ABOVE;
+  const rsiBuyBias = rsi15mValue < RSI_BUY_BELOW || rsi1hValue < RSI_BUY_BELOW;
+  const rsiSellBias = rsi15mValue > RSI_SELL_ABOVE || rsi1hValue > RSI_SELL_ABOVE;
   const buyBias = rsiBuyBias || maBullish;
   const sellBias = rsiSellBias || maBearish;
 
@@ -812,7 +960,7 @@ export async function resolveTradeDirection(
   // FINAL VALIDATION: Check execution readiness
   // ============================================================================
 
-  const executionReady =
+  let executionReady =
     requireExecutionReady
       ? direction.type !== "NO_TRADE" &&
         quoteResult.isFresh &&
@@ -858,16 +1006,75 @@ export async function resolveTradeDirection(
     }
   }
 
+  // ============================================================================
+  // DIRECTION GUARD — the chosen side must agree with the REAL 1h trend.
+  //
+  // `tradingCandles` is oldest→newest, so the newest close is the LAST entry
+  // and the close five candles earlier is the sixth from the end. When the
+  // chosen direction contradicts that move, no order is sent: the verdict
+  // becomes NO TRADE carrying the actual closes, and the popup bus receives
+  // the same numbers so the mismatch is visible instead of silent.
+  // ============================================================================
+  const guardCloses = tradingCandles ?? [];
+  const verdict =
+    direction.type === "BUY" || direction.type === "SELL"
+      ? checkDirectionAgainstCandles(direction.type, guardCloses)
+      : ({ ok: true } as DirectionGuardVerdict);
+
+  if (!verdict.ok) {
+    const blockedReason = verdict.reason;
+    direction = {
+      type: "NO_TRADE",
+      reason: blockedReason,
+      blocked: true,
+    };
+    strength = "none";
+    executionReady = false;
+    reason = blockedReason;
+    console.error(`[auto-trade] ${symbol}: ${blockedReason}`);
+    // The same numbers go to the popup surfaces (top toast, floating bot,
+    // Android bubble) so the trader SEES the mismatch instead of a silent
+    // wrong-way entry.
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("eamp:execution-result", {
+          detail: {
+            ok: false,
+            status: "blocked",
+            symbol,
+            message: blockedReason,
+            rsi15m: rsi15mValue,
+            rsi1h: rsi1hValue,
+            momentum15m: momentum15mValue,
+            momentum1h: momentum1hValue,
+          },
+        }),
+      );
+    }
+  }
+
+  // ── ONE LINE BEFORE THE DECISION LEAVES THIS FUNCTION: the last five
+  // candles (timestamp + close), the momentum sign and the final direction.
+  const lastFive = tradingCandles ? tradingCandles.slice(-5) : [];
+  const momentumSign = avgMomentum > 0 ? "bullish (+)" : avgMomentum < 0 ? "bearish (-)" : "flat (0)";
+  console.log(
+    `[auto-trade] ${symbol} DECISION candles(1h, ${usingLiveCandles ? "live bridge" : "verified fixture"}, oldest→newest): ${
+      lastFive
+        .map((candle) => `${new Date(candle.time * 1000).toISOString()}:${candle.close}`)
+        .join(" | ") || "none"
+    } | momentum ${momentumSign} (avg=${avgMomentum.toFixed(4)}) | direction ${direction.type}`,
+  );
+
   return {
     symbol,
     direction,
-    rsi15m: rsi15mResult.value,
-    rsi1h: rsi1hResult.value,
-    momentum15m: mom15mResult.value,
-    momentum1h: mom1hResult.value,
+    rsi15m: rsi15mValue,
+    rsi1h: rsi1hValue,
+    momentum15m: momentum15mValue,
+    momentum1h: momentum1hValue,
     source,
     timeframe: "1h",
-    candleTimestamp: candlesResult?.[0]?.time ?? null,
+    candleTimestamp: tradingCandles ? tradingCandles[tradingCandles.length - 1]!.time : null,
     strength,
     executionReady,
     reason,
@@ -1144,10 +1351,13 @@ export async function executeAutoTrade(
 
   for (let i = 0; i < maxTrades; i++) {
     try {
-      // 1. Get analysis with safety checks
+      // 1. Get analysis with safety checks. LIVE mode hands its credentials
+      // to the analysis so RSI/momentum/candle structure come from the
+      // broker's OWN candles (oldest→newest) instead of the fixtures.
       const analysis = await resolveTradeDirection(symbol, {
         requireExecutionReady: true,
         rejectProxyData: true,
+        credentials,
       });
 
       console.log(`[auto-trade] ${symbol} trade ${i + 1}/${maxTrades}: ${analysis.direction.type} - ${analysis.reason}`);
@@ -1463,7 +1673,10 @@ export function preserveEaName(name: string): string {
  * Used by the scanner and auto-trading support checks.
  * Returns true if we have valid bridge data, false if bridge is unavailable.
  */
-export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | "no data" {
+export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | "no data" | "direction mismatch" {
+  // The direction guard is its own refusal: the data said one thing, the
+  // chosen side said the other, so nothing was sent.
+  if (/direction guard/i.test(reason)) return "direction mismatch";
   if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
   if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
   // Missing/unverifiable data, proxy symbols, bad levels — none of it can be

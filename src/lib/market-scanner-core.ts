@@ -354,6 +354,8 @@ const GATE_HINTS = {
   "weak setup": "The setup did not confirm — no order is sent. See the reasons above.",
   "no data": "This symbol's market data cannot be verified — execution is disabled.",
   "stale quote": "The quote is stale — scan again for fresh levels.",
+  "direction mismatch":
+    "The chosen side disagreed with the recent candle trend — no order is sent. The closes that disagreed are in the reasons above.",
 } as const;
 
 export function executionGate(analysis: ScannerAnalysis): ExecutionGate {
