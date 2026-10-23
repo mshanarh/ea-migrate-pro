@@ -266,6 +266,10 @@ describe("Real failures are ERRORs that name the cause", () => {
   });
 
   it("a weak/missing-data symbol is refused as NO TRADE, distinct from an error", async () => {
+    // The bridge answers — it just has no series for this name (the analysis
+    // retries once, then refuses with the reason instead of erroring).
+    stubBridge({});
+
     const results = await executeAutoTrade({
       symbol: "UNKNOWN_SYMBOL_XYZ",
       lotSize: 0.01,
@@ -277,8 +281,9 @@ describe("Real failures are ERRORs that name the cause", () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.status).toBe("blocked");
     expect(results[0]!.message).toContain("NO TRADE (no data)");
-    // No bridge request was even attempted for an unverifiable symbol.
-  });
+    // The refusal names the raw response, never a bare HTTP status.
+    expect(results[0]!.message).toContain("no candles for UNKNOWN_SYMBOL_XYZ");
+  }, 15_000);
 });
 
 // ============================================================================

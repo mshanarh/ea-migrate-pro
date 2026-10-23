@@ -142,18 +142,153 @@ function normalizeBridgeCandles(raw: readonly BrokerCandle[]): BrokerCandle[] {
 
 const CANDLES_TIMEOUT_MS = 8000;
 
+/**
+ * WHAT THE BRIDGE ACTUALLY ANSWERED — one diagnostic per request.
+ *
+ * "HTTP 200" alone told the trader nothing: a 200 with an empty or reshaped
+ * payload was reported as if the transport had failed. This summary keeps the
+ * exact symbol that was sent, the timeframe, the HTTP status, how many candle
+ * entries the payload carried, how many survived normalisation, the payload's
+ * key fingerprint (so a different response shape is obvious) and the bridge's
+ * own words when it refused.
+ */
+export type CandleResponseSummary = {
+  /** The exact symbol string sent in the request body. */
+  sentSymbol: string;
+  timeframe: string;
+  /** HTTP status, or "network" when the request never got an answer. */
+  status: number | "network";
+  /** Candle entries the payload carried (0 when there was no candle array). */
+  rawCount: number;
+  /** Candle entries that survived normalisation (closed, strictly increasing). */
+  usableCount: number;
+  /** Top-level keys of the payload — the shape fingerprint. */
+  keys: string[];
+  /** Where the candle array was found ("candles", "data.candles", …). */
+  path?: string;
+  /** The bridge's own message, when it gave one. */
+  message?: string;
+  /** Transport failure text. */
+  error?: string;
+  /** 1 = first try, 2 = the single retry. */
+  attempt: number;
+};
+
+/** The raw response summary — never reduced to a bare HTTP status. */
+export function describeCandleResponse(summary: CandleResponseSummary): string {
+  const shape =
+    summary.keys.length > 0 ? `; payload keys: ${summary.keys.slice(0, 8).join(", ")}` : "";
+  const found = summary.path ? `; candles found at "${summary.path}"` : "";
+  if (summary.error) return `bridge unreachable: ${summary.error}`;
+  if (summary.message) return `bridge said "${summary.message}" (HTTP ${summary.status})${shape}`;
+  if (summary.rawCount === 0) {
+    return `bridge returned 0 candles (HTTP ${summary.status}${shape})`;
+  }
+  if (summary.usableCount === 0) {
+    return `bridge returned ${summary.rawCount} candles but none were usable (HTTP ${summary.status}${shape}${found})`;
+  }
+  return `bridge returned ${summary.rawCount} candles, ${summary.usableCount} closed and usable (HTTP ${summary.status}${shape}${found})`;
+}
+
+/** Full attempt line — exact symbol sent, timeframe, attempt, raw summary. */
+export function describeCandleAttempt(summary: CandleResponseSummary): string {
+  return `symbol ${summary.sentSymbol} | timeframe ${summary.timeframe} | attempt ${summary.attempt} | ${describeCandleResponse(summary)}`;
+}
+
+/** One retry only, after this pause, when the bridge hands back no candles. */
+export const CANDLE_RETRY_DELAY_MS = 2000;
+
+/** Candle array locations a bridge may use — the app accepts all of them. */
+const CANDLE_CONTAINER_KEYS = ["candles", "rates", "bars", "history", "ohlc", "data", "result", "payload"];
+
+/** Recursively locate the candle array, whatever key the bridge nests it under. */
+function findCandleArray(payload: unknown, prefix = ""): { list: unknown[]; path: string } | null {
+  if (Array.isArray(payload)) return { list: payload, path: prefix || "(root array)" };
+  if (!payload || typeof payload !== "object" || prefix.split(".").length > 4) return null;
+  const record = payload as Record<string, unknown>;
+  for (const key of CANDLE_CONTAINER_KEYS) {
+    const value = record[key];
+    if (value === null || value === undefined) continue;
+    const nextPrefix = prefix ? `${prefix}.${key}` : key;
+    if (Array.isArray(value)) return { list: value, path: nextPrefix };
+    const nested = findCandleArray(value, nextPrefix);
+    if (nested) return nested;
+  }
+  return null;
+}
+
+function toNumberValue(value: unknown): number | null {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value === "string" && value.trim() !== "") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+/** Bridge times can be seconds, milliseconds or an ISO string — normalise to seconds. */
+function toSeconds(value: unknown): number | null {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}/.test(value)) {
+    const ms = Date.parse(value);
+    return Number.isFinite(ms) ? Math.floor(ms / 1000) : null;
+  }
+  const numeric = toNumberValue(value);
+  if (numeric === null) return null;
+  return Math.floor(numeric > 1e11 ? numeric / 1000 : numeric);
+}
+
+/** One candle from either an object row or an MT5-style tuple row. */
+function coerceCandle(entry: unknown): BrokerCandle | null {
+  let time: unknown;
+  let open: unknown;
+  let high: unknown;
+  let low: unknown;
+  let close: unknown;
+  let volume: unknown;
+  if (Array.isArray(entry)) {
+    [time, open, high, low, close, volume] = entry as unknown[];
+  } else if (entry && typeof entry === "object") {
+    const row = entry as Record<string, unknown>;
+    time = row["time"] ?? row["timestamp"] ?? row["t"] ?? row["date"];
+    open = row["open"] ?? row["o"];
+    high = row["high"] ?? row["h"];
+    low = row["low"] ?? row["l"];
+    close = row["close"] ?? row["c"];
+    volume = row["volume"] ?? row["tick_volume"] ?? row["v"] ?? 0;
+  } else {
+    return null;
+  }
+  const timeSeconds = toSeconds(time);
+  const o = toNumberValue(open);
+  const h = toNumberValue(high);
+  const l = toNumberValue(low);
+  const c = toNumberValue(close);
+  if (timeSeconds === null || o === null || h === null || l === null || c === null) return null;
+  return { time: timeSeconds, open: o, high: h, low: l, close: c, volume: toNumberValue(volume) ?? 0 };
+}
+
 /** Candles or the reason there are none — unreachable differs from refused. */
 type CandleFetch =
-  | { candles: BrokerCandle[] }
-  | { failure: "unreachable" | "unavailable"; detail?: string };
+  | { candles: BrokerCandle[]; summary: CandleResponseSummary }
+  | { failure: "unreachable" | "unavailable"; detail: string; summary: CandleResponseSummary };
 
 async function fetchBridgeCandlesResult(
   credentials: BridgeCredentials,
   symbol: string,
   timeframe: string,
+  attempt = 1,
 ): Promise<CandleFetch> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CANDLES_TIMEOUT_MS);
+  const summary: CandleResponseSummary = {
+    sentSymbol: symbol,
+    timeframe,
+    status: "network",
+    rawCount: 0,
+    usableCount: 0,
+    keys: [],
+    attempt,
+  };
   try {
     const response = await fetch(BRIDGE_URL + "/symbol/candles", {
       method: "POST",
@@ -164,28 +299,63 @@ async function fetchBridgeCandlesResult(
       body: JSON.stringify({ credentials, symbol, timeframe, count: 120 }),
       signal: controller.signal,
     });
-    const data = (await response.json().catch(() => ({}))) as {
-      ok?: boolean;
-      success?: boolean;
-      /** Present only on refusal — the bridge's own reason. */
-      message?: string;
-      candles?: BrokerCandle[];
-    };
-    if (!response.ok || (data.ok !== true && data.success !== true) || !Array.isArray(data.candles)) {
-      const detail =
-        (typeof data.message === "string" && data.message) || `HTTP ${response.status}`;
-      console.warn(`[auto-trade] Bridge returned no candles: ${detail}`);
-      return { failure: "unavailable", detail };
+    summary.status = response.status;
+    const payload = (await response.json().catch(() => ({}))) as unknown;
+    const record = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : {};
+    summary.keys = Object.keys(record);
+    const message =
+      (typeof record["message"] === "string" && record["message"]) ||
+      (typeof record["error"] === "string" && record["error"]) ||
+      (typeof record["detail"] === "string" && record["detail"]) ||
+      "";
+    if (message) summary.message = message;
+
+    // SHAPE ALIGNMENT: the candle array is wherever the bridge put it, and its
+    // rows may be objects or MT5 tuples.
+    const found = findCandleArray(payload);
+    let usable: BrokerCandle[] = [];
+    if (found) {
+      summary.path = found.path;
+      summary.rawCount = found.list.length;
+      const coerced: BrokerCandle[] = [];
+      for (const entry of found.list) {
+        const candle = coerceCandle(entry);
+        if (candle) coerced.push(candle);
+      }
+      usable = normalizeBridgeCandles(coerced);
+      summary.usableCount = usable.length;
     }
-    const normalized = normalizeBridgeCandles(data.candles);
-    return normalized.length > 0 ? { candles: normalized } : { failure: "unavailable", detail: "no usable candles" };
+
+    // ONE LINE PER REQUEST: exact symbol sent, timeframe, raw response summary.
+    console.log(`[auto-trade] candles → ${describeCandleAttempt(summary)}`);
+
+    const refused = record["ok"] === false || record["success"] === false;
+    if (usable.length > 0 && !refused) return { candles: usable, summary };
+    if (usable.length === 0 && !summary.message && found && summary.rawCount > 0) {
+      summary.message = "every candle in the payload was malformed or out of order";
+    }
+    return { failure: "unavailable", detail: describeCandleResponse(summary), summary };
   } catch (error) {
     const detail = (error as Error)?.message || "bridge unreachable";
-    console.warn(`[auto-trade] Bridge candles request exception: ${detail}`);
-    return { failure: "unreachable", detail };
+    summary.error = detail;
+    console.warn(`[auto-trade] candles → ${describeCandleAttempt(summary)}`);
+    return { failure: "unreachable", detail, summary };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * The symbol to send on the retry: the broker's OWN resolved name when the
+ * quote call returned one (the same resolution the working quote/trade path
+ * gets from the bridge — "HW_100" → "USTEC"), otherwise the SAME symbol, so a
+ * transient miss is retried and the report still names what the trader
+ * configured. No name is ever guessed here.
+ */
+function candleRetrySymbol(requested: string, brokerSymbol: string | null): string {
+  const clean = requested.trim();
+  const resolved = brokerSymbol?.trim() ?? "";
+  return resolved || clean;
 }
 
 /**
@@ -830,12 +1000,43 @@ async function resolveBreakoutDirection(
   const { requireExecutionReady = true, rejectProxyData = true, credentials } = options;
   const timestamp = Date.now();
 
-  const [candleFetch, quoteResult] = await Promise.all([
+  const [firstCandleFetch, quoteResult] = await Promise.all([
     credentials
       ? fetchBridgeCandlesResult(credentials, symbol, BREAKOUT_TIMEFRAME)
-      : Promise.resolve<CandleFetch>({ failure: "unavailable", detail: "no MT5 credentials" }),
+      : Promise.resolve<CandleFetch>({
+          failure: "unavailable",
+          detail: "no MT5 credentials for this analysis",
+          summary: {
+            sentSymbol: symbol,
+            timeframe: BREAKOUT_TIMEFRAME,
+            status: "network",
+            rawCount: 0,
+            usableCount: 0,
+            keys: [],
+            message: "no MT5 credentials for this analysis",
+            attempt: 1,
+          },
+        }),
     credentials ? fetchBridgeQuote(credentials, symbol) : Promise.resolve(null),
   ]);
+
+  // ONE RETRY, two seconds later, when the bridge handed back no candles — a
+  // transient miss must not become a no-trade. The retry is sent under the
+  // broker's OWN resolved symbol (the same resolution the working quote/trade
+  // path gets from the bridge), so HW_100 and its broker spelling are measured
+  // on the identical instrument.
+  let candleFetch = firstCandleFetch;
+  let candleSymbol = symbol;
+  if (credentials && "failure" in candleFetch) {
+    const brokerSymbol = quoteResult && "quote" in quoteResult ? quoteResult.quote.symbol : null;
+    const retrySymbol = candleRetrySymbol(symbol, brokerSymbol);
+    console.warn(
+      `[auto-trade] ${symbol}: no candles on attempt 1 (${candleFetch.detail}) — retrying once in ${CANDLE_RETRY_DELAY_MS}ms as "${retrySymbol}"`,
+    );
+    await new Promise((resolve) => setTimeout(resolve, CANDLE_RETRY_DELAY_MS));
+    candleFetch = await fetchBridgeCandlesResult(credentials, retrySymbol, BREAKOUT_TIMEFRAME, 2);
+    candleSymbol = retrySymbol;
+  }
 
   const newestTime =
     "candles" in candleFetch && candleFetch.candles.length > 0
@@ -874,20 +1075,19 @@ async function resolveBreakoutDirection(
   // trader must see the transport failure (the bridge's own detail included).
   if ("failure" in candleFetch && candleFetch.failure === "unreachable") {
     throw new Error(
-      `Cannot analyze ${symbol}: could not reach your trading bridge (${candleFetch.detail ?? "unreachable"})`,
+      `Cannot analyze ${symbol}: could not reach your trading bridge (${candleFetch.detail || "unreachable"})`,
     );
   }
   if ("failure" in candleFetch) {
+    // The refusal names EVERYTHING that was measured: the exact symbol sent,
+    // the timeframe, the attempt and the raw response summary — a 200 with no
+    // candles reads as "bridge returned 0 candles", never as "HTTP 200".
+    const sentAs = candleSymbol !== symbol ? ` (sent as "${candleSymbol}")` : "";
     return noTrade(
-      `Missing or unavailable broker data: ${BREAKOUT_TIMEFRAME} candles from the bridge${candleFetch.detail ? ` (${candleFetch.detail})` : ""}. Cannot measure a breakout range.`,
+      `Missing or unavailable broker data: ${BREAKOUT_TIMEFRAME} candles for ${symbol}${sentAs} — attempt ${candleFetch.summary.attempt}: ${candleFetch.detail}. Cannot measure a breakout range.`,
     );
   }
   const candles = candleFetch.candles;
-  if (candles.length === 0) {
-    return noTrade(
-      `Missing or unavailable broker data: ${BREAKOUT_TIMEFRAME} candles from the bridge. Cannot measure a breakout range.`,
-    );
-  }
   if (!quoteResult) {
     return noTrade("Missing or unavailable broker data: live quote. Cannot measure a breakout range.");
   }
@@ -1495,7 +1695,9 @@ export function readMtCredentials(
   };
 }
 
-type BridgeLiveQuote = { bid: number; ask: number; digits: number; point: number; minDistance: number };
+/** The broker's exact symbol name comes back with every quote — the same name
+ *  the working execution path uses, reused for the candle request. */
+type BridgeLiveQuote = { symbol: string; bid: number; ask: number; digits: number; point: number; minDistance: number };
 type BridgeQuoteResult = { quote: BridgeLiveQuote } | { failure: "unavailable" | "unreachable"; detail?: string };
 
 /** LIVE bid/ask straight from the broker via the bridge — SL/TP anchor to it. */
@@ -1526,10 +1728,14 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
     const point =
       typeof payload["point"] === "number" && payload["point"] > 0 ? payload["point"] : 10 ** -digits;
     const stopsLevelPoints = typeof payload["stops_level"] === "number" ? payload["stops_level"] : 0;
+    // The name the BROKER resolved this request to — returned by the bridge
+    // ("HW_100" → "USTEC"). The candle request reuses it on a retry.
+    const resolvedSymbol =
+      (typeof payload["symbol"] === "string" && payload["symbol"].trim()) || symbol;
     // A broker can report stops_level 0 and still refuse levels inside the
     // spread, so keep a real buffer on top of the reported minimum.
     const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
-    return { quote: { bid, ask, digits, point, minDistance } };
+    return { quote: { symbol: resolvedSymbol, bid, ask, digits, point, minDistance } };
   } catch (error) {
     const message = (error as Error)?.message || "Broker unavailable";
     console.warn(`[auto-trade] Failed to fetch live quote for ${symbol}: ${message}`);

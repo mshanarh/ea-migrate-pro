@@ -225,11 +225,19 @@ def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(Non
             return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
         # Fetch candles from MT5
         rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
-        if rates is None:
+        # A 200 with an EMPTY series hides the real cause (symbol not in Market
+        # Watch, no history downloaded yet, market closed). Report it as a
+        # refusal with the broker's own names instead of `candles: []`.
+        if rates is None or len(rates) == 0:
             disconnect()
             return {
                 "success": False,
-                "message": f"No candle data for {req.symbol} ({req.timeframe})",
+                "error_code": mt5.last_error()[0] if mt5.last_error() else 0,
+                "message": (
+                    f"bridge returned 0 candles: MT5 has no {req.timeframe} history for "
+                    f"{trade_symbol} (requested {req.symbol}). Select the symbol in "
+                    f"Market Watch and let the terminal download its history."
+                ),
             }
         # Convert to list of dicts, ORDERED OLDEST-FIRST exactly as MT5 returns
         # them (copy_rates_from_pos: index 0 = oldest bar, last = forming bar).
@@ -248,10 +256,16 @@ def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(Non
                 "spread": int(row[6]) if len(row) > 6 else 0,
             }
             candles.append(candle)
-        # Build response
+        # Build response — BOTH success markers are set so every app version
+        # (which may check `ok` or `success`) reads the same answer, and the
+        # requested name is echoed so the app can prove how it was resolved.
         result = {
             "ok": True,
+            "success": True,
+            "requestedSymbol": req.symbol,
             "symbol": trade_symbol,
+            "timeframe": req.timeframe,
+            "count": len(candles),
             "serverTime": __import__("datetime").datetime.utcnow().isoformat(),
             "candles": candles,
         }
