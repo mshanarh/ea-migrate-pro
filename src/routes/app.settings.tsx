@@ -89,7 +89,7 @@ function PillSection({
   return (
     <section className="w-full max-w-full">
       <div
-        className="flex items-center justify-between gap-3 border border-white/10 bg-[#0f1a1a] px-5 py-3.5"
+        className="if-card if-control flex items-center justify-between gap-3 border border-white/10 bg-[#0f1a1a] px-5 py-3.5"
         style={{ borderRadius: isIos ? "var(--plat-radius-control)" : "9999px" }}
       >
         <button
@@ -101,7 +101,7 @@ function PillSection({
           <span className="text-xl" aria-hidden>
             {icon}
           </span>
-          <span className="truncate text-sm font-black tracking-wide text-white">{label}</span>
+          <span className="if-header truncate text-sm font-black tracking-wide text-white">{label}</span>
         </button>
         {onSwitch && (
           <button
@@ -266,11 +266,11 @@ function AppSettings() {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
-    <div className="app-fullscreen bg-black text-white">
+    <div className="app-fullscreen if-screen bg-black text-white">
       <div className="app-scroll-area">
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-safe pb-safe-nav">
           <div className="pb-5">
-            <h1 className="text-3xl font-black tracking-tight">Settings</h1>
+            <h1 className="if-header if-header-rule text-3xl font-black tracking-tight">Settings</h1>
             <p className="mt-2 text-sm text-white/55">
               Tap any section to open it. Changes apply instantly and are saved on this device.
             </p>

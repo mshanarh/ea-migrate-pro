@@ -8,6 +8,8 @@ import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
 import { useMediaDim } from "@/lib/use-media-dim";
 import { Sniper, Phoenix, Vortex } from "@/components/app/SignatureLayouts";
+import { InterfaceConsole } from "@/components/app/InterfaceConsole";
+import { interfaceDefinitionFor } from "@/lib/interface-themes";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
@@ -57,7 +59,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
       initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="mx-3 flex min-h-56 w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-3 rounded-[24px] border-2 border-dashed p-10 text-center"
+      className="if-card if-control mx-3 flex min-h-56 w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-3 border-2 border-dashed p-10 text-center"
       style={{ borderColor: `${accent}66`, backgroundColor: `${accent}0d` }}
     >
       <span className="flex size-16 items-center justify-center rounded-3xl" style={{ backgroundColor: `${accent}26` }}>
@@ -349,6 +351,23 @@ function ThemeContentInner(props: ThemeContentProps) {
   const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
+
+  // The eight real Main Interfaces (Crimson Navigator … Ultron Mega) render
+  // the definition-driven console: same live robot/broker data, the
+  // interface's own colours, surfaces, header and hero decoration. It renders
+  // with or without a robot, so the interface is visible immediately.
+  const definition = interfaceDefinitionFor(theme);
+  if (definition) {
+    return (
+      <InterfaceConsole
+        definition={definition}
+        robot={props.robot}
+        accent={accent}
+        actions={actions}
+        onOpenAdd={props.onOpenAdd}
+      />
+    );
+  }
 
   if (!props.robot) {
     return (

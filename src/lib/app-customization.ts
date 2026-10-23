@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { colourCycleAccentId, subscribeColourCycle } from "@/lib/color-cycle";
+import { setBottomNavStyle } from "@/lib/bottom-nav-style";
+import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interface-themes";
 
 export const ACCENT_COLORS = [
   { id: "inferno-red", name: "Inferno Red", value: "#FF2D2D" },
@@ -194,6 +196,16 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
   // The interface style also drives the font — its signature typeface ships with it.
   state = { ...state, theme: id, font: THEME_FONT[id] };
   persist();
+  // A styled interface is a WHOLE definition (lib/interface-themes.ts): its
+  // nav shape ships with it and is applied immediately, exactly like its
+  // colours/surfaces (published by InterfaceThemeSync).
+  const definition = interfaceDefinitionFor(id);
+  if (definition) {
+    setBottomNavStyle(definition.navStyle);
+    applyInterfaceDefinition(definition);
+  } else {
+    applyInterfaceDefinition(null);
+  }
 }
 
 export function setFontOption(id: FontOptionId) {

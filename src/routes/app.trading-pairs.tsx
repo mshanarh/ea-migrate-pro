@@ -198,7 +198,7 @@ function TradingPairsScreen() {
   const hasRobot = Boolean(robot);
 
   return (
-    <div className="app-fullscreen bg-black text-white">
+    <div className="app-fullscreen if-screen bg-black text-white">
       <div className="app-scroll-area">
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-4 pt-safe pb-safe-nav">
           {/* Header — back, robot avatar, name, accent subtitle */}
@@ -222,8 +222,8 @@ function TradingPairsScreen() {
               </span>
             )}
             <div className="min-w-0">
-              <h1 className="truncate text-xl font-black leading-tight">{robot?.name ?? "Quotes"}</h1>
-              <p className="text-sm font-bold" style={{ color: accent }}>
+              <h1 className="if-header truncate text-xl font-black leading-tight">{robot?.name ?? "Quotes"}</h1>
+              <p className="if-num text-sm font-bold" style={{ color: accent }}>
                 {eaSymbols.length} symbols on this EA
               </p>
             </div>
@@ -260,7 +260,7 @@ function TradingPairsScreen() {
                     key={symbol}
                     type="button"
                     onClick={() => openConfig(symbol)}
-                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
+                    className="if-card flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
                     style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
                   >
                     <span
@@ -291,7 +291,7 @@ function TradingPairsScreen() {
                     // Reopening prefills the saved settings so editing a symbol
                     // cannot silently reset its lots or trade count.
                     onClick={() => openConfig(pair.symbol, pair)}
-                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
+                    className="if-card flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
                     style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
                   >
                     <span
@@ -302,7 +302,7 @@ function TradingPairsScreen() {
                     </span>
                     <span className="min-w-0">
                       <span className="block truncate text-xl font-black">{pair.symbol}</span>
-                      <span className="mt-0.5 block text-sm text-white/50">
+                      <span className="if-num mt-0.5 block text-sm text-white/50">
                         {pair.lotSize} lots • {typeLabel(pair.direction)} • {tradesLabel(pair.maxTrades)} trades
                       </span>
                     </span>
@@ -323,7 +323,7 @@ function TradingPairsScreen() {
           if (!next) setConfigSymbol(null);
         }}
       >
-        <DialogContent className="max-h-[92vh] overflow-y-auto rounded-[28px] border border-white/10 bg-[#0b0b0d] p-6 text-white sm:max-w-md">
+        <DialogContent className="if-card max-h-[92vh] overflow-y-auto rounded-[28px] border border-white/10 bg-[#0b0b0d] p-6 text-white sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="truncate text-2xl font-black">{configSymbol}</DialogTitle>
           </DialogHeader>

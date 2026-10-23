@@ -595,7 +595,7 @@ function AppScanner() {
   };
 
   return (
-    <div className="app-fullscreen bg-[#07090b] text-white">
+    <div className="app-fullscreen if-screen bg-[#07090b] text-white">
       <div className="app-scroll-area">
         <ChartScanner
           symbols={robot?.symbols ?? []}

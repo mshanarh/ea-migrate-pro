@@ -322,7 +322,9 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
         <div
           className="flex items-end justify-around rounded-full px-5 py-2"
           style={{
-            backgroundColor: "rgba(16,16,18,0.92)",
+            // The interface definition supplies the dock chrome and the centre
+            // button (white circle on red, split silver/red, …).
+            background: "var(--if-nav-bg, rgba(16,16,18,0.92))",
             backdropFilter: "blur(18px)",
             WebkitBackdropFilter: "blur(18px)",
             border: "1px solid rgba(255,255,255,0.10)",
@@ -343,10 +345,10 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
                   aria-label={tabLabel(tab.label)}
                   className="plat-pressable relative -mt-8 flex size-14 items-center justify-center rounded-full"
                   style={{
-                    backgroundColor: accent,
+                    backgroundColor: "var(--if-nav-centre, var(--accent))",
                     color: "#08080a",
                     border: "1px solid rgba(255,255,255,0.18)",
-                    boxShadow: `0 12px 26px ${accent}66, 0 0 0 5px rgba(10,10,12,0.96)`,
+                    boxShadow: `0 12px 26px var(--accent-soft, ${accent}66), 0 0 0 5px rgba(10,10,12,0.96)`,
                   }}
                 >
                   <Icon className="size-6" strokeWidth={2.6} />

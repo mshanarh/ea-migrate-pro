@@ -514,7 +514,7 @@ export default function ChartScanner({
   const gate = analysis ? executionGate(analysis) : null;
 
   return (
-    <div className="mx-auto flex w-full max-w-5xl flex-col pt-safe pb-safe-nav" style={{ backgroundColor: "#090c10" }}>
+    <div className="if-screen mx-auto flex w-full max-w-5xl flex-col pt-safe pb-safe-nav" style={{ backgroundColor: "#090c10" }}>
       {/* Header — title, scans-left badge */}
       <div className="flex items-start justify-between gap-4 px-4 pb-5 pt-2 sm:px-6">
         <div>
@@ -524,7 +524,7 @@ export default function ChartScanner({
               MARKET FEED LIVE
             </span>
           </div>
-          <h1 className="mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
+          <h1 className="if-header if-header-rule mt-2 text-3xl font-black tracking-tight text-white sm:text-4xl">Market scanner</h1>
           <p className="mt-1 max-w-md text-sm leading-relaxed text-white/45">
             Public market data builds executable trade plans with entry, stop-loss and take-profit. Execute sends the order to your saved MT5 account.
           </p>
@@ -644,7 +644,7 @@ export default function ChartScanner({
 
       {/* Optional screenshot — the signal is calculated from MT5 market data. */}
       <div
-        className={`relative mx-3 mt-3 min-h-[220px] overflow-hidden border-2 border-dashed sm:mx-6 sm:min-h-[280px] ${isIos ? "rounded-[20px]" : "rounded-[26px]"}`}
+        className={`if-card relative mx-3 mt-3 min-h-[220px] overflow-hidden border-2 border-dashed sm:mx-6 sm:min-h-[280px] ${isIos ? "rounded-[20px]" : "rounded-[26px]"}`}
         style={{ borderColor: dragging ? accent : "#4a2029", backgroundColor: "#120b10" }}
         onDragOver={(event) => {
           event.preventDefault();
@@ -884,7 +884,7 @@ export default function ChartScanner({
         /* ---------- RESULT VIEW ---------- */
         <div className="mx-3 mt-3 space-y-3 sm:mx-6">
           {/* LIVE MARKET DATA — real broker values only */}
-          <div className={`border border-white/8 bg-[#151a20] p-4 ${cardRadius}`}>
+          <div className={`if-card border border-white/8 bg-[#151a20] p-4 ${cardRadius}`}>
             <div className="flex items-center justify-between">
               <p className="flex items-center gap-2 text-[10px] font-bold tracking-[0.2em] text-white/35">
                 <span className="size-1.5 rounded-full bg-emerald-400" aria-hidden="true" />
@@ -949,7 +949,7 @@ export default function ChartScanner({
           )}
 
           {/* TRADE PLAN — real calculated levels */}
-          <div className={`border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
+          <div className={`if-card border-2 bg-[#151a20] p-4 ${cardRadius}`} style={{ borderColor: `${SIGNAL_COLORS[analysis.signal]}44` }}>
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-[10px] font-bold tracking-[0.2em] text-white/35">TRADE PLAN</p>
@@ -974,19 +974,19 @@ export default function ChartScanner({
                 <p className="text-[10px]" style={{ color: accent }}>
                   ENTRY
                 </p>
-                <p data-testid="text-analysis-entry" className="mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-entry" className="if-num mt-1 text-[13px] font-bold text-white">
                   {fmtSignalLevel(analysis.entry)}
                 </p>
               </div>
               <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
                 <p className="text-[10px] text-red-400">STOP-LOSS</p>
-                <p data-testid="text-analysis-stop-loss" className="mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-stop-loss" className="if-num mt-1 text-[13px] font-bold text-white">
                   {fmtSignalLevel(analysis.stopLoss)}
                 </p>
               </div>
               <div className="rounded-[16px] bg-[#0d1116] p-3 text-center">
                 <p className="text-[10px] text-green-400">TAKE-PROFIT</p>
-                <p data-testid="text-analysis-take-profit" className="mt-1 text-[13px] font-bold text-white">
+                <p data-testid="text-analysis-take-profit" className="if-num mt-1 text-[13px] font-bold text-white">
                   {fmtSignalLevel(analysis.takeProfit)}
                 </p>
               </div>

@@ -114,6 +114,7 @@ const PLATFORM_PREPAINT_SCRIPT = `
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
+import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { speakTradeExecution } from "@/lib/bot-voice";
@@ -294,6 +295,9 @@ function RootComponent() {
       <ColourCycleTap />
       {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
       <AccentVarSync />
+      {/* Publishes the selected Main Interface definition to <html> so Home,
+          Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
+      <InterfaceThemeSync />
       {/* The app-wide background picture layer — under the content wrapper below. */}
       <AppBackground />
       <div style={{ position: "relative", zIndex: 1 }}>

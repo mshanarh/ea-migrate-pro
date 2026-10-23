@@ -441,7 +441,7 @@ export function DraggableBotPopup() {
         <div
           role="dialog"
           aria-label={`${eaName} trade log`}
-          className="fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 border-[var(--accent)] bg-[#0A0A1A] shadow-[0_0_30px_var(--accent-soft)]"
+          className="if-card fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 border-[var(--accent)] bg-[#0A0A1A] shadow-[0_0_30px_var(--accent-soft)]"
           style={{ marginBottom: "var(--sa-bottom)" }}
         >
           {/* EA image header */}

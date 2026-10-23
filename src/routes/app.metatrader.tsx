@@ -709,14 +709,14 @@ function AppMetatrader() {
   const field = "flex h-16 items-center gap-4 rounded-full border border-white/10 bg-black/40 px-6 focus-within:border-white/30";
 
   return (
-    <div className="app-fullscreen relative bg-[#070d10] text-white">
+    <div className="app-fullscreen if-screen relative bg-[#070d10] text-white">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]" style={{ background: `radial-gradient(ellipse 70% 55% at 50% -8%, ${accent}22, transparent 70%)` }} />
       <div className="app-scroll-area relative">
         <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 pt-safe pb-safe-nav">
           <motion.header initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mt-4 flex items-end justify-between gap-3">
             <div>
               <p className="text-xs font-bold tracking-[0.35em] text-white/50 uppercase">EA Migrate</p>
-              <h1 className="mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
+              <h1 className="if-header if-header-rule mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
             </div>
             <span className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300" : "border-red-400/50 bg-red-500/15 text-red-300"}`}>
               <span className={`size-2 rounded-full ${online ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
@@ -724,7 +724,7 @@ function AppMetatrader() {
             </span>
           </motion.header>
 
-          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
+          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
             <div className="flex items-center justify-between">
               <p className="text-xs font-bold tracking-[0.3em] text-white/60 uppercase">MT5 Status</p>
               {mt && (
@@ -740,7 +740,7 @@ function AppMetatrader() {
               </div>
               <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
                 <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><Clock className="size-3.5" /> Last verified</p>
-                <p className="mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
+                <p className="if-num mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
               </div>
             </div>
             {mt && (
@@ -758,7 +758,7 @@ function AppMetatrader() {
             )}
           </motion.section>
 
-          <motion.form custom={1} variants={stagger} initial="hidden" animate="show" onSubmit={(event) => void submit(event)} className="space-y-4 rounded-[32px] border border-white/10 bg-white/[0.03] p-5" style={{ boxShadow: `0 0 40px ${accent}14` }}>
+          <motion.form custom={1} variants={stagger} initial="hidden" animate="show" onSubmit={(event) => void submit(event)} className="if-card space-y-4 rounded-[32px] border border-white/10 bg-white/[0.03] p-5" style={{ boxShadow: `0 0 40px ${accent}14` }}>
             <label className={field}>
               <User className="size-5 shrink-0 text-white/60" />
               <input value={loginId} onChange={(e) => { clearError(); setLoginId(e.target.value); }} placeholder="Account ID" inputMode="numeric" aria-label="Account ID" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
@@ -778,7 +778,7 @@ function AppMetatrader() {
             <p className="px-1 text-sm leading-relaxed text-white/50">
               Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="text-white/80">File → Login to Trade Account</span>.
             </p>
-            <button type="submit" disabled={saving} className="flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
+            <button type="submit" disabled={saving} className="if-control flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
               <Fingerprint className="size-7" style={{ color: accent }} />
               <span>{saving ? "CONNECTING..." : "CONNECT ACCOUNT"}</span>
               <ChevronsRight className="size-6" style={{ color: accent }} />

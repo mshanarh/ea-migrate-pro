@@ -617,7 +617,7 @@ function AppHome() {
 
   return (
     <div
-      className="app-fullscreen flex w-full flex-col bg-black text-white"
+      className="app-fullscreen if-screen flex w-full flex-col bg-black text-white"
       onTouchStart={onTouchStart}
       onTouchEnd={(event) => {
         if (touchStartX.current !== null && event.changedTouches?.length === 1) {

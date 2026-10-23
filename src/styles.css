@@ -431,6 +431,116 @@ body.eamp-app-bg [data-eamp-bg-host] {
   background-color: transparent;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   INTERFACE THEMES
+   ══════════════════════════════════════════════════════════════════════
+   Every "Select Main Interface" style is a REAL definition — colours,
+   surfaces, radii, borders, shadows, header/number treatment, texture and
+   the bottom nav that ships with it (src/lib/interface-themes.ts).
+   `InterfaceThemeSync` publishes the tokens below on <html>; these helpers
+   restyle the shared surfaces of Home, Metatrader, Quotes, Scanner,
+   Settings and the popups. They switch on only while a styled interface is
+   selected, so the legacy layouts keep their own bespoke look. */
+:root {
+  --if-signature: #ffffff;
+  --if-signature-2: #ffffff;
+  --if-bg: #000000;
+  --if-texture: none;
+  --if-surface: rgba(255, 255, 255, 0.03);
+  --if-surface-alt: rgba(255, 255, 255, 0.06);
+  --if-border: rgba(255, 255, 255, 0.1);
+  --if-border-width: 1px;
+  --if-radius: 16px;
+  --if-control-radius: 16px;
+  --if-shadow: none;
+  --if-header-weight: 800;
+  --if-header-tracking: 0em;
+  --if-header-transform: none;
+  --if-header-size: 1.75rem;
+  --if-header-rule: transparent;
+  --if-number-font: inherit;
+  --if-blur: none;
+  --if-font-variant: normal;
+  --if-nav-bg: rgba(16, 16, 18, 0.92);
+  --if-nav-centre: var(--accent);
+}
+
+/* The screen wash (deep red console, ice-blue glow, studio grid, steel). */
+html[data-if-styled] .if-screen.if-screen {
+  background: var(--if-bg) !important;
+  background-image: var(--if-texture) !important;
+}
+
+/* The background picture / background animation is the owner's switch: while
+   either is ON the interface wash steps aside so the picture reads clearly. */
+body.eamp-app-bg .if-screen.if-screen,
+body.eamp-bg-on .if-screen.if-screen {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* Cards, sheets and the popup shells. */
+html[data-if-styled] .if-card.if-card {
+  background: var(--if-surface) !important;
+  border: var(--if-border-width) solid var(--if-border) !important;
+  border-radius: var(--if-radius) !important;
+  box-shadow: var(--if-shadow) !important;
+  backdrop-filter: var(--if-blur);
+  -webkit-backdrop-filter: var(--if-blur);
+}
+html[data-if-styled] .if-card-alt.if-card-alt {
+  background: var(--if-surface-alt) !important;
+}
+
+/* Buttons and pills — pill buttons, sharp tiles, whatever the brief says. */
+html[data-if-styled] .if-control.if-control {
+  border-radius: var(--if-control-radius) !important;
+}
+
+/* Headers: weight/tracking/case per interface (serif-style = small caps). */
+html[data-if-styled] .if-header.if-header {
+  font-weight: var(--if-header-weight) !important;
+  letter-spacing: var(--if-header-tracking) !important;
+  text-transform: var(--if-header-transform) !important;
+  font-variant: var(--if-font-variant);
+}
+html[data-if-styled] .if-header-rule.if-header-rule {
+  border-bottom: 1px solid var(--if-header-rule) !important;
+  padding-bottom: 0.4rem;
+}
+
+/* Numbers: monospace studio figures where the interface asks for them. */
+html[data-if-styled] .if-num.if-num {
+  font-family: var(--if-number-font);
+  font-variant-numeric: tabular-nums;
+}
+
+html[data-if-styled] .if-rule {
+  border-color: var(--if-border) !important;
+}
+html[data-if-styled] .if-accent {
+  color: var(--if-signature) !important;
+}
+
+/* Heavy-metal bevel: strong highlights on the top edge, shadow underneath. */
+html[data-interface="ULTRON MEGA"] .if-card.if-card {
+  position: relative;
+}
+html[data-interface="ULTRON MEGA"] .if-header.if-header {
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.22), 0 -1px 0 rgba(0, 0, 0, 0.7);
+}
+
+/* Sniper focus: a single thin red line above each card, nothing else. */
+html[data-interface="PABLO ELITE"] .if-card.if-card {
+  border-top-color: var(--if-signature) !important;
+}
+
+/* Split layout: the card edge carries both hues. */
+html[data-interface="SUPREME EQUINOX"] .if-card.if-card {
+  border-left: 3px solid var(--if-signature) !important;
+  border-right: 3px solid var(--if-signature-2) !important;
+}
+
 /* Lock the body only while a native-shell screen is actually mounted with the
    locked variant — the mentor portal still scrolls normally. */
 body:has(.app-shell-locked) {

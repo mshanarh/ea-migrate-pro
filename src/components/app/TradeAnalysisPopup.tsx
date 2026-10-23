@@ -161,7 +161,7 @@ export function TradeAnalysisPopup({
       <div
         role="status"
         aria-live="polite"
-        className="animate-[slideDown_0.3s_ease-out] rounded-[20px] border bg-[#0f0f0f]/95 p-4 shadow-2xl backdrop-blur"
+        className="if-card animate-[slideDown_0.3s_ease-out] rounded-[20px] border bg-[#0f0f0f]/95 p-4 shadow-2xl backdrop-blur"
         style={{
           borderColor: `${accent}44`,
           boxShadow: `0 18px 40px rgba(0,0,0,0.55), 0 0 26px ${accent}1f`,
@@ -196,7 +196,7 @@ export function TradeAnalysisPopup({
         </div>
 
         {/* Source label */}
-        <p className="mt-2.5 text-[11px] font-bold uppercase tracking-[0.18em]" style={{ color: accent }}>
+        <p className="if-header mt-2.5 text-[11px] font-bold uppercase tracking-[0.18em]" style={{ color: accent }}>
           AI trade
         </p>
 
@@ -223,7 +223,7 @@ export function TradeAnalysisPopup({
               {symbol || "—"} {side ?? ""}
             </p>
             {entryText || stopText || targetText ? (
-              <p className="font-mono text-[12px] font-bold text-white/85">
+              <p className="if-num font-mono text-[12px] font-bold text-white/85">
                 {entryText ? `Entry ${entryText}` : "Entry —"}
                 {" · "}
                 {stopText ? `SL ${stopText}` : "SL —"}
