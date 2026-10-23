@@ -3,6 +3,7 @@ import { Bot, Pause, Play, Plus, Trash2, DollarSign } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { ACCENT_COLORS, useCustomization } from "@/lib/app-customization";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
+import { useMediaDim } from "@/lib/use-media-dim";
 
 /**
  * BLUEPRINT EDGE — robot console theme, built exactly like the reference
@@ -50,6 +51,9 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
 export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
+  // Same persisted Background Picture switch as everywhere else — OFF leaves
+  // this console on clean black instead of the robot's picture.
+  const mediaDim = useMediaDim();
   const eaName = robot?.name ?? "YOUR ROBOT";
   const eaImage = robot?.image || "/logo.png";
 
@@ -60,7 +64,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* The black console's static image background — when the HOME
           double-press starts the video, the universal backdrop in ThemeContent
           plays it, so this layer never runs a second <video> decoder. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} />
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} mediaDim={mediaDim} />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section

@@ -6,6 +6,7 @@ import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customi
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
+import { useMediaDim } from "@/lib/use-media-dim";
 import { Sniper, Phoenix, Vortex } from "@/components/app/SignatureLayouts";
 
 export type ThemeContentProps = {
@@ -320,18 +321,20 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 export function ThemeContent(props: ThemeContentProps) {
   const { theme, color } = useCustomization();
   const accent = accentColorValue(color);
+  // Home's themed backdrop follows the SAME persisted Background Picture
+  // switch as every other screen: OFF → no image, no video, clean black.
+  const mediaDim = useMediaDim();
 
   // The HOME double-press video — ONE universal backdrop for every interface
   // style. When stopped this renders nothing (the slots keep the picture);
   // when playing, the video runs edge-to-edge behind the theme's content.
-  // Home ALWAYS shows its picture (the nav screens are never blacked out by
-  // the Background Picture toggle — that scope lives in AppBackground).
   return (
     <>
       <VideoBackdrop
         image={props.robot?.image || "/logo.png"}
         video={props.robot?.video}
         accent={accentColorValue(color)}
+        mediaDim={mediaDim}
         showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
