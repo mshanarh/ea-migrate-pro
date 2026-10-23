@@ -26,23 +26,6 @@ import {
   useCustomization,
 } from "@/lib/app-customization";
 
-export type BottomNavStyle =
-  | "floating-pill"
-  | "icon-pill"
-  | "classic-tabs"
-  | "compact-dots";
-
-export const BOTTOM_NAV_STYLES: Array<{
-  id: BottomNavStyle;
-  name: string;
-  description: string;
-}> = [
-  { id: "floating-pill", name: "Floating Pill", description: "Rounded glass bar with icons and labels" },
-  { id: "icon-pill", name: "Icon Pill", description: "Floating pill with icons only" },
-  { id: "classic-tabs", name: "Classic Tabs", description: "Tab bar with labels below icons" },
-  { id: "compact-dots", name: "Compact Dots", description: "Compact bar with icons and dot indicator" },
-];
-
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
   beforeLoad: () => {

@@ -13,9 +13,49 @@ import { mt5OrderComment } from "./utils";
 export const FORCE_WEAK_EXECUTION = true;
 
 export type TradeDecision =
-  | { type: "BUY"; entry: number; sl: number; tp: number; rrRatio: number; reason: string }
-  | { type: "SELL"; entry: number; sl: number; tp: number; rrRatio: number; reason: string }
+  | {
+      type: "BUY";
+      entry: number;
+      sl: number;
+      tp: number;
+      /** First target (1× range height on a breakout plan). */
+      tp1?: number;
+      /** Second target (2× range height on a breakout plan). */
+      tp2?: number;
+      rrRatio: number;
+      reason: string;
+    }
+  | {
+      type: "SELL";
+      entry: number;
+      sl: number;
+      tp: number;
+      tp1?: number;
+      tp2?: number;
+      rrRatio: number;
+      reason: string;
+    }
   | { type: "NO_TRADE"; reason: string; blocked: boolean };
+
+/**
+ * The breakout range a LIVE decision was measured against, carried on the
+ * analysis so the execution path can re-check that price has not fallen back
+ * inside it before the order leaves (see executeAutoTrade).
+ */
+export type BreakoutRange = {
+  timeframe: string;
+  /** Highest high of the completed bars that PRECEDE the breakout candle. */
+  high: number;
+  /** Lowest low of those same bars. */
+  low: number;
+  height: number;
+  /** 0.05% of `height` — the live-price breakout clearance. */
+  buffer: number;
+  /** How many completed bars built the range. */
+  bars: number;
+  /** Open time (seconds) of the newest COMPLETED candle the decision used. */
+  candleTime: number | null;
+};
 
 export interface AnalysisResult {
   symbol: string;
@@ -31,6 +71,8 @@ export interface AnalysisResult {
   executionReady: boolean;
   reason: string;
   timestamp: number;
+  /** Present for a LIVE breakout decision — the range it broke out of. */
+  range?: BreakoutRange | null;
 }
 
 
@@ -100,16 +142,16 @@ function normalizeBridgeCandles(raw: readonly BrokerCandle[]): BrokerCandle[] {
 
 const CANDLES_TIMEOUT_MS = 8000;
 
-/**
- * Real candles for one timeframe, signed with the caller's OWN MT5
- * credentials. Returns `null` when the bridge cannot answer — the caller
- * decides what a missing series means; this helper never guesses.
- */
-async function fetchBridgeCandles(
+/** Candles or the reason there are none — unreachable differs from refused. */
+type CandleFetch =
+  | { candles: BrokerCandle[] }
+  | { failure: "unreachable" | "unavailable"; detail?: string };
+
+async function fetchBridgeCandlesResult(
   credentials: BridgeCredentials,
   symbol: string,
   timeframe: string,
-): Promise<BrokerCandle[] | null> {
+): Promise<CandleFetch> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CANDLES_TIMEOUT_MS);
   try {
@@ -122,10 +164,6 @@ async function fetchBridgeCandles(
       body: JSON.stringify({ credentials, symbol, timeframe, count: 120 }),
       signal: controller.signal,
     });
-    if (!response.ok) {
-      console.warn(`[auto-trade] Bridge candles request failed: ${response.status}`);
-      return null;
-    }
     const data = (await response.json().catch(() => ({}))) as {
       ok?: boolean;
       success?: boolean;
@@ -133,18 +171,35 @@ async function fetchBridgeCandles(
       message?: string;
       candles?: BrokerCandle[];
     };
-    if ((data.ok !== true && data.success !== true) || !Array.isArray(data.candles)) {
-      console.warn(`[auto-trade] Bridge returned no candles: ${data.message ?? "unknown"}`);
-      return null;
+    if (!response.ok || (data.ok !== true && data.success !== true) || !Array.isArray(data.candles)) {
+      const detail =
+        (typeof data.message === "string" && data.message) || `HTTP ${response.status}`;
+      console.warn(`[auto-trade] Bridge returned no candles: ${detail}`);
+      return { failure: "unavailable", detail };
     }
     const normalized = normalizeBridgeCandles(data.candles);
-    return normalized.length > 0 ? normalized : null;
+    return normalized.length > 0 ? { candles: normalized } : { failure: "unavailable", detail: "no usable candles" };
   } catch (error) {
-    console.warn(`[auto-trade] Bridge candles request exception: ${error}`);
-    return null;
+    const detail = (error as Error)?.message || "bridge unreachable";
+    console.warn(`[auto-trade] Bridge candles request exception: ${detail}`);
+    return { failure: "unreachable", detail };
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Real candles for one timeframe, signed with the caller's OWN MT5
+ * credentials. Returns `null` when the bridge cannot answer — the caller
+ * decides what a missing series means; this helper never guesses.
+ */
+async function fetchBridgeCandles(
+  credentials: BridgeCredentials,
+  symbol: string,
+  timeframe: string,
+): Promise<BrokerCandle[] | null> {
+  const result = await fetchBridgeCandlesResult(credentials, symbol, timeframe);
+  return "candles" in result ? result.candles : null;
 }
 
 /**
@@ -593,7 +648,7 @@ function checkDirectionAgainstCandles(
     .join(" → ");
   return {
     ok: false,
-    reason: `Direction guard: ${side} disagrees with the 1h trend — newest close ${newest.close} vs ${fiveAgo.close} five candles ago (${trendSign > 0 ? "rising" : "falling"}). Recent closes: ${closesText}`,
+    reason: `Direction guard: ${side} disagrees with the recent trend — newest close ${newest.close} vs ${fiveAgo.close} five candles ago (${trendSign > 0 ? "rising" : "falling"}). Recent closes: ${closesText}`,
   };
 }
 
@@ -617,15 +672,338 @@ export async function verifyDirectionAgainstTrend(
   return checkDirectionAgainstCandles(side, candles);
 }
 
+// ============================================================================
+// BREAKOUT STRATEGY — the auto-trading decision
+//
+// Auto-trading trades a RANGE BREAKOUT on the trading timeframe, measured on
+// the broker's own candles:
+//
+//   • range  = highest high / lowest low of the last 20 COMPLETED 15m bars
+//              that precede the newest completed bar (the forming bar is
+//              already dropped by the candle fetcher, and the breakout bar can
+//              never define the level it has to clear);
+//   • BUY    = a completed bar CLOSES above the range high, or the live ask
+//              clears it by the buffer (0.05% of the range height);
+//   • SELL   = a completed bar CLOSES below the range low, or the live bid
+//              clears it by the same buffer;
+//   • inside the range → NO TRADE. No RSI vote, no momentum vote, no default
+//              direction, no forced fallback;
+//   • SL     = just below the range low (buy) / just above the range high
+//              (sell);
+//   • TP1    = 1× the range height from entry, TP2 = 2× the range height.
+//
+// The old indicator-vote engine below (`resolveFixtureDirection`) still serves
+// callers that have NO MT5 credentials to sign a bridge request (the public
+// scanner server function and paper previews). LIVE auto-trading always has
+// credentials, so it always uses the breakout engine.
+// ============================================================================
+
+export const BREAKOUT_TIMEFRAME = "15m";
+export const BREAKOUT_LOOKBACK = 20;
+/** Live-price clearance beyond the range, as a fraction of the range height. */
+export const BREAKOUT_BUFFER_RATIO = 0.0005;
+
+export type BreakoutPlan = {
+  signal: "BUY" | "SELL";
+  range: BreakoutRange;
+  trigger: "candle close" | "live price";
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  reason: string;
+};
+
+export type BreakoutEvaluation =
+  | { kind: "signal"; plan: BreakoutPlan }
+  | { kind: "no-trade"; range: BreakoutRange | null; reason: string; price: number };
+
+/** Print a price without inventing precision. */
+function level(value: number): string {
+  return String(Number(value.toFixed(8)));
+}
+
+/**
+ * PURE breakout evaluation — no fetch, no clock, no globals.
+ *
+ * `candles` must be OLDEST → NEWEST completed bars (the one ordering this
+ * module guarantees). `ask` is the price a BUY pays, `bid` the price a SELL
+ * receives; both come from the broker's live quote.
+ */
+export function evaluateBreakout(input: {
+  candles: ReadonlyArray<BrokerCandle>;
+  ask: number;
+  bid: number;
+  lookback?: number;
+  timeframe?: string;
+}): BreakoutEvaluation {
+  const lookback = input.lookback ?? BREAKOUT_LOOKBACK;
+  const timeframe = input.timeframe ?? BREAKOUT_TIMEFRAME;
+  const candles = input.candles;
+  const price = (input.ask + input.bid) / 2;
+
+  // The range bars PLUS the breakout candle that is judged against them —
+  // 21 completed bars for the default lookback of 20.
+  const needed = lookback + 1;
+  if (!Array.isArray(candles) || candles.length < needed) {
+    return {
+      kind: "no-trade",
+      range: null,
+      price,
+      reason: `Breakout skipped: only ${candles?.length ?? 0} completed ${timeframe} candles — ${needed} needed to build a ${lookback}-candle range.`,
+    };
+  }
+
+  const newest = candles[candles.length - 1]!;
+  const rangeBars = candles.slice(-(lookback + 1), -1);
+  let high = -Infinity;
+  let low = Infinity;
+  for (const candle of rangeBars) {
+    if (candle.high > high) high = candle.high;
+    if (candle.low < low) low = candle.low;
+  }
+  if (!Number.isFinite(high) || !Number.isFinite(low) || !(high > low)) {
+    return {
+      kind: "no-trade",
+      range: null,
+      price,
+      reason: `Breakout skipped: the last ${lookback} ${timeframe} candles form no usable range (high ${level(high)}, low ${level(low)}).`,
+    };
+  }
+  const height = high - low;
+  const buffer = height * BREAKOUT_BUFFER_RATIO;
+  const range: BreakoutRange = {
+    timeframe,
+    high,
+    low,
+    height,
+    buffer,
+    bars: rangeBars.length,
+    candleTime: newest.time,
+  };
+
+  const plan = (
+    signal: "BUY" | "SELL",
+    trigger: "candle close" | "live price",
+  ): BreakoutEvaluation => {
+    const entry = signal === "BUY" ? input.ask : input.bid;
+    const sl = signal === "BUY" ? low - buffer : high + buffer;
+    const tp1 = signal === "BUY" ? entry + height : entry - height;
+    const tp2 = signal === "BUY" ? entry + height * 2 : entry - height * 2;
+    const broke = signal === "BUY" ? `above ${level(high)}` : `below ${level(low)}`;
+    const reason =
+      `Breakout ${signal} on ${timeframe} (${trigger}): range ${level(low)}–${level(high)} ` +
+      `(height ${level(height)}), ${trigger === "candle close" ? `completed candle closed ${level(newest.close)} ${broke}` : `live price ${level(price)} broke ${broke} by the ${level(buffer)} buffer`}. ` +
+      `Entry ${level(entry)}, SL ${level(sl)} (just ${signal === "BUY" ? "below the range low" : "above the range high"}), ` +
+      `TP1 ${level(tp1)} (1× range), TP2 ${level(tp2)} (2× range).`;
+    return { kind: "signal", plan: { signal, range, trigger, entry, sl, tp1, tp2, reason } };
+  };
+
+  // A completed candle closing outside the range is the primary signal.
+  if (newest.close > high) return plan("BUY", "candle close");
+  if (newest.close < low) return plan("SELL", "candle close");
+  // Otherwise only a live break with real clearance counts.
+  if (input.ask > high + buffer) return plan("BUY", "live price");
+  if (input.bid < low - buffer) return plan("SELL", "live price");
+
+  return {
+    kind: "no-trade",
+    range,
+    price,
+    reason: `No trade: price ${level(price)} is inside the ${timeframe} range ${level(low)}–${level(high)} (no breakout yet).`,
+  };
+}
+
+/**
+ * LIVE breakout decision — real broker candles + real broker quote, signed
+ * with the caller's own MT5 credentials. Used by every credentialled caller
+ * (auto-trading, the Home START button and its card).
+ */
+async function resolveBreakoutDirection(
+  symbol: string,
+  options: {
+    requireExecutionReady?: boolean;
+    rejectProxyData?: boolean;
+    credentials?: BridgeCredentials | null;
+  },
+): Promise<AnalysisResult> {
+  const { requireExecutionReady = true, rejectProxyData = true, credentials } = options;
+  const timestamp = Date.now();
+
+  const [candleFetch, quoteResult] = await Promise.all([
+    credentials
+      ? fetchBridgeCandlesResult(credentials, symbol, BREAKOUT_TIMEFRAME)
+      : Promise.resolve<CandleFetch>({ failure: "unavailable", detail: "no MT5 credentials" }),
+    credentials ? fetchBridgeQuote(credentials, symbol) : Promise.resolve(null),
+  ]);
+
+  const newestTime =
+    "candles" in candleFetch && candleFetch.candles.length > 0
+      ? candleFetch.candles[candleFetch.candles.length - 1]!.time
+      : null;
+  const noTrade = (
+    reason: string,
+    extra: { source?: AnalysisResult["source"]; range?: BreakoutRange | null; strength?: AnalysisResult["strength"] } = {},
+  ): AnalysisResult => {
+    console.warn(`[auto-trade] BLOCKED ${symbol}: ${reason}`);
+    return {
+      symbol,
+      direction: { type: "NO_TRADE", reason, blocked: true },
+      rsi15m: null,
+      rsi1h: null,
+      momentum15m: null,
+      momentum1h: null,
+      source: extra.source ?? "unavailable",
+      timeframe: BREAKOUT_TIMEFRAME,
+      candleTimestamp: newestTime,
+      strength: extra.strength ?? "none",
+      executionReady: false,
+      reason,
+      timestamp,
+      range: extra.range ?? null,
+    };
+  };
+
+  if (rejectProxyData && SYNTHETIC_PROXY_SYMBOLS.has(symbol.toUpperCase().trim())) {
+    return noTrade(
+      `Symbol ${symbol} is a synthetic/proxy ticker (e.g., NQ=F). Trading with proxy data is blocked. Use actual broker symbol.`,
+      { source: "proxy" },
+    );
+  }
+  // A bridge that cannot be REACHED is an error, not a quiet "no data" — the
+  // trader must see the transport failure (the bridge's own detail included).
+  if ("failure" in candleFetch && candleFetch.failure === "unreachable") {
+    throw new Error(
+      `Cannot analyze ${symbol}: could not reach your trading bridge (${candleFetch.detail ?? "unreachable"})`,
+    );
+  }
+  if ("failure" in candleFetch) {
+    return noTrade(
+      `Missing or unavailable broker data: ${BREAKOUT_TIMEFRAME} candles from the bridge${candleFetch.detail ? ` (${candleFetch.detail})` : ""}. Cannot measure a breakout range.`,
+    );
+  }
+  const candles = candleFetch.candles;
+  if (candles.length === 0) {
+    return noTrade(
+      `Missing or unavailable broker data: ${BREAKOUT_TIMEFRAME} candles from the bridge. Cannot measure a breakout range.`,
+    );
+  }
+  if (!quoteResult) {
+    return noTrade("Missing or unavailable broker data: live quote. Cannot measure a breakout range.");
+  }
+  if ("failure" in quoteResult) {
+    if (quoteResult.failure === "unreachable") {
+      throw new Error(
+        `Cannot analyze ${symbol}: could not reach your trading bridge (${quoteResult.detail ?? "unreachable"})`,
+      );
+    }
+    // The bridge answered and refused — its own reason is the honest one.
+    throw new Error(
+      `Cannot analyze ${symbol}: ${quoteResult.detail ?? "the market is closed or the symbol is inactive on your broker"}`,
+    );
+  }
+
+  const { quote } = quoteResult;
+  const evaluation = evaluateBreakout({ candles, ask: quote.ask, bid: quote.bid });
+
+  // ONE LINE PER DECISION — range high, range low, current price, verdict.
+  const rangeForLog = evaluation.kind === "signal" ? evaluation.plan.range : evaluation.range;
+  const priceForLog = evaluation.kind === "signal" ? evaluation.plan.entry : evaluation.price;
+  console.log(
+    `[auto-trade] ${symbol} BREAKOUT ${BREAKOUT_TIMEFRAME}: range high ${rangeForLog ? level(rangeForLog.high) : "—"} | ` +
+      `range low ${rangeForLog ? level(rangeForLog.low) : "—"} | price ${level(priceForLog)} | ` +
+      `${evaluation.kind === "signal" ? `${evaluation.plan.signal} (${evaluation.plan.trigger})` : "NO TRADE"}`,
+  );
+
+  if (evaluation.kind === "no-trade") {
+    return noTrade(evaluation.reason, {
+      source: "mt5_broker",
+      range: evaluation.range,
+      strength: "none",
+    });
+  }
+
+  const plan = evaluation.plan;
+  // Levels must be on the correct side of entry — a gap that put the live
+  // entry through the stop is a refusal, never a resize.
+  const validLevels =
+    plan.signal === "BUY"
+      ? plan.entry > plan.sl && plan.tp1 > plan.entry && plan.tp2 > plan.tp1
+      : plan.entry < plan.sl && plan.tp1 < plan.entry && plan.tp2 < plan.tp1;
+  if (!validLevels) {
+    return noTrade(
+      `Breakout ${plan.signal} refused: the live entry ${level(plan.entry)} is on the wrong side of the range levels (SL ${level(plan.sl)}, TP1 ${level(plan.tp1)}). No order was sent.`,
+      { source: "mt5_broker", range: plan.range },
+    );
+  }
+
+  // THE DIRECTION GUARD still applies: a chosen side that contradicts the last
+  // six closed bars is refused with the real closes in the reason.
+  const verdict = checkDirectionAgainstCandles(plan.signal, candles);
+  if (!verdict.ok) {
+    return noTrade(verdict.reason, { source: "mt5_broker", range: plan.range });
+  }
+
+  const risk = Math.abs(plan.entry - plan.sl);
+  const direction: TradeDecision = {
+    type: plan.signal,
+    entry: plan.entry,
+    sl: plan.sl,
+    // The broker order carries TP1 (the first target) — TP2 stays in the plan.
+    tp: plan.tp1,
+    tp1: plan.tp1,
+    tp2: plan.tp2,
+    rrRatio: risk > 0 ? Number((Math.abs(plan.tp1 - plan.entry) / risk).toFixed(2)) : 0,
+    reason: plan.reason,
+  };
+
+  return {
+    symbol,
+    direction,
+    rsi15m: null,
+    rsi1h: null,
+    momentum15m: null,
+    momentum1h: null,
+    source: "mt5_broker",
+    timeframe: BREAKOUT_TIMEFRAME,
+    candleTimestamp: plan.range.candleTime,
+    strength: plan.trigger === "candle close" ? "strong" : "weak",
+    executionReady: requireExecutionReady ? quote.bid > 0 && quote.ask > 0 : true,
+    reason: plan.reason,
+    timestamp,
+    range: plan.range,
+  };
+}
+
 export async function resolveTradeDirection(
   symbol: string,
   options: {
     requireExecutionReady?: boolean;
     rejectProxyData?: boolean;
     /**
-     * The caller's OWN MT5 account. When present, the direction is derived from
-     * live bridge candles (oldest→newest) instead of the verified fixtures.
+     * The caller's OWN MT5 account. When present, the auto-trading decision is
+     * the LIVE candle RANGE BREAKOUT; without it there is no broker series to
+     * measure, so the fixture engine (public scanner / paper previews) answers.
      */
+    credentials?: BridgeCredentials | null;
+  } = {},
+): Promise<AnalysisResult> {
+  // LIVE trading path — breakout on the broker's own 15m candles. Nothing from
+  // the indicator-vote engine below is consulted here.
+  if (options.credentials) return resolveBreakoutDirection(symbol, options);
+  return resolveFixtureDirection(symbol, options);
+}
+
+/**
+ * CREDENTIAL-LESS engine (public scanner server function, paper previews).
+ * Unchanged indicator logic — it never had live candles to reason about, and
+ * it is NOT reachable from a live auto-trading decision.
+ */
+async function resolveFixtureDirection(
+  symbol: string,
+  options: {
+    requireExecutionReady?: boolean;
+    rejectProxyData?: boolean;
     credentials?: BridgeCredentials | null;
   } = {},
 ): Promise<AnalysisResult> {
@@ -1439,6 +1817,45 @@ export async function executeAutoTrade(
         throw new Error(`Live quote unavailable for ${symbol} at order time`);
       }
 
+      // BREAKOUT RE-CHECK — the quote above is fetched fresh for THIS order.
+      // If price has fallen back inside (or through) the range since the
+      // signal, the breakout did not hold: no order is sent and the reason
+      // names the range and the current price.
+      const breakoutRange = analysis.range ?? null;
+      if (breakoutRange && breakoutRange.height > 0) {
+        const priceNow = side === "BUY" ? liveQuote.ask : liveQuote.bid;
+        const held = side === "BUY" ? priceNow > breakoutRange.high : priceNow < breakoutRange.low;
+        if (!held) {
+          const message = `NO TRADE (breakout faded): price moved back inside the ${breakoutRange.timeframe} range — range high ${breakoutRange.high}, range low ${breakoutRange.low}, price now ${priceNow}. The breakout did not hold, so no order was sent.`;
+          console.warn(`[auto-trade] ${symbol}: ${message}`);
+          const skipped: ExecutedTrade = {
+            index: i + 1,
+            symbol,
+            side: "BLOCKED",
+            lotSize,
+            entry: 0,
+            sl: 0,
+            tp: 0,
+            status: "blocked",
+            message,
+            meta: { requestedComment: eaName },
+          };
+          results.push(skipped);
+          if (emitEvent) {
+            emitEvent("eamp:execution-result", {
+              event: `TRADE ${i + 1}/${maxTrades} BLOCKED - BREAKOUT FADED`,
+              symbol,
+              reason: message,
+              rangeHigh: breakoutRange.high,
+              rangeLow: breakoutRange.low,
+              price: priceNow,
+            });
+          }
+          if (onTradeExecute) onTradeExecute(skipped, i + 1, maxTrades);
+          break;
+        }
+      }
+
       // FRESHNESS — the analysis must be seconds old when the order fires.
       //
       // The OLD guard compared the engine's analysis price against the
@@ -1677,6 +2094,13 @@ export function classifyNoTrade(reason: string): "weak setup" | "stale quote" | 
   // The direction guard is its own refusal: the data said one thing, the
   // chosen side said the other, so nothing was sent.
   if (/direction guard/i.test(reason)) return "direction mismatch";
+  // Missing/unverifiable broker data is always the first answer.
+  if (/missing or unavailable broker data/i.test(reason)) return "no data";
+  // Breakout: price never left the range (or the live entry invalidated the
+  // levels) — a setup that did not confirm, not a data failure.
+  if (/inside the .* range|breakout (skipped|faded|.*refused)|no breakout yet/i.test(reason)) {
+    return "weak setup";
+  }
   if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
   if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
   // Missing/unverifiable data, proxy symbols, bad levels — none of it can be

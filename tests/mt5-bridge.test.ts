@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { executeAutoTrade, preserveEaName, resolveTradeDirection } from "../src/lib/auto-trade";
+import { executeAutoTrade, preserveEaName } from "../src/lib/auto-trade";
 import { mt5OrderComment } from "../src/lib/utils";
+import { bridgeSeries } from "./breakout-fixtures";
 
 /**
  * THE ORDER COMMENT MUST REACH THE BRIDGE UNCHANGED.
@@ -25,32 +26,36 @@ const CREDENTIALS = {
 type Captured = { url: string; body: Record<string, unknown> };
 type BridgeReply = { status?: number; payload: Record<string, unknown> };
 
-/** The live quote the engine anchors SL/TP to — pinned to the analysed entry
- *  so the "market moved against setup" guard doesn't block the order. */
-async function analysedQuote(): Promise<Record<string, unknown>> {
-  const plan = await resolveTradeDirection("AUDUSD");
-  const entry = plan.direction.type === "NO_TRADE" ? 0.65 : plan.direction.entry;
-  const bid = Number(entry.toFixed(5));
-  return { success: true, bid, ask: Number((bid + 0.0002).toFixed(5)), digits: 5, point: 0.00001, stops_level: 0 };
-}
+/**
+ * A live AUDUSD breakout: 20 completed bars in a 0.6500–0.6540 range, then a
+ * completed bar closing at 0.6560. The quote below sits just above the range
+ * high, so the breakout holds and the order is allowed to fire.
+ */
+const QUOTE = { bid: 0.655, ask: 0.6552, digits: 5, point: 0.00001, stops_level: 0 };
+const CANDLES = bridgeSeries({ low: 0.65, high: 0.654, breakoutClose: 0.656 });
 
 /**
- * Stub the bridge: /symbol/price returns the live quote, /trade/execute returns
- * the broker's verdict. Every request body is captured for assertions.
+ * Stub the bridge: /symbol/candles returns the breakout series, /symbol/price
+ * the live quote and /trade/execute the broker's verdict. Every request body is
+ * captured for assertions.
  */
-function stubBridge(tradeReply: BridgeReply, quote: Record<string, unknown>): Captured[] {
+function stubBridge(tradeReply: BridgeReply): Captured[] {
   const captured: Captured[] = [];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (url: string | URL, init?: RequestInit) => {
-      const isQuote = String(url).endsWith("/symbol/price");
+      const target = String(url);
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
-      captured.push({ url: String(url), body });
+      captured.push({ url: target, body });
+      if (target.endsWith("/symbol/candles")) {
+        return { ok: true, status: 200, json: async () => ({ ok: true, candles: CANDLES }) } as unknown as Response;
+      }
+      const isQuote = target.endsWith("/symbol/price");
       const status = isQuote ? 200 : (tradeReply.status ?? 200);
       return {
         ok: status < 400,
         status,
-        json: async () => (isQuote ? quote : tradeReply.payload),
+        json: async () => (isQuote ? { success: true, ...QUOTE } : tradeReply.payload),
       } as unknown as Response;
     }),
   );
@@ -59,7 +64,7 @@ function stubBridge(tradeReply: BridgeReply, quote: Record<string, unknown>): Ca
 
 /** Run the app's live engine once and return both the results and the requests. */
 async function runOneLiveTrade(tradeReply: BridgeReply, eaName: string = EA_NAME) {
-  const captured = stubBridge(tradeReply, await analysedQuote());
+  const captured = stubBridge(tradeReply);
   const results = await executeAutoTrade({
     symbol: "AUDUSD",
     lotSize: 0.01,
