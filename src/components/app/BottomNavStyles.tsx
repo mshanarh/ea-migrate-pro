@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useCustomization } from "@/lib/app-customization";
+import { setBottomNavStyle, useBottomNavStyle } from "@/lib/bottom-nav-style";
 import { Save, Check } from "lucide-react";
 
 export type BottomNavStyle =
@@ -50,28 +51,15 @@ export function BottomNavStyles() {
   const { color } = useCustomization();
   const accent = color;
 
-  const [selectedStyle, setSelectedStyle] = useState<BottomNavStyle>("floating-pill");
+  // Shared, persisted store — the same one the real bottom nav reads, so a
+  // tap here re-renders Home, Metatrader, Quotes and Scanner instantly.
+  const selectedStyle = useBottomNavStyle();
   const [applied, setApplied] = useState(false);
 
-  useEffect(() => {
-    // Load saved style from localStorage
-    try {
-      const saved = window.localStorage.getItem("eamp.bottomNavStyle");
-      if (saved && BOTTOM_NAV_STYLES.some((s) => s.id === saved)) {
-        setSelectedStyle(saved as BottomNavStyle);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
   const handleSelect = (style: BottomNavStyle) => {
-    setSelectedStyle(style);
-    try {
-      window.localStorage.setItem("eamp.bottomNavStyle", style);
-    } catch {
-      // ignore
-    }
+    setBottomNavStyle(style);
+    setApplied(true);
+    setTimeout(() => setApplied(false), 2000);
   };
 
   const handleApply = () => {

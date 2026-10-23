@@ -9,6 +9,7 @@ import {
   LineChart,
   Music,
   Palette,
+  PanelBottom,
   Type,
   X,
 } from "lucide-react";
@@ -25,6 +26,11 @@ import {
 } from "@/lib/app-customization";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
+import {
+  BOTTOM_NAV_STYLE_OPTIONS,
+  setBottomNavStyle,
+  useBottomNavStyle,
+} from "@/lib/bottom-nav-style";
 import { usePlatform } from "@/lib/platform";
 import { Newspaper } from "lucide-react";
 
@@ -116,6 +122,7 @@ function PillRow({
 export function CustomizationPanel() {
   const { color, theme, font } = useCustomization();
   const accent = accentColorValue(color);
+  const bottomNavStyle = useBottomNavStyle();
   const [openSection, setOpenSection] = useState<string | null>(null);
   const toggle = (key: string) => setOpenSection((current) => (current === key ? null : key));
 
@@ -212,6 +219,42 @@ export function CustomizationPanel() {
                 </span>
                 <span className="flex-1 text-sm font-bold text-white/85">{option.name}</span>
                 {font === option.id && (
+                  <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+                )}
+              </button>
+            ))}
+          </div>
+        </PillRow>
+
+        <PillRow
+          icon={<PanelBottom className="size-5" />}
+          label="Bottom Nav"
+          accent={accent}
+          open={openSection === "nav"}
+          onToggle={() => toggle("nav")}
+        >
+          <div className="space-y-3">
+            {BOTTOM_NAV_STYLE_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setBottomNavStyle(option.id)}
+                className="flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                style={{
+                  borderColor: bottomNavStyle === option.id ? accent : "rgba(255,255,255,0.1)",
+                  backgroundColor:
+                    bottomNavStyle === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
+                  boxShadow: bottomNavStyle === option.id ? `0 0 22px ${accent}33` : "none",
+                }}
+                aria-pressed={bottomNavStyle === option.id}
+              >
+                <span className="min-w-0">
+                  <span className="block text-sm font-black tracking-wide text-white">
+                    {option.name}
+                  </span>
+                  <span className="block text-xs text-white/50">{option.description}</span>
+                </span>
+                {bottomNavStyle === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
                 )}
               </button>

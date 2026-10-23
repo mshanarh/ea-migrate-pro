@@ -4,23 +4,9 @@ import { toast } from "sonner";
 import { House, Server, ScanLine } from "lucide-react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
+import { useBottomNavStyle, type BottomNavStyle } from "@/lib/bottom-nav-style";
 
-export type BottomNavStyle =
-  | "floating-pill"
-  | "icon-pill"
-  | "classic-tabs"
-  | "compact-dots";
-
-export const BOTTOM_NAV_STYLES: Array<{
-  id: BottomNavStyle;
-  name: string;
-  description: string;
-}> = [
-  { id: "floating-pill", name: "Floating Pill", description: "Rounded glass bar with icons and labels" },
-  { id: "icon-pill", name: "Icon Pill", description: "Floating pill with icons only" },
-  { id: "classic-tabs", name: "Classic Tabs", description: "Tab bar with labels below icons" },
-  { id: "compact-dots", name: "Compact Dots", description: "Compact bar with icons and dot indicator" },
-];
+export type { BottomNavStyle };
 
 const TABS = [
   { to: "/app/metatrader", label: "METATRADER", icon: Server },
@@ -71,9 +57,10 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const lastHomeTap = useRef<number>(0);
-  const navStyle = style ?? (
-    (typeof window !== "undefined" ? (window.localStorage.getItem("eamp.bottomNavStyle") as BottomNavStyle | null) : null) ?? "floating-pill"
-  );
+  // Live, persisted style: selecting one in Settings re-renders every mounted
+  // nav immediately (no reload), on Home, Metatrader, Quotes and Scanner.
+  const storedStyle = useBottomNavStyle();
+  const navStyle = style ?? storedStyle;
 
   const handleHomeClick = () => {
     // The Link's SPA navigation still runs — module state (the request
