@@ -536,12 +536,13 @@ html[data-if-styled] .if-field.if-field {
   color: var(--if-text) !important;
 }
 
-/* Chips, status pills and small badges. */
+/* Chips, status pills and small badges. Text colour is left to the chip's own
+   semantic class (ONLINE green, OFFLINE red…) or `if-text`; only the surface,
+   the border and the shape come from the interface. */
 html[data-if-styled] .if-chip.if-chip {
   background: var(--if-surface-alt) !important;
   border: var(--if-border-width) solid var(--if-border) !important;
   border-radius: var(--if-control-radius) !important;
-  color: var(--if-text) !important;
 }
 
 /* Text: primary and secondary, interface coloured on every screen. */
