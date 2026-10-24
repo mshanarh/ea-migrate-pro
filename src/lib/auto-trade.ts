@@ -1311,6 +1311,44 @@ export async function executeAutoTrade(
         throw new Error(`Live quote unavailable for ${symbol} at order time`);
       }
 
+      // HARD GUARD: signal direction must match order side exactly.
+      // If they differ, abort the order and log the mismatch so it's visible instantly.
+      if (side !== direction.type) {
+        const mismatchExecuted: ExecutedTrade = {
+          index: i + 1,
+          symbol,
+          side,
+          lotSize,
+          entry: 0,
+          sl: 0,
+          tp: 0,
+          status: "aborted",
+          message: `TRADE ABORTED: signal=${direction.type}, order=${side} — direction and order side must match exactly`,
+          meta: {
+            requestedComment: eaName,
+            mismatch: `signal=${direction.type}, order=${side}`,
+          },
+        };
+        results.push(mismatchExecuted);
+
+        if (emitEvent) {
+          emitEvent("eamp:execution-result", {
+            event: `TRADE ${i + 1}/${maxTrades} ABORTED - DIRECTION MISMATCH`,
+            symbol,
+            signalDirection: direction.type,
+            orderSide: side,
+            mismatch: `signal=${direction.type}, order=${side}`,
+          });
+        }
+
+        if (onTradeExecute) {
+          onTradeExecute(mismatchExecuted, i + 1, maxTrades);
+        }
+
+        console.error(`[auto-trade] ${symbol}: DIRECTION MISMATCH — signal=${direction.type}, order=${side}. Aborting order.`);
+        break;
+      }
+
       // FRESHNESS — the analysis must be seconds old when the order fires.
       //
       // The OLD guard compared the engine's analysis price against the
