@@ -74,7 +74,7 @@ describe("candle payload shapes", () => {
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
     expect(result.direction.type).toBe("BUY");
-    expect(result.range?.high).toBe(110);
+    expect(result.setup?.lastClose).toBe(112);
   });
 
   it("reads MT5-style tuple rows served under `rates`", async () => {
@@ -91,7 +91,7 @@ describe("candle payload shapes", () => {
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
     expect(result.direction.type).toBe("BUY");
-    expect(result.range?.high).toBe(110);
+    expect(result.setup?.lastClose).toBe(112);
   });
 
   it("reads a bare array payload", async () => {

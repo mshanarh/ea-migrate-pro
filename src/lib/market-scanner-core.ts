@@ -356,6 +356,7 @@ const GATE_HINTS = {
   "stale quote": "The quote is stale — scan again for fresh levels.",
   "direction mismatch":
     "The chosen side disagreed with the recent candle trend — no order is sent. The closes that disagreed are in the reasons above.",
+  "flat market": "The market shows no net movement in either direction — no order is sent.",
 } as const;
 
 export function executionGate(analysis: ScannerAnalysis): ExecutionGate {
