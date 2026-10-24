@@ -71,6 +71,60 @@ export function storeConfigured(): boolean {
   return kvConfig() !== null;
 }
 
+/**
+ * WHICH SERVER VARIABLES ARE ACTUALLY PRESENT.
+ *
+ * Diagnostics used to say "KV is not configured in this build
+ * (VITE_KV_REST_HOST missing…)" — a CLIENT-side variable name that was never
+ * set and could never authenticate a KV call anyway. This reports the real
+ * server names, so an operator can see exactly what the deployment has.
+ */
+export function storeConfigInfo(): {
+  configured: boolean;
+  urlVar: string | null;
+  tokenVar: string | null;
+} {
+  const urlVar = process.env["KV_REST_API_URL"]?.trim()
+    ? "KV_REST_API_URL"
+    : process.env["UPSTASH_REDIS_REST_URL"]?.trim()
+      ? "UPSTASH_REDIS_REST_URL"
+      : null;
+  const tokenVar = process.env["KV_REST_API_TOKEN"]?.trim()
+    ? "KV_REST_API_TOKEN"
+    : process.env["KV_REST_API_READ_ONLY_TOKEN"]?.trim()
+      ? "KV_REST_API_READ_ONLY_TOKEN"
+      : process.env["UPSTASH_REDIS_REST_TOKEN"]?.trim()
+        ? "UPSTASH_REDIS_REST_TOKEN"
+        : null;
+  return { configured: Boolean(urlVar && tokenVar), urlVar, tokenVar };
+}
+
+/**
+ * READ-ONLY KV COMMAND — uses the read-only token when the write token is not
+ * present in this deployment, so a diagnostic read never needs write rights.
+ */
+export async function kvRead(command: (string | number)[]): Promise<unknown> {
+  const url = (process.env["KV_REST_API_URL"] ?? process.env["UPSTASH_REDIS_REST_URL"] ?? "").trim().replace(/\/+$/, "");
+  const token = (
+    process.env["KV_REST_API_TOKEN"] ??
+    process.env["KV_REST_API_READ_ONLY_TOKEN"] ??
+    process.env["UPSTASH_REDIS_REST_TOKEN"] ??
+    ""
+  ).trim();
+  if (!url || !token) {
+    throw new Error("KV_REST_API_URL / KV_REST_API_TOKEN are not set on the server");
+  }
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(command),
+    signal: AbortSignal.timeout(10_000),
+  });
+  const payload = (await response.json().catch(() => ({}))) as { result?: unknown; error?: string };
+  if (!response.ok || payload.error) throw new Error(payload.error ?? `Storage error ${response.status}`);
+  return payload.result;
+}
+
 async function kv(command: (string | number)[]): Promise<unknown> {
   const config = kvConfig();
   if (!config) throw new Error("Registration storage is not configured (KV_REST_API_URL / KV_REST_API_TOKEN)");

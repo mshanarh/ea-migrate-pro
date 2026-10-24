@@ -21,7 +21,7 @@ import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotCo
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
-import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
+import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 
@@ -656,8 +656,11 @@ function AppHome() {
     // floating bubble changes state. The execution popup and its voice
     // belong to the runs below (scanner Execute / auto trading).
     if (robot.running) {
+      console.info("[bot] STOP pressed — halting the loop (open positions keep their broker SL/TP)");
       scalpRef.current?.stop();
       scalpRef.current = null;
+      stopExecution();
+      setAnalysisOpen(false);
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
       return;
@@ -676,12 +679,16 @@ function AppHome() {
    *             ever force-closing a winner.
    */
   const runBotLoop = (target: Robot, mode: BotMode) => {
+    console.info(`[bot] STEP 1 mode selected: ${mode} for ${target.name}`);
     const pairs = (target.pairs ?? []).filter((pair) => pair.symbol?.trim());
     if (pairs.length === 0) {
+      console.warn("[bot] STEP 2 blocked: no allowed quotes");
       toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
       return;
     }
+    console.info(`[bot] STEP 2 quotes: ${pairs.map((pair) => pair.symbol).join(", ")}`);
     const credentials = readMtCredentials(app.mt);
+    console.info(`[bot] STEP 3 MT5 credentials: ${credentials ? "saved" : "missing"}`);
     if (!credentials) {
       toast.message(`${target.name} is running`, {
         description:
@@ -703,6 +710,13 @@ function AppHome() {
         ? "Scalper mode — analysing the last 8 completed M15 candles..."
         : "Normal mode — analysing the last 8 completed M15 candles...",
     );
+    // THE CARD OPENS IMMEDIATELY — a run that does not show its analysis is
+    // indistinguishable from a bot that never started.
+    setAnalysisOpen(true);
+    setToastSymbol(pairs[0]?.symbol?.trim() ?? "");
+    setToastTrades(totalTrades);
+    setToastOpen(true);
+    console.info("[bot] STEP 4 opening the AI TRADE card and starting the loop");
     scalpRef.current = startScalpLoop({
       symbols: pairs.map((pair) => ({
         symbol: pair.symbol.trim(),
@@ -713,6 +727,7 @@ function AppHome() {
       credentials,
       mode,
     });
+    console.info("[bot] STEP 5 loop started");
     toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
       description:
         mode === "scalper"

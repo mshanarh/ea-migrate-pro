@@ -5,25 +5,27 @@ import {
   type BridgeCredentials,
 } from "./auto-trade";
 import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
+import { setExecutionStage, updateExecutionPlan } from "./execution-state";
 
 /**
- * SCALPING LOOP — trade, take the profit, re-analyse, open again.
+ * THE BOT LOOP — both behaviours, one engine.
  *
- * On start, every Allowed Quote is analysed from the last 8 completed M15
- * candles and traded immediately in that short-term direction. While the loop
- * runs it watches ONLY the positions it opened (its own magic number):
+ * SCALPER — open on the last 8 completed M15 candles, close a winner at TP1 or
+ *           at spread + 0.2 ATR of movement, then re-analyse and open again,
+ *           non-stop. A stop-out waits for the next completed M15 candle.
+ * NORMAL  — open on the same short-term direction and let the broker's
+ *           SL/TP1/TP2 manage the trade. Re-analyses on each NEW completed M15
+ *           candle; never force-closes a winner.
  *
- *   • a position in profit by TP1, or by at least the spread cost plus 0.2 ATR
- *     of movement, is closed — then the symbol is analysed again and the next
- *     trade opens in the NEW direction;
- *   • a position that disappears without this loop closing it (stop loss or
- *     broker TP) sends that symbol to the next completed M15 candle before a
- *     new order, so a loss is never stacked into a revenge trade.
+ * THE VPS BRIDGE MAY NOT HAVE THE POSITION ENDPOINTS YET. `/positions/list`
+ * and `/positions/close` are only needed to know what is open and to take a
+ * profit. Their absence must NEVER stop the bot from analysing and opening:
+ * the loop keeps a local record of what it opened, says
+ * "Position monitoring unavailable — waiting for updated bridge" once, and
+ * carries on. In normal mode nothing depends on those endpoints at all.
  *
- * Hard blocks only — stale candles, a missing live price, invalid SL/TP, the
- * 20% free-margin buffer and the per-symbol cap — and each one is named in the
- * popup. Nothing is ever reported as executed, closed or profitable before the
- * broker itself confirms it.
+ * Every step logs a `[bot]` line and announces on the execution bus, so the
+ * bot can never sit in a silent running state.
  */
 
 /** Every order this loop opens carries this magic number. */
@@ -34,12 +36,6 @@ const M15_MS = 15 * 60 * 1000;
 
 export type ScalpSymbol = { symbol: string; lotSize: number; maxTrades: number };
 
-/**
- * SCALPER — open, take the profit, re-open, non-stop.
- * NORMAL   — open on the same short-term direction and let SL/TP1/TP2 manage
- *            it; it re-analyses on each NEW completed M15 candle, but it never
- *            force-closes a winner early.
- */
 export type BotMode = "scalper" | "normal";
 
 export type ScalpLoopOptions = {
@@ -81,18 +77,31 @@ function announce(detail: Record<string, unknown>) {
   window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail }));
 }
 
-function broadcast(message: string, extra: Record<string, unknown> = {}) {
-  console.log(`[scalp] ${message}`);
-  announce({ ok: true, message, status: "scalp", ...extra });
+function log(message: string) {
+  console.info(`[bot] ${message}`);
 }
 
-async function bridgePost<T>(path: string, body: unknown): Promise<{ ok: boolean; data: T | null; error?: string }> {
+function broadcast(message: string, extra: Record<string, unknown> = {}) {
+  log(message);
+  announce({ ok: true, message, status: "info", ...extra });
+}
+
+function fail(message: string, extra: Record<string, unknown> = {}) {
+  console.warn(`[bot] ${message}`);
+  announce({ ok: false, message, status: "failed", ...extra });
+}
+
+async function bridgePost<T>(
+  path: string,
+  body: unknown,
+  timeoutMs = 12_000,
+): Promise<{ ok: boolean; data: T | null; error?: string }> {
   try {
     const reply = await fetch(`${getBridgeUrl()}${path}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(12_000),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = (await reply.json().catch(() => null)) as T | null;
     if (!reply.ok) {
@@ -122,105 +131,171 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const waitingNotice = new Set<string>();
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let monitoringNoticeShown = false;
+
+  log(`starting ${mode.toUpperCase()} mode for ${symbols.map((entry) => entry.symbol).join(", ") || "no symbols"}`);
 
   /** The next completed M15 candle, plus a few seconds of settle time. */
   const nextM15Boundary = () => Math.ceil((Date.now() + 1) / M15_MS) * M15_MS + 5_000;
 
+  /** Open positions carrying this loop's magic. `null` = endpoint unavailable. */
   const listPositions = async (): Promise<BridgePosition[] | null> => {
     const reply = await bridgePost<{ success?: boolean; positions?: BridgePosition[]; message?: string }>(
       "/positions/list",
       { credentials, magic: SCALP_MAGIC },
     );
     if (!reply.ok || reply.data?.success === false) {
+      log(`/positions/list unavailable: ${reply.error ?? reply.data?.message ?? "unknown"}`);
       return null;
     }
     return Array.isArray(reply.data?.positions) ? reply.data!.positions! : [];
   };
 
   const closePosition = async (position: BridgePosition): Promise<boolean> => {
-    const reply = await bridgePost<{
-      success?: boolean;
-      price?: number;
-      profit?: number;
-      message?: string;
-    }>("/positions/close", { credentials, ticket: position.ticket });
+    const reply = await bridgePost<{ success?: boolean; profit?: number; message?: string }>(
+      "/positions/close",
+      { credentials, ticket: position.ticket },
+    );
 
     if (!reply.ok || reply.data?.success !== true) {
-      broadcast(
-        `Could not close ticket #${position.ticket} — ${reply.error ?? reply.data?.message ?? "the broker refused the close"}`,
-        { symbol: position.symbol, ok: false, status: "failed" },
-      );
+      const detail = reply.error ?? reply.data?.message ?? "the broker refused the close";
+      log(`close ${position.ticket} failed: ${detail}`);
+      announce({
+        ok: false,
+        message: `Position monitoring unavailable — waiting for updated bridge (close #${position.ticket}: ${detail})`,
+        status: "failed",
+        symbol: position.symbol,
+      });
       return false;
     }
     const profit = Number(reply.data?.profit ?? position.profit);
     const sign = profit >= 0 ? "+" : "−";
-    broadcast(
-      `closed ticket #${position.ticket} for ${sign}$${Math.abs(profit).toFixed(2)} profit`,
-      { symbol: position.symbol, ok: true, status: "closed", profit },
-    );
+    broadcast(`closed ticket #${position.ticket} for ${sign}$${Math.abs(profit).toFixed(2)} profit`, {
+      symbol: position.symbol,
+      status: "closed",
+      side: position.type,
+      profit,
+      entry: position.price_current,
+    });
     return true;
   };
 
   /** Analyse + open immediately, exactly as the signal reads. */
   const openFor = async (symbol: string, lotSize: number, maxTrades: number) => {
-    const analysis = await resolveTradeDirection(symbol, { credentials });
+    setExecutionStage(`Analysing ${symbol} candles…`);
+    updateExecutionPlan({ symbol });
+    log(`analysing ${symbol} (mode ${mode})`);
+
+    let analysis;
+    try {
+      analysis = await resolveTradeDirection(symbol, { credentials });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      fail(`${symbol}: could not reach the bridge — ${reason}`, { symbol, status: "failed" });
+      return;
+    }
+
+    log(
+      `${symbol}: ${analysis.direction.type}${analysis.direction.type === "NO_TRADE" ? ` (${analysis.direction.reason})` : ""}`,
+    );
+
     if (analysis.direction.type === "NO_TRADE") {
       const kind = classifyNoTrade(analysis.direction.reason);
-      broadcast(`${symbol} NO TRADE (${kind}) — ${analysis.direction.reason}`, {
+      fail(`${symbol} NO TRADE (${kind}) — ${analysis.direction.reason}`, {
         symbol,
-        ok: false,
         status: "blocked",
+        reason: analysis.direction.reason,
       });
       return;
     }
+
     const direction = analysis.direction;
     const tradeCount = Math.max(1, Math.floor(maxTrades));
+
+    // The card shows the analysed plan before the broker confirms anything.
+    updateExecutionPlan({
+      symbol,
+      direction: direction.type,
+      entry: direction.entry,
+      stopLoss: direction.sl,
+      takeProfit: direction.tp,
+      lotSize,
+      totalTrades: tradeCount,
+      mode,
+    });
+    setExecutionStage(`${direction.type} ${symbol} — sending ${tradeCount} order(s)…`);
     broadcast(`re-analysed: direction now ${direction.type}, opening ${direction.type} ${lotSize} × ${tradeCount}`, {
       symbol,
       side: direction.type,
       status: "reanalysed",
-    });
-
-    const executed = await executeAutoTrade({
-      symbol,
+      entry: direction.entry,
+      stopLoss: direction.sl,
+      takeProfit: direction.tp,
       lotSize,
-      maxTrades: tradeCount,
-      eaName,
-      credentials,
-      magic: SCALP_MAGIC,
-      onTradeExecute: (trade) => {
-        if (trade.status === "executed") {
-          broadcast(
-            `opened ${trade.side} ${trade.lotSize} at price ${trade.entry}, SL ${trade.sl}, TP1 ${trade.tp}`,
-            {
-              symbol,
-              side: trade.side,
-              entry: trade.entry,
-              stopLoss: trade.sl,
-              takeProfit: trade.tp,
-              status: "executed",
-              lotSize: trade.lotSize,
-              ...(trade.meta?.mtOrderId ? { orderId: trade.meta.mtOrderId } : {}),
-            },
-          );
-        } else if (trade.message) {
-          broadcast(trade.message, { symbol, ok: false, status: trade.status });
-        }
-      },
     });
 
-    const firstTicket = Number(
-      executed.find((trade) => trade.status === "executed" && trade.meta?.mtOrderId)?.meta?.mtOrderId ?? NaN,
-    );
-    const tp1 = direction.tp1 ?? direction.tp;
-    const atr = analysis.gate?.atr ?? Math.abs(direction.entry - direction.sl) * 0.5;
-    if (Number.isFinite(firstTicket)) {
-      tracks.set(symbol, {
-        ticket: firstTicket,
-        side: direction.type,
-        entry: direction.entry,
-        tp1Distance: Math.abs(tp1 - direction.entry),
-        atr,
+    try {
+      const executed = await executeAutoTrade({
+        symbol,
+        lotSize,
+        maxTrades: tradeCount,
+        eaName,
+        credentials,
+        magic: SCALP_MAGIC,
+        onTradeExecute: (trade) => {
+          if (trade.status === "executed") {
+            broadcast(
+              `opened ${trade.side} ${trade.lotSize} at price ${trade.entry}, SL ${trade.sl}, TP1 ${trade.tp}`,
+              {
+                symbol,
+                side: trade.side,
+                entry: trade.entry,
+                stopLoss: trade.sl,
+                takeProfit: trade.tp,
+                status: "executed",
+                lotSize: trade.lotSize,
+                ...(trade.meta?.mtOrderId ? { orderId: trade.meta.mtOrderId } : {}),
+              },
+            );
+          } else if (trade.message) {
+            fail(trade.message, { symbol, status: trade.status });
+          }
+        },
+      });
+
+      const firstTicket = Number(
+        executed.find((trade) => trade.status === "executed" && trade.meta?.mtOrderId)?.meta?.mtOrderId ?? NaN,
+      );
+      const tp1 = direction.tp1 ?? direction.tp;
+      const atr = analysis.gate?.atr ?? Math.abs(direction.entry - direction.sl) * 0.5;
+      if (Number.isFinite(firstTicket)) {
+        tracks.set(symbol, {
+          ticket: firstTicket,
+          side: direction.type,
+          entry: direction.entry,
+          tp1Distance: Math.abs(tp1 - direction.entry),
+          atr,
+        });
+      } else if (executed.some((trade) => trade.status === "executed")) {
+        // The broker confirmed a fill but the bridge did not echo a ticket.
+        // Remember the position by symbol so the loop never stacks orders.
+        tracks.set(symbol, {
+          ticket: -1,
+          side: direction.type,
+          entry: direction.entry,
+          tp1Distance: Math.abs(tp1 - direction.entry),
+          atr,
+        });
+      }
+      setExecutionStage(
+        executed.some((trade) => trade.status === "executed")
+          ? `${symbol} ${direction.type} confirmed by MT5`
+          : `${symbol} ${direction.type} was not opened — see the log`,
+      );
+    } catch (error) {
+      fail(`${symbol}: order failed — ${error instanceof Error ? error.message : String(error)}`, {
+        symbol,
+        status: "failed",
       });
     }
   };
@@ -228,13 +303,19 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const tick = async () => {
     if (stopped) return;
     const positions = await listPositions();
-    if (positions === null) {
-      broadcast(
-        "Position monitoring unavailable — the VPS bridge did not answer /positions/list. Update bridge.py on the VPS to keep scalping.",
-        { ok: false, status: "blocked" },
-      );
-      schedule();
-      return;
+    const monitoring = positions !== null;
+
+    if (!monitoring && !monitoringNoticeShown) {
+      monitoringNoticeShown = true;
+      announce({
+        ok: true,
+        message: "Position monitoring unavailable — waiting for updated bridge",
+        status: "info",
+      });
+    }
+    if (monitoring && monitoringNoticeShown) {
+      monitoringNoticeShown = false;
+      broadcast("Position monitoring restored — the bridge now reports open positions");
     }
 
     for (const entry of symbols) {
@@ -242,17 +323,26 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       const symbol = entry.symbol.trim();
       if (!symbol) continue;
       const lotSize = Number(entry.lotSize) || 0.01;
-      const forSymbol = positions.filter((position) => position.symbol.toUpperCase() === symbol.toUpperCase());
       const cap = Math.max(1, Math.floor(entry.maxTrades));
+      const track = tracks.get(symbol);
+
+      const bridgePositions = positions
+        ? positions.filter((position) => position.symbol.toUpperCase() === symbol.toUpperCase())
+        : [];
+      const knowsOpen = monitoring ? bridgePositions.length > 0 : Boolean(track);
 
       // ── NORMAL MODE — nothing to do while a position is open. SL/TP1/TP2
       // are the broker's job, and a winner is never pulled early.
-      if (mode === "normal" && forSymbol.length > 0) continue;
+      if (mode === "normal" && knowsOpen) continue;
 
-      // ── An open position this loop owns: take the profit or leave it be.
-      if (forSymbol.length > 0) {
-        const position = forSymbol[0]!;
-        const track = tracks.get(symbol);
+      // ── SCALPER MODE, position open: take the profit or leave it be.
+      if (mode === "scalper" && knowsOpen) {
+        if (!monitoring) {
+          // Nothing can be closed without the endpoint, and nothing must be
+          // stacked either — the position stays and the loop waits.
+          continue;
+        }
+        const position = bridgePositions[0]!;
         const quote = await bridgePost<{ success?: boolean; bid?: number; ask?: number }>("/symbol/price", {
           credentials,
           symbol,
@@ -262,28 +352,27 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         const spread = Number.isFinite(bid) && Number.isFinite(ask) && ask > bid ? ask - bid : 0;
         const atr = track?.atr ?? 0;
         const moveInFavour =
-          position.type === "BUY" ? position.price_current - position.price_open : position.price_open - position.price_current;
+          position.type === "BUY"
+            ? position.price_current - position.price_open
+            : position.price_open - position.price_current;
         const scalpTarget = spread + atr * 0.2;
         const tp1Reached = track ? moveInFavour >= track.tp1Distance : false;
         if ((tp1Reached || (atr > 0 && moveInFavour >= scalpTarget)) && moveInFavour > 0) {
           const closed = await closePosition(position);
-          tracks.delete(symbol);
-          if (closed && !stopped) {
-            await openFor(symbol, lotSize, cap);
+          if (closed) {
+            tracks.delete(symbol);
+            if (!stopped) await openFor(symbol, lotSize, cap);
           }
         }
-        // Otherwise hold: TP2 stays as the broker's own take-profit, and a
-        // winner is never held waiting for it.
         continue;
       }
 
-      // ── The position vanished without this loop closing it → stop loss.
-      const lost = tracks.get(symbol);
-      if (lost) {
+      // ── Flat: the position vanished without this loop closing it → stop loss.
+      if (track && monitoring) {
         tracks.delete(symbol);
         waitUntil.set(symbol, nextM15Boundary());
         broadcast(
-          `ticket #${lost.ticket} closed by the broker (stop loss or take profit) — waiting for the next completed M15 candle before a new ${symbol} trade`,
+          `ticket #${track.ticket} closed by the broker (stop loss or take profit) — waiting for the next completed M15 candle before a new ${symbol} trade`,
           { symbol, ok: false, status: "stopped-out" },
         );
         continue;
@@ -309,27 +398,36 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       waitingNotice.delete(symbol);
       waitUntil.delete(symbol);
 
-      if (forSymbol.length >= cap) continue;
       await openFor(symbol, lotSize, cap);
     }
-
-    schedule();
   };
 
   const schedule = () => {
     if (stopped) return;
     timer = setTimeout(() => {
-      void tick();
+      void runTick();
     }, POLL_MS);
   };
 
-  void tick();
+  /** One guarded pass — a thrown step must never kill the loop silently. */
+  const runTick = async () => {
+    if (stopped) return;
+    try {
+      await tick();
+    } catch (error) {
+      fail(`loop error — ${error instanceof Error ? error.message : String(error)}`, { status: "failed" });
+    }
+    schedule();
+  };
+
+  void runTick();
 
   return {
     stop: () => {
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = null;
+      log("stopped");
     },
     isRunning: () => !stopped,
   };

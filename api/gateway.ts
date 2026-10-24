@@ -67,6 +67,7 @@ const ROUTES: Record<string, () => Promise<HandlerModule>> = {
   "device/register": () => import("./_handlers/device/register.js"),
   "ea-media": () => import("./_handlers/ea-media.js"),
   "generate-robot-key": () => import("./_handlers/generate-robot-key.js"),
+  "kv/portal-accounts": () => import("./_handlers/kv-portal-accounts.js"),
   licenses: () => import("./_handlers/licenses.js"),
   "mentor-status": () => import("./_handlers/mentor-status.js"),
   notifications: () => import("./_handlers/notifications.js"),
