@@ -24,6 +24,7 @@ import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
+import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -663,6 +664,8 @@ function AppHome() {
       setAnalysisOpen(false);
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
+      // "Bot stopped" — no outcome is claimed for the positions that stay open.
+      notifyBotStopped();
       return;
     }
     // STOP ANY PREVIOUS LOOP, then ask which mode this run uses.
@@ -717,6 +720,9 @@ function AppHome() {
     setToastTrades(totalTrades);
     setToastOpen(true);
     console.info("[bot] STEP 4 opening the AI TRADE card and starting the loop");
+    // NUMBERING RESTARTS WITH THE SESSION, before the first pass can fill an
+    // order — so the loop's first confirmed trade is "Trade 1".
+    beginBotSession();
     scalpRef.current = startScalpLoop({
       symbols: pairs.map((pair) => ({
         symbol: pair.symbol.trim(),
@@ -728,6 +734,8 @@ function AppHome() {
       mode,
     });
     console.info("[bot] STEP 5 loop started");
+    // "Bot started — Scalper mode, watching BTCUSDm" (Normal lists the symbols too).
+    notifyBotStarted(mode, pairs.map((pair) => pair.symbol.trim()));
     toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
       description:
         mode === "scalper"

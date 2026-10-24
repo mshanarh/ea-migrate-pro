@@ -61,7 +61,7 @@
  * still remembers from a session the owner has since revoked — can never open
  * the app, because it is never consulted.
  */
-import { markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/lib/auth-store";
+import { isPaymentExemptEmail, markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { checkAccessServer } from "@/lib/supabase-users";
 import { getDeviceBinding, bindDeviceToEmail } from "@/lib/supabase-users";
@@ -210,6 +210,44 @@ const CACHE_TTL_MS = 300_000;
  */
 const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
+
+/**
+ * THE LAST STORE BREAKDOWN the server sent for each email.
+ *
+ * The refusal screens log ONE line naming what every store answered (users
+ * table, KV registrations, paid ledger, portal accounts, licence keys, cloud
+ * access gate), so the next report shows the real cause instead of a guess.
+ * Memory only — never persisted, never read by the gate itself.
+ */
+const lastStores = new Map<string, { stores: Record<string, string> | null; unreadable: string[] }>();
+
+export function accessStores(email: string | null | undefined): {
+  stores: Record<string, string> | null;
+  unreadable: string[];
+} {
+  const clean = (email ?? "").trim().toLowerCase();
+  return lastStores.get(clean) ?? { stores: null, unreadable: [] };
+}
+
+/** The one diagnostic line a refusal logs. */
+export function formatAccessDiagnostic(
+  email: string,
+  verdict: string,
+  stores: Record<string, string> | null,
+  unreadable: string[] = [],
+): string {
+  const names = [
+    "users table",
+    "KV registrations",
+    "paid ledger",
+    "portal accounts",
+    "licence keys",
+    "cloud access gate",
+  ];
+  const parts = names.map((name) => `${name}=${stores?.[name] ?? "not read"}`);
+  if (unreadable.length > 0) parts.push(`unreachable=${unreadable.join("; ")}`);
+  return `[access] ${email} → ${verdict}: ${parts.join(" | ")}`;
+}
 
 /**
  * STALE-WHILE-REVALIDATE FOR CONFIRMED PAID ANSWERS.
@@ -448,6 +486,7 @@ export function invalidateAccessCache(email: string | null | undefined): void {
   navigation.delete(clean);
   localBindings.delete(clean);
   backgroundRevalidations.delete(clean);
+  lastStores.delete(clean);
 }
 
 /**
@@ -463,12 +502,14 @@ export async function resolveCloudAccess(
 ): Promise<CloudAccess | null> {
   const clean = (email ?? "").trim().toLowerCase();
   if (!clean) return "unpaid";
-  // NO OWNER SHORTCUT. This used to answer "admin" before touching the
-  // database, which meant a platform address opened the app with no payment
-  // record at all — the exact thing "paid only" has to mean. Every email,
-  // owner included, goes to the server below, which is answered by the ledger.
-  // The browser never imports the KV client: this endpoint answers with the
-  // real server-side verdict, and the browser only reads one JSON shape.
+  // ── THE SOLE ADMIN, FIRST ────────────────────────────────────────────────
+  // biyasentobeko222@gmail.com is the account that administers this app. It
+  // passes before ANY store is consulted, so a KV timeout, a missing ledger
+  // row or a store that disagrees can never send it to the plan chooser.
+  if (isPaymentExemptEmail(clean)) return "admin";
+  // Every other email goes to the server below, which reads the stores. The
+  // browser never imports the KV client: this endpoint answers with the real
+  // server-side verdict, and the browser only reads one JSON shape.
   const bundle = await resolveBundle(clean, options?.fresh === true);
   return bundle.status;
 }
@@ -540,6 +581,11 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
 
   try {
     const server = await checkAccessServer(clean, getDeviceId());
+    // REMEMBER WHAT EACH STORE SAID — used by the refusal diagnostic below.
+    lastStores.set(clean, {
+      stores: server.stores ?? null,
+      unreadable: server.unreadable ?? [],
+    });
     // Endpoint could not decide — caller must fail closed. Nothing is cached.
     if (!server.ok) {
       console.warn(`[payment-gate] access check undecided: ${server.detail ?? "no verdict"}`);
@@ -693,12 +739,14 @@ export async function requireVerifiedAccess(
   // cloud decides again on this very pass. Nobody is exempt, owners included.
   if (consumeStaleSession()) appSignOut();
   if (!email) return { action: "signin" };
-  // NO OWNER PASS-THROUGH. Platform owners used to return "pass" here before
-  // any database call, so the owner account could never be locked out of the
-  // app it administers. That is precisely the hole "paid only, everybody"
-  // closes: if the owner's email is not on the payment ledger, the app does not
-  // open for it either. Mark it paid in the console like any other account.
   const clean = email.trim().toLowerCase();
+  /**
+   * ── THE SOLE ADMIN, FIRST ────────────────────────────────────────────────
+   * biyasentobeko222@gmail.com administers this app and must never be sent to
+   * the plan chooser, whatever any store says (or fails to say). The device
+   * binding below still runs — that is a session rule, not a payment verdict.
+   */
+  const adminFirst = isPaymentExemptEmail(clean);
 
   let bundle: Bundle = { status: null, binding: null, bindingKnown: false };
   try {
@@ -728,7 +776,7 @@ export async function requireVerifiedAccess(
     appSignOut();
     return { action: "signin" };
   }
-  const cloud = bundle.status;
+  const cloud: CloudAccess | null = adminFirst ? "admin" : bundle.status;
   if (cloud === "paid") {
     // Reconcile the local store so in-app UI (which reads it) agrees with
     // the cloud decision. This is a downstream mirror, never the source.

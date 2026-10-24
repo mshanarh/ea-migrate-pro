@@ -30,6 +30,9 @@ vi.mock("@supabase/supabase-js", () => ({
       const chain = {
         select: () => chain,
         eq: () => chain,
+        // The gate matches the exact address case-insensitively when it is
+        // safe to (no LIKE wildcards in it) — see check-access.ts.
+        ilike: () => chain,
         neq: () => chain,
         order: () => chain,
         limit: () => chain,
@@ -135,9 +138,24 @@ describe("check-access — a claimed licence key is proof of access", () => {
     expect(body["isPaid"]).toBe(true);
   });
 
-  it("a revoked KV record STILL WINS over a licence key on the row", async () => {
+  it("ANY paid mark wins — one store's disagreement never downgrades another's", async () => {
+    // The console record says unpaid, the `users` row holds a claimed key.
+    // The owner's rule is explicit: if EVEN ONE authoritative store marks the
+    // address paid, the account passes. A revocation therefore stands only
+    // when nothing else marks the address paid.
     kvRecord = { email: EMAIL, isPaid: false, paidAt: null, status: "approved" };
     db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
+
+    const { status, body } = await callCheckAccess();
+
+    expect(status).toBe(200);
+    expect(body["status"]).toBe("paid");
+    expect(body["isPaid"]).toBe(true);
+  });
+
+  it("keeps REVOKED when no store marks the address paid", async () => {
+    kvRecord = { email: EMAIL, isPaid: false, paidAt: null, status: "approved" };
+    db.users = { license_key: "", device_id: null, device_email: null };
 
     const { status, body } = await callCheckAccess();
 

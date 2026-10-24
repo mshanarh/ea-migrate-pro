@@ -48,10 +48,25 @@ jobs:
           (cd build/apk && zip -q -u ../base.apk classes.dex)
 
           "$BT_DIR/zipalign" -f 4 build/base.apk build/aligned.apk
-          keytool -genkeypair -keystore build/ks.jks -storepass eamigrate \
-            -keypass eamigrate -alias ea -keyalg RSA -keysize 2048 \
-            -validity 10000 -dname "CN=EA Migrate" >/dev/null 2>&1
-          "$BT_DIR/apksigner" sign --ks build/ks.jks --ks-pass pass:eamigrate \
+
+          # THE PINNED RELEASE KEYSTORE.
+          #
+          # This used to generate a NEW key on every run, so every APK had a
+          # different signature and Android refused to install one over the
+          # previous one (INSTALL_FAILED_UPDATE_INCOMPATIBLE) — the user had to
+          # uninstall and lose the app's data each time. The key now lives in
+          # the repository (android/ks.jks) and is reused by every build, so a
+          # fresh APK installs straight over the last one. The first run after
+          # this change creates it and commits it, which pins it for good.
+          if [ -f android/ks.jks ]; then
+            echo "Using the pinned release keystore (android/ks.jks)"
+          else
+            echo "No pinned keystore yet — creating it now"
+            keytool -genkeypair -keystore android/ks.jks -storepass eamigrate \
+              -keypass eamigrate -alias ea -keyalg RSA -keysize 2048 \
+              -validity 10000 -dname "CN=EA Migrate" >/dev/null 2>&1
+          fi
+          "$BT_DIR/apksigner" sign --ks android/ks.jks --ks-pass pass:eamigrate \
             --key-pass pass:eamigrate --out public/ea-migrate.apk build/aligned.apk
 
           ls -la public/ea-migrate.apk
@@ -61,5 +76,8 @@ jobs:
           git config user.name "ea-migrate-bot"
           git config user.email "bot@eamigrate.dev"
           git add public/ea-migrate.apk
-          git commit -m "[skip ci] Ship fresh Android APK"
+          # The pinned keystore is committed WITH the APK it signed, so the next
+          # build reuses exactly this key.
+          git add -f android/ks.jks
+          git commit -m "[skip ci] Ship fresh Android APK" || echo "nothing new to commit"
           git push

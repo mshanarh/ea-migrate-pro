@@ -50,6 +50,14 @@ export type RegistrationResult = {
    * retry message instead of the plan chooser.
    */
   unavailable?: boolean;
+  /**
+   * What EACH store answered for this email, straight from /api/check-access —
+   * logged as one line the moment the gate refuses, so the next report shows
+   * the real cause instead of a guess.
+   */
+  stores?: Record<string, string>;
+  /** Sources that could not be READ — never evidence of non-payment. */
+  unreadable?: string[];
 };
 
 function clean(email: string) {
@@ -83,6 +91,10 @@ export type AccessServerAnswer = {
   deviceMatches?: boolean;
   /** No verdict was reached — a source could not be read. Never "unpaid". */
   unavailable?: boolean;
+  /** What each store answered — see RegistrationResult.stores. */
+  stores?: Record<string, string>;
+  /** Sources that could not be read. */
+  unreadable?: string[];
   /** Technical detail for logs/diagnostics, never for the user-facing message. */
   detail?: string;
 };
@@ -119,6 +131,7 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
       deviceMatches?: unknown;
       error?: string;
       unreadable?: unknown;
+      stores?: unknown;
     };
     if (!payload.ok || payload.status == null) {
       const sources = Array.isArray(payload.unreadable) ? payload.unreadable.join(", ") : "";
@@ -132,6 +145,17 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
       status,
       paidAt: typeof payload.paidAt === "string" ? payload.paidAt : "",
     };
+    // THE STORES TRAVEL WITH THE VERDICT — the gate logs them when it refuses.
+    if (payload.stores && typeof payload.stores === "object") {
+      const stores: Record<string, string> = {};
+      for (const [name, value] of Object.entries(payload.stores as Record<string, unknown>)) {
+        if (typeof value === "string") stores[name] = value;
+      }
+      answer.stores = stores;
+    }
+    if (Array.isArray(payload.unreadable)) {
+      answer.unreadable = payload.unreadable.filter((entry): entry is string => typeof entry === "string");
+    }
     // Only present when the SERVER actually read the binding — see ServerDeviceBinding.
     if (payload.deviceBinding !== undefined) {
       const raw = payload.deviceBinding as { deviceEmail?: unknown; deviceId?: unknown } | null;
@@ -178,22 +202,43 @@ export async function registerWithEmail(
   const dbClient = db();
   const address = clean(email);
   if (!address) return { outcome: "checkout", user: null, verified: false, error: "missing-email" };
+  /**
+   * ── 1. ADMIN FIRST ────────────────────────────────────────────────────────
+   * The sole admin (biyasentobeko222@gmail.com, and its dotless alias) passes
+   * BEFORE any store is consulted: the login gate must never send that address
+   * to the plan chooser, whatever a store happens to say. Every other email is
+   * decided from the stores below.
+   */
+  const adminFirst = isPaymentExemptEmail(address);
   // UNCONFIGURED SUPABASE → CHECKOUT. There is no database to verify against,
   // so there is no way to confirm anybody paid; "we cannot check" must never
   // read as "this account is fine". This only affects a build with no
   // VITE_SUPABASE_URL, which is not attacker-controllable.
   if (!dbClient) {
-    const access = await checkAccessServer(address);
+    const access = adminFirst
+      ? ({ ok: true, isPaid: true, status: "admin" } as AccessServerAnswer)
+      : await checkAccessServer(address);
     if (access.ok && access.isPaid) {
       return { outcome: "allow", user: null, verified: true };
     }
-    return { outcome: "checkout", user: null, verified: false, error: "supabase-not-configured" };
+    return {
+      outcome: "checkout",
+      user: null,
+      verified: false,
+      error: "supabase-not-configured",
+      // A store we could not read is not a refusal.
+      ...(access.ok ? {} : { unavailable: true }),
+    };
   }
 
   // PAID FIRST. A paying customer must never land on the plan page because the
   // browser could not import the old KV client. Ask the server, which already
   // owns the decision, and let the address through if the ledger says paid.
-  const access = await checkAccessServer(address);
+  //
+  // The admin short-circuits the store read entirely (see `adminFirst`).
+  const access = adminFirst
+    ? ({ ok: true, isPaid: true, status: "admin" } as AccessServerAnswer)
+    : await checkAccessServer(address);
   // NO VERDICT IS NOT "UNPAID". A source that could not be read leaves the
   // account undecided, and the login screen's answer to that is a retry
   // message — never the plan chooser.
@@ -205,6 +250,8 @@ export async function registerWithEmail(
       verified: false,
       unavailable: true,
       ...(access.detail ? { error: access.detail } : {}),
+      ...(access.unreadable ? { unreadable: access.unreadable } : {}),
+      ...(access.stores ? { stores: access.stores } : {}),
     };
   }
   if (access.isPaid) {
@@ -323,7 +370,14 @@ export async function registerWithEmail(
   // which is exactly the hole this gate exists to close — a role is not a
   // receipt. Both lists still govern what they are good for (portal admin
   // rights); neither opens the trading app.
-  if (!user) return { outcome: "checkout", user: null, verified: false };
+  if (!user) {
+    return {
+      outcome: "checkout",
+      user: null,
+      verified: false,
+      ...(access.stores ? { stores: access.stores } : {}),
+    };
+  }
   // PAYMENT IS THE ONLY THING THAT OPENS THE APP.
   //   a ledger row     → the console's "Mark paid" wrote it. `paid_emails` is
   //                      the same table the console's Paid tab reads, so

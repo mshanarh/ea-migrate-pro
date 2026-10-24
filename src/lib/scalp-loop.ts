@@ -6,6 +6,16 @@ import {
 } from "./auto-trade";
 import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
 import { setExecutionStage, updateExecutionPlan } from "./execution-state";
+import {
+  notifyBrokerClose,
+  notifyCloseThenOpen,
+  notifyTradeClosed,
+  notifyTradeOpened,
+  notifyTradeSkipped,
+  reserveTradeNumber,
+  type ClosedTrade,
+  type OpenedTrade,
+} from "./bot-notify";
 
 /**
  * THE BOT LOOP — both behaviours, one engine.
@@ -69,7 +79,18 @@ type Track = {
   /** TP1 distance in price, measured at the signal that opened it. */
   tp1Distance: number;
   atr: number;
+  /** The number the notification gave this trade when it opened. */
+  tradeNo: number;
+  /** The exact levels the broker was given — used to name a broker-side close. */
+  sl: number;
+  tp: number;
 };
+
+/** What one analyse-and-open pass did — the scalper combines it with a close. */
+type OpenOutcome =
+  | { kind: "opened"; opens: OpenedTrade[] }
+  | { kind: "skipped"; reason: string }
+  | { kind: "failed"; reason: string };
 
 /** One line for the popup / bot log — never a claim the broker did not make. */
 function announce(detail: Record<string, unknown>) {
@@ -151,7 +172,15 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     return Array.isArray(reply.data?.positions) ? reply.data!.positions! : [];
   };
 
-  const closePosition = async (position: BridgePosition): Promise<boolean> => {
+  /**
+   * CLOSE ONE POSITION — only ever one this loop opened (the list call filters
+   * on `SCALP_MAGIC`, so manual trades and other EAs are never touched).
+   *
+   * Returns the BROKER'S OWN profit, or null when the close did not happen.
+   * Nothing is notified here on purpose: in scalper mode this close and the
+   * trade that follows it are sent as ONE alert, so the caller decides.
+   */
+  const closePosition = async (position: BridgePosition): Promise<number | null> => {
     const reply = await bridgePost<{ success?: boolean; profit?: number; message?: string }>(
       "/positions/close",
       { credentials, ticket: position.ticket },
@@ -166,7 +195,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         status: "failed",
         symbol: position.symbol,
       });
-      return false;
+      return null;
     }
     const profit = Number(reply.data?.profit ?? position.profit);
     const sign = profit >= 0 ? "+" : "−";
@@ -177,11 +206,26 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       profit,
       entry: position.price_current,
     });
-    return true;
+    return Number.isFinite(profit) ? profit : null;
   };
 
-  /** Analyse + open immediately, exactly as the signal reads. */
-  const openFor = async (symbol: string, lotSize: number, maxTrades: number) => {
+  /**
+   * Analyse + open immediately, exactly as the signal reads.
+   *
+   * `deferNotify` is for the scalper's close-then-open step: the fills are
+   * numbered here but the phone is told about them together with the close
+   * they followed. Every other caller gets one notification per confirmed fill.
+   */
+  const openFor = async (
+    symbol: string,
+    lotSize: number,
+    maxTrades: number,
+    options: { deferNotify?: boolean } = {},
+  ): Promise<OpenOutcome> => {
+    const notifyNow = options.deferNotify !== true;
+    const opens: OpenedTrade[] = [];
+    let skipReason: string | null = null;
+    let failureReason: string | null = null;
     setExecutionStage(`Analysing ${symbol} candles…`);
     updateExecutionPlan({ symbol });
     log(`analysing ${symbol} (mode ${mode})`);
@@ -192,7 +236,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       fail(`${symbol}: could not reach the bridge — ${reason}`, { symbol, status: "failed" });
-      return;
+      return { kind: "failed", reason };
     }
 
     log(
@@ -206,7 +250,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         status: "blocked",
         reason: analysis.direction.reason,
       });
-      return;
+      // THE EXACT BLOCK IS NAMED on the phone — once per symbol+reason, never
+      // on every six-second pass.
+      if (notifyNow) notifyTradeSkipped(symbol, analysis.direction.reason);
+      return { kind: "skipped", reason: analysis.direction.reason };
     }
 
     const direction = analysis.direction;
@@ -244,6 +291,16 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         magic: SCALP_MAGIC,
         onTradeExecute: (trade) => {
           if (trade.status === "executed") {
+            // A NUMBER IS SPENT ONLY HERE — on a fill MT5 confirmed.
+            const opened: OpenedTrade = {
+              number: reserveTradeNumber(),
+              side: trade.side,
+              symbol,
+              lotSize: trade.lotSize,
+              price: trade.entry,
+            };
+            opens.push(opened);
+            if (notifyNow) notifyTradeOpened(opened);
             broadcast(
               `opened ${trade.side} ${trade.lotSize} at price ${trade.entry}, SL ${trade.sl}, TP1 ${trade.tp}`,
               {
@@ -259,6 +316,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
             );
           } else if (trade.message) {
             fail(trade.message, { symbol, status: trade.status });
+            if (trade.status === "blocked") {
+              skipReason = trade.message;
+              if (notifyNow) notifyTradeSkipped(symbol, trade.message);
+            } else {
+              failureReason = trade.message;
+            }
           }
         },
       });
@@ -268,36 +331,35 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       );
       const tp1 = direction.tp1 ?? direction.tp;
       const atr = analysis.gate?.atr ?? Math.abs(direction.entry - direction.sl) * 0.5;
-      if (Number.isFinite(firstTicket)) {
+      const filled = executed.some((trade) => trade.status === "executed");
+      if (filled) {
+        // The number the FIRST fill was given is the one the close reports.
         tracks.set(symbol, {
-          ticket: firstTicket,
+          ticket: Number.isFinite(firstTicket) ? firstTicket : -1,
           side: direction.type,
           entry: direction.entry,
           tp1Distance: Math.abs(tp1 - direction.entry),
           atr,
-        });
-      } else if (executed.some((trade) => trade.status === "executed")) {
-        // The broker confirmed a fill but the bridge did not echo a ticket.
-        // Remember the position by symbol so the loop never stacks orders.
-        tracks.set(symbol, {
-          ticket: -1,
-          side: direction.type,
-          entry: direction.entry,
-          tp1Distance: Math.abs(tp1 - direction.entry),
-          atr,
+          tradeNo: opens[0]?.number ?? 0,
+          sl: direction.sl,
+          tp: tp1,
         });
       }
       setExecutionStage(
-        executed.some((trade) => trade.status === "executed")
-          ? `${symbol} ${direction.type} confirmed by MT5`
-          : `${symbol} ${direction.type} was not opened — see the log`,
+        filled ? `${symbol} ${direction.type} confirmed by MT5` : `${symbol} ${direction.type} was not opened — see the log`,
       );
     } catch (error) {
-      fail(`${symbol}: order failed — ${error instanceof Error ? error.message : String(error)}`, {
+      const reason = error instanceof Error ? error.message : String(error);
+      fail(`${symbol}: order failed — ${reason}`, {
         symbol,
         status: "failed",
       });
+      return { kind: "failed", reason };
     }
+
+    if (opens.length > 0) return { kind: "opened", opens };
+    if (skipReason) return { kind: "skipped", reason: skipReason };
+    return { kind: "failed", reason: failureReason ?? "MT5 did not confirm any order" };
   };
 
   const tick = async () => {
@@ -358,10 +420,27 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         const scalpTarget = spread + atr * 0.2;
         const tp1Reached = track ? moveInFavour >= track.tp1Distance : false;
         if ((tp1Reached || (atr > 0 && moveInFavour >= scalpTarget)) && moveInFavour > 0) {
-          const closed = await closePosition(position);
-          if (closed) {
+          const closedTrack = tracks.get(symbol);
+          const profit = await closePosition(position);
+          if (profit !== null) {
+            const closeInfo: ClosedTrade = { number: closedTrack?.tradeNo ?? 0, profit };
             tracks.delete(symbol);
-            if (!stopped) await openFor(symbol, lotSize, cap);
+            if (stopped) {
+              notifyTradeClosed(closeInfo);
+              continue;
+            }
+            // ── SCALPER: CLOSE + RE-ANALYSE + OPEN, AS ONE ALERT ──
+            // The close DID happen, so it is always reported. When the next
+            // trade follows, the two share a single notification; when the
+            // re-analysis is blocked, the phone gets the close and then the
+            // exact block, so the trader always knows what the bot did.
+            const outcome = await openFor(symbol, lotSize, cap, { deferNotify: true });
+            if (outcome.kind === "opened" && outcome.opens.length > 0) {
+              notifyCloseThenOpen(closeInfo, outcome.opens);
+            } else {
+              notifyTradeClosed(closeInfo);
+              if (outcome.kind === "skipped") notifyTradeSkipped(symbol, outcome.reason);
+            }
           }
         }
         continue;
@@ -375,6 +454,21 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
           `ticket #${track.ticket} closed by the broker (stop loss or take profit) — waiting for the next completed M15 candle before a new ${symbol} trade`,
           { symbol, ok: false, status: "stopped-out" },
         );
+        // WHICH LEVEL CLOSED IT — read from the live price, and only named when
+        // the price actually proves one. No profit figure is invented: the
+        // broker does not report a result for a close this bot did not place.
+        const lastQuote = await bridgePost<{ success?: boolean; bid?: number; ask?: number }>("/symbol/price", {
+          credentials,
+          symbol,
+        });
+        const lastPrice = Number(track.side === "BUY" ? lastQuote.data?.bid : lastQuote.data?.ask);
+        notifyBrokerClose({
+          number: track.tradeNo,
+          side: track.side,
+          stopLoss: track.sl,
+          takeProfit: track.tp,
+          price: Number.isFinite(lastPrice) ? lastPrice : null,
+        });
         continue;
       }
 

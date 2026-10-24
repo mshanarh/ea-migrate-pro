@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PictureInPicture2 } from "lucide-react";
 import { useAppState } from "@/lib/app-store";
 import { callNative, hasNativeBridge, queryNative, toNativeImage } from "@/lib/native-bridge";
+import { notifyExecutionResult } from "@/lib/bot-notify";
 
 /** Clamp a coordinate so the button can never be dragged off-screen. */
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
@@ -351,9 +352,17 @@ export function DraggableBotPopup() {
       // numbers, and refuses to repeat itself. This popup only narrates the
       // log — speaking here as well would stack two utterances on top of
       // every fill.
-      if (result.ok && /EXECUTED|SUMMARY/.test(result.message)) {
-        callNative("showTradeNotification", eaName, result.message);
-      }
+      // ONE NOTIFICATION PATH. The wording — title, per-session numbering, the
+      // exact block on a skip — lives in @/lib/bot-notify; this listener only
+      // feeds it, and it announces nothing but a CONFIRMED fill.
+      notifyExecutionResult({
+        ok: result.ok,
+        message: result.message,
+        side: result.side,
+        symbol: result.symbol,
+        lotSize: (result as { lotSize?: number | null }).lotSize ?? null,
+        entry: (result as { entry?: number | null }).entry ?? null,
+      });
     };
     window.addEventListener("eamp:execution-result", onExecutionResult);
     // Compatibility no-op — visibility is store-driven now.

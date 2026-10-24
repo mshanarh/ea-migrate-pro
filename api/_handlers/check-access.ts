@@ -158,149 +158,277 @@ type AccessAnswer = Record<string, unknown> & {
   isPaid: boolean;
   status: string;
   paidAt?: string;
+  /** What EACH store said about this email — logged when the gate refuses. */
+  stores?: Record<string, string>;
 };
 
-async function resolveAccess(email: string, deviceId: string | null): Promise<AccessAnswer> {
-  // Server-side only now — this file never ships KV client code to the browser.
-  const { isAdminEmail, getRegistration } = await import("./_registry.js");
+/**
+ * ONE STORE'S ANSWER.
+ *
+ * `readable: false` means WE COULD NOT ASK — it is never "not paid". Three
+ * states are kept apart on purpose: a paid mark, a readable "no", and no
+ * answer at all.
+ */
+type StoreVerdict = {
+  paid: boolean;
+  paidAt?: string | null;
+  readable: boolean;
+  detail: string;
+  /** The console deliberately marked this email unpaid. */
+  revoked?: boolean;
+  /** The console rejected this registration. */
+  rejected?: boolean;
+};
 
-  let answer: AccessAnswer | null = null;
-  /**
-   * SOURCES THAT COULD NOT BE READ — NEVER EVIDENCE OF NON-PAYMENT.
-   *
-   * A paid customer whose portal/ledger read fails is not unpaid; the answer
-   * is "we could not check", and the client turns that into a retry message
-   * instead of the plan chooser. Only a source that ANSWERED can deny.
-   */
-  const unreadable: string[] = [];
-  if (isAdminEmail(email)) {
-    answer = { ok: true, isPaid: true, status: "admin" };
+function noAnswer(detail: string): StoreVerdict {
+  return { paid: false, readable: false, detail };
+}
+
+
+/** The six sources the gate reports — see the diagnostic line below. */
+const STORE_NAMES = [
+  "users table",
+  "KV registrations",
+  "paid ledger",
+  "portal accounts",
+  "licence keys",
+  "cloud access gate",
+] as const;
+
+function diagnosticLine(email: string, stores: Record<string, string>, verdict: string): string {
+  return `[check-access] ${email} → ${verdict}: ${STORE_NAMES.map((name) => `${name}=${stores[name] ?? "—"}`).join(" | ")}`;
+}
+
+/** eamp:registrations — the console's record, which the portal's account is. */
+async function readKvRegistrations(email: string): Promise<StoreVerdict> {
+  try {
+    const { getRegistration } = await import("./_registry.js");
+    const record = await getRegistration(email);
+    if (!record) return { paid: false, readable: true, detail: "no registration" };
+    if (record.isPaid === true) {
+      return {
+        paid: true,
+        paidAt: record.paidAt,
+        readable: true,
+        detail: `paid${record.paidAt ? ` at ${record.paidAt}` : " (no timestamp)"}`,
+      };
+    }
+    if (record.isPaid === false && record.paidAt === null) {
+      return { paid: false, readable: true, revoked: true, detail: "marked unpaid by the console" };
+    }
+    if (record.status === "rejected") {
+      return { paid: false, readable: true, rejected: true, detail: "rejected in the console" };
+    }
+    return { paid: false, readable: true, detail: "registered, no payment" };
+  } catch (error) {
+    return noAnswer(`KV registrations → ${errorText(error)}`);
+  }
+}
+
+/**
+ * THE `users` ROW — the payment flag the console writes, plus the holder-bound
+ * licence key (only ever proof for THIS account: it is written after the paid
+ * check and the single-use claim, and a key bound to another device does not
+ * count here — that device rule still runs at sign-in).
+ *
+ * `is_admin` is REPORTED but never counts as payment: a role is not a receipt.
+ */
+async function readUsersStore(email: string, deviceId: string | null): Promise<StoreVerdict> {
+  const db = await serviceClient();
+  if (!db) return noAnswer("users table → database not configured");
+  try {
+    const base = db.from("users").select("is_paid, is_admin, license_key, device_id");
+    const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
+    const { data, error } = await scoped.maybeSingle();
+    if (error) {
+      if (absentStore(error)) return { paid: false, readable: true, detail: "table not present in this deployment — no row" };
+      return noAnswer(`users table → ${error.message}`);
+    }
+    if (!data) return { paid: false, readable: true, detail: "no row" };
+    const row = data as { is_paid?: boolean | null; is_admin?: boolean | null; license_key?: string | null; device_id?: string | null };
+    const flag = row.is_paid === true;
+    const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
+    const mismatch = Boolean(key && row.device_id && deviceId && row.device_id !== deviceId);
+    return {
+      paid: flag || Boolean(key) && !mismatch,
+      readable: true,
+      detail: `${flag ? "paid flag" : "not paid"}${key ? (mismatch ? ", key bound to another device" : ", key held") : ""}${row.is_admin ? ", admin flag" : ""}`,
+    };
+  } catch (error) {
+    return noAnswer(`users table → ${errorText(error)}`);
+  }
+}
+
+/** A table this deployment never created cannot hold a paid mark. */
+function absentStore(error: { code?: string; message?: string } | null | undefined): boolean {
+  const code = error?.code ?? "";
+  if (["42P01", "42703", "PGRST204", "PGRST205"].includes(code)) return true;
+  return /does not exist|could not find the table|schema cache/i.test(error?.message ?? "");
+}
+
+/** The console's payment ledger — `paid_emails`, the same rows the Paid tab reads. */
+async function readPaidLedger(email: string): Promise<StoreVerdict> {
+  const ledger = await paidEmailInSupabase(email);
+  if (!ledger.readable) return noAnswer(ledger.detail);
+  return {
+    paid: Boolean(ledger.paidAt),
+    paidAt: ledger.paidAt,
+    readable: true,
+    detail: ledger.detail,
+  };
+}
+
+/** The portal's own payment record — `portal_payments`, read with the service role. */
+async function readPortalAccounts(email: string): Promise<StoreVerdict> {
+  const portal = await portalPaymentInSupabase(email);
+  if (!portal.readable) return noAnswer(portal.detail);
+  return { paid: portal.paid, paidAt: portal.paidAt ?? null, readable: true, detail: portal.detail };
+}
+
+/**
+ * LICENCE KEYS — the live KV store (keys assigned to this client) and the
+ * legacy `license_keys` table. Either one holding a key for this address is a
+ * paid mark of its own; the holder-bound `users.license_key` is counted in
+ * `readUsersStore`.
+ */
+async function readLicenceKeys(email: string): Promise<StoreVerdict> {
+  const details: string[] = [];
+  let paid = false;
+  let readable = true;
+
+  try {
+    const { kvRead } = await import("./_registry.js");
+    const count = Number(await kvRead(["SCARD", `eamp:license-by-client:${email}`])) || 0;
+    if (count > 0) paid = true;
+    details.push(`KV keys for client: ${count}`);
+  } catch (error) {
+    readable = false;
+    details.push(`KV licence keys → ${errorText(error)}`);
+  }
+
+  const db = await serviceClient();
+  if (!db) {
+    readable = false;
+    details.push("licence keys → database not configured");
   } else {
-    /**
-     * THE STORE'S EXPLICIT WORD WINS — paid, revoked and rejected are the
-     * owner's decisions and are never second-guessed below.
-     *
-     * A FAILED READ IS NOT A VERDICT. `getRegistration` throws when the KV REST
-     * call times out, and that used to fail this whole endpoint (the client
-     * reads the failure as "unpaid" and bounces a paying customer to
-     * checkout). A timeout therefore falls THROUGH to the proven fallbacks
-     * instead of deciding anything.
-     */
-    let record: Awaited<ReturnType<typeof getRegistration>> = null;
     try {
-      record = await getRegistration(email);
-    } catch (error) {
-      console.warn("[check-access] registration store unavailable:", error);
-      unreadable.push(`KV registrations → ${errorText(error)}`);
-    }
-    if (record) {
-      if (record.isPaid && record.paidAt) {
-        answer = { ok: true, isPaid: true, status: "paid", paidAt: record.paidAt };
-      } else if (record.isPaid === false && record.paidAt === null) {
-        answer = { ok: true, isPaid: false, status: "revoked" };
-      } else if (record.status === "rejected") {
-        answer = { ok: true, isPaid: false, status: "rejected" };
-      }
-      // A record that simply has no payment (or an unreadable store) is not a
-      // refusal — fall through to the ledger and the claimed-key proof below.
-    }
-    if (!answer) {
-      // Fallback 1: the same payment ledger the console reads.
-      const paid = await paidEmailInSupabase(email);
-      if (!paid.readable) unreadable.push(paid.detail);
-      if (paid.paidAt) {
-        answer = { ok: true, isPaid: true, status: "paid", paidAt: paid.paidAt };
+      const base = db.from("license_keys").select("key");
+      const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
+      const { data, error } = await scoped.limit(1).maybeSingle();
+      if (error) {
+        if (absentStore(error)) details.push("license_keys → not present in this deployment");
+        else {
+          readable = false;
+          details.push(`license_keys → ${error.message}`);
+        }
+      } else if (data) {
+        paid = true;
+        details.push("legacy key held");
       } else {
-        // Fallback 1b: read the Supabase `users` row for `license_key`.
-        // This is holder-bound proof: the column is only written after the
-        // single-use claim and paid check succeeded for THIS account.
-        // If KV was absent or unreadable and paid_emails has no row, the license_key
-        // from the users table IS the payment proof for key customers.
-        const db = await serviceClient();
-        let licenseKeyProof = false;
-        let deviceMismatch = false;
-        if (db) {
-          try {
-            const { data, error } = await db
-              .from("users")
-              .select("license_key, device_id")
-              .eq("email", email)
-              .maybeSingle();
-            if (!error && data) {
-              const row = data as { license_key?: string | null; device_id?: string | null };
-              const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
-              if (key) {
-                // If the row has a device_id and the request carries a deviceId,
-                // require them to match; a mismatch answers unpaid.
-                if (row.device_id && deviceId && row.device_id !== deviceId) {
-                  deviceMismatch = true;
-                } else {
-                  licenseKeyProof = true;
-                }
-              }
-            }
-          } catch (error) {
-            // DB read failure — record it and continue to the next fallback.
-            unreadable.push(`users row → ${errorText(error)}`);
-          }
-        }
-        if (deviceMismatch) {
-          answer = { ok: true, isPaid: false, status: "unpaid" };
-        } else if (licenseKeyProof) {
-          // license_key IS the payment proof — even when KV and paid_emails
-          // both cannot answer, a set license_key means the account is paid.
-          answer = { ok: true, isPaid: true, status: "paid" };
-        } else if (await claimedLicenseKeyProof(email, deviceId, unreadable)) {
-          // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
-          //
-          // api/activation.ts writes `users.license_key` only after the paid
-          // check AND the single-use claim succeeded for THIS account, so the
-          // column is holder-bound server-side proof — never something a browser
-          // can set. Without this, a customer who just activated a key is
-          // answered "unpaid" here (their money lives in the key, not in the
-          // ledger) and is sent back to the email + code form.
-          answer = { ok: true, isPaid: true, status: "paid" };
-        } else {
-          // ── ANY AUTHORITATIVE PAID RECORD IS ENOUGH ──
-          //
-          // The portal's own payment table is a paid source in its own right:
-          // being marked paid there opens the app. And a source that could not
-          // be READ is not a "no" — the answer is "we could not check", which
-          // the client shows as a retry message, never as the plan chooser.
-          const portal = await portalPaymentInSupabase(email);
-          if (portal.paid) {
-            answer = {
-              ok: true,
-              isPaid: true,
-              status: "paid",
-              ...(portal.paidAt ? { paidAt: portal.paidAt } : {}),
-            };
-          } else if (unreadable.length > 0) {
-            console.warn("[check-access] undecided — unreadable sources:", unreadable.join(" | "));
-            answer = {
-              ok: false,
-              isPaid: false,
-              status: "undecided",
-              error: "Access check could not complete — one record source was unreachable",
-              unreadable,
-            };
-          } else {
-            answer = { ok: true, isPaid: false, status: "unpaid" };
-          }
-        }
+        details.push("no key held");
       }
+    } catch (error) {
+      readable = false;
+      details.push(`license_keys → ${errorText(error)}`);
     }
   }
 
-  // NOTHING DECIDED (only reachable when an unexpected branch falls through) —
-  // never a refusal: the client shows the retry line for this answer.
-  const decided: AccessAnswer = answer ?? {
-    ok: false,
-    isPaid: false,
-    status: "undecided",
-    error: "Access check could not complete — one record source was unreachable",
-    unreadable,
-  };
+  return { paid, readable, detail: details.join(" · ") };
+}
+
+/**
+ * THE DECISION — every store is read, then one rule decides:
+ *
+ *   1. ADMIN passes first, before any store is consulted.
+ *   2. ANY paid mark wins. One store saying "paid" is never downgraded by
+ *      another store saying "no", being absent, or failing to answer.
+ *   3. A deliberate revocation / rejection in the console stands only when
+ *      nothing marks the address paid.
+ *   4. Otherwise: every store answered and none is paid → `unpaid` (the plan
+ *      chooser); ANY store unreachable → `undecided`, which the client turns
+ *      into "Checking your subscription… Retry" and never into the plans.
+ *
+ * One diagnostic line is logged with every store's answer, so the next report
+ * shows the real cause instead of a guess.
+ */
+async function resolveAccess(email: string, deviceId: string | null): Promise<AccessAnswer> {
+  // Server-side only now — this file never ships KV client code to the browser.
+  const { isAdminEmail } = await import("./_registry.js");
+
+  // ── 1. ADMIN FIRST ────────────────────────────────────────────────────────
+  if (isAdminEmail(email)) {
+    const stores: Record<string, string> = {
+      "users table": "admin — not consulted",
+      "KV registrations": "admin — not consulted",
+      "paid ledger": "admin — not consulted",
+      "portal accounts": "admin — not consulted",
+      "licence keys": "admin — not consulted",
+      "cloud access gate": "admin",
+    };
+    console.info(diagnosticLine(email, stores, "admin"));
+    return { ok: true, isPaid: true, status: "admin", stores };
+  }
+
+  // ── 2. EVERY STORE, IN PARALLEL, EACH INSIDE ITS OWN GUARD ───────────────
+  const [kv, users, ledger, portal, keys] = await Promise.all([
+    readKvRegistrations(email),
+    readUsersStore(email, deviceId),
+    readPaidLedger(email),
+    readPortalAccounts(email),
+    readLicenceKeys(email),
+  ]);
+
+  const verdicts: Array<[string, StoreVerdict]> = [
+    ["users table", users],
+    ["KV registrations", kv],
+    ["paid ledger", ledger],
+    ["portal accounts", portal],
+    ["licence keys", keys],
+  ];
+  const stores: Record<string, string> = {};
+  for (const [name, verdict] of verdicts) stores[name] = verdict.detail;
+
+  // ── 3. ANY PAID MARK IS ENOUGH ───────────────────────────────────────────
+  const paidBy = verdicts.find(([, verdict]) => verdict.paid);
+  let decided: AccessAnswer;
+  if (paidBy) {
+    const [name, verdict] = paidBy;
+    decided = {
+      ok: true,
+      isPaid: true,
+      status: "paid",
+      ...(verdict.paidAt ? { paidAt: verdict.paidAt } : {}),
+    };
+    stores["cloud access gate"] = `paid via ${name}`;
+    console.info(diagnosticLine(email, stores, `paid (${name})`));
+  } else if (kv.revoked) {
+    stores["cloud access gate"] = "revoked";
+    console.info(diagnosticLine(email, stores, "revoked"));
+    decided = { ok: true, isPaid: false, status: "revoked" };
+  } else if (kv.rejected) {
+    stores["cloud access gate"] = "rejected";
+    console.info(diagnosticLine(email, stores, "rejected"));
+    decided = { ok: true, isPaid: false, status: "rejected" };
+  } else {
+    const unreadable = verdicts.filter(([, verdict]) => !verdict.readable).map(([, verdict]) => verdict.detail);
+    if (unreadable.length > 0) {
+      // A SOURCE WE COULD NOT READ COULD BE THE ONE THAT KNOWS THIS EMAIL.
+      stores["cloud access gate"] = "undecided — unreachable source";
+      console.warn(diagnosticLine(email, stores, "undecided"));
+      decided = {
+        ok: false,
+        isPaid: false,
+        status: "undecided",
+        error: "Access check could not complete — one record source was unreachable",
+        unreadable,
+        stores,
+      };
+    } else {
+      stores["cloud access gate"] = "unpaid — every store answered";
+      console.info(diagnosticLine(email, stores, "unpaid"));
+      decided = { ok: true, isPaid: false, status: "unpaid", stores };
+    }
+  }
 
   // THE BINDING, IN THE SAME ANSWER — see readDeviceBinding above. The keys are
   // only added when the read succeeded, so an unreadable database can never be
@@ -315,47 +443,6 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   return decided;
 }
 
-/**
- * DOES THIS ACCOUNT HOLD A CLAIMED LICENCE KEY?
- *
- * Reads the same `users` row the binding comes from and treats a non-empty
- * `license_key` as proof of access — see the call site for why it cannot be
- * forged. The device rule is the existing one: when the row is bound to a
- * device and the caller names a different one, the account is activated on
- * another phone and must be answered unpaid.
- */
-async function claimedLicenseKeyProof(
-  email: string,
-  requestDeviceId: string | null,
-  unreadable: string[],
-): Promise<boolean> {
-  const db = await serviceClient();
-  if (!db) {
-    unreadable.push("licence key → database not configured");
-    return false;
-  }
-  try {
-    const { data, error } = await db
-      .from("users")
-      .select("license_key, device_id")
-      .eq("email", email)
-      .maybeSingle();
-    if (error) {
-      unreadable.push(`licence key → ${error.message}`);
-      return false;
-    }
-    if (!data) return false;
-    const row = data as { license_key?: string | null; device_id?: string | null };
-    const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
-    if (!key) return false;
-    if (row.device_id && requestDeviceId && row.device_id !== requestDeviceId) return false;
-    return true;
-  } catch (error) {
-    unreadable.push(`licence key → ${errorText(error)}`);
-    return false;
-  }
-}
-
 type LedgerRead = { paidAt: string | null; readable: boolean; detail: string };
 
 /** The console's payment ledger — one of the authoritative paid sources. */
@@ -365,15 +452,17 @@ async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
     return { paidAt: null, readable: false, detail: "paid ledger → database not configured" };
   }
   try {
-    const { data, error } = await db
-      .from("paid_emails")
-      .select("paid_at")
-      .eq("email", email)
+    const base = db.from("paid_emails").select("paid_at");
+    const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
+    const { data, error } = await scoped
       .neq("paid_at", null)
       .order("paid_at", { ascending: false })
       .limit(1);
 
     if (error) {
+      if (absentStore(error)) {
+        return { paidAt: null, readable: true, detail: "paid ledger → table not present in this deployment, no row" };
+      }
       return { paidAt: null, readable: false, detail: `paid ledger → ${error.message}` };
     }
     const row = Array.isArray(data) ? data[0] : data;
@@ -401,12 +490,13 @@ async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
     return { paid: false, readable: false, detail: "portal payments → database not configured" };
   }
   try {
-    const { data, error } = await db
-      .from("portal_payments")
-      .select("paid, paid_at")
-      .eq("email", email)
-      .limit(1);
+    const base = db.from("portal_payments").select("paid, paid_at");
+    const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
+    const { data, error } = await scoped.limit(1);
     if (error) {
+      if (absentStore(error)) {
+        return { paid: false, readable: true, detail: "portal payments → table not present in this deployment, no row" };
+      }
       return { paid: false, readable: false, detail: `portal payments → ${error.message}` };
     }
     const row = Array.isArray(data) ? data[0] : data;
