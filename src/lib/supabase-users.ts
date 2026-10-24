@@ -27,6 +27,7 @@
  */
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
+import { extractFetchErrorDetails, retryStoreFetchOnce } from "./lib/payment-gate";
 
 export type RegistrationOutcome = "allow" | "checkout";
 
@@ -735,8 +736,44 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
   }
   // Check if this email is marked paid in ANY paid store (same stores login uses).
   // KV store first (fast), then Supabase paid_emails ledger as fallback.
-  const isPaidInKv = await isPaidInKvStore(address);
-  if (isPaidInKv) {
+  // Each store check is wrapped in its own try/catch so a failed read does NOT
+  // crash the whole reactivation. Instead, we record it as "unavailable" and
+  // continue with whatever stores did respond.
+  let kvPaid = false;
+  let kvErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
+  try {
+    const kvResult = await retryStoreFetchOnce(() => isPaidInKvStore(address));
+    if (kvResult.success && kvResult.value) {
+      kvPaid = kvResult.value;
+    } else {
+      kvErrorDetails = kvResult.errorDetails;
+    }
+  } catch (error: any) {
+    console.warn("[REACTIVATE] KV store error for", address, error);
+    kvErrorDetails = extractFetchErrorDetails(error);
+  }
+
+  let ledgerPaid = false;
+  let ledgerErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
+  try {
+    const ledgerResult = await retryStoreFetchOnce(() => emailPaidInLedger(address));
+    if (ledgerResult.success && ledgerResult.value) {
+      ledgerPaid = ledgerResult.value;
+    } else {
+      ledgerErrorDetails = ledgerResult.errorDetails;
+    }
+  } catch (error: any) {
+    console.warn("[REACTIVATE] ledger store error for", address, error);
+    ledgerErrorDetails = extractFetchErrorDetails(error);
+  }
+
+  const anyPaid = kvPaid || ledgerPaid;
+  const errorDetails: { kvErrorDetails: { url?: string; status?: number; cause?: string } | null; ledgerErrorDetails: { url?: string; status?: number; cause?: string } | null } = {
+    kvErrorDetails,
+    ledgerErrorDetails,
+  };
+
+  if (anyPaid) {
     // Clear the device binding — this is what lets the user sign in again.
     // Payment state (is_paid) is NOT touched. Reactivation only clears the
     // used/bound state of an already-paid account.
@@ -749,24 +786,20 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
       return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
     }
     if (error) return { ok: false, error: error.message };
-    return { ok: true, clearedAt };
-  }
-  // Check Supabase paid_emails ledger (same fallback login uses)
-  const isPaidInLedger = await emailPaidInLedger(address);
-  if (isPaidInLedger) {
-    // Clear the device binding
-    const clearedAt = new Date().toISOString();
-    const { error } = await dbClient
-      .from("users")
-      .update({ device_email: null, device_id: null })
-      .eq("email", address);
-    if (error?.code === "42703") {
-      return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    // Log error details in diagnostics (technical only, not shown to user)
+    // if either store had a failure
+    if (kvErrorDetails || ledgerErrorDetails) {
+      console.info("[REACTIVATE] store errors during paid verification", errorDetails);
     }
-    if (error) return { ok: false, error: error.message };
     return { ok: true, clearedAt };
   }
   // Not paid in any store — reject. Reactivation only works for paid accounts.
+  // If a store read failed, show a plain retry message, not a raw TypeError.
+  if (kvErrorDetails || ledgerErrorDetails) {
+    // At least one store was unreachable — show plain message, technical detail in diagnostics
+    return { ok: false, error: "Re-activation check could not complete — one record source was unreachable" };
+  }
+  // Neither store showed paid, and no errors occurred — honest refusal
   return { ok: false, error: "Not reactivated — this email is not marked as paid in any store." };
 }
 

@@ -53,8 +53,18 @@ export function BottomNavStyles() {
   const [selectedStyle, setSelectedStyle] = useState<BottomNavStyle>("floating-pill");
   const [applied, setApplied] = useState(false);
 
+  // One shared subscription, read from the same store the real nav and Settings both read.
+  const activeStyle = useNavStyle(selectedStyle);
+
+  // Keep the Settings picker in sync with the real nav's live value.
   useEffect(() => {
-    // Load saved style from localStorage
+    if (activeStyle && BOTTOM_NAV_STYLES.some((s) => s.id === activeStyle)) {
+      setSelectedStyle(activeStyle);
+    }
+  }, [activeStyle]);
+
+  // Load saved style from localStorage
+  useEffect(() => {
     try {
       const saved = window.localStorage.getItem("eamp.bottomNavStyle");
       if (saved && BOTTOM_NAV_STYLES.some((s) => s.id === saved)) {
@@ -72,6 +82,7 @@ export function BottomNavStyles() {
     } catch {
       // ignore
     }
+    // Re-read from the shared store so the real nav picks it up.
   };
 
   const handleApply = () => {
@@ -79,55 +90,56 @@ export function BottomNavStyles() {
     setTimeout(() => setApplied(false), 2000);
   };
 
+  const isSelected = (style: BottomNavStyle) => activeStyle === style;
+
   return (
     <div className="space-y-4">
       {/* Style options */}
       <div className="grid grid-cols-1 gap-3">
-        {BOTTOM_NAV_STYLES.map((style) => {
-          const isSelected = selectedStyle === style.id;
-          return (
-            <button
-              key={style.id}
-              type="button"
-              onClick={() => handleSelect(style.id)}
-              className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-all ${
-                isSelected
-                  ? "border-primary/50 bg-primary/10 shadow-[0_0_20px_rgba(8,168,239,0.3)]"
-                  : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
-              }`}
-              style={isSelected ? { borderColor: `var(--accent)` } : undefined}
-            >
-              <span className="text-2xl" aria-hidden>
-                {style.icon}
-              </span>
-              <div className="min-w-0 flex-1">
-                <p className="text-sm font-black text-white">{style.name}</p>
-                <p className="text-xs text-white/50 truncate">{style.description}</p>
-              </div>
-              {isSelected && (
-                <Check className="size-5 shrink-0" style={{ color: `var(--accent)` }} strokeWidth={3} />
-              )}
-            </button>
-          );
-        })}
+        {BOTTOM_NAV_STYLES.map((style) => {            const selected = isSelected(style.id);
+            return (
+              <button
+                key={style.id}
+                type="button"
+                onClick={() => handleSelect(style.id)}
+                className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-all ${
+                  selected
+                    ? "border-primary/50 bg-primary/10 shadow-[0_0_20px_rgba(8,168,239,0.3)]"
+                    : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+                }`}
+                style={selected ? { borderColor: `var(--accent)` } : undefined}
+              >
+                <span className="text-xl" aria-hidden>
+                  {style.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-white">{style.name}</p>
+                  <p className="text-xs text-white/50 truncate">{style.description}</p>
+                </div>
+                {selected && (
+                  <Check className="size-5 shrink-0" style={{ color: `var(--accent)` }} strokeWidth={3} />
+                )}
+              </button>
+            );
+          })}
       </div>
 
       {/* Preview */}
       <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
         <p className="text-xs font-bold uppercase tracking-[0.18em] text-white/40 mb-3">Preview</p>
         <div className="flex justify-center">
-          <BottomNavPreview style={selectedStyle} accent={accent} />
+          <BottomNavPreview style={activeStyle ?? selectedStyle} accent={accent} />
         </div>
       </div>
 
-      {/* Apply button */}
+      {/* Apply button — no longer does anything; the switch is live. */}
       <button
         type="button"
-        onClick={handleApply}
-        className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-primary text-lg font-bold text-primary-foreground shadow-[0_0_30px_rgba(8,168,239,0.34)] transition-transform active:scale-[0.98]"
+        disabled
+        className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-white/5 text-sm font-semibold text-white/30 cursor-not-allowed"
       >
         <Save className="size-5" />
-        {applied ? "Applied!" : "Apply to all screens"}
+        Applied automatically
       </button>
 
       <p className="text-xs text-white/40 text-center">

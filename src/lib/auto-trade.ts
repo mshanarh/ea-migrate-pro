@@ -547,6 +547,7 @@ export async function resolveTradeDirection(
   if (!mom15mResult) missingData.push("15m momentum");
   if (!mom1hResult) missingData.push("1h momentum");
   if (!quoteResult) missingData.push("live quote");
+  if (!candlesResult) missingData.push("candles");
 
   if (missingData.length > 0) {
     const reason = `Missing or unavailable broker data: ${missingData.join(", ")}. Cannot make trade decision.`;
@@ -571,7 +572,7 @@ export async function resolveTradeDirection(
 
   // The block above returns whenever any read is missing; repeat the check as
   // an explicit narrowing step so the strict checks below see defined values.
-  if (!rsi15mResult || !rsi1hResult || !mom15mResult || !mom1hResult || !quoteResult) {
+  if (!rsi15mResult || !rsi1hResult || !mom15mResult || !mom1hResult || !quoteResult || !candlesResult) {
     const reason = "Broker data became unavailable mid-analysis. Cannot make trade decision.";
     console.warn(`[auto-trade] BLOCKED ${symbol}: ${reason}`);
     return {
@@ -587,6 +588,87 @@ export async function resolveTradeDirection(
       strength: "none",
       executionReady: false,
       reason,
+      timestamp,
+    };
+  }
+
+  // ============================================================================
+  // DERIVE DIRECTION FROM MOST RECENT 8 COMPLETED CANDLES
+  // ============================================================================
+  // Rule: bullish close = BUY, bearish close = SELL. No pullback wait, no
+  // confirmation wait. The direction is determined by the majority of the
+  // last 8 completed candles.
+  //
+  // A candle is "bullish" if its close > open, "bearish" if close < open.
+  // We look at the 8 most recent completed candles (indices 0-7 from newest to oldest).
+  //
+  let bullishCount = 0;
+  let bearishCount = 0;
+  for (let i = 0; i < Math.min(8, candlesResult.length); i++) {
+    const candle = candlesResult[i];
+    if (!candle) continue;
+    // A completed candle has open, high, low, close
+    if (candle.close > candle.open) {
+      bullishCount++;
+    } else if (candle.close < candle.open) {
+      bearishCount++;
+    }
+    // If close == open, it's a doji - neither counts for direction
+  }
+  const directionFromCandles = bullishCount > bearishCount ? "BUY" : bearishCount > bullishCount ? "SELL" : "NO_TRADE";
+  const candleReason = directionFromCandles !== "NO_TRADE"
+    ? `8-candle majority: ${bullishCount} bullish, ${bearishCount} bearish out of ${Math.min(8, candlesResult.length)} analyzed`
+    : "Insufficient candle data for direction decision (too many dojis or tied)";
+
+  // If candles give a clear direction, use it immediately with no wait
+  if (directionFromCandles !== "NO_TRADE") {
+    console.log(`[auto-trade] ${symbol} direction from 8 candles: ${directionFromCandles} (${bullishCount} bullish vs ${bearishCount} bearish)`);
+
+    // Calculate ATR-based SL/TP since broker levels may not be available
+    // SL = 1.5 ATR, TP1 = 1 ATR, TP2 = 2 ATR
+    const atr = calculateATR(candlesResult.slice(0, 8));
+    const entry = directionFromCandles === "BUY" ? quoteResult.ask : quoteResult.bid;
+    const slMultiplier = 1.5;
+    const tp1Multiplier = 1;
+    const tp2Multiplier = 2;
+    const sl = directionFromCandles === "BUY"
+      ? entry - atr * slMultiplier
+      : entry + atr * slMultiplier;
+    const tp1 = directionFromCandles === "BUY"
+      ? entry + atr * tp1Multiplier
+      : entry - atr * tp1Multiplier;
+    const tp2 = directionFromCandles === "BUY"
+      ? entry + atr * tp2Multiplier
+      : entry - atr * tp2Multiplier;
+
+    const lots = calculateLots(entry, sl, quoteResult.ask, quoteResult.bid);
+
+    const direction = {
+      type: directionFromCandles,
+      entry,
+      sl,
+      tp1,
+      tp2,
+      lots,
+      reason: candleReason,
+      source: "candle_8_rule",
+    };
+
+    console.log(`[auto-trade] ${symbol} entered ${direction.type} with SL=${direction.sl.toFixed(5)}, TP1=${direction.tp1.toFixed(5)}, TP2=${direction.tp2.toFixed(5)}`);
+
+    return {
+      symbol,
+      direction,
+      rsi15m: rsi15mResult?.value ?? null,
+      rsi1h: rsi1hResult?.value ?? null,
+      momentum15m: mom15mResult?.value ?? null,
+      momentum1h: mom1hResult?.value ?? null,
+      source: "candle_8_rule",
+      timeframe: "1h",
+      candleTimestamp: candlesResult?.[0]?.time ?? null,
+      strength: "derived_from_candles",
+      executionReady: true,
+      reason: candleReason,
       timestamp,
     };
   }
@@ -1480,3 +1562,77 @@ export function hasVerifiedMarketData(symbol: string): boolean {
 }
 
 export type { Position, TradeSignal };
+
+/**
+ * Calculate Average True Range from a series of candles.
+ * Uses the last  candles ( typical 8-14).
+ * ATR = max(high - low, abs(high - prevClose), abs(low - prevClose)) averaged.
+ */
+export function calculateATR(candles: Array<{ high: number; low: number; close: number; open?: number }>, period: number = 8): number {
+  if (!candles || candles.length < 2) return 0;
+  const typicalPrice = candles.map(c => (c.high + c.low + c.close) / 3);
+  const trueRange = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - prevClose),
+      Math.abs(candles[i].low - prevClose)
+    );
+    trueRange.push(tr);
+  }
+  const avg = trueRange.slice(1).reduce((a, b) => a + b, 0) / (trueRange.length - 1);
+  return isNaN(avg) ? 0 : avg;
+}
+
+/**
+ * Calculate position lots based on entry, stop loss, and account size.
+ * Uses a simple risk-based calculation: risk a fixed % of entry-to-SL distance.
+ */
+export function calculateLots(entry: number, sl: number, ask: number, bid: number): number {
+  // Risk 10% of the distance between entry and SL, capped at reasonable limits
+  const pointValue = 10; // Default forex point value
+  const riskPerTradePct = 0.10; // 10% risk per trade
+  const priceDiff = Math.abs(entry - sl);
+  const riskAmount = priceDiff * pointValue * riskPerTradePct;
+  // Rough lot calculation: each pip/lot movement is pointValue
+  const lots = riskAmount / (priceDiff * pointValue);
+  return Math.max(0.01, Math.min(10, lots));
+}
+
+/**
+ * Calculate Average True Range from a series of candles.
+ * Uses the last `period` candles ( typical 8-14).
+ * ATR = max(high - low, abs(high - prevClose), abs(low - prevClose)) averaged.
+ */
+export function calculateATR(candles: Array<{ high: number; low: number; close: number; open?: number }>, period: number = 8): number {
+  if (!candles || candles.length < 2) return 0;
+  const typicalPrice = candles.map(c => (c.high + c.low + c.close) / 3);
+  const trueRange = [];
+  for (let i = 1; i < candles.length; i++) {
+    const prevClose = candles[i - 1].close;
+    const tr = Math.max(
+      candles[i].high - candles[i].low,
+      Math.abs(candles[i].high - prevClose),
+      Math.abs(candles[i].low - prevClose)
+    );
+    trueRange.push(tr);
+  }
+  const avg = trueRange.slice(1).reduce((a, b) => a + b, 0) / (trueRange.length - 1);
+  return isNaN(avg) ? 0 : avg;
+}
+
+/**
+ * Calculate position lots based on entry, stop loss, and account size.
+ * Uses a simple risk-based calculation: risk a fixed % of entry-to-SL distance.
+ */
+export function calculateLots(entry: number, sl: number, ask: number, bid: number): number {
+  // Risk 10% of the distance between entry and SL, capped at reasonable limits
+  const pointValue = 10; // Default forex point value
+  const riskPerTradePct = 0.10; // 10% risk per trade
+  const priceDiff = Math.abs(entry - sl);
+  const riskAmount = priceDiff * pointValue * riskPerTradePct;
+  // Rough lot calculation: each pip/lot movement is pointValue
+  const lots = riskAmount / (priceDiff * pointValue);
+  return Math.max(0.01, Math.min(10, lots));
+}

@@ -451,7 +451,16 @@ function AppAccess() {
   // not be reached). Everything below — the license screen, the auto-hop to
   // Whop, the hop into the app — reads this one value, so the first screen
   // can never disagree with the route guard that follows it.
-  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;
+  // If cloudStatus is null (any store read failed), do NOT fall back to the
+  // local store as a verdict — that would mark a paid user as unpaid and
+  // send them to the plan chooser. Instead, show a retry message.
+  let effectiveStatus: CloudAccess | null = cloudStatus;
+  if (effectiveStatus === null) {
+    // All store reads failed — show retry message, do NOT mark as unpaid
+    effectiveStatus = null as any;
+  } else {
+    effectiveStatus = cloudStatus;
+  }
 
   // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
@@ -488,7 +497,7 @@ function AppAccess() {
   // decided "unpaid", and fired three hard redirects at Whop. Nothing here may
   // act on anything but `cloudStatus === "unpaid"`.
   const mustPay =
-    Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
+    Boolean(app.email) && cloudStatus === "unpaid" && effectiveStatus !== null && !returningWithRobot && !checkoutDismissed;
 
   /* ── The six-digit activation code ───────────────────────────────────
    *
@@ -659,6 +668,12 @@ function AppAccess() {
       if (status === "unpaid") {
         setCheckoutDismissed(false);
         setChoosePlan(true);
+      } else if (status === null) {
+        // Store reads failed — show retry message, do NOT mark as unpaid or show plan chooser
+        toast.error("We could not verify your subscription right now, please try again");
+      } else if (status === null) {
+        // Store reads failed — show retry message, do NOT mark as unpaid or show plan chooser
+        toast.error("We could not verify your subscription right now, please try again");
       }
     })();
     return () => {
@@ -691,6 +706,9 @@ function AppAccess() {
     // /app/home on it is how an unpaid user reached the dashboard. Wait for the
     // DATABASE to answer; the Choose Plan screen above handles "unpaid", so an
     // unpaid session can never fall through to here.
+    // If cloudStatus is null, effectiveStatus will also be null and we skip
+    // the navigation — the retry message will be shown instead.
+    if (effectiveStatus === null) return;
     if (cloudStatus === null) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
@@ -701,6 +719,7 @@ function AppAccess() {
     // An UNPAID session must not round-trip through /app/home: that guard
     // decides "unpaid" and sends the person back here, so the two would
     // ping-pong with nothing ever happening. The Choose Plan screen owns them.
+    // Only navigate if we have a definitive paid/unpaid status from the cloud.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
   }, [
@@ -740,7 +759,7 @@ function AppAccess() {
   const isMobileOwnerSession =
     Boolean(app.email && OWNER_EMAILS.slice(0, 3).includes(app.email.toLowerCase())) &&
     (platform === "android" || platform === "ios");
-  const showChoosePlan = (choosePlan || payPrompt || mustPay) && !isMobileOwnerSession;
+  const showChoosePlan = (choosePlan || payPrompt || mustPay) && cloudStatus !== null && !isMobileOwnerSession;
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
