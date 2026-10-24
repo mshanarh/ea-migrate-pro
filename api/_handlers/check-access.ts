@@ -82,6 +82,61 @@ function serviceClient(): ReturnType<typeof buildServiceClient> {
   return clientPromise;
 }
 
+/**
+ * IS THE DATABASE A STORE THIS DEPLOYMENT STILL HAS?
+ *
+ * "Unreachable" and "absent" are different answers and the gate must not merge
+ * them. A query that fails while the host resolves is a TRANSIENT fault: the
+ * store might still hold a paid mark, so the verdict is `undecided` and the
+ * client shows Retry. A host that does not resolve AT ALL — the Supabase
+ * project was deleted, or no database was ever configured — is a store that is
+ * NOT PART OF THIS DEPLOYMENT: it holds no paid record, so it answers "no row"
+ * and unpaid customers still reach the plan chooser instead of being parked on
+ * a Retry screen forever.
+ *
+ * The probe runs only when a query has already failed, and its answer is held
+ * for five minutes, so the happy path pays nothing for it.
+ */
+let hostProbe: { missing: boolean; at: number } | null = null;
+const HOST_PROBE_TTL_MS = 5 * 60 * 1000;
+
+async function databaseHostMissing(): Promise<boolean> {
+  if (hostProbe && Date.now() - hostProbe.at < HOST_PROBE_TTL_MS) return hostProbe.missing;
+  const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
+  if (!url) {
+    hostProbe = { missing: true, at: Date.now() };
+    return true;
+  }
+  let missing = false;
+  try {
+    const host = new URL(url).hostname;
+    const { lookup } = await import("node:dns/promises");
+    await lookup(host);
+  } catch {
+    missing = true;
+    console.error(`[check-access] database host does not resolve (${url}) — treating the database as absent`);
+  }
+  hostProbe = { missing, at: Date.now() };
+  return missing;
+}
+
+/** The verdict for a database store this deployment either lacks or cannot reach. */
+async function databaseStoreFailure(store: string, error: unknown): Promise<StoreVerdict> {
+  if (await databaseHostMissing()) {
+    return {
+      paid: false,
+      readable: true,
+      detail: `${store} → no database in this deployment (host does not resolve), no row`,
+    };
+  }
+  return noAnswer(`${store} → ${errorText(error)}`);
+}
+
+/** "This deployment has no database" — an absent store, never evidence of payment. */
+function absentDatabase(store: string): StoreVerdict {
+  return { paid: false, readable: true, detail: `${store} → no database in this deployment, no row` };
+}
+
 /** The device binding for this email — the same column the app reads today. */
 type Binding = { deviceEmail: string | null; deviceId: string | null };
 type BindingAnswer = { readable: boolean; value: Binding | null };
@@ -235,7 +290,7 @@ async function readKvRegistrations(email: string): Promise<StoreVerdict> {
  */
 async function readUsersStore(email: string, deviceId: string | null): Promise<StoreVerdict> {
   const db = await serviceClient();
-  if (!db) return noAnswer("users table → database not configured");
+  if (!db) return absentDatabase("users table");
   try {
     const base = db.from("users").select("is_paid, is_admin, license_key, device_id");
     const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
@@ -255,7 +310,7 @@ async function readUsersStore(email: string, deviceId: string | null): Promise<S
       detail: `${flag ? "paid flag" : "not paid"}${key ? (mismatch ? ", key bound to another device" : ", key held") : ""}${row.is_admin ? ", admin flag" : ""}`,
     };
   } catch (error) {
-    return noAnswer(`users table → ${errorText(error)}`);
+    return databaseStoreFailure("users table", error);
   }
 }
 
@@ -308,8 +363,7 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
 
   const db = await serviceClient();
   if (!db) {
-    readable = false;
-    details.push("licence keys → database not configured");
+    details.push("license_keys → no database in this deployment");
   } else {
     try {
       const base = db.from("license_keys").select("key");
@@ -328,8 +382,9 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
         details.push("no key held");
       }
     } catch (error) {
-      readable = false;
-      details.push(`license_keys → ${errorText(error)}`);
+      const verdict = await databaseStoreFailure("license_keys", error);
+      if (!verdict.readable) readable = false;
+      details.push(verdict.detail);
     }
   }
 
@@ -449,7 +504,7 @@ type LedgerRead = { paidAt: string | null; readable: boolean; detail: string };
 async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
   const db = await serviceClient();
   if (!db) {
-    return { paidAt: null, readable: false, detail: "paid ledger → database not configured" };
+    return { paidAt: null, readable: true, detail: "paid ledger → no database in this deployment, no row" };
   }
   try {
     const base = db.from("paid_emails").select("paid_at");
@@ -463,7 +518,8 @@ async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
       if (absentStore(error)) {
         return { paidAt: null, readable: true, detail: "paid ledger → table not present in this deployment, no row" };
       }
-      return { paidAt: null, readable: false, detail: `paid ledger → ${error.message}` };
+      const verdict = await databaseStoreFailure("paid ledger", error);
+      return { paidAt: null, readable: verdict.readable, detail: verdict.detail };
     }
     const row = Array.isArray(data) ? data[0] : data;
     const paidAt = row && typeof (row as { paid_at?: unknown }).paid_at === "string"
@@ -471,7 +527,8 @@ async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
       : null;
     return { paidAt, readable: true, detail: paidAt ? `paid ledger → paid at ${paidAt}` : "paid ledger → no paid row" };
   } catch (error) {
-    return { paidAt: null, readable: false, detail: `paid ledger → ${errorText(error)}` };
+    const verdict = await databaseStoreFailure("paid ledger", error);
+    return { paidAt: null, readable: verdict.readable, detail: verdict.detail };
   }
 }
 
@@ -487,7 +544,7 @@ type PortalPayment = { paid: boolean; paidAt?: string; readable: boolean; detail
 async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
   const db = await serviceClient();
   if (!db) {
-    return { paid: false, readable: false, detail: "portal payments → database not configured" };
+    return { paid: false, readable: true, detail: "portal payments → no database in this deployment, no row" };
   }
   try {
     const base = db.from("portal_payments").select("paid, paid_at");
@@ -497,7 +554,8 @@ async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
       if (absentStore(error)) {
         return { paid: false, readable: true, detail: "portal payments → table not present in this deployment, no row" };
       }
-      return { paid: false, readable: false, detail: `portal payments → ${error.message}` };
+      const verdict = await databaseStoreFailure("portal payments", error);
+      return { paid: false, readable: verdict.readable, detail: verdict.detail };
     }
     const row = Array.isArray(data) ? data[0] : data;
     if (!row) return { paid: false, readable: true, detail: "portal payments → no row" };
@@ -511,7 +569,8 @@ async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
       detail: paid ? "portal payments → paid" : "portal payments → not paid",
     };
   } catch (error) {
-    return { paid: false, readable: false, detail: `portal payments → ${errorText(error)}` };
+    const verdict = await databaseStoreFailure("portal payments", error);
+    return { paid: false, readable: verdict.readable, detail: verdict.detail };
   }
 }
 
