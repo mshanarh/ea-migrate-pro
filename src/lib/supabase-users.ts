@@ -712,9 +712,10 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * The affected user, on next login, goes straight to the license key screen
  * like a fresh paid user (no OTP code for paid emails).
  *
- * PAID CHECK: uses the same stores the login flow uses — the KV registration
- * store AND the Supabase paid_emails ledger. If EITHER says paid, reactivation
- * is allowed. Only emails that are paid in NONE of these stores are rejected.
+ * PAID CHECK: uses ONLY the KV registration store (Upstash) — same store the
+ * admin dashboard writes to via "Mark paid". The Supabase `paid_emiles` ledger
+ * is NOT consulted. Reactivation only clears the used/bound state of an already-paid
+ * account.
  */
 export async function reactivateEmail(email: string): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
   const dbClient = db();
@@ -734,11 +735,9 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
   if (!existing) {
     return { ok: false, error: "That email is not registered." };
   }
-  // Check if this email is marked paid in ANY paid store (same stores login uses).
-  // KV store first (fast), then Supabase paid_emails ledger as fallback.
-  // Each store check is wrapped in its own try/catch so a failed read does NOT
-  // crash the whole reactivation. Instead, we record it as "unavailable" and
-  // continue with whatever stores did respond.
+  // Check if this email is marked paid in the KV registration store (same
+  // store the admin dashboard writes to via "Mark paid"). This is the sole
+  // authority for reactivation — the Supabase paid_emiles ledger is not consulted.
   let kvPaid = false;
   let kvErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
   try {
@@ -753,27 +752,7 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
     kvErrorDetails = extractFetchErrorDetails(error);
   }
 
-  let ledgerPaid = false;
-  let ledgerErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
-  try {
-    const ledgerResult = await retryStoreFetchOnce(() => emailPaidInLedger(address));
-    if (ledgerResult.success && ledgerResult.value) {
-      ledgerPaid = ledgerResult.value;
-    } else {
-      ledgerErrorDetails = ledgerResult.errorDetails;
-    }
-  } catch (error: any) {
-    console.warn("[REACTIVATE] ledger store error for", address, error);
-    ledgerErrorDetails = extractFetchErrorDetails(error);
-  }
-
-  const anyPaid = kvPaid || ledgerPaid;
-  const errorDetails: { kvErrorDetails: { url?: string; status?: number; cause?: string } | null; ledgerErrorDetails: { url?: string; status?: number; cause?: string } | null } = {
-    kvErrorDetails,
-    ledgerErrorDetails,
-  };
-
-  if (anyPaid) {
+  if (kvPaid) {
     // Clear the device binding — this is what lets the user sign in again.
     // Payment state (is_paid) is NOT touched. Reactivation only clears the
     // used/bound state of an already-paid account.
@@ -787,25 +766,29 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
     }
     if (error) return { ok: false, error: error.message };
     // Log error details in diagnostics (technical only, not shown to user)
-    // if either store had a failure
-    if (kvErrorDetails || ledgerErrorDetails) {
-      console.info("[REACTIVATE] store errors during paid verification", errorDetails);
+    // if the store had a failure
+    if (kvErrorDetails) {
+      console.info("[REACTIVATE] store errors during paid verification", kvErrorDetails);
     }
     return { ok: true, clearedAt };
   }
-  // Not paid in any store — reject. Reactivation only works for paid accounts.
-  // If a store read failed, show a plain retry message, not a raw TypeError.
-  if (kvErrorDetails || ledgerErrorDetails) {
+  // Not paid in KV store — reject. Reactivation only works for paid accounts.
+  // If the KV store was unreachable, show a plain message, technical detail
+  // in diagnostics only.
+  if (kvErrorDetails) {
     // At least one store was unreachable — show plain message, technical detail in diagnostics
     return { ok: false, error: "Re-activation check could not complete — one record source was unreachable" };
   }
-  // Neither store showed paid, and no errors occurred — honest refusal
-  return { ok: false, error: "Not reactivated — this email is not marked as paid in any store." };
+  // Neither KV showed paid, and no errors occurred — honest refusal
+  return { ok: false, error: "Not reactivated — this email is not marked as paid in KV store." };
 }
 
 /**
  * Check if an email is paid in the KV registration store (same store the
  * admin dashboard writes to via "Mark paid").
+ *
+ * This is the SOLE store used for reactivation. The Supabase paid_emiles
+ * ledger is intentionally NOT consulted for re-activation.
  */
 async function isPaidInKvStore(email: string): Promise<boolean> {
   try {
@@ -814,7 +797,8 @@ async function isPaidInKvStore(email: string): Promise<boolean> {
     const record = await getRegistration(email);
     if (record && record.isPaid === true && record.paidAt != null) return true;
   } catch {
-    // KV unavailable — fall through to ledger check
+    // KV unavailable — reactivation is blocked; the caller will show the
+    // diagnostic message.
   }
   return false;
 }
