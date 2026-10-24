@@ -297,7 +297,9 @@ async function readUsersStore(email: string, deviceId: string | null): Promise<S
     const { data, error } = await scoped.maybeSingle();
     if (error) {
       if (absentStore(error)) return { paid: false, readable: true, detail: "table not present in this deployment — no row" };
-      return noAnswer(`users table → ${error.message}`);
+      // A network-level failure arrives HERE as a resolved error object, not a
+      // throw — so the absent-vs-unreachable probe has to run on this path too.
+      return await databaseStoreFailure("users table", error);
     }
     if (!data) return { paid: false, readable: true, detail: "no row" };
     const row = data as { is_paid?: boolean | null; is_admin?: boolean | null; license_key?: string | null; device_id?: string | null };
@@ -372,8 +374,9 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
       if (error) {
         if (absentStore(error)) details.push("license_keys → not present in this deployment");
         else {
-          readable = false;
-          details.push(`license_keys → ${error.message}`);
+          const verdict = await databaseStoreFailure("license_keys", error);
+          if (!verdict.readable) readable = false;
+          details.push(verdict.detail);
         }
       } else if (data) {
         paid = true;
