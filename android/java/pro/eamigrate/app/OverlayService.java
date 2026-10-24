@@ -537,14 +537,6 @@ public class OverlayService extends Service {
             cardBg.setColor(Color.parseColor("#0A0A1A"));
             cardBg.setStroke(dp(2), Color.parseColor("#A020F0"));
             card.setBackground(cardBg);
-            // Subtle red band on the card header bottom edge.
-            View redBand = new View(this);
-            redBand.setBackground(new GradientDrawable(
-                    GradientDrawable.Orientation.TOP_BOTTOM,
-                    new int[] { Color.parseColor("#E11D48"), Color.parseColor("#0A0F1E") }));
-            redBand.setLayoutParams(new FrameLayout.LayoutParams(
-                    FrameLayout.LayoutParams.MATCH_PARENT, dp(3)));
-            header.addView(redBand);
             card.setClipToOutline(true);
 
             // ── Header: EA picture + name + status ──
@@ -635,6 +627,14 @@ public class OverlayService extends Service {
 
             header.addView(info);
             card.addView(header);
+            // Subtle red band on the card header bottom edge.
+            View redBand = new View(this);
+            redBand.setBackground(new GradientDrawable(
+                    GradientDrawable.Orientation.TOP_BOTTOM,
+                    new int[] { Color.parseColor("#E11D48"), Color.parseColor("#0A0F1E") }));
+            redBand.setLayoutParams(new FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT, dp(3)));
+            header.addView(redBand);
 
             // ── Terminal log panel ──
             expandedLogList = new LinearLayout(this);
@@ -647,7 +647,7 @@ public class OverlayService extends Service {
             // Red-tinted card footer line.
             View footerLine = new View(this);
             footerLine.setBackground(new GradientDrawable(
-                    GradientDrawable.Orientation.Bottom_TOP,
+                    GradientDrawable.Orientation.BOTTOM_TOP,
                     new int[] { Color.parseColor("#0F172A"), Color.parseColor("#1E1018") }));
             footerLine.setLayoutParams(new LinearLayout.LayoutParams(
                     LinearLayout.LayoutParams.MATCH_PARENT, dp(1)));

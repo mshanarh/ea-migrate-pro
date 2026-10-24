@@ -706,7 +706,7 @@ public class MainActivity extends Activity {
         try {
             tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
                 @Override
-                public void OnInit(int status) {
+                public void onInit(int status) {
                     ttsReady = status == TextToSpeech.SUCCESS;
                     if (ttsReady && tts != null) {
                         // A device without the US voice pack must still
