@@ -4,6 +4,7 @@ import {
   Link,
   createRootRouteWithContext,
   useRouter,
+  useRouterState,
   HeadContent,
   Scripts,
   type ErrorComponentProps,
@@ -114,8 +115,11 @@ const PLATFORM_PREPAINT_SCRIPT = `
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
+import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
+import { loadBridgeConfig } from "@/lib/bridge-client";
+import { applyShellScope, isPortalPath } from "@/lib/shell-scope";
 import { speakTradeExecution } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -256,9 +260,35 @@ function RootShell({ children }: { children: ReactNode }) {
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
+  /**
+   * THE PORTAL IS A SEPARATE DESIGN — see src/lib/shell-scope.ts.
+   *
+   * The app's customization publishing (font, accent, interface style, colour
+   * cycle, app background) is mounted for APP ROUTES ONLY, and `data-portal`
+   * plus a token reset goes on <html> for the mentor portal. A font or accent
+   * chosen inside the Android app therefore cannot repaint the portal — the
+   * two shells never share those tokens.
+   */
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const portalShell = isPortalPath(pathname);
+
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
     applyColourMatrixFromStorage();
+  }, []);
+
+  // Put the document into the right shell BEFORE the portal paints, and undo
+  // every app customization token on the way in.
+  useEffect(() => {
+    applyShellScope(portalShell);
+  }, [portalShell]);
+
+  // READ THE BRIDGE'S CURRENT ADDRESS once per app start. The tunnel hostname
+  // changes whenever cloudflared restarts, so the address is an admin setting
+  // read at runtime (KV via /api/bridge-config) instead of a build constant.
+  // A missing endpoint or an offline start keeps the address already cached.
+  useEffect(() => {
+    void loadBridgeConfig();
   }, []);
 
   // DYNAMIC TRADE VOICE — one listener for the whole app.
@@ -288,14 +318,21 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Animated background sits behind everything; content lifts above it. */}
-      <BackgroundEffects />
-      {/* Invisible centre-tap surface for the interface colour cycle. */}
-      <ColourCycleTap />
-      {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
-      <AccentVarSync />
-      {/* The app-wide background picture layer — under the content wrapper below. */}
-      <AppBackground />
+      {portalShell ? null : (
+        <>
+          {/* Animated background sits behind everything; content lifts above it. */}
+          <BackgroundEffects />
+          {/* Invisible centre-tap surface for the interface colour cycle. */}
+          <ColourCycleTap />
+          {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
+          <AccentVarSync />
+          {/* Publishes the selected Main Interface definition to <html> so Home,
+              Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
+          <InterfaceThemeSync />
+          {/* The app-wide background picture layer — under the content wrapper below. */}
+          <AppBackground />
+        </>
+      )}
       <div style={{ position: "relative", zIndex: 1 }}>
         {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
         <Outlet />

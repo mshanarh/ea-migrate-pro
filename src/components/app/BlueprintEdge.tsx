@@ -3,6 +3,7 @@ import { Bot, Pause, Play, Plus, Trash2, DollarSign } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { ACCENT_COLORS, useCustomization } from "@/lib/app-customization";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
+import { useMediaDim } from "@/lib/use-media-dim";
 
 /**
  * BLUEPRINT EDGE — robot console theme, built exactly like the reference
@@ -50,6 +51,9 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
 export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
+  // Same persisted Background Picture switch as everywhere else — OFF leaves
+  // this console on clean black instead of the robot's picture.
+  const mediaDim = useMediaDim();
   const eaName = robot?.name ?? "YOUR ROBOT";
   const eaImage = robot?.image || "/logo.png";
 
@@ -60,7 +64,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* The black console's static image background — when the HOME
           double-press starts the video, the universal backdrop in ThemeContent
           plays it, so this layer never runs a second <video> decoder. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} />
+      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} mediaDim={mediaDim} />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section
@@ -70,26 +74,26 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="flex flex-col items-center rounded-[28px] px-4 pb-2 pt-1"
       >
-        <h2 className="max-w-full truncate px-2 text-center text-sm font-bold" style={{ color: accent, fontFamily: "'Montserrat', sans-serif" }}>
+        <h2 className="max-w-full truncate px-2 text-center text-sm font-bold" style={{ color: accent }}>
           {eaName}
         </h2>
 
         <span
-          className="mt-4 flex size-52 items-center justify-center overflow-hidden rounded-full border-[5px] bg-white p-2"
+          className="app-hero-orb mt-3 flex items-center justify-center overflow-hidden rounded-full border-[5px] bg-white p-2"
           style={{ borderColor: accent, boxShadow: `0 0 42px ${accent}, 0 0 90px ${accent}66` }}
         >
           <RobotMedia image={eaImage} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </span>
 
-        <p className="mt-5 font-sans text-base font-medium text-white">Your Trading With</p>
+        <p className="mt-4 font-sans text-base font-medium text-white">Your Trading With</p>
         <h1
-          className="mx-auto mt-1 max-w-full break-words px-2 text-center text-[34px] font-black leading-tight tracking-wide text-white uppercase"
-          style={{ fontFamily: "'Montserrat', sans-serif", textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
+          className="mx-auto mt-1 max-w-full break-words px-2 text-center text-3xl font-black leading-tight tracking-wide text-white uppercase"
+          style={{ textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
         >
           {eaName}
         </h1>
 
-        <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border bg-black/85 px-7 py-2.5 text-sm font-bold text-white" style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}>
+        <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border bg-black/85 px-6 py-2 text-sm font-bold text-white" style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}>
           Powered By <span style={{ color: accent }}>EA MIGRATE</span>
         </span>
       </motion.section>
@@ -113,7 +117,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                 key={candidate.id}
                 type="button"
                 onClick={() => onSelectRobot(candidate.id)}
-                className="relative flex h-24 w-full items-center justify-center overflow-hidden rounded-full transition-transform active:scale-[0.99]"
+                className="relative flex h-20 w-full items-center justify-center overflow-hidden rounded-full transition-transform active:scale-[0.99]"
                 style={{
                   border: `2px solid ${accent}`,
                   boxShadow: selected ? `0 0 30px ${accent}99` : `0 0 14px ${accent}33`,
@@ -132,7 +136,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                 {selected && (
                   <span
                     className="relative px-4 text-center text-base font-black uppercase tracking-wide"
-                    style={{ color: accent, textShadow: `0 0 14px ${accent}, 0 2px 10px rgba(0,0,0,0.9)`, fontFamily: "'Montserrat', sans-serif" }}
+                    style={{ color: accent, textShadow: `0 0 14px ${accent}, 0 2px 10px rgba(0,0,0,0.9)` }}
                   >
                     {candidate.name}
                   </span>

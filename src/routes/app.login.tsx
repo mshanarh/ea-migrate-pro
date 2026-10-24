@@ -21,6 +21,7 @@ import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/au
 import { callNative } from "@/lib/native-bridge";
 import { supabase } from "@/lib/supabase";
 import {
+  VERIFY_RETRY_MESSAGE,
   verifyPaymentReturn,
   invalidateAccessCache,
   resolveCloudAccess,
@@ -44,7 +45,15 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
  *   ?license=1     — the account proved its code and still owes a licence key;
  *                    this screen holds the form instead of hopping into the app
  */
-const RESUME_EXEMPT_FLAGS = new Set(["pay", "deactivated", "success", "reset", "awaiting", "license"]);
+const RESUME_EXEMPT_FLAGS = new Set([
+  "pay",
+  "deactivated",
+  "success",
+  "reset",
+  "awaiting",
+  "license",
+  "verify",
+]);
 
 /**
  * AN ACTIVATED SESSION LANDING ON ?pay=1 — ask the cloud ONCE, not the person.
@@ -241,6 +250,12 @@ function AppAccess() {
   // the notice below is what the person is told.
   const [deactivated, setDeactivated] = useState(false);
   /**
+   * ?verify=1, or a gate answer of `retry` — a paid-record source could not be
+   * READ. The plain retry line is shown instead of the plan chooser, because
+   * "we could not check" must never be answered as "you have not paid".
+   */
+  const [verifyNotice, setVerifyNotice] = useState("");
+  /**
    * ?pay=1 ON AN ACTIVATED DEVICE — read ONCE at mount, before the first
    * paint, so the email form never flashes for a session that already owns a
    * robot. See `activatedSessionOnPayLanding` above.
@@ -375,6 +390,7 @@ function AppAccess() {
     const params = new URLSearchParams(window.location.search);
     setPayPrompt(params.get("pay") === "1");
     setDeactivated(params.get("deactivated") === "1");
+    setVerifyNotice(params.get("verify") === "1" ? VERIFY_RETRY_MESSAGE : "");
     // Re-read the owed-key flag every render: a deep link from /app/home or
     // /app carries ?license=1, and the flag itself survives the app closing.
     //
@@ -615,6 +631,16 @@ function AppAccess() {
         setResuming(false);
         return;
       }
+      if (access.action === "retry") {
+        // NO VERDICT — a store could not be read. Keep the session, show the
+        // plain retry line, never the plans: the account may well be paid and
+        // only the read failed.
+        setVerifyNotice(access.message ?? VERIFY_RETRY_MESSAGE);
+        setChoosePlan(false);
+        setPayPrompt(false);
+        setResuming(false);
+        return;
+      }
       if (access.action === "pay") {
         leaveForCheckout();
         setCloudStatus("unpaid");
@@ -843,6 +869,23 @@ function AppAccess() {
           setRedirecting(false);
           window.history.replaceState({}, "", "/app/login?deactivated=1");
           setDeactivated(true);
+          return;
+        }
+        // NO VERDICT IS NOT A REFUSAL.
+        //
+        // A paid-record source that could not be READ (the access endpoint's
+        // portal/ledger/KV read, or this endpoint being unreachable) leaves
+        // `registration.unavailable` true. Sending that account to the plan
+        // chooser is how a paying customer was told to buy again because a
+        // store was down, so the answer here is the plain retry line, on the
+        // same screen, and nothing else is changed: no sign-in, no device
+        // binding, no plan selection.
+        if (registration.unavailable) {
+          setRedirecting(false);
+          setChoosePlan(false);
+          setPayPrompt(false);
+          setBusy(false);
+          toast.error(VERIFY_RETRY_MESSAGE);
           return;
         }
         // STOP HERE. The unpaid account does not go near /app/home; it lands
@@ -1412,6 +1455,7 @@ function AppAccess() {
             checking={(busy && !redirecting) || sendingCode}
             redirecting={redirecting}
             deactivated={deactivated}
+            verifyNotice={verifyNotice}
           />
         ) : (
           <LicenseView
@@ -1523,6 +1567,7 @@ function LoginView({
   checking,
   redirecting,
   deactivated,
+  verifyNotice,
 }: {
   email: string;
   setEmail: (value: string) => void;
@@ -1530,6 +1575,7 @@ function LoginView({
   checking: boolean;
   redirecting: boolean;
   deactivated?: boolean;
+  verifyNotice?: string;
 }) {
   return (
     <>
@@ -1559,6 +1605,14 @@ function LoginView({
           Use the email linked to your membership
         </p>
         {deactivated ? <DeactivatedNotice /> : null}
+        {verifyNotice ? (
+          <p
+            role="status"
+            className="relative mt-4 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm font-semibold text-amber-200"
+          >
+            {verifyNotice}
+          </p>
+        ) : null}
         <form
           className="relative mt-10 space-y-4 rounded-[28px] border border-white/10 bg-gradient-to-b from-[#121a1f] to-[#0a0f12] p-6 text-left"
           onSubmit={onSubmit}

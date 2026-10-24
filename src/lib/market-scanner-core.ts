@@ -238,12 +238,14 @@ export async function analyzeChartForScanner(
 
 export function isSymbolSupported(symbol: string): { supported: boolean; error?: string } {
   const normalized = symbol.toUpperCase().trim();
+  // The refusal quotes the symbol exactly as the EA spells it.
+  const label = symbol.trim();
 
   // Check if it's a proxy symbol
   if (PROXY_SYMBOLS.has(normalized)) {
     return {
       supported: false,
-      error: `${normalized} is a proxy/synthetic symbol. Use actual broker symbol.`,
+      error: `${label} is a proxy/synthetic symbol. Use actual broker symbol.`,
     };
   }
 
@@ -254,7 +256,7 @@ export function isSymbolSupported(symbol: string): { supported: boolean; error?:
   if (!hasVerifiedMarketData(symbol)) {
     return {
       supported: false,
-      error: `No verified market data for ${normalized}.`,
+      error: `No verified market data for ${label}.`,
     };
   }
 
@@ -354,6 +356,11 @@ const GATE_HINTS = {
   "weak setup": "The setup did not confirm — no order is sent. See the reasons above.",
   "no data": "This symbol's market data cannot be verified — execution is disabled.",
   "stale quote": "The quote is stale — scan again for fresh levels.",
+  "direction mismatch":
+    "The chosen side disagreed with the recent candle trend — no order is sent. The closes that disagreed are in the reasons above.",
+  "flat market": "The market shows no net movement in either direction — no order is sent.",
+  "waiting for pullback":
+    "The direction is readable but the move is exhausted — the entry waits for a pullback and a confirming candle instead of chasing it.",
 } as const;
 
 export function executionGate(analysis: ScannerAnalysis): ExecutionGate {

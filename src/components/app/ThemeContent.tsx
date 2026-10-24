@@ -6,7 +6,10 @@ import { accentColorValue, fontStack, useCustomization } from "@/lib/app-customi
 import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
+import { useMediaDim } from "@/lib/use-media-dim";
 import { Sniper, Phoenix, Vortex } from "@/components/app/SignatureLayouts";
+import { InterfaceConsole } from "@/components/app/InterfaceConsole";
+import { interfaceDefinitionFor } from "@/lib/interface-themes";
 
 export type ThemeContentProps = {
   robot: Robot | undefined;
@@ -56,7 +59,7 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
       initial={{ opacity: 0, y: 22 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-      className="mx-3 flex min-h-56 w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-3 rounded-[24px] border-2 border-dashed p-10 text-center"
+      className="if-card if-control mx-3 flex min-h-44 w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-3 border-2 border-dashed p-8 text-center"
       style={{ borderColor: `${accent}66`, backgroundColor: `${accent}0d` }}
     >
       <span className="flex size-16 items-center justify-center rounded-3xl" style={{ backgroundColor: `${accent}26` }}>
@@ -73,26 +76,26 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
 function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <motion.section
         layout
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-black"
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="relative flex h-full flex-col items-center justify-end px-4 pb-8 pt-4">
+        <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <h1
             className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
           >
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-          <div className="mt-8 grid w-full max-w-xs grid-cols-3 gap-2">
+          <div className="mt-5 grid w-full max-w-xs grid-cols-3 gap-2">
             {actions.map(({ label, icon: Icon, onClick }) => (
               <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-2 py-1">
                 <Icon className="size-9 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} strokeWidth={2.2} />
@@ -100,7 +103,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
               </button>
             ))}
           </div>
-          <p className="mt-7 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
+          <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
         </div>
       </motion.section>
 
@@ -126,7 +129,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative flex min-h-[62vh] w-full flex-col items-center justify-center gap-7 overflow-hidden bg-black px-5 py-10">
+    <div className="relative flex app-hero-fold-min w-full flex-col items-center justify-center gap-5 overflow-hidden bg-black px-5 py-7">
       {/* The picture at FULL strength — no dim layer over it. Text contrast
           comes from the shadows on the text itself. */}
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
@@ -136,15 +139,15 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-          className="flex size-52 items-center justify-center rounded-full border-4 bg-white/10 p-2"
+          className="flex app-hero-orb items-center justify-center rounded-full border-4 bg-white/10 p-2"
           style={{ borderColor: accent, boxShadow: `0 0 46px ${accent}, 0 0 110px ${accent}59` }}
         >
           <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </motion.span>
 
-        <p className="mt-7 text-sm font-bold tracking-[0.34em] text-white/60 uppercase" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>You're trading with</p>
+        <p className="mt-5 text-sm font-bold tracking-[0.34em] text-white/60 uppercase" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>You're trading with</p>
         <h1
-          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-3xl font-black leading-tight tracking-wide text-white uppercase sm:text-4xl"
+          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-2xl font-black leading-tight tracking-wide text-white uppercase sm:text-3xl"
           style={{ fontFamily: fontStack(font), textShadow: `0 0 34px ${accent}80` }}
         >
           {robot?.name ?? "YOUR ROBOT"}
@@ -160,7 +163,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
               key={label}
               type="button"
               onClick={onClick}
-              className="group flex size-24 flex-col items-center justify-center gap-1.5 rounded-full border-2 bg-black/90 transition-transform active:scale-95"
+              className="group flex size-20 flex-col items-center justify-center gap-1.5 rounded-full border-2 bg-black/90 transition-transform active:scale-95"
               style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}
             >
               <Icon className="size-7" style={{ color: accent }} />
@@ -187,18 +190,18 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
 function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenScanner: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <motion.section
         layout
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-black"
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="relative flex h-full flex-col items-center justify-end pb-9">
+        <div className="relative flex h-full flex-col items-center justify-end pb-7">
           <h1
             className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black leading-tight text-white sm:text-3xl"
             style={{ fontFamily: fontStack(font), textShadow: "0 2px 20px rgba(0,0,0,0.85)" }}
@@ -251,20 +254,20 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
 function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="flex flex-col gap-6">
+    <div className="flex flex-col gap-4">
       <motion.section
         layout
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed relative h-[65vh] w-full overflow-hidden bg-black"
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
         {/* Background picture at full strength — no dim/gradient over it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="relative flex min-h-[430px] flex-col items-center justify-end px-4 pb-8 pt-4">
+        <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <div className="absolute top-4 left-4 flex flex-col items-center gap-3">
             <button
               type="button"
@@ -286,7 +289,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
 
-          <div className="mt-8 grid w-full max-w-xs grid-cols-3 gap-2">
+          <div className="mt-5 grid w-full max-w-xs grid-cols-3 gap-2">
             {actions.map(({ label, icon: Icon, onClick }) => (
               <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-2 py-1">
                 <Icon className="size-9 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} strokeWidth={2.2} />
@@ -295,7 +298,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
             ))}
           </div>
 
-          <p className="mt-7 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
+          <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
         </div>
       </motion.section>
 
@@ -320,18 +323,20 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 export function ThemeContent(props: ThemeContentProps) {
   const { theme, color } = useCustomization();
   const accent = accentColorValue(color);
+  // Home's themed backdrop follows the SAME persisted Background Picture
+  // switch as every other screen: OFF → no image, no video, clean black.
+  const mediaDim = useMediaDim();
 
   // The HOME double-press video — ONE universal backdrop for every interface
   // style. When stopped this renders nothing (the slots keep the picture);
   // when playing, the video runs edge-to-edge behind the theme's content.
-  // Home ALWAYS shows its picture (the nav screens are never blacked out by
-  // the Background Picture toggle — that scope lives in AppBackground).
   return (
     <>
       <VideoBackdrop
         image={props.robot?.image || "/logo.png"}
         video={props.robot?.video}
         accent={accentColorValue(color)}
+        mediaDim={mediaDim}
         showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
@@ -346,6 +351,23 @@ function ThemeContentInner(props: ThemeContentProps) {
   const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
+
+  // The eight real Main Interfaces (Crimson Navigator … Ultron Mega) render
+  // the definition-driven console: same live robot/broker data, the
+  // interface's own colours, surfaces, header and hero decoration. It renders
+  // with or without a robot, so the interface is visible immediately.
+  const definition = interfaceDefinitionFor(theme);
+  if (definition) {
+    return (
+      <InterfaceConsole
+        definition={definition}
+        robot={props.robot}
+        accent={accent}
+        actions={actions}
+        onOpenAdd={props.onOpenAdd}
+      />
+    );
+  }
 
   if (!props.robot) {
     return (

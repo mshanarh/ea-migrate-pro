@@ -7,6 +7,7 @@ import {
   resolveTradeDirection,
 } from "../src/lib/auto-trade";
 import type { BridgeCredentials } from "../src/lib/auto-trade";
+import { bridgeSeries, pullbackSeries, type Candle } from "./breakout-fixtures";
 
 /**
  * WHY THESE TESTS EXIST — "AUTO-TRADING GIVES AN ERROR ON EVERY SYMBOL".
@@ -42,10 +43,15 @@ type Captured = { url: string; body: Record<string, unknown> };
 type BridgeScript = {
   quote?: Record<string, unknown>;
   trade?: Record<string, unknown>;
+  /** Completed 15m breakout series per symbol — the live engine's only input. */
+  candles?: Record<string, Candle[]>;
   reject?: Error;
 };
 
-/** Stub the bridge: /symbol/price answers with `quote`, /trade/execute with `trade`. */
+/**
+ * Stub the bridge: /symbol/candles answers the symbol's series (or a refusal),
+ * /symbol/price answers with `quote`, /trade/execute with `trade`.
+ */
 function stubBridge(script: BridgeScript): Captured[] {
   const captured: Captured[] = [];
   vi.stubGlobal(
@@ -55,6 +61,17 @@ function stubBridge(script: BridgeScript): Captured[] {
       const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : {};
       captured.push({ url: target, body });
       if (script.reject) throw script.reject;
+      if (target.endsWith("/symbol/candles")) {
+        const series = script.candles?.[String(body["symbol"])];
+        return {
+          ok: true,
+          status: 200,
+          json: async () =>
+            series
+              ? { ok: true, candles: series }
+              : { success: false, message: `no candles for ${String(body["symbol"])}` },
+        } as unknown as Response;
+      }
       const isQuote = target.endsWith("/symbol/price");
       const payload = isQuote ? (script.quote ?? {}) : (script.trade ?? { retcode: 10009, order: 777 });
       return {
@@ -65,6 +82,16 @@ function stubBridge(script: BridgeScript): Captured[] {
     }),
   );
   return captured;
+}
+
+/** A completed 15m breakout series for the direction a test wants to trade. */
+function breakout(direction: "BUY" | "SELL", low: number, high: number): Candle[] {
+  const range = high - low;
+  return bridgeSeries({
+    low,
+    high,
+    breakoutClose: direction === "BUY" ? high + range * 0.1 : low - range * 0.1,
+  });
 }
 
 /** Live quotes pinned to the engine's analysed levels for the symbol. */
@@ -219,7 +246,10 @@ describe("Real failures are ERRORs that name the cause", () => {
   });
 
   it("a stale quote refused by the bridge fails with the cause in the message", async () => {
-    stubBridge({ quote: { success: false, message: "quote is stale for XAUUSD" } });
+    stubBridge({
+      candles: { AUDUSD: breakout("BUY", 0.65, 0.654) },
+      quote: { success: false, message: "quote is stale for XAUUSD" },
+    });
 
     const results = await executeAutoTrade({
       symbol: "AUDUSD",
@@ -236,6 +266,10 @@ describe("Real failures are ERRORs that name the cause", () => {
   });
 
   it("a weak/missing-data symbol is refused as NO TRADE, distinct from an error", async () => {
+    // The bridge answers — it just has no series for this name (the analysis
+    // retries once, then refuses with the reason instead of erroring).
+    stubBridge({});
+
     const results = await executeAutoTrade({
       symbol: "UNKNOWN_SYMBOL_XYZ",
       lotSize: 0.01,
@@ -247,8 +281,9 @@ describe("Real failures are ERRORs that name the cause", () => {
     expect(results).toHaveLength(1);
     expect(results[0]!.status).toBe("blocked");
     expect(results[0]!.message).toContain("NO TRADE (no data)");
-    // No bridge request was even attempted for an unverifiable symbol.
-  });
+    // The refusal names the raw response, never a bare HTTP status.
+    expect(results[0]!.message).toContain("no candles for UNKNOWN_SYMBOL_XYZ");
+  }, 15_000);
 });
 
 // ============================================================================
@@ -264,7 +299,14 @@ describe("Direction safety and order shape", () => {
     const scan = await analyzeMarket({ symbol: "US30", timeframe: "1h" });
     expect(scan.analysis!.signal).toBe("SELL");
 
-    const captured = stubBridge({ quote: pinnedQuote("US30") });
+    // A TRADEABLE falling series: a gentle drift, a bounce into the average
+    // and a completed bearish candle — what the entry filter requires. A
+    // vertical drop is refused, so it cannot be used to test the order shape.
+    const fixture = pullbackSeries({ direction: "SELL", base: 42150, forming: true });
+    const captured = stubBridge({
+      candles: { US30: fixture.candles },
+      quote: { success: true, bid: fixture.bid, ask: fixture.ask, digits: 1, point: 0.1, stops_level: 0 },
+    });
     const results = await executeAutoTrade({
       symbol: "US30",
       lotSize: 0.1,
@@ -278,7 +320,7 @@ describe("Direction safety and order shape", () => {
     const order = captured.find((request) => request.url.endsWith("/trade/execute"))!;
     expect(order.body["action"], "the detected direction must be what MT5 receives").toBe("SELL");
     // SELL: stop-loss ABOVE the live price, take-profit BELOW it.
-    const liveBid = 42148.0;
+    const liveBid = fixture.bid;
     expect(Number(order.body["stop_loss"])).toBeGreaterThan(liveBid);
     expect(Number(order.body["take_profit"])).toBeLessThan(liveBid);
   });
@@ -288,7 +330,13 @@ describe("Direction safety and order shape", () => {
     expect(analysis.direction.type).toBe("BUY");
     expect(analysis.executionReady).toBe(true);
 
-    const captured = stubBridge({ quote: pinnedQuote("XAUUSD") });
+    // A TRADEABLE rising series: a gentle drift, a dip back toward the average
+    // and a completed bullish candle.
+    const fixture = pullbackSeries({ direction: "BUY", base: 2650, forming: true });
+    const captured = stubBridge({
+      candles: { XAUUSD: fixture.candles },
+      quote: { success: true, bid: fixture.bid, ask: fixture.ask, digits: 2, point: 0.01, stops_level: 0 },
+    });
     const results = await executeAutoTrade({
       symbol: "XAUUSD",
       lotSize: 0.1,
@@ -297,12 +345,12 @@ describe("Direction safety and order shape", () => {
       credentials: CREDENTIALS,
     });
 
-    expect(results[0]!.status).toBe("executed");
+    expect(results[0]!.status, results[0]!.message).toBe("executed");
     expect(results[0]!.side).toBe("BUY");
     const order = captured.find((request) => request.url.endsWith("/trade/execute"))!;
     expect(order.body["action"]).toBe("BUY");
     // BUY: stop-loss BELOW the live price, take-profit ABOVE it.
-    const liveAsk = 2650.0;
+    const liveAsk = fixture.ask;
     expect(Number(order.body["stop_loss"])).toBeLessThan(liveAsk);
     expect(Number(order.body["take_profit"])).toBeGreaterThan(liveAsk);
   });
@@ -311,7 +359,21 @@ describe("Direction safety and order shape", () => {
     // The old guard compared the analysis price with the broker quote using an
     // ABSOLUTE tolerance of 0.0005 — a live AUDUSD seven big-hands away was
     // refused as "Market moved against setup" on every attempt.
-    stubBridge({ quote: { success: true, bid: 0.7012, ask: 0.7015, digits: 5, point: 0.00001, stops_level: 0 } });
+    // The execution quote is a REAL second round trip to the bridge; it is no
+    // longer compared against the analysis price in absolute pips, only the
+    // analysis' own age is checked.
+    const fixture = pullbackSeries({ direction: "BUY", base: 0.7014, forming: true });
+    stubBridge({
+      candles: { AUDUSD: fixture.candles },
+      quote: {
+        success: true,
+        bid: fixture.bid,
+        ask: fixture.ask,
+        digits: 5,
+        point: 0.00001,
+        stops_level: 0,
+      },
+    });
 
     const results = await executeAutoTrade({
       symbol: "AUDUSD",

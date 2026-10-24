@@ -61,7 +61,9 @@ export default async function handler(request: ApiRequest, response: ApiResponse
     return;
   }
   const email = String(input["email"] ?? "").trim().toLowerCase();
-  const symbol = String(input["symbol"] ?? "").trim().toUpperCase();
+  // The symbol is stored EXACTLY as the sender spells it (BTCUSDm stays
+  // BTCUSDm) — only the action is normalised.
+  const symbol = String(input["symbol"] ?? "").trim();
   const action = String(input["action"] ?? "").trim().toUpperCase();
   if (!email || !symbol || !["BUY", "SELL", "CLOSE"].includes(action)) {
     response.status(400).json({ ok: false, error: "email, symbol and action (BUY/SELL/CLOSE) are required" });

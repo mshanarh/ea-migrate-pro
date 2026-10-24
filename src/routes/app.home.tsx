@@ -14,8 +14,10 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
-import { activateKey, appSignOut, getAppState, hasPendingLicense, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
@@ -81,6 +83,19 @@ export const Route = createFileRoute("/app/home")({
       if (access.action === "deactivate") {
         invalidateAccessCache(email);
         throw redirect({ href: "/app/login?deactivated=1" });
+      }
+      // NO VERDICT IS NOT A REFUSAL. A paid-record source that could not be
+      // READ answers `retry`, and the destination for that is the plain retry
+      // line on the login screen (`?verify=1`) — never the plan chooser. An
+      // activated device stays put and asks again quietly instead of losing the
+      // dashboard to a store that was briefly down.
+      if (access.action === "retry") {
+        if (getAppState().robots.length > 0) {
+          scheduleActivatedRetry(email);
+          return;
+        }
+        invalidateAccessCache(email);
+        throw redirect({ href: "/app/login?verify=1" });
       }
       if (access.action === "pay") {
         // AN ACTIVATED DEVICE IS NOT EJECTED BY A CLOUD THAT DID NOT ANSWER.
@@ -293,7 +308,14 @@ function AppHome() {
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
   useEffect(() => {
+    // The mentor's LOCAL store (empty on a client phone) and the REAL server
+    // config, resolved by the activated licence key. The server is the source
+    // of truth for symbols — the local store is only a fallback.
     void syncRobotsFromPortal();
+    // The server config (symbols) is authoritative…
+    void refreshRobotConfigs();
+    // …and the legacy cloud mirror still fills in EA media for keys issued
+    // before the picture travelled with the licence record.
     void syncRobotsFromCloudPortal();
   }, []);
 
@@ -327,6 +349,13 @@ function AppHome() {
       }
       if (result.action === "deactivate") {
         window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      if (result.action === "retry") {
+        // A source was unreadable — retry quietly rather than eject the
+        // dashboard to the plans. Nothing here grants access: the next check
+        // still has to come back clean before the session is confirmed.
+        scheduleActivatedRetry(app.email);
         return;
       }
       if (result.action === "pay") {
@@ -368,10 +397,14 @@ function AppHome() {
 
   if (access !== "ok") return <AccessSplash />;
 
+  // PULL DOWN → re-read the EA config from the server.
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
   const onTouchStart = (event: React.TouchEvent) => {
+    pull.handlers.onTouchStart(event as React.TouchEvent<HTMLElement>);
     touchStartX.current = event.touches[0]?.clientX ?? null;
   };
   const onTouchEnd = (event: React.TouchEvent) => {
+    pull.handlers.onTouchEnd();
     if (touchStartX.current === null) return;
     const endX = event.changedTouches[0]?.clientX ?? null;
     if (endX !== null && touchStartX.current - endX > 70) setDrawerOpen(true);
@@ -454,7 +487,22 @@ function AppHome() {
       if (!symbol) continue;
 
       try {
-        const analysis = await resolveTradeDirection(symbol);
+        // Credentialled analysis: the direction comes from the broker's own
+        // candles (oldest→newest), not the fixture tables.
+        const analysis = await resolveTradeDirection(symbol, { credentials });
+
+        // THE ENTRY FILTER, ON THE CARD. The direction derivation is unchanged;
+        // this only shows what was measured (trend, extension in ATR) and why
+        // the entry was allowed or skipped.
+        const gate = analysis.gate ?? null;
+        if (gate) {
+          updateExecutionPlan({
+            trend: gate.direction,
+            extensionAtr: gate.extensionAtr,
+            entryGate: gate.verdict,
+            entryReason: gate.summary,
+          });
+        }
 
         if (analysis.direction.type === "NO_TRADE") {
           blocked += 1;
@@ -465,7 +513,7 @@ function AppHome() {
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `${symbol.toUpperCase()} NO TRADE (${kind}) — ${analysis.direction.reason}`,
+                message: `${symbol} NO TRADE (${kind}) — ${analysis.direction.reason}`,
                 status: "blocked",
                 symbol,
                 robotName: target.name,
@@ -553,7 +601,7 @@ function AppHome() {
           new CustomEvent("eamp:execution-result", {
             detail: {
               ok: false,
-              message: `${symbol.toUpperCase()} FAILED — ${error instanceof Error ? error.message.toUpperCase() : "UNKNOWN ERROR"}`,
+              message: `${symbol} FAILED — ${error instanceof Error ? error.message : "Unknown error"}`,
               status: "failed",
               symbol,
               robotName: target.name,
@@ -615,8 +663,9 @@ function AppHome() {
 
   return (
     <div
-      className="app-fullscreen flex w-full flex-col bg-black text-white"
+      className="app-fullscreen if-screen flex w-full flex-col bg-black text-white"
       onTouchStart={onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {
         if (touchStartX.current !== null && event.changedTouches?.length === 1) {
           const touchEnd = event.changedTouches?.[0];
@@ -633,6 +682,7 @@ function AppHome() {
     >
       <div className="app-scroll-area">
         <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
+          <EaConfigNote className="pt-1" />
           <ThemeContent
             robot={robot}
             robots={app.robots}
@@ -653,8 +703,9 @@ function AppHome() {
       <DraggableBotPopup />        <TradeAnalysisPopup
           isOpen={analysisOpen}
           onClose={() => setAnalysisOpen(false)}
-          robot={robot as Robot | undefined}
+          robot={robot}
           scannerMode={false}
+          activeRobotId={app.activeRobotId ?? ""}
         />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />

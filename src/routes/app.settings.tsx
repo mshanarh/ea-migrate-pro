@@ -26,23 +26,6 @@ import {
   useCustomization,
 } from "@/lib/app-customization";
 
-export type BottomNavStyle =
-  | "floating-pill"
-  | "icon-pill"
-  | "classic-tabs"
-  | "compact-dots";
-
-export const BOTTOM_NAV_STYLES: Array<{
-  id: BottomNavStyle;
-  name: string;
-  description: string;
-}> = [
-  { id: "floating-pill", name: "Floating Pill", description: "Rounded glass bar with icons and labels" },
-  { id: "icon-pill", name: "Icon Pill", description: "Floating pill with icons only" },
-  { id: "classic-tabs", name: "Classic Tabs", description: "Tab bar with labels below icons" },
-  { id: "compact-dots", name: "Compact Dots", description: "Compact bar with icons and dot indicator" },
-];
-
 export const Route = createFileRoute("/app/settings")({
   ssr: false,
   beforeLoad: () => {
@@ -106,7 +89,7 @@ function PillSection({
   return (
     <section className="w-full max-w-full">
       <div
-        className="flex items-center justify-between gap-3 border border-white/10 bg-[#0f1a1a] px-5 py-3.5"
+        className="if-card if-control flex items-center justify-between gap-3 border px-5 py-3.5"
         style={{ borderRadius: isIos ? "var(--plat-radius-control)" : "9999px" }}
       >
         <button
@@ -118,7 +101,7 @@ function PillSection({
           <span className="text-xl" aria-hidden>
             {icon}
           </span>
-          <span className="truncate text-sm font-black tracking-wide text-white">{label}</span>
+          <span className="if-header if-text truncate text-sm font-black tracking-wide">{label}</span>
         </button>
         {onSwitch && (
           <button
@@ -175,7 +158,7 @@ function AccentSection({ accent }: { accent: string }) {
           key={option.id}
           type="button"
           onClick={() => setAccentColor(option.id)}
-          className={`flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${
+          className={`if-control flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${
             color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"
           }`}
         >
@@ -185,7 +168,7 @@ function AccentSection({ accent }: { accent: string }) {
           >
             {color === option.id && <Check className="size-5 text-black" strokeWidth={3} />}
           </span>
-          <span className="text-center text-[10px] font-bold text-white/70">{option.name}</span>
+          <span className="if-muted text-center text-[10px] font-bold">{option.name}</span>
         </button>
       ))}
       <span className="sr-only" style={{ color: accent }}>
@@ -204,16 +187,16 @@ function InterfaceSection({ accent }: { accent: string }) {
           key={option.id}
           type="button"
           onClick={() => setInterfaceTheme(option.id)}
-          className="flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+          className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
           style={{
-            borderColor: theme === option.id ? accent : "rgba(255,255,255,0.1)",
-            backgroundColor: theme === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
-            boxShadow: theme === option.id ? `0 0 22px ${accent}33` : "none",
+            borderColor: theme === option.id ? accent : undefined,
+            backgroundColor: theme === option.id ? `${accent}14` : undefined,
+            boxShadow: theme === option.id ? `0 0 22px ${accent}33` : undefined,
           }}
         >
           <span>
-            <span className="block text-sm font-black tracking-wide text-white">{option.name}</span>
-            <span className="block text-xs text-white/50">{option.description}</span>
+            <span className="if-text block text-sm font-black tracking-wide">{option.name}</span>
+            <span className="if-muted block text-xs">{option.description}</span>
           </span>
           {theme === option.id && (
             <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
@@ -243,7 +226,10 @@ function FontSection({ accent }: { accent: string }) {
           <span className="min-w-0 flex-1">
             <span
               className="block truncate text-2xl font-bold text-white"
-              style={{ fontFamily: fontStack(option.id) }}
+              /* The picker's ONE intentional exception to the app font: each
+                 option is drawn in its own face so the choice is visible. */
+              data-font-sample
+              style={{ "--font-sample": fontStack(option.id) } as React.CSSProperties}
             >
               {option.name}
             </span>
@@ -283,12 +269,12 @@ function AppSettings() {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
 
   return (
-    <div className="app-fullscreen bg-black text-white">
+    <div className="app-fullscreen if-screen bg-black text-white">
       <div className="app-scroll-area">
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-5 pt-safe pb-safe-nav">
           <div className="pb-5">
-            <h1 className="text-3xl font-black tracking-tight">Settings</h1>
-            <p className="mt-2 text-sm text-white/55">
+            <h1 className="if-header if-header-rule if-text text-3xl font-black tracking-tight">Settings</h1>
+            <p className="if-muted mt-2 text-sm">
               Tap any section to open it. Changes apply instantly and are saved on this device.
             </p>
           </div>
@@ -442,7 +428,7 @@ function AppLogoSection() {
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={busy}
-          className="flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] text-sm font-bold text-white/85 transition-colors hover:bg-white/[0.1] disabled:opacity-60"
+          className="if-chip flex h-12 flex-1 items-center justify-center gap-2 rounded-2xl border text-sm font-bold disabled:opacity-60"
         >
           <ImagePlus className="size-4" /> {busy ? "Saving..." : "Upload logo"}
         </button>
@@ -453,7 +439,7 @@ function AppLogoSection() {
               void clearCustomLogo();
               toast.success("Back to the built-in mascot");
             }}
-            className="flex h-12 items-center justify-center gap-2 rounded-2xl border border-white/10 bg-white/[0.05] px-4 text-sm font-bold text-white/60 transition-colors hover:text-white"
+            className="if-chip flex h-12 items-center justify-center gap-2 rounded-2xl border px-4 text-sm font-bold"
           >
             <RotateCcw className="size-4" /> Reset
           </button>

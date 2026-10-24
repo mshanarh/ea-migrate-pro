@@ -9,6 +9,7 @@ import {
   LineChart,
   Music,
   Palette,
+  PanelBottom,
   Type,
   X,
 } from "lucide-react";
@@ -25,6 +26,11 @@ import {
 } from "@/lib/app-customization";
 import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
+import {
+  BOTTOM_NAV_STYLE_OPTIONS,
+  setBottomNavStyle,
+  useBottomNavStyle,
+} from "@/lib/bottom-nav-style";
 import { usePlatform } from "@/lib/platform";
 import { Newspaper } from "lucide-react";
 
@@ -64,7 +70,7 @@ function PillRow({
         type="button"
         onClick={handle}
         aria-expanded={to ? undefined : open}
-        className="flex w-full items-center justify-between gap-3 rounded-full border px-5 py-4 text-left transition-transform active:scale-[0.98]"
+        className="if-control flex w-full items-center justify-between gap-3 rounded-full border px-5 py-4 text-left transition-transform active:scale-[0.98]"
         style={{
           borderColor: `${accent}66`,
           background: "linear-gradient(180deg, rgba(255,255,255,0.05), rgba(255,255,255,0.02))",
@@ -75,7 +81,7 @@ function PillRow({
           <span className="shrink-0" style={{ color: accent }} aria-hidden>
             {icon}
           </span>
-          <span className="truncate text-base font-bold text-white">{label}</span>
+          <span className="if-text truncate text-base font-bold">{label}</span>
         </span>
         {to ? (
           <ChevronDown
@@ -116,6 +122,7 @@ function PillRow({
 export function CustomizationPanel() {
   const { color, theme, font } = useCustomization();
   const accent = accentColorValue(color);
+  const bottomNavStyle = useBottomNavStyle();
   const [openSection, setOpenSection] = useState<string | null>(null);
   const toggle = (key: string) => setOpenSection((current) => (current === key ? null : key));
 
@@ -135,7 +142,7 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setInterfaceTheme(option.id)}
-                className="flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: theme === option.id ? accent : "rgba(255,255,255,0.1)",
                   backgroundColor: theme === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
@@ -143,10 +150,10 @@ export function CustomizationPanel() {
                 }}
               >
                 <span>
-                  <span className="block text-sm font-black tracking-wide text-white">
+                  <span className="if-text block text-sm font-black tracking-wide">
                     {option.name}
                   </span>
-                  <span className="block text-xs text-white/50">{option.description}</span>
+                  <span className="if-muted block text-xs">{option.description}</span>
                 </span>
                 {theme === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
@@ -169,7 +176,7 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setAccentColor(option.id)}
-                className={`flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"}`}
+                className={`if-control flex flex-col items-center gap-2 rounded-2xl border p-3 transition-transform active:scale-95 ${color === option.id ? "border-white/40 bg-white/10" : "border-white/10 bg-white/[0.03]"}`}
               >
                 <span
                   className="relative flex size-10 items-center justify-center rounded-full border border-white/20"
@@ -177,7 +184,7 @@ export function CustomizationPanel() {
                 >
                   {color === option.id && <Check className="size-5 text-black" strokeWidth={3} />}
                 </span>
-                <span className="text-center text-[10px] font-bold text-white/70">
+                <span className="if-muted text-center text-[10px] font-bold">
                   {option.name}
                 </span>
               </button>
@@ -198,20 +205,59 @@ export function CustomizationPanel() {
                 key={option.id}
                 type="button"
                 onClick={() => setFontOption(option.id)}
-                className="flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                className="if-control flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
                 style={{
                   borderColor: font === option.id ? accent : "rgba(255,255,255,0.1)",
                   backgroundColor: font === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
                 }}
               >
                 <span
-                  className="flex size-12 shrink-0 items-center justify-center rounded-xl bg-white/5 text-xl font-black text-white"
-                  style={{ fontFamily: fontStack(option.id) }}
+                  className="if-chip flex size-12 shrink-0 items-center justify-center rounded-xl text-xl font-black"
+                  /* Drawn in its own face on purpose — the app font rule has
+                     this single exception so the choice stays legible. */
+                  data-font-sample
+                  style={{ "--font-sample": fontStack(option.id) } as React.CSSProperties}
                 >
                   Aa
                 </span>
-                <span className="flex-1 text-sm font-bold text-white/85">{option.name}</span>
+                <span className="if-text flex-1 text-sm font-bold">{option.name}</span>
                 {font === option.id && (
+                  <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+                )}
+              </button>
+            ))}
+          </div>
+        </PillRow>
+
+        <PillRow
+          icon={<PanelBottom className="size-5" />}
+          label="Bottom Nav"
+          accent={accent}
+          open={openSection === "nav"}
+          onToggle={() => toggle("nav")}
+        >
+          <div className="space-y-3">
+            {BOTTOM_NAV_STYLE_OPTIONS.map((option) => (
+              <button
+                key={option.id}
+                type="button"
+                onClick={() => setBottomNavStyle(option.id)}
+                className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+                style={{
+                  borderColor: bottomNavStyle === option.id ? accent : "rgba(255,255,255,0.1)",
+                  backgroundColor:
+                    bottomNavStyle === option.id ? `${accent}14` : "rgba(255,255,255,0.03)",
+                  boxShadow: bottomNavStyle === option.id ? `0 0 22px ${accent}33` : "none",
+                }}
+                aria-pressed={bottomNavStyle === option.id}
+              >
+                <span className="min-w-0">
+                  <span className="if-text block text-sm font-black tracking-wide">
+                    {option.name}
+                  </span>
+                  <span className="if-muted block text-xs">{option.description}</span>
+                </span>
+                {bottomNavStyle === option.id && (
                   <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
                 )}
               </button>

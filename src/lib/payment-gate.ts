@@ -65,6 +65,7 @@ import { markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/l
 import { appSignOut, getDeviceId } from "@/lib/app-store";
 import { checkAccessServer } from "@/lib/supabase-users";
 import { getDeviceBinding, bindDeviceToEmail } from "@/lib/supabase-users";
+import { readPortalPayment } from "@/lib/portal-paid";
 
 /**
  * `revoked` is DELIBERATE and separate from `unpaid`.
@@ -99,8 +100,21 @@ export type CloudAccess = "admin" | "paid" | "unpaid" | "revoked";
  * moment the ledger agrees — which is what "I activated a key and it asked me
  * for my email and code all over again" was really about.
  */
+/**
+ * THE PLAIN MESSAGE FOR AN UNVERIFIABLE SUBSCRIPTION.
+ *
+ * Shown instead of the plan chooser whenever a paid-record source could not be
+ * READ. "We could not check" is not "you have not paid", and telling a paying
+ * customer to choose a plan because a store was down is exactly the bug this
+ * closes.
+ */
+export const VERIFY_RETRY_MESSAGE =
+  "We could not verify your subscription right now, please try again.";
+
 export type AppAccessCheck = {
-  action: "pass" | "signin" | "pay" | "deactivate";
+  action: "pass" | "signin" | "pay" | "deactivate" | "retry";
+  /** Plain, user-facing retry line (only on `retry`). */
+  message?: string;
   /**
    * TRUE only when the cloud gave NO verdict at all (timeout, network error,
    * unconfigured). A `pay` action with `undecided` is "we could not ask", while
@@ -828,9 +842,34 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
   try {
     const server = await checkAccessServer(clean, getDeviceId());
     // Endpoint could not decide — caller must fail closed. Nothing is cached.
-    if (!server.ok) return { status: null, binding: null, bindingKnown: false };
+    if (!server.ok) {
+      console.warn(`[payment-gate] access check undecided: ${server.detail ?? "no verdict"}`);
+      return { status: null, binding: null, bindingKnown: false };
+    }
 
-    const status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
+    let status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
+
+    // ── ANY AUTHORITATIVE PAID RECORD IS ENOUGH ──
+    // The server already consults the KV record, the paid ledger, the portal's
+    // payment table and licence-key proof. This is the same rule applied to the
+    // one store the browser can read: a paid portal record opens the app even
+    // when the ledger has no row for it.
+    //
+    // A VERDICT THAT WAS REACHED STANDS. `server.ok` means every store the
+    // endpoint reads answered — including `portal_payments`, read there with the
+    // service role. This browser-side read is only an extra chance to UPGRADE an
+    // "unpaid" answer, so if it cannot be made (row-level security on the anon
+    // key, a cold network) the server's verdict is kept. Treating that failed
+    // read as "undecided" would send every ordinary unpaid customer to a retry
+    // screen instead of the plans.
+    if (status === "unpaid") {
+      const portal = await readPortalPayment(clean);
+      if (portal.state === "paid") {
+        status = "paid";
+      } else if (portal.state === "unavailable") {
+        console.warn(`[payment-gate] paid-record source unavailable: ${portal.detail}`);
+      }
+    }
 
     // THE BINDING CAME BACK WITH THE SAME ANSWER in the normal case. When the
     // server could not read it (`deviceBinding` absent), fall back to this
@@ -1153,3 +1192,4 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
   }
   return false;
 }
+

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -10,13 +10,16 @@ import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
-import { getAppState, leaveForCheckout } from "@/lib/app-store";
+import { getAppState, leaveForCheckout, refreshRobotConfigs } from "@/lib/app-store";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
+import { BRIDGE_KEY, bridgeSymbolCandidates, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
+import { verifyDirectionAgainstTrend } from "@/lib/auto-trade";
 import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -57,6 +60,12 @@ export const Route = createFileRoute("/app/scanner")({
 
 function AppScanner() {
   const app = useAppState();
+  // The scanner's symbol universe is the EA's CURRENT list, fetched by licence
+  // key every time this screen opens (and on pull-to-refresh).
+  useEffect(() => {
+    void refreshRobotConfigs();
+  }, []);
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
   const { color } = useCustomization();
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
@@ -171,6 +180,26 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
+      // DIRECTION GUARD — the side about to be sent must agree with the
+      // broker's OWN 1h candles (newest close vs the close five bars ago).
+      // A mismatch is refused with the real closes instead of sending a
+      // wrong-way order; the no-stops fallback never bypasses this.
+      const directionGuard = await verifyDirectionAgainstTrend(symbol, direction, credentials);
+      if (!directionGuard.ok) {
+        onProgress("Direction mismatch — trade blocked");
+        window.dispatchEvent(
+          new CustomEvent("eamp:execution-result", {
+            detail: {
+              ok: false,
+              status: "blocked",
+              symbol,
+              side: direction,
+              message: directionGuard.reason,
+            },
+          }),
+        );
+        return { ok: false, message: directionGuard.reason };
+      }
       // The order comment is the CURRENT BOT'S NAME EXACTLY AS CONFIGURED —
       // spaces, version text, plus signs and every other character included
       // ("sniper killer ea v2+" is sent as "sniper killer ea v2+"). Nothing
@@ -196,7 +225,7 @@ function AppScanner() {
       let brokerDigits: number | null = null;
       if (planStop > 0 || planTp > 0) {
         try {
-          const priceResponse = await fetch(`${BRIDGE_URL}/symbol/price`, {
+          const priceResponse = await fetch(`${getBridgeUrl()}/symbol/price`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
             body: JSON.stringify({ credentials, symbol }),
@@ -248,7 +277,7 @@ function AppScanner() {
       setExecutionStage(`Executing ${total} trades one by one...`);
 
       const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
-        const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
+        const response = await fetch(`${getBridgeUrl()}/trade/execute`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -452,13 +481,13 @@ function AppScanner() {
             // one clear error instead of firing N identical failures.
             lastError =
               error instanceof TypeError
-                ? "Could not reach the execution bridge — check your connection and try again."
+                ? bridgeUnreachableMessage()
                 : (error instanceof Error ? error.message : "Execution failed.");
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
                 detail: {
                   ok: false,
-                  message: `${lastError.toUpperCase()} — CONNECTION CLOSED`,
+                  message: `${lastError} — connection closed`,
                   status: "failed",
                   symbol,
                   side: direction,
@@ -477,7 +506,7 @@ function AppScanner() {
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `TRADE ${index} REFUSED — ${refused.toUpperCase()}`,
+                message: `TRADE ${index} REFUSED — ${refused}`,
                 status: "failed",
                 symbol,
                 side: direction,
@@ -549,7 +578,7 @@ function AppScanner() {
         new CustomEvent("eamp:execution-result", {
           detail: {
             ok: true,
-            message: finalMessage.toUpperCase(),
+            message: finalMessage,
             summary: true,
             symbol,
             robotName: robot?.name,
@@ -562,7 +591,7 @@ function AppScanner() {
     } catch (error) {
       const message =
         error instanceof TypeError
-          ? "Could not reach the execution bridge — check your connection and try again."
+          ? bridgeUnreachableMessage()
           : (error instanceof Error ? error.message : "Could not reach the execution service.");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
@@ -574,8 +603,14 @@ function AppScanner() {
   };
 
   return (
-    <div className="app-fullscreen bg-[#07090b] text-white">
+    <div
+      className="app-fullscreen if-screen bg-[#07090b] text-white"
+      onTouchStart={pull.handlers.onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
+      onTouchEnd={pull.handlers.onTouchEnd}
+    >
       <div className="app-scroll-area">
+        <EaConfigNote className="pt-2" />
         <ChartScanner
           symbols={robot?.symbols ?? []}
           pairs={(robot?.pairs ?? []).map((pair) => ({ symbol: pair.symbol, lotSize: pair.lotSize, maxTrades: pair.maxTrades, ...(pair.direction ? { direction: pair.direction } : {}) }))}
@@ -589,12 +624,13 @@ function AppScanner() {
       <DraggableBotPopup />        <TradeAnalysisPopup
           isOpen={analysisOpen}
           onClose={() => setAnalysisOpen(false)}
-          robot={robot as import("@/lib/app-store").Robot | undefined}
+          robot={robot}
           scannerMode={true}
+          activeRobotId={app.activeRobotId ?? ""}
         />
       <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
-        <DialogContent className="max-w-sm rounded-3xl border border-white/10 bg-[#0b0b0d] p-6 text-center text-white sm:max-w-sm">
+        <DialogContent className="if-card max-w-sm rounded-3xl border p-6 text-center sm:max-w-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">
             <span className="text-xl font-black">!</span>
           </div>

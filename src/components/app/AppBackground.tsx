@@ -13,23 +13,21 @@ import { useBackgroundPicture } from "@/lib/background-picture";
  * picture is never dimmed, blurred or scrimmed; text contrast belongs to the
  * text itself (shadows), not to a layer over the picture.
  *
- * SCOPE — who keeps their picture:
- *   • The three bottom-nav screens (Metatrader, Home, Scanner) ALWAYS show
- *     it — the Background Picture toggle never blacks them out. Home runs
- *     its own layered backdrop (theme VideoBackdrop + hero card), so this
- *     layer stays off there to avoid duplicate decoders; Metatrader and
- *     Scanner get it from here.
- *   • Every other app interface shows it only while the "Background Picture"
- *     toggle is ON (default OFF → clean solid black). The switch and this layer
- *     share ONE persisted store (`background-picture.ts`), so flipping it in
- *     Settings repaints the current screen the same second and every screen
+ * SCOPE — the toggle is authoritative on EVERY interface:
+ *   • OFF (default) → nothing paints here, every screen sits on clean black.
+ *     This includes the nav screens (Home, Metatrader, Scanner): an OFF
+ *     switch must never leave a picture on screen.
+ *   • ON → the picture shows on every app interface. Home runs its own
+ *     themed backdrop (theme VideoBackdrop + hero card), so this layer stays
+ *     off there to avoid duplicate decoders — that backdrop follows the very
+ *     same store, so Home blacks out too.
+ *   • All of it reads ONE persisted store (`background-picture.ts`), so a flip
+ *     in Settings repaints the current screen the same second and every screen
  *     navigated to afterwards — no reload, no second copy of the flag.
  *   • Auth forms (login/activate) are forms, not interfaces — never.
  */
 
-/** Bottom-nav trio — always keep the picture. */
-const ALWAYS_ON = ["/app/metatrader", "/app/scanner"];
-/** Home owns its own theme backdrop layers. */
+/** Home owns its own theme backdrop layers (they read the same toggle). */
 const HOME = "/app/home";
 /** Auth forms never get the picture layer. */
 const NEVER = ["/app/login", "/app/activate"];
@@ -46,10 +44,16 @@ export function AppBackground() {
   useEffect(() => setMounted(true), []);
 
   const excluded = NEVER.some((prefix) => matchesPath(pathname, prefix));
-  const alwaysOn = ALWAYS_ON.some((prefix) => matchesPath(pathname, prefix));
   const ownsItsOwnLayers = matchesPath(pathname, HOME);
-  // Nav trio: always. Other interfaces: only while the toggle is ON.
-  const show = mounted && !excluded && !ownsItsOwnLayers && (alwaysOn || mediaDim);
+  // The toggle decides for every interface, nav screens included.
+  const show = mounted && !excluded && !ownsItsOwnLayers && mediaDim;
+
+  // Trace so the live value and this layer's decision are visible in console.
+  useEffect(() => {
+    console.log(
+      `[bg-picture] toggle=${mediaDim ? "ON" : "OFF"} path=${pathname} layer=${show ? "ON" : "OFF"}${ownsItsOwnLayers ? " (home paints its own backdrop, same store)" : ""}`,
+    );
+  }, [mediaDim, pathname, show, ownsItsOwnLayers]);
 
   // Let the screens' solid backgrounds step aside while the picture shows.
   useEffect(() => {

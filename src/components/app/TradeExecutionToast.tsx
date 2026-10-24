@@ -205,7 +205,7 @@ export function TradeExecutionToast({
       aria-live="polite"
       data-mode={mode}
       data-symbol={symbol || undefined}
-      className="fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md animate-[slideDown_0.3s_ease-out] rounded-[16px] border border-[#2a2a2a] bg-[#0f0f0f] p-4 shadow-xl"
+      className="if-card fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md animate-[slideDown_0.3s_ease-out] rounded-[16px] border p-4 shadow-xl"
       style={{ marginTop: "var(--sa-top)" }}
     >
       <div className="flex items-center gap-3">
@@ -224,7 +224,7 @@ export function TradeExecutionToast({
         {/* Text */}
         <div className="min-w-0 flex-1">
           {phase === "steps" && (
-            <p className="truncate text-[13px] font-semibold text-white" title={symbol ?? undefined}>
+            <p className="if-text truncate text-[13px] font-semibold" title={symbol ?? undefined}>
               {symbol ? `${symbol} — ${stepText}` : stepText}
             </p>
           )}
@@ -234,7 +234,7 @@ export function TradeExecutionToast({
             </p>
           )}
           {phase === "trade" && totalTrades > 0 ? (
-            <p className="truncate text-[13px] font-bold text-white">
+            <p className="if-text truncate text-[13px] font-bold">
               <span className="text-green-400">✅</span> Trade {currentTrade}/{totalTrades} completed successfully
             </p>
           ) : (

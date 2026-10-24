@@ -268,13 +268,17 @@ describe("the security rules, unchanged by any of this", () => {
     expect(appStore.getAppState().email).toBeNull();
   });
 
-  it("the cloud cannot answer → fail closed (`pay`), never a pass", async () => {
+  it("the cloud cannot answer → fail closed (`retry`), never a pass", async () => {
     const { appStore, gate } = await loadGate();
     seedSession(appStore);
     vi.stubGlobal("fetch", vi.fn(async () => Promise.reject(new Error("offline"))));
 
     const verdict = await gate.requireVerifiedAccess(EMAIL);
-    expect(verdict.action, "an undecided cloud is a refusal, never a pass").toBe("pay");
+    // An unreadable store is NOT a verdict: the answer is the plain retry line,
+    // never a pass and never the plan chooser (a paid customer must not be told
+    // to buy again because a read failed).
+    expect(verdict.action, "an undecided cloud is a refusal, never a pass").toBe("retry");
+    expect(verdict.message).toBe(gate.VERIFY_RETRY_MESSAGE);
     expect(appStore.getAppState().email).toBe(EMAIL);
   });
 

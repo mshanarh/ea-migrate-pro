@@ -327,10 +327,10 @@ export function DraggableBotPopup() {
             const total = tradeMatch[2];
             const side = result.side ?? "-";
             const sym = result.symbol ?? "-";
-            const entry = result.entry ?? "-";
-            const sl = result.stopLoss ?? "-";
-            const tp = result.takeProfit ?? "-";
-            const lot = result.lotSize ?? "-";
+            const entry = (result as { entry?: number | null }).entry ?? "-";
+            const sl = (result as { stopLoss?: number | null }).stopLoss ?? "-";
+            const tp = (result as { takeProfit?: number | null }).takeProfit ?? "-";
+            const lot = (result as { lotSize?: number | null }).lotSize ?? "-";
             return [...demoted, {
               text: `TRADE ${tradeNum}/${total} EXECUTED — ${sym} ${side} · ${lot} lot · Entry ${entry} · SL ${sl} · TP ${tp}`,
               kind: "last" as const
@@ -340,7 +340,9 @@ export function DraggableBotPopup() {
         // Refusals and connection chatter would only buzz the phone for
         // something that never happened — suppress those.
         if (!/REFUSED|CONNECTING|STALE|NO TRADE/i.test(result.message)) {
-          return [...demoted, { text: result.message.toUpperCase(), kind: "info" as const }];
+          // The message carries the symbol exactly as the portal spells it —
+          // uppercasing it here would turn BTCUSDm into BTCUSDM.
+          return [...demoted, { text: result.message, kind: "info" as const }];
         }
         return demoted;
       });
@@ -441,7 +443,7 @@ export function DraggableBotPopup() {
         <div
           role="dialog"
           aria-label={`${eaName} trade log`}
-          className="fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 border-[var(--accent)] bg-[#0A0A1A] shadow-[0_0_30px_var(--accent-soft)]"
+          className="if-card fixed bottom-[172px] right-3 z-[9999] w-[320px] max-w-[calc(100vw-24px)] animate-[popUp_0.25s_ease] overflow-hidden rounded-[20px] border-2 shadow-[0_0_30px_var(--accent-soft)]"
           style={{ marginBottom: "var(--sa-bottom)" }}
         >
           {/* EA image header */}
@@ -475,7 +477,7 @@ export function DraggableBotPopup() {
 
           {/* Terminal trade log */}
           {/* Terminal trade log — scrollable, drops to a bounded height. */}
-          <div className="flex-1 overflow-y-auto overflow-x-hidden bg-[#0F172A] p-4 font-mono text-[12px] leading-[22px]" style={{ maxHeight: "calc(100% - 220px)" }}>
+          <div className="if-well flex-1 overflow-y-auto overflow-x-hidden border-t p-4 font-mono text-[12px] leading-[22px]" style={{ maxHeight: "calc(100% - 220px)" }}>
             {state === "ready" ? (
               READY_LINES.map((line, index) => (
                 <div key={index} className="flex gap-2">

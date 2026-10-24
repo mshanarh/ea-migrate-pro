@@ -11,8 +11,9 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
 import { friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
+import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
+import { brokerLogoUrl, companyFromBridgeReply, serverFromBridgeReply } from "@/lib/broker-identity";
 
 export const Route = createFileRoute("/app/metatrader")({
   ssr: false,
@@ -76,7 +77,7 @@ const labelClass = "plat-uppercase-label text-[11px] font-bold tracking-[0.28em]
  * and typography are shared — this is the same input on both platforms.
  */
 const fieldClass =
-  "plat-field w-full border border-white/[0.07] bg-[#141414] px-5 text-base text-white outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25 focus:bg-[#181818] focus:shadow-[0_0_0_4px_rgba(255,255,255,0.03)]";
+  "if-field plat-field w-full border px-5 text-base outline-none transition-all duration-200 placeholder:text-white/25 focus:border-white/25";
 
 /** Select styled like the screenshot's dark dropdowns (native = reliable on mobile). */
 function DarkSelect({ value, onChange, placeholder, options, ariaLabel, hint }: {
@@ -127,8 +128,34 @@ function Mt5Logo() {
       <circle cx="33" cy="57" r="19" fill="url(#mt5-gold)" />
       <circle cx="63" cy="57" r="19" fill="url(#mt5-blue)" />
       <circle cx="48" cy="46" r="21" fill="url(#mt5-silver)" />
-      <text x="48" y="47" textAnchor="middle" dominantBaseline="central" fontSize="30" fontWeight="900" fontFamily="Arial, sans-serif" fill="#3c4350" stroke="#ffffff" strokeWidth="0.6">5</text>
+      <text x="48" y="47" textAnchor="middle" dominantBaseline="central" fontSize="30" fontWeight="900" fill="#3c4350" stroke="#ffffff" strokeWidth="0.6">5</text>
     </svg>
+  );
+}
+
+/**
+ * THE BROKER'S OWN LOGO, WITH A GUARANTEED FALLBACK.
+ *
+ * The domain is derived from the company name the bridge reported (see
+ * broker-identity.ts) and the image comes from logo.dev with the publishable
+ * key from the environment. An unknown broker, a missing key or an image that
+ * fails to load all fall back to the existing MetaTrader mark — a broken
+ * image is never shown.
+ */
+function BrokerLogo({ company, server, accent }: { company: string; server: string; accent: string }) {
+  const [failed, setFailed] = useState(false);
+  const url = company ? brokerLogoUrl(company, server) : null;
+  if (!url || failed) {
+    return <span className="block scale-75"><Mt5Logo /></span>;
+  }
+  return (
+    <img
+      src={url}
+      alt={company}
+      onError={() => setFailed(true)}
+      className="size-32 rounded-[28px] bg-white object-contain p-2"
+      style={{ boxShadow: `0 10px 30px rgba(0,0,0,0.6), 0 0 0 1px ${accent}44` }}
+    />
   );
 }
 
@@ -143,7 +170,14 @@ const SYNC_STEP_LABELS = [
 type SyncStepState = "idle" | "active" | "done" | "failed";
 type SyncPhase = "syncing" | "connected" | "failed";
 type SyncState = {
+  /**
+   * The broker's OWN name — MT5's `company`, known only after the bridge
+   * answers. Empty until then: the overlay shows nothing rather than guessing.
+   */
   brokerLabel: string;
+  /** The account login and server from the real reply/form. */
+  login: string;
+  server: string;
   phase: SyncPhase;
   steps: SyncStepState[];
   detail: string | null;
@@ -200,11 +234,32 @@ function Mt5SyncOverlay({
           className={state.phase === "syncing" ? "animate-pulse" : ""}
           style={{ filter: `drop-shadow(0 0 26px ${accent}88)` }}
         >
-          <span className="block scale-75"><Mt5Logo /></span>
+          <BrokerLogo
+            key={`${state.brokerLabel}|${state.server}`}
+            company={state.brokerLabel}
+            server={state.server}
+            accent={accent}
+          />
         </span>
       </div>
 
-      <p className="mt-5 text-center text-3xl font-black tracking-tight text-white">{state.brokerLabel}</p>
+      {/* Broker name — the bridge's `company`, never a guess. Until it answers,
+          the space is reserved but empty. */}
+      {state.brokerLabel ? (
+        <p
+          data-testid="text-sync-broker"
+          className="mt-5 max-w-[20rem] text-center text-3xl font-black tracking-tight text-white"
+        >
+          {state.brokerLabel}
+        </p>
+      ) : (
+        <div aria-hidden className="mt-5 h-9" />
+      )}
+      <p data-testid="text-sync-account" className="mt-1 text-center text-[12px] font-semibold text-white/45">
+        {state.login ? `Account ${state.login}` : ""}
+        {state.login && state.server ? " · " : ""}
+        {state.server}
+      </p>
       <p
         className="mt-2 text-center text-[13px] font-black uppercase tracking-[0.35em]"
         style={{
@@ -402,7 +457,7 @@ function AppMetatrader() {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+      const response = await fetch(`${getBridgeUrl()}/account/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
         body: JSON.stringify({ login: Number(login) || login, password: pass, server: srv }),
@@ -454,7 +509,10 @@ function AppMetatrader() {
       setSync((prev) => (prev ? { ...prev, ...next } : prev));
 
     setSync({
-      brokerLabel: details.brokerLabel,
+      // NOTHING IS GUESSED: the broker name arrives with the bridge answer.
+      brokerLabel: "",
+      login: details.login,
+      server: details.server,
       phase: "syncing",
       steps: ["active", "idle", "idle", "idle"],
       detail: null,
@@ -470,11 +528,16 @@ function AppMetatrader() {
       let ok = false;
       let summary = "";
       let failure = "";
+      let company = "";
+      let liveServer = details.server;
       try {
         const payload = await verifyViaBridge(details.login, details.password, details.server);
         if (payload["__httpOk"] === true && payload["success"] === true) {
           ok = true;
           summary = accountSummary(payload["account"]);
+          // THE REAL BROKER IDENTITY — `company` from MT5, `server` beside it.
+          company = companyFromBridgeReply(payload);
+          liveServer = serverFromBridgeReply(payload) || details.server;
         } else {
           const raw =
             (typeof payload["detail"] === "string" && payload["detail"]) ||
@@ -493,6 +556,13 @@ function AppMetatrader() {
       if (!ok) {
         patch({ phase: "failed", steps: ["done", "failed", "idle", "idle"], detail: failure });
         return;
+      }
+
+      // The bridge has answered — show the broker it named (or nothing).
+      patch({ brokerLabel: company, server: liveServer });
+      if (company) {
+        const saved = getAppState().mt;
+        if (saved) connectMt({ ...saved, company });
       }
 
       // Success — tick the remaining steps one at a time so the sequence is
@@ -576,7 +646,9 @@ function AppMetatrader() {
       login: account.loginId,
       password: typedPassword,
       server: account.server,
-      brokerLabel: derivedBroker,
+      // Deliberately empty: the overlay names the broker only after the
+      // bridge reports its `company`.
+      brokerLabel: "",
     });
 
     // 3. Cloud copy in the background — persisted best-effort; its own
@@ -633,7 +705,7 @@ function AppMetatrader() {
       // Direct browser → bridge verification: the static production build has
       // no server functions, so this goes to the bridge exactly like trade
       // execution does.
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+      const response = await fetch(`${getBridgeUrl()}/account/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
         body: JSON.stringify({
@@ -667,20 +739,31 @@ function AppMetatrader() {
       const marginFree = num("margin_free") ?? num("equity") ?? num("balance");
       const balance = num("balance");
       const equity = num("equity");
+      // Persist the broker's real company name from this verification.
+      const company = companyFromBridgeReply(payload);
+      if (company) {
+        const saved = getAppState().mt;
+        if (saved) connectMt({ ...saved, company });
+      }
       try { window.localStorage.setItem("mt5_last_verified", new Date().toLocaleTimeString()); } catch { /* ignore */ }
-      toast.success(`Connected ✓ — Account ${mt.loginId} · ${mt.server}`);
+      toast.success(`Connected ✓ — ${company ? `${company} · ` : ""}Account ${mt.loginId} · ${mt.server}`);
       if (marginFree === null && balance === null && equity === null) {
-        setTestResult(`Connected ✓ — Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`);
+        setTestResult(
+          `Connected ✓ — ${company ? `${company} · ` : ""}Account ${mt.loginId} on ${mt.server} is ready — trades will execute on demand.`,
+        );
         return;
       }
       setTestResult(
-        `Connected ✓ — Free margin available: ${fmt(marginFree)}` +
+        `Connected ✓ — ${company ? `${company} · ` : ""}Free margin available: ${fmt(marginFree)}` +
           (balance !== null ? ` · Balance: ${fmt(balance)}` : "") +
           (equity !== null ? ` · Equity: ${fmt(equity)}` : "") +
           " — ready to execute.",
       );
-    } catch {
-      const message = "Could not reach the bridge — check your connection and try again.";
+    } catch (error) {
+      // The address being called is part of the message — "Failed to fetch"
+      // alone cannot tell a dead tunnel from a network problem.
+      console.warn(`[metatrader] bridge verify failed at ${getBridgeUrl()}/account/verify`, error);
+      const message = bridgeUnreachableMessage(error instanceof Error ? error.message : undefined);
       setErrorMessage(message);
       toast.error(message);
     } finally {
@@ -706,27 +789,27 @@ function AppMetatrader() {
   const lastVerified = (() => {
     try { return window.localStorage.getItem("mt5_last_verified"); } catch { return null; }
   })();
-  const field = "flex h-16 items-center gap-4 rounded-full border border-white/10 bg-black/40 px-6 focus-within:border-white/30";
+  const field = "if-field flex h-16 items-center gap-4 rounded-full border px-6 focus-within:border-white/30";
 
   return (
-    <div className="app-fullscreen relative bg-[#070d10] text-white">
+    <div className="app-fullscreen if-screen relative bg-[#070d10] text-white">
       <div aria-hidden className="pointer-events-none absolute inset-x-0 top-0 h-[420px]" style={{ background: `radial-gradient(ellipse 70% 55% at 50% -8%, ${accent}22, transparent 70%)` }} />
       <div className="app-scroll-area relative">
         <main className="mx-auto flex w-full max-w-md flex-col gap-5 px-5 pt-safe pb-safe-nav">
           <motion.header initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }} className="mt-4 flex items-end justify-between gap-3">
             <div>
-              <p className="text-xs font-bold tracking-[0.35em] text-white/50 uppercase">EA Migrate</p>
-              <h1 className="mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
+              <p className="if-muted text-xs font-bold tracking-[0.35em] uppercase">EA Migrate</p>
+              <h1 className="if-header if-header-rule if-text mt-1 text-3xl font-black tracking-tight">Connect Account</h1>
             </div>
-            <span className={`flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "border-emerald-400/50 bg-emerald-500/15 text-emerald-300" : "border-red-400/50 bg-red-500/15 text-red-300"}`}>
+            <span className={`if-chip flex items-center gap-2 rounded-full border px-4 py-2 text-xs font-black tracking-[0.15em] ${online ? "text-emerald-300" : "text-red-300"}`}>
               <span className={`size-2 rounded-full ${online ? "bg-emerald-400 animate-pulse" : "bg-red-400"}`} />
               {online ? "ONLINE" : "OFFLINE"}
             </span>
           </motion.header>
 
-          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
+          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
             <div className="flex items-center justify-between">
-              <p className="text-xs font-bold tracking-[0.3em] text-white/60 uppercase">MT5 Status</p>
+              <p className="if-muted text-xs font-bold tracking-[0.3em] uppercase">MT5 Status</p>
               {mt && (
                 <button type="button" onClick={() => void checkStatus()} disabled={testing} className="flex items-center gap-1.5 text-sm text-white/60 disabled:opacity-50">
                   <RefreshCw className={`size-4 ${testing ? "animate-spin" : ""}`} /> {testing ? "testing" : "test"}
@@ -734,18 +817,22 @@ function AppMetatrader() {
               )}
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3">
-              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><ShieldCheck className="size-3.5" /> Connection</p>
-                <p className={`mt-1 text-lg font-black ${online ? "text-emerald-300" : "text-white/70"}`}>{online ? "Linked" : "Not linked"}</p>
+              <div className="if-well rounded-3xl border p-4">
+                <p className="if-muted flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] uppercase"><ShieldCheck className="size-3.5" /> Connection</p>
+                <p className={`mt-1 text-lg font-black ${online ? "text-emerald-300" : "if-text"}`}>{online ? "Linked" : "Not linked"}</p>
               </div>
-              <div className="rounded-3xl border border-white/10 bg-black/40 p-4">
-                <p className="flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] text-white/50 uppercase"><Clock className="size-3.5" /> Last verified</p>
-                <p className="mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
+              <div className="if-well rounded-3xl border p-4">
+                <p className="if-muted flex items-center gap-1.5 text-[10px] font-bold tracking-[0.2em] uppercase"><Clock className="size-3.5" /> Last verified</p>
+                <p className="if-num if-text mt-1 text-lg font-black">{lastVerified ?? "—"}</p>
               </div>
             </div>
             {mt && (
-              <div className="mt-3 flex items-center justify-between gap-3 rounded-full border border-white/10 bg-black/40 px-5 py-3 text-sm">
-                <span className="truncate text-white/80">{mt.loginId} · {mt.server}</span>
+              <div className="if-well mt-3 flex items-center justify-between gap-3 rounded-full border px-5 py-3 text-sm">
+                {/* The broker's own name comes from MT5's `company`; until a
+                    verification has reported it, only the real login/server show. */}
+                <span className="if-text truncate">
+                  {mt.company ? `${mt.company} · ${mt.loginId}` : mt.loginId} · {mt.server}
+                </span>
                 <button type="button" onClick={() => void removeConnection()} className="shrink-0 text-xs font-bold text-white/50 hover:text-red-300">REMOVE</button>
               </div>
             )}
@@ -758,7 +845,7 @@ function AppMetatrader() {
             )}
           </motion.section>
 
-          <motion.form custom={1} variants={stagger} initial="hidden" animate="show" onSubmit={(event) => void submit(event)} className="space-y-4 rounded-[32px] border border-white/10 bg-white/[0.03] p-5" style={{ boxShadow: `0 0 40px ${accent}14` }}>
+          <motion.form custom={1} variants={stagger} initial="hidden" animate="show" onSubmit={(event) => void submit(event)} className="if-card space-y-4 rounded-[32px] border border-white/10 bg-white/[0.03] p-5" style={{ boxShadow: `0 0 40px ${accent}14` }}>
             <label className={field}>
               <User className="size-5 shrink-0 text-white/60" />
               <input value={loginId} onChange={(e) => { clearError(); setLoginId(e.target.value); }} placeholder="Account ID" inputMode="numeric" aria-label="Account ID" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
@@ -775,10 +862,10 @@ function AppMetatrader() {
               <input value={server} onChange={(e) => { clearError(); setServer(e.target.value); }} placeholder="Broker server only MT5" aria-label="Broker server" list="mt5-server-suggestions" className="h-full w-full bg-transparent text-lg outline-none placeholder:text-white/40" />
               <datalist id="mt5-server-suggestions">{servers.map((item) => <option key={item} value={item} />)}</datalist>
             </label>
-            <p className="px-1 text-sm leading-relaxed text-white/50">
-              Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="text-white/80">File → Login to Trade Account</span>.
+            <p className="if-muted px-1 text-sm leading-relaxed">
+              Tip: find your server name in your broker's welcome email or your MT5 terminal under <span className="if-text">File → Login to Trade Account</span>.
             </p>
-            <button type="submit" disabled={saving} className="flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
+            <button type="submit" disabled={saving} className="if-control flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
               <Fingerprint className="size-7" style={{ color: accent }} />
               <span>{saving ? "CONNECTING..." : "CONNECT ACCOUNT"}</span>
               <ChevronsRight className="size-6" style={{ color: accent }} />

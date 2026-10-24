@@ -1,5 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { colourCycleAccentId, subscribeColourCycle } from "@/lib/color-cycle";
+import { setBottomNavStyle } from "@/lib/bottom-nav-style";
+import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interface-themes";
 
 export const ACCENT_COLORS = [
   { id: "inferno-red", name: "Inferno Red", value: "#FF2D2D" },
@@ -70,32 +72,26 @@ export const FONT_OPTIONS = [
   { id: "Major Mono Display", name: "Major Mono Display", description: "Brutalist Mono", pro: true },
   { id: "Bruno Ace SC", name: "Bruno Ace SC", description: "Hyper Modern", pro: true },
   { id: "Russo One", name: "Russo One", description: "Heavy Display", pro: true },
+  {
+    id: "Rubik Glitch",
+    name: "Rubik Glitch",
+    description: "Glitched Display",
+  },
 ] as const;
 
 export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
 export type AccentColorId = (typeof ACCENT_COLORS)[number]["id"];
 export type FontOptionId = (typeof FONT_OPTIONS)[number]["id"];
 
-/** Each interface style carries its signature font — picking a style applies it. */
-export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
-  "NOVA CORE": "Orbitron",
-  "PHANTOM PULSE": "Space Grotesk",
-  "TITAN EDGE": "Rajdhani",
-  "PRIME FORGE": "Inter",
-  "BLUEPRINT EDGE": "Inter",
-  "CRIMSON NAVIGATOR": "Russo One",
-  "NAVIGATOR PLUS": "Russo One",
-  "PABLO CRIMSON": "Teko",
-  "PABLO ELITE": "Teko",
-  "QUANTUM BLUE": "Space Grotesk",
-  "DARKWEB AI": "JetBrains Mono",
-  "SUPREME EQUINOX": "Russo One",
-  "ULTRON MEGA": "Rajdhani",
-  "EA CLOUD": "Inter",
-  "SNIFFER": "Orbitron",
-  "PHOENIX": "Space Grotesk",
-  "VORTEX 1": "Russo One",
-};
+/**
+ * FONT AND INTERFACE STYLE ARE INDEPENDENT PREFS.
+ *
+ * An interface style owns colour, background, radii, borders, shadows, header
+ * treatment and the bottom nav — never a typeface. Picking a style used to
+ * overwrite the chosen font with the style's "signature" face, which is why
+ * switching Quantum Blue → Ultron Mega silently reset the Settings choice.
+ * There is deliberately no theme → font map any more.
+ */
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";
 const DEFAULT_THEME: InterfaceThemeId = "NOVA CORE";
@@ -109,8 +105,44 @@ export function accentColorValue(id: string): string {
   return (ACCENT_COLORS.find((color) => color.id === id) ?? ACCENT_COLORS[1]).value;
 }
 
+/**
+ * THE WHOLE-APP FONT — ONE STACK, PUBLISHED AS A CSS VARIABLE.
+ *
+ * Every element in the app reads `--app-font` (see the font block in
+ * styles.css), so the Settings choice reaches headers, body copy, numbers, the
+ * bottom nav and the popups on EVERY interface style. Interface definitions no
+ * longer carry a typeface of their own: a theme supplies colour, shape and
+ * layout, the user supplies the font. The only face that may override the
+ * choice is the choice itself (Rubik Glitch included, once it is picked).
+ */
+export const APP_FONT_VAR = "--app-font";
+
 export function fontStack(id: string): string {
-  return `'${id}', system-ui, sans-serif`;
+  return `'${id}', system-ui, -apple-system, "Segoe UI", sans-serif`;
+}
+
+/**
+ * REMOVE THE APP FONT — used when the document becomes the mentor portal.
+ *
+ * The app's picked face is a user preference for the APP; the portal has its
+ * own hardcoded font (src/styles.css). Dropping the inline variable lets the
+ * stylesheet's value apply instead of leaking a glitch/techno face into the
+ * portal.
+ */
+export function clearFontStack(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.removeProperty(APP_FONT_VAR);
+  document.documentElement.removeAttribute("data-app-font");
+}
+
+/** Publish the selected font to <html>; safe to call on every render/effect. */
+export function applyFontStack(id: string): string {
+  const stack = fontStack(id);
+  if (typeof document !== "undefined") {
+    document.documentElement.style.setProperty(APP_FONT_VAR, stack);
+    document.documentElement.setAttribute("data-app-font", id);
+  }
+  return stack;
 }
 
 type Customization = {
@@ -191,13 +223,32 @@ export function setAccentColor(id: AccentColorId) {
 
 export function setInterfaceTheme(id: InterfaceThemeId) {
   load();
-  // The interface style also drives the font — its signature typeface ships with it.
-  state = { ...state, theme: id, font: THEME_FONT[id] };
+  // STYLE TOKENS ONLY. The font is a SEPARATE app-level preference
+  // (`ea_migrate_font` → `--app-font`) and is never rewritten here, so a style
+  // switch cannot reset the user's chosen face.
+  state = { ...state, theme: id };
   persist();
+  // A styled interface is a WHOLE definition (lib/interface-themes.ts): its
+  // nav shape ships with it and is applied immediately, exactly like its
+  // colours/surfaces (published by InterfaceThemeSync).
+  const definition = interfaceDefinitionFor(id);
+  if (definition) {
+    setBottomNavStyle(definition.navStyle);
+    applyInterfaceDefinition(definition);
+  } else {
+    applyInterfaceDefinition(null);
+  }
 }
 
 export function setFontOption(id: FontOptionId) {
   load();
+  // The ONLY writer of the font preference — no interface style touches it.
   state = { ...state, font: id };
   persist();
+}
+
+/** Non-hook snapshot (route guards/tests) — never used to mutate state. */
+export function getCustomization(): Customization {
+  load();
+  return state;
 }

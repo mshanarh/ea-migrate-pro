@@ -18,7 +18,14 @@ export const NAV_STYLE_KEY = "eamp.bottomNavStyle";
  * view enforces): an unsigned-in visitor goes to the app login, an unpaid
  * email goes to checkout, and paid/admin emails pass through.
  */
-export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
+/**
+ * `retry` = a paid-record source could not be READ. It is not a refusal, so
+ * callers answer it with the plain retry line — never the plan chooser.
+ */
+export type AppAccessCheck = {
+  action: "pass" | "signin" | "pay" | "deactivate" | "retry";
+  message?: string;
+};
 
 /**
  * LEGACY route guard — now a FAIL-CLOSED wrapper over the cloud gate.
@@ -67,6 +74,14 @@ export type Robot = {
   video?: string;
   eaId?: string;
   running: boolean;
+  /**
+   * WHEN the symbol list last came from the SERVER, and whether that last
+   * fetch failed. The symbols themselves are no longer frozen at activation:
+   * they are refreshed by license key (see refreshRobotConfigs), so the local
+   * copy is only an offline fallback and is labelled with its date.
+   */
+  configUpdatedAt?: string;
+  configStale?: boolean;
 };
 
 export type PairSetting = {
@@ -77,12 +92,29 @@ export type PairSetting = {
   direction?: "BOTH" | "BUY" | "SELL";
 };
 
+/**
+ * SYMBOL SPELLING — the portal's exact case wins.
+ *
+ * A broker's symbol name is case-sensitive (Exness lists BTCUSDm/XAUUSDm, not
+ * BTCUSDM/XAUUSDM), so a saved pair is matched case-insensitively against the
+ * EA's own portal list and rewritten with the portal's spelling. Only a symbol
+ * the EA does not list keeps whatever it already had.
+ */
+export function canonicalEaSymbol(symbol: string, eaSymbols: readonly string[] | undefined | null): string {
+  const clean = symbol.trim();
+  if (!clean) return clean;
+  const match = (eaSymbols ?? []).find((candidate) => candidate.trim().toUpperCase() === clean.toUpperCase());
+  return match ? match.trim() : clean;
+}
+
 export type MtAccount = {
   platform: "MT5";
   broker: string;
   server: string;
   accountType: string;
   loginId: string;
+  /** The broker's own name from MT5's account_info (`company`). Absent until verified. */
+  company?: string;
   /** The user's own MetaApi account id (created under the platform token). */
   mcAccountId?: string;
   /** MetaApi region returned at connect time (used to pick the trade API host). */
@@ -202,7 +234,13 @@ function load() {
             // user presses Configure.
             pairs: Array.isArray(robot.pairs) && robot.pairs.length > 0
               ? robot.pairs.map((pair) => ({
-                  symbol: typeof pair?.symbol === "string" ? pair.symbol : "",
+                  // Pairs saved by older builds were uppercased — restore the
+                  // portal's spelling so the symbol reads exactly as the EA
+                  // lists it (comparison stays case-insensitive).
+                  symbol:
+                    typeof pair?.symbol === "string"
+                      ? canonicalEaSymbol(pair.symbol, Array.isArray(robot.symbols) ? robot.symbols : [])
+                      : "",
                   lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
                   maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
                 })).filter((pair) => pair.symbol)
@@ -889,6 +927,11 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
     name: savedEa?.name || licenseResult.license.eaName || "Private EA",
     ...(savedEa?.version ? { version: savedEa.version } : {}),
     symbols,
+    // Dated and marked STALE: this is the snapshot the licence carried at
+    // activation, not a promise about the EA's current symbols. The server
+    // refresh replaces it on the next screen load (see refreshRobotConfigs).
+    configUpdatedAt: new Date().toISOString(),
+    configStale: true,
     // All symbols start under Selected Quotes. Only the symbol the user
     // configures is moved into pairs (Allowed Quotes) — press Configure.
     pairs: [],
@@ -970,9 +1013,9 @@ export async function syncRobotsFromPortal() {
       // the list (it used to assign [], throwing away every symbol the user
       // had allowed on each sync) and never seed new ones in.
       const portalSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
-      const pairs: PairSetting[] = oldPairs.filter((pair) =>
-        portalSymbolKeys.has(pair.symbol.trim().toUpperCase()),
-      );
+      const pairs: PairSetting[] = oldPairs
+        .filter((pair) => portalSymbolKeys.has(pair.symbol.trim().toUpperCase()))
+        .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) {
@@ -1231,7 +1274,9 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       // symbols they never allowed straight into "Allowed Quotes" (and START
       // then traded them).
       const cloudSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
-      const pairs = oldPairs.filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()));
+      const pairs = oldPairs
+        .filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()))
+        .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name)) return robot;
@@ -1259,10 +1304,121 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
   }
 }
 
+/**
+ * THE LIVE EA CONFIG REFRESH — the fix for "my mentor added a symbol but I
+ * only see it after a new key".
+ *
+ * The robot's symbol list is resolved from the SERVER by the licence key the
+ * robot already holds (the same record the mentor portal writes when an EA is
+ * saved). Calling this on the bot screen, Quotes and Scanner — and from the
+ * refresh control / pull-to-refresh — makes the server the source of truth.
+ *
+ * FAILURE IS SHOWN, NOT HIDDEN: when the server cannot answer, the last known
+ * list stays on the robot and `configStale` is set, so the UI can print the
+ * "last updated" note instead of pretending the snapshot is current.
+ */
+
+/** One in-flight refresh shared by every screen that mounts at once. */
+let configRefresh: Promise<{ ok: boolean; updated: number; at: string | null; error?: string }> | null = null;
+
+export function refreshRobotConfigs(): Promise<{ ok: boolean; updated: number; at: string | null; error?: string }> {
+  load();
+  if (typeof window === "undefined") {
+    return Promise.resolve({ ok: false, updated: 0, at: null, error: "not in a browser" });
+  }
+  if (state.robots.length === 0) {
+    return Promise.resolve({ ok: true, updated: 0, at: null });
+  }
+  if (configRefresh) return configRefresh;
+
+  const run = (async () => {
+    const { fetchEaConfigsInKv } = await import("@/lib/license-cloud");
+    const answer = await fetchEaConfigsInKv(state.robots.map((robot) => robot.key));
+
+    if (!answer.enabled || !answer.ok) {
+      // Keep every symbol we already have — an unreachable server must never
+      // wipe the trader's Quotes — but mark it as an offline copy.
+      state = {
+        ...state,
+        robots: state.robots.map((robot) => ({ ...robot, configStale: true })),
+      };
+      persist();
+      return {
+        ok: false,
+        updated: 0,
+        at: null,
+        ...(answer.error ? { error: answer.error } : {}),
+      };
+    }
+
+    const at = new Date().toISOString();
+    const byKey = new Map(
+      answer.configs.map((config) => [config.key.trim().toUpperCase(), config] as const),
+    );
+    let updated = 0;
+    const robots = await Promise.all(
+      state.robots.map(async (robot) => {
+        const config = byKey.get(robot.key.trim().toUpperCase());
+        if (!config) {
+          // The server answered but holds no record for this key — the local
+          // snapshot is all we have, so it stays and is marked stale.
+          return robot.configStale ? robot : { ...robot, configStale: true };
+        }
+        // `null` = the record predates stored symbols (keep the known list);
+        // `[]` = the mentor removed every symbol (drop them).
+        const symbols = config.symbols === null ? robot.symbols : config.symbols;
+        const symbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
+        const oldPairs = robot.pairs ?? [];
+        const pairs = oldPairs
+          .filter((pair) => symbolKeys.has(pair.symbol.trim().toUpperCase()))
+          // Rewrite an old uppercased spelling to the server's exact one.
+          .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
+        const name = config.eaName || robot.name;
+        const image = config.image ? await travelSizedImage(config.image) : robot.image;
+        const sameSymbols =
+          symbols.length === robot.symbols.length &&
+          symbols.every((symbol, index) => symbol === robot.symbols[index]);
+        const stamped = config.updatedAt || at;
+        if (
+          sameSymbols &&
+          pairs.length === oldPairs.length &&
+          name === robot.name &&
+          image === robot.image &&
+          robot.configUpdatedAt === stamped &&
+          robot.configStale === false
+        ) {
+          return robot;
+        }
+        updated += 1;
+        return {
+          ...robot,
+          symbols,
+          pairs,
+          name,
+          ...(image ? { image } : {}),
+          configUpdatedAt: stamped,
+          configStale: false,
+        };
+      }),
+    );
+    state = { ...state, robots };
+    persist();
+    return { ok: true, updated, at };
+  })();
+
+  configRefresh = run;
+  return run.finally(() => {
+    configRefresh = null;
+  });
+}
+
 export function setRobotPairs(id: string, pairs: PairSetting[]) {
   load();
+  // The EA's portal list is the spelling authority — saved symbols keep its
+  // exact case (BTCUSDm stays BTCUSDm), never a forced uppercase.
+  const eaSymbols = state.robots.find((robot) => robot.id === id)?.symbols ?? [];
   const safePairs = pairs.filter((pair) => pair.symbol.trim()).map((pair) => ({
-    symbol: pair.symbol.trim().toUpperCase(),
+    symbol: canonicalEaSymbol(pair.symbol, eaSymbols),
     lotSize: pair.lotSize || "0.01",
     maxTrades: pair.maxTrades || "0",
     ...(pair.direction && pair.direction !== "BOTH" ? { direction: pair.direction } : {}),

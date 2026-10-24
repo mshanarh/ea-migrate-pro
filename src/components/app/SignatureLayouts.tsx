@@ -15,7 +15,7 @@ type SignatureLayoutProps = {
 function PoweredBadge({ accent }: { accent: string }) {
   return (
     <div
-      className="inline-flex min-h-14 items-center justify-center rounded-full border-2 bg-black/80 px-8 text-base font-black text-white"
+      className="inline-flex min-h-12 items-center justify-center rounded-full border-2 bg-black/80 px-6 text-sm font-black text-white"
       style={{ borderColor: accent, boxShadow: `0 0 24px ${accent}80` }}
     >
       Powered By&nbsp;<span style={{ color: accent }}>EA Migrate</span>
@@ -23,11 +23,10 @@ function PoweredBadge({ accent }: { accent: string }) {
   );
 }
 
-function RobotPortrait({ robot, accent, size = 44 }: { robot: Robot | undefined; accent: string; size?: number }) {
-  const sizeClass = size === 44 ? "size-44 sm:size-48" : `size-${size}`;
+function RobotPortrait({ robot, accent }: { robot: Robot | undefined; accent: string }) {
   return (
     <div
-      className={`${sizeClass} overflow-hidden rounded-full border-[5px] bg-black sm:size-48`}
+      className="app-portrait overflow-hidden rounded-full border-[5px] bg-black"
       style={{ borderColor: accent, boxShadow: `0 0 34px ${accent}55` }}
     >
       <RobotMedia
@@ -49,8 +48,8 @@ function RobotHeading({ robot, accent }: { robot: Robot | undefined; accent: str
         You&apos;re Trading With
       </p>
       <h1
-        className="mx-auto mt-3 max-w-[22rem] break-words text-4xl font-black uppercase leading-[0.98] text-white sm:text-5xl"
-        style={{ fontFamily: "'Teko', 'Arial Black', sans-serif", textShadow: "0 2px 0 rgba(255,255,255,.18)" }}
+        className="mx-auto mt-2 max-w-[22rem] break-words text-3xl font-black uppercase leading-[0.98] text-white sm:text-4xl"
+        style={{ textShadow: "0 2px 0 rgba(255,255,255,.18)" }}
       >
         {robot?.name ?? "YOUR ROBOT"}
       </h1>
@@ -87,7 +86,7 @@ function RoundAction({
 function WideRobotCard({ robot, accent, image, crop = "50% 35%" }: { robot: Robot | undefined; accent: string; image?: string; crop?: string }) {
   return (
     <div
-      className="relative h-24 overflow-hidden rounded-full border-2 bg-black"
+      className="relative h-20 overflow-hidden rounded-full border-2 bg-black"
       style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}66` }}
     >
       <img
@@ -109,8 +108,8 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:px-5 sm:pt-7">
-      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:px-5 sm:pt-6">
+      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
@@ -127,7 +126,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
         <section className="w-full pt-1">
           <h2 className="mb-4 text-xl font-bold text-white/65" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>Connected Robots:</h2>
           <div
-            className="flex min-h-24 items-center gap-4 rounded-full border-2 bg-black px-7"
+            className="flex min-h-20 items-center gap-4 rounded-full border-2 bg-black px-6"
             style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}66` }}
           >
             <div className="size-14 shrink-0 overflow-hidden rounded-full border-2" style={{ borderColor: accent }}>
@@ -138,7 +137,7 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
           <button
             type="button"
             onClick={onOpenAdd}
-            className="mt-5 flex min-h-24 w-full items-center justify-center gap-5 rounded-full border-2 bg-black text-xl font-black text-white transition-transform active:scale-[0.98]"
+            className="mt-4 flex min-h-20 w-full items-center justify-center gap-5 rounded-full border-2 bg-black text-lg font-black text-white transition-transform active:scale-[0.98]"
             style={{ borderColor: accent, boxShadow: `0 0 24px ${accent}70` }}
           >
             <span className="flex size-12 items-center justify-center rounded-full" style={{ backgroundColor: accent, boxShadow: `0 0 22px ${accent}` }}>
@@ -157,14 +156,14 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-10 pt-6 text-white sm:pt-7">
-      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-5 sm:gap-7">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:pt-6">
+      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
 
         <div
-          className="relative flex min-h-28 w-full items-center justify-between rounded-full border-2 bg-black/80 px-5 sm:px-8"
+          className="relative flex min-h-24 w-full items-center justify-between rounded-full border-2 bg-black/80 px-5 sm:px-8"
           style={{ borderColor: accent, boxShadow: `0 0 30px ${accent}70` }}
         >
           <button type="button" onClick={onRemove} className="flex w-16 flex-col items-center gap-1 text-xs font-black sm:w-auto sm:flex-row sm:gap-2 sm:text-base" style={{ color: accent }}>
@@ -177,7 +176,7 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
             type="button"
             onClick={onStart}
             aria-label={running ? "Stop robot" : "Start robot"}
-            className="absolute left-1/2 top-1/2 flex size-28 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-full border-[5px] bg-black transition-transform active:scale-95"
+            className="absolute left-1/2 top-1/2 flex size-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center gap-1 rounded-full border-[5px] bg-black transition-transform active:scale-95"
             style={{ borderColor: accent, boxShadow: `0 0 28px ${accent}` }}
           >
             {running ? <Pause className="size-11" fill="currentColor" style={{ color: accent }} /> : <Play className="size-11" fill="currentColor" style={{ color: accent }} />}
@@ -185,9 +184,9 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
           </button>
         </div>
 
-        <section className="w-full pt-3">
-          <h2 className="mb-5 text-2xl font-black" style={{ textShadow: "0 2px 12px rgba(0,0,0,.85)" }}>Robots List:</h2>
-          <div className="space-y-4">
+        <section className="w-full pt-2">
+          <h2 className="mb-3 text-xl font-black" style={{ textShadow: "0 2px 12px rgba(0,0,0,.85)" }}>Robots List:</h2>
+          <div className="space-y-3">
             <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 18%" />
             <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 46%" />
             <WideRobotCard robot={robot} accent={accent} image={image} crop="50% 78%" />
@@ -201,20 +200,20 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
 export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   const running = Boolean(robot?.running);
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-10 pt-6 text-white">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-6">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-6 pt-4 text-white">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-5">
         <div
-          className="relative flex flex-col items-center rounded-[40px] px-5 pb-10 pt-10"
+          className="relative flex flex-col items-center rounded-[40px] px-5 pb-7 pt-7"
           style={{ background: `linear-gradient(160deg, ${accent}e6 0%, ${accent}99 45%, rgba(0,0,0,0.75) 100%)`, boxShadow: `0 0 40px ${accent}aa` }}
         >
           <span className="absolute right-6 top-6 size-3.5 rounded-full" style={{ backgroundColor: running ? "#22C55E" : "#FF1744", boxShadow: `0 0 10px ${running ? "#22C55E" : "#FF1744"}` }} />
-          <div className="size-36 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl">
+          <div className="size-32 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl sm:size-36">
             <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
           </div>
-          <h1 className="mt-8 max-w-full break-words text-center text-3xl font-black uppercase leading-none" style={{ textShadow: "0 2px 6px rgba(0,0,0,.6)" }}>
+          <h1 className="mt-6 max-w-full break-words text-center text-2xl font-black uppercase leading-none sm:text-3xl" style={{ textShadow: "0 2px 6px rgba(0,0,0,.6)" }}>
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-          <div className="mt-9 grid w-full grid-cols-3">
+          <div className="mt-6 grid w-full grid-cols-3">
             {[
               { label: running ? "Stop" : "Start", icon: running ? Pause : Square, onClick: onStart },
               { label: "Quotes", icon: LineChart, onClick: onQuotes },
@@ -230,7 +229,7 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
         <button
           type="button"
           onClick={onOpenAdd}
-          className="flex min-h-24 items-center gap-5 rounded-full px-8 text-left transition-transform active:scale-[0.98]"
+          className="flex min-h-20 items-center gap-5 rounded-full px-7 text-left transition-transform active:scale-[0.98]"
           style={{ background: `linear-gradient(90deg, ${accent}, ${accent}55)`, boxShadow: `0 0 30px ${accent}88` }}
         >
           <span className="flex size-12 items-center justify-center rounded-full bg-white/25"><Plus className="size-6" strokeWidth={3} /></span>

@@ -45,6 +45,12 @@ export type RegistrationResult = {
   user: UserRow | null;
   verified: boolean;
   error?: string;
+  /**
+   * The access service could NOT decide (unreachable / one of its sources was
+   * down). This is not an unpaid verdict: the login screen shows a plain
+   * retry message instead of the plan chooser.
+   */
+  unavailable?: boolean;
 };
 
 function clean(email: string) {
@@ -76,17 +82,35 @@ export type AccessServerAnswer = {
   paidAt?: string;
   deviceBinding?: ServerDeviceBinding;
   deviceMatches?: boolean;
+  /** No verdict was reached — a source could not be read. Never "unpaid". */
+  unavailable?: boolean;
+  /** Technical detail for logs/diagnostics, never for the user-facing message. */
+  detail?: string;
 };
 
 export async function checkAccessServer(email: string, deviceId?: string): Promise<AccessServerAnswer> {
+  const url = "/api/check-access";
   try {
-    const reply = await fetch("/api/check-access", {
+    const reply = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(deviceId ? { email, deviceId } : { email }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
+    const failed = (detail: string): AccessServerAnswer => ({
+      ok: false,
+      isPaid: false,
+      status: "unpaid",
+      unavailable: true,
+      detail: `${url} → ${detail}`,
+    });
+    if (!reply.ok) {
+      const body = (await reply.json().catch(() => ({}))) as { error?: unknown; unreadable?: unknown };
+      const sources = Array.isArray(body.unreadable) ? body.unreadable.join(", ") : "";
+      return failed(
+        `HTTP ${reply.status} ${reply.statusText || ""}${sources ? ` — unreadable: ${sources}` : typeof body.error === "string" ? ` — ${body.error}` : ""}`.trim(),
+      );
+    }
     const payload = (await reply.json().catch(() => ({}))) as {
       ok?: boolean;
       isPaid?: boolean;
@@ -94,8 +118,13 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
       paidAt?: string;
       deviceBinding?: unknown;
       deviceMatches?: unknown;
+      error?: string;
+      unreadable?: unknown;
     };
-    if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
+    if (!payload.ok || payload.status == null) {
+      const sources = Array.isArray(payload.unreadable) ? payload.unreadable.join(", ") : "";
+      return failed(`${payload.error ?? "no verdict"}${sources ? ` — unreadable: ${sources}` : ""}`);
+    }
     const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
     if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
     const answer: AccessServerAnswer = {
@@ -116,8 +145,14 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
     }
     if (typeof payload.deviceMatches === "boolean") answer.deviceMatches = payload.deviceMatches;
     return answer;
-  } catch {
-    return { ok: false, isPaid: false, status: "unpaid" };
+  } catch (error) {
+    return {
+      ok: false,
+      isPaid: false,
+      status: "unpaid",
+      unavailable: true,
+      detail: `${url} → no response (${error instanceof Error ? `${error.name}: ${error.message}` : String(error)})`,
+    };
   }
 }
 
@@ -160,7 +195,20 @@ export async function registerWithEmail(
   // browser could not import the old KV client. Ask the server, which already
   // owns the decision, and let the address through if the ledger says paid.
   const access = await checkAccessServer(address);
-  if (access.ok && access.isPaid) {
+  // NO VERDICT IS NOT "UNPAID". A source that could not be read leaves the
+  // account undecided, and the login screen's answer to that is a retry
+  // message — never the plan chooser.
+  if (!access.ok) {
+    console.warn(`[access] ${address}: undecided — ${access.detail ?? "no detail"}`);
+    return {
+      outcome: "checkout",
+      user: null,
+      verified: false,
+      unavailable: true,
+      ...(access.detail ? { error: access.detail } : {}),
+    };
+  }
+  if (access.isPaid) {
     // Keep a row for the app later — bindDeviceToEmail at sign-in wants it.
     const { data: inserted, error: upsertError } = await dbClient
       .from("users")
@@ -712,16 +760,35 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * The affected user, on next login, goes straight to the license key screen
  * like a fresh paid user (no OTP code for paid emails).
  *
+<<<<<<< HEAD
+ * REGISTRATION + PAID CHECK: delegates to `checkReactivationEmail`, which asks
+ * the SAME stores the login gate asks — the KV registration record, the
+ * paid_emails ledger, /api/check-access, the KV/Supabase licence keys and the
+ * portal account — instead of requiring one Supabase `users` row that a
+ * KV-registered client may not have yet. Only emails that are registered in
+ * NONE of those stores are refused, and an email that is registered but unpaid
+ * gets its own message.
+=======
  * PAID CHECK: uses ONLY the KV registration store (Upstash) — same store the
  * admin dashboard writes to via "Mark paid". The Supabase `paid_emiles` ledger
  * is NOT consulted. Reactivation only clears the used/bound state of an already-paid
  * account.
+>>>>>>> origin/main
  */
 export async function reactivateEmail(email: string): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
   const address = clean(email);
   if (!address) return { ok: false, error: "Missing email." };
+<<<<<<< HEAD
+
+  // Dynamic import: reactivation-check imports this module's read helpers.
+  const { checkReactivationEmail } = await import("./reactivation-check");
+  const check = await checkReactivationEmail(address);
+  console.info(check.diagnostic);
+  if (!check.registered) {
+    return { ok: false, error: check.error ?? "That email is not registered in any store." };
+=======
   // Verify the email exists in the database
   const { data: existing, error: readError } = await dbClient
     .from("users")
@@ -799,6 +866,23 @@ async function isPaidInKvStore(email: string): Promise<boolean> {
   } catch {
     // KV unavailable — reactivation is blocked; the caller will show the
     // diagnostic message.
+>>>>>>> origin/main
   }
-  return false;
+  if (!check.paid) {
+    return { ok: false, error: check.error ?? "Not reactivated — this email is registered but not marked paid." };
+  }
+
+  // DEVICE UNBINDING ONLY. A KV-registered client may have no `users` row yet;
+  // updating by email then matches nothing, which is correct — there is no
+  // device bound. Payment, keys, expiry and subscription are never written.
+  const clearedAt = new Date().toISOString();
+  const { error } = await dbClient
+    .from("users")
+    .update({ device_email: null, device_id: null })
+    .eq("email", address);
+  if (error?.code === "42703") {
+    return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+  }
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, clearedAt };
 }

@@ -63,3 +63,36 @@ export function applyAccentTokens(accent: string): void {
   root.style.setProperty("--accent-soft", `${accent}59`);
   document.body.style.setProperty("--eamp-glow", `rgb(${r} ${g} ${b} / 0.3)`);
 }
+
+/**
+ * UNDO THE APP ACCENT — used when the document becomes the mentor portal.
+ *
+ * Removing the inline properties (rather than writing defaults over them) lets
+ * the stylesheet's own :root values apply again, so the portal is painted by
+ * its own tokens and cannot inherit a colour the user picked in the app.
+ */
+export function clearAccentTokens(): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  for (const name of [
+    "--primary",
+    "--accent",
+    "--ring",
+    "--sidebar-primary",
+    "--sidebar-accent-foreground",
+    "--sidebar-ring",
+    "--chart-1",
+    "--chart-2",
+    "--chart-3",
+    "--chart-4",
+    "--chart-5",
+    "--glow",
+    "--glow-soft",
+    "--gradient-brand",
+    "--accent-deep",
+    "--accent-soft",
+  ]) {
+    root.style.removeProperty(name);
+  }
+  document.body.style.removeProperty("--eamp-glow");
+}

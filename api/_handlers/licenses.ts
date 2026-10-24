@@ -81,6 +81,12 @@ export type LicenceRecord = {
   symbols?: string[];
   /** The EA picture, when it survived the size cap below. */
   image?: string;
+  /**
+   * WHEN this record's EA config last changed (issue, or a mentor EA edit).
+   * The app shows it as the "last updated" note and uses it to tell a live
+   * server config from a local fallback.
+   */
+  updatedAt?: string;
 };
 
 const KEYS_HASH = "eamp:license-keys";
@@ -102,7 +108,16 @@ const CLAIM_PREFIX = "eamp:license-claim:";
  */
 const MAX_IMAGE_CHARS = 400_000;
 
-const ACTIONS = ["issue", "list", "count", "lookup", "remove", "claim"] as const;
+const ACTIONS = [
+  "issue",
+  "list",
+  "count",
+  "lookup",
+  "remove",
+  "claim",
+  "ea-config",
+  "update-ea",
+] as const;
 type Action = (typeof ACTIONS)[number];
 
 /** The generator's shape (EMP-XXXX-XXXX-XXXX) plus the older EMP- + 12 chars. */
@@ -186,6 +201,7 @@ async function issue(request: ApiRequest): Promise<{ status: number; body: Recor
     createdAt: existing?.createdAt ?? new Date().toISOString(),
     claimedBy: existing?.claimedBy ?? null,
     claimedAt: existing?.claimedAt ?? null,
+    updatedAt: new Date().toISOString(),
   };
   if (symbolsRaw.length > 0) record.symbols = symbolsRaw;
   // Only keep a picture that fits under the request-size cap (see above).
@@ -393,6 +409,108 @@ async function claim(request: ApiRequest): Promise<{ status: number; body: Recor
   };
 }
 
+/* ── ea-config ───────────────────────────────────────────────────────── */
+
+/** Clean a symbol list from a request body. Empty is meaningful — it means
+ *  the mentor removed every symbol, and the app must hear that. */
+function symbolList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((symbol): symbol is string => typeof symbol === "string")
+    .map((symbol) => symbol.trim())
+    .filter(Boolean)
+    .slice(0, 200);
+}
+
+/**
+ * THE APP'S LIVE EA CONFIG — by licence KEY, which is the identity the app
+ * actually holds.
+ *
+ * This is the endpoint that replaces "the symbols I saw when I activated":
+ * every screen calls it with the activated keys and receives the mentor's
+ * CURRENT symbol list (plus name and picture) from the same store the mentor
+ * portal writes to. Nothing here is a snapshot taken at activation.
+ *
+ * `symbols: null` means the record predates symbols being stored — the app
+ * keeps its last known list. `symbols: []` means the mentor deliberately
+ * removed them all.
+ */
+async function eaConfig(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const raw = Array.isArray(body["keys"]) ? (body["keys"] as unknown[]) : [];
+  const keys = Array.from(
+    new Set(
+      raw
+        .map((value) => validKey(value))
+        .filter((key): key is string => Boolean(key)),
+    ),
+  ).slice(0, 50);
+  if (keys.length === 0) {
+    return { status: 400, body: { ok: false, error: "At least one licence key is required" } };
+  }
+  const configs: Array<Record<string, unknown>> = [];
+  for (const key of keys) {
+    const record = await readRecord(key);
+    if (!record) continue;
+    configs.push({
+      key,
+      ...(record.eaId ? { eaId: record.eaId } : {}),
+      ...(record.eaName ? { eaName: record.eaName } : {}),
+      symbols: Array.isArray(record.symbols) ? record.symbols : null,
+      ...(record.image ? { image: record.image } : {}),
+      updatedAt: record.updatedAt ?? record.createdAt,
+    });
+  }
+  return { status: 200, body: { ok: true, configs } };
+}
+
+/**
+ * MENTOR EA EDIT → EVERY KEY FOR THAT EA.
+ *
+ * The portal calls this when the mentor saves an EA's symbols/name/picture, so
+ * the record the app reads is updated in the SAME store. No key regeneration,
+ * re-activation or re-login is needed: the next refresh on the client's phone
+ * resolves the new list by the key it already holds.
+ */
+async function updateEa(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const mentorEmail = normalizeEmail(body["mentorEmail"]);
+  if (!mentorEmail) {
+    return { status: 400, body: { ok: false, error: "mentorEmail is required" } };
+  }
+  const eaId = text(body["eaId"], 120);
+  const eaName = text(body["eaName"], 120);
+  if (!eaId && !eaName) {
+    return { status: 400, body: { ok: false, error: "eaId or eaName is required" } };
+  }
+  const hasSymbols = Array.isArray(body["symbols"]);
+  const symbols = symbolList(body["symbols"]);
+  const imageRaw = text(body["image"], MAX_IMAGE_CHARS + 1);
+  const at = new Date().toISOString();
+  const codes = await members(mentorKey(mentorEmail));
+  let updated = 0;
+  for (const code of codes) {
+    const record = await readRecord(code);
+    if (!record) continue;
+    const sameId = Boolean(eaId && record.eaId && record.eaId === eaId);
+    const sameName =
+      Boolean(eaName) &&
+      record.eaName.trim().toLowerCase() === eaName.toLowerCase();
+    if (!sameId && !sameName) continue;
+    const next: LicenceRecord = {
+      ...record,
+      ...(eaName ? { eaName } : {}),
+      // An explicit list wins — including an EMPTY one (a removal).
+      ...(hasSymbols ? { symbols } : {}),
+      ...(imageRaw && imageRaw.length <= MAX_IMAGE_CHARS ? { image: imageRaw } : {}),
+      updatedAt: at,
+    };
+    await kvCommand(["HSET", KEYS_HASH, code, JSON.stringify(next)]);
+    updated += 1;
+  }
+  return { status: 200, body: { ok: true, updated, updatedAt: at } };
+}
+
 /* ── handler ─────────────────────────────────────────────────────────── */
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -434,7 +552,11 @@ export default async function handler(request: ApiRequest, response: ApiResponse
               ? await lookup(request)
               : action === "remove"
                 ? await remove(request)
-                : await claim(request);
+                : action === "claim"
+                  ? await claim(request)
+                  : action === "ea-config"
+                    ? await eaConfig(request)
+                    : await updateEa(request);
     response.status(answer.status).json(answer.body);
   } catch (error) {
     console.error("[licenses]", action, error);

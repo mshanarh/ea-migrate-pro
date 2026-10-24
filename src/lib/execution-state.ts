@@ -43,6 +43,14 @@ export type ExecutionPlan = {
   takeProfit?: number;
   /** The broker's decimal count for this symbol. */
   digits?: number;
+  /** The trend the analysis read from the broker's closes. */
+  trend?: ExecutionSide;
+  /** How far the live price sat from the 20-candle average, in ATR(14). */
+  extensionAtr?: number;
+  /** The overextension filter's verdict: enter / too-extended / waiting-*. */
+  entryGate?: string;
+  /** What the filter measured, and why it entered or skipped. */
+  entryReason?: string;
 };
 
 export type ExecutionState = {

@@ -1,10 +1,12 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { ArrowLeft, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { getAppState, leaveForCheckout, setRobotPairs, useAppState } from "@/lib/app-store";
+import { canonicalEaSymbol, getAppState, leaveForCheckout, refreshRobotConfigs, setRobotPairs, useAppState } from "@/lib/app-store";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -98,14 +100,36 @@ function TradingPairsScreen() {
 
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
+  // Quotes always reads the CURRENT EA config from the server (by licence
+  // key), so a symbol the mentor added or removed is here without a new key.
+  useEffect(() => {
+    void refreshRobotConfigs();
+  }, []);
+  const pull = usePullToRefresh(() => refreshRobotConfigs());
+
   // The EA's own symbol universe — set while the EA was created in the portal,
-  // displayed exactly as the bot added it.
-  const eaSymbols = useMemo(
-    () => (robot ? [...new Set(robot.symbols.map(symbolKey).filter(Boolean))] : []),
+  // displayed exactly as the bot added it (BTCUSDm stays BTCUSDm). Only the
+  // duplicate CHECK is case-insensitive.
+  const eaSymbols = useMemo(() => {
+    if (!robot) return [];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const raw of robot.symbols) {
+      const symbol = raw.trim();
+      if (!symbol) continue;
+      const key = symbolKey(symbol);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push(symbol);
+    }
+    return list;
+  }, [robot]);
+  // Selected Quotes = the robot's active selection (settings per symbol). A
+  // pair saved by an older build in uppercase reads back in the EA's spelling.
+  const mine = useMemo(
+    () => (robot?.pairs ?? []).map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, robot?.symbols) })),
     [robot],
   );
-  // Selected Quotes = the robot's active selection (settings per symbol).
-  const mine = useMemo(() => (robot?.pairs ?? []).map((pair) => ({ ...pair })), [robot]);
   const mineSymbols = useMemo(() => new Set(mine.map((pair) => symbolKey(pair.symbol))), [mine]);
   // The two tabs hold DISJOINT halves of the EA's symbol universe, so a symbol
   // always lives in exactly one of them and visibly crosses between them:
@@ -198,7 +222,12 @@ function TradingPairsScreen() {
   const hasRobot = Boolean(robot);
 
   return (
-    <div className="app-fullscreen bg-black text-white">
+    <div
+      className="app-fullscreen if-screen bg-black text-white"
+      onTouchStart={pull.handlers.onTouchStart}
+      onTouchMove={pull.handlers.onTouchMove}
+      onTouchEnd={pull.handlers.onTouchEnd}
+    >
       <div className="app-scroll-area">
         <main className="mx-auto flex min-h-full w-full max-w-md flex-col px-4 pt-safe pb-safe-nav">
           {/* Header — back, robot avatar, name, accent subtitle */}
@@ -207,7 +236,7 @@ function TradingPairsScreen() {
               type="button"
               aria-label="Go back"
               onClick={() => (window.history.length > 1 ? window.history.back() : void navigate({ to: "/app/home" }))}
-              className="flex size-11 shrink-0 items-center justify-center rounded-full bg-[#1A1A1A] text-white/80"
+              className="if-chip if-text flex size-11 shrink-0 items-center justify-center rounded-full"
             >
               <ArrowLeft className="size-5" />
             </button>
@@ -222,12 +251,14 @@ function TradingPairsScreen() {
               </span>
             )}
             <div className="min-w-0">
-              <h1 className="truncate text-xl font-black leading-tight">{robot?.name ?? "Quotes"}</h1>
-              <p className="text-sm font-bold" style={{ color: accent }}>
+              <h1 className="if-header if-text truncate text-xl font-black leading-tight">{robot?.name ?? "Quotes"}</h1>
+              <p className="if-num text-sm font-bold" style={{ color: accent }}>
                 {eaSymbols.length} symbols on this EA
               </p>
             </div>
           </div>
+
+          <EaConfigNote className="mt-3 px-0" />
 
           {/* Tabs */}
           <div className="mt-5 flex gap-3">
@@ -238,20 +269,20 @@ function TradingPairsScreen() {
           {/* Content */}
           {!hasRobot ? (
             <div className="mt-16 flex flex-col items-center gap-3 text-center">
-              <span className="flex size-16 items-center justify-center rounded-full bg-[#1E1E1E] text-2xl">🤖</span>
+              <span className="if-chip flex size-16 items-center justify-center rounded-full text-2xl">🤖</span>
               <p className="text-sm font-bold">No robot activated</p>
-              <p className="max-w-[250px] text-xs text-white/45">
+              <p className="if-muted max-w-[250px] text-xs">
                 Activate one of your EA keys on the Home screen — its quotes will show up here.
               </p>
             </div>
           ) : tab === "selected" ? (
             <div className="mt-5 flex flex-col gap-4">
               {eaSymbols.length === 0 ? (
-                <p className="mt-14 px-6 text-center text-base text-white/45">
+                <p className="if-muted mt-14 px-6 text-center text-base">
                   No symbols on this EA yet — your mentor adds them on the portal.
                 </p>
               ) : pending.length === 0 ? (
-                <p className="mt-14 px-6 text-center text-base text-white/45">
+                <p className="if-muted mt-14 px-6 text-center text-base">
                   Every symbol on this EA is already in Allowed Quotes.
                 </p>
               ) : (
@@ -260,7 +291,7 @@ function TradingPairsScreen() {
                     key={symbol}
                     type="button"
                     onClick={() => openConfig(symbol)}
-                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
+                    className="if-card flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
                     style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
                   >
                     <span
@@ -270,8 +301,8 @@ function TradingPairsScreen() {
                       <Plus className="size-5" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-xl font-black">{symbol}</span>
-                      <span className="mt-0.5 block text-sm text-white/50">Tap to configure</span>
+                      <span className="if-text block truncate text-xl font-black">{symbol}</span>
+                      <span className="if-muted mt-0.5 block text-sm">Tap to configure</span>
                     </span>
                   </button>
                 ))
@@ -280,7 +311,7 @@ function TradingPairsScreen() {
           ) : (
             <div className="mt-5 flex flex-col gap-4">
               {allowed.length === 0 ? (
-                <p className="mt-14 px-6 text-center text-base text-white/45">
+                <p className="if-muted mt-14 px-6 text-center text-base">
                   Nothing configured yet. Configure a symbol from Selected Quotes.
                 </p>
               ) : (
@@ -291,7 +322,7 @@ function TradingPairsScreen() {
                     // Reopening prefills the saved settings so editing a symbol
                     // cannot silently reset its lots or trade count.
                     onClick={() => openConfig(pair.symbol, pair)}
-                    className="flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
+                    className="if-card flex w-full items-center gap-4 rounded-[32px] border p-4 text-left transition-colors hover:bg-white/[0.05]"
                     style={{ borderColor: `${accent}59`, backgroundColor: "rgba(255,255,255,0.03)" }}
                   >
                     <span
@@ -301,8 +332,8 @@ function TradingPairsScreen() {
                       <Check className="size-5" />
                     </span>
                     <span className="min-w-0">
-                      <span className="block truncate text-xl font-black">{pair.symbol}</span>
-                      <span className="mt-0.5 block text-sm text-white/50">
+                      <span className="if-text block truncate text-xl font-black">{pair.symbol}</span>
+                      <span className="if-num if-muted mt-0.5 block text-sm">
                         {pair.lotSize} lots • {typeLabel(pair.direction)} • {tradesLabel(pair.maxTrades)} trades
                       </span>
                     </span>
@@ -323,7 +354,7 @@ function TradingPairsScreen() {
           if (!next) setConfigSymbol(null);
         }}
       >
-        <DialogContent className="max-h-[92vh] overflow-y-auto rounded-[28px] border border-white/10 bg-[#0b0b0d] p-6 text-white sm:max-w-md">
+        <DialogContent className="if-card max-h-[92vh] overflow-y-auto rounded-[28px] border p-6 sm:max-w-md">
           <DialogHeader>
             <DialogTitle className="truncate text-2xl font-black">{configSymbol}</DialogTitle>
           </DialogHeader>
@@ -335,7 +366,7 @@ function TradingPairsScreen() {
                 value={draftLot}
                 onChange={(event) => setDraftLot(event.target.value)}
                 inputMode="decimal"
-                className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base text-white outline-none placeholder:text-white/35 focus:border-white/25"
+                className="if-field mt-2 h-14 w-full rounded-2xl border px-5 text-base outline-none placeholder:text-white/35 focus:border-white/25"
                 placeholder="0.01"
               />
             </div>
@@ -345,7 +376,7 @@ function TradingPairsScreen() {
               <button
                 type="button"
                 onClick={() => setTypeOpen((open) => !open)}
-                className="mt-2 flex h-14 w-full items-center justify-between rounded-2xl border border-white/10 bg-white/[0.04] px-5"
+                className="if-field mt-2 flex h-14 w-full items-center justify-between rounded-2xl border px-5"
               >
                 <span className="text-base font-black" style={{ color: accent }}>
                   {DIRECTION_LABELS[draftDirection]}
@@ -353,7 +384,7 @@ function TradingPairsScreen() {
                 <ChevronDown className={`size-5 text-white/50 transition-transform ${typeOpen ? "rotate-180" : ""}`} />
               </button>
               {typeOpen && (
-                <div className="mt-2 overflow-hidden rounded-2xl border border-white/10 bg-[#141414]">
+                <div className="if-well mt-2 overflow-hidden rounded-2xl border">
                   {(Object.keys(DIRECTION_LABELS) as PairDirection[]).map((value) => (
                     <button
                       key={value}
@@ -383,7 +414,7 @@ function TradingPairsScreen() {
                 value={draftTrades}
                 onChange={(event) => setDraftTrades(event.target.value)}
                 inputMode="numeric"
-                className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base text-white outline-none placeholder:text-white/35 focus:border-white/25"
+                className="if-field mt-2 h-14 w-full rounded-2xl border px-5 text-base outline-none placeholder:text-white/35 focus:border-white/25"
                 placeholder="1"
               />
               <p className="mt-1.5 text-xs text-white/35">0 = unlimited</p>

@@ -9,6 +9,7 @@ import { createEaRecord, renameEa, setEAs, useCurrentAccount, type Account, type
 import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob, videoTooLargeForCloud } from "@/lib/media-store";
 import { syncRegister } from "@/lib/account-sync.server";
 import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
+import { updateEaConfigInKv } from "@/lib/license-cloud";
 
 /**
  * Mirrors the account (EAs + video refs) to the cloud so every device — and
@@ -188,7 +189,28 @@ function ManageEAs() {
         </ul>
       )}
       <CreateEaDialog open={createOpen} onOpenChange={setCreateOpen} onCreate={(ea) => { setEAs(account.id, [...eas, ea]); mirrorAccount({ ...account, eas: [...eas, ea] }); toast.success(ea.name + " saved privately"); }} />
-      <EditEaDialog ea={editingEa} onClose={() => setEditingEa(null)} onSave={(patch) => { if (!editingEa) return; renameEa(account.id, editingEa.id, patch); const updatedEas = eas.map((item) => item.id === editingEa.id ? { ...item, ...patch } : item); mirrorAccount({ ...account, eas: updatedEas }); toast.success("EA updated"); }} />
+      <EditEaDialog ea={editingEa} onClose={() => setEditingEa(null)} onSave={(patch) => {
+                if (!editingEa) return;
+                renameEa(account.id, editingEa.id, patch);
+                const updatedEas = eas.map((item) => item.id === editingEa.id ? { ...item, ...patch } : item);
+                mirrorAccount({ ...account, eas: updatedEas });
+                // THE SAME SERVER CONFIG THE APP READS: write the new symbol
+                // list onto every licence key issued for this EA, so clients
+                // see the edit on their next refresh — no new key, no
+                // re-activation, no re-login.
+                void updateEaConfigInKv({
+                  mentorEmail: account.email,
+                  eaId: editingEa.id,
+                  eaName: editingEa.name,
+                  symbols: patch.symbols ?? editingEa.symbols ?? [],
+                  ...(patch.image ? { image: patch.image } : {}),
+                }).then((reply) => {
+                  if (reply.enabled && !reply.ok) {
+                    console.warn("[eas] live EA config not updated:", reply.error);
+                  }
+                });
+                toast.success("EA updated");
+              }} />
     </div>
   );
 }

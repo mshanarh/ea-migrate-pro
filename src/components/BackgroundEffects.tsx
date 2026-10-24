@@ -77,6 +77,13 @@ type Factory = (ctx: CanvasRenderingContext2D, w: number, h: number) => Stepper;
  * fillStyle / strokeStyle / shadowColor / gradient stop to the user's
  * accent colour (alpha preserved). Near-white accents are left alone so
  * lightning / snow / flashes keep their natural look.
+ *
+ * THE ACCENT IS READ LIVE, never captured. The colour cycle changes the
+ * accent constantly; if the proxy closed over one colour, the only way to
+ * pick a new one would be to rebuild the whole animation — which used to
+ * restart every effect from frame zero on each colour change. The getter
+ * below means a colour change is a pure recolour of the running scene: the
+ * particles keep their positions, the clock keeps running.
  */
 
 /** localStorage key for the overlay (play-over-screen) mode. */
@@ -110,9 +117,17 @@ function tint(color: string, accent: Rgb): string {
   return c; // named colours etc. pass through
 }
 
-/** Wraps a draw context so every colour the effect paints becomes the accent. */
-function tintedCtx(ctx: CanvasRenderingContext2D, accent: Rgb): CanvasRenderingContext2D {
-  if (isNearWhite(accent)) return ctx;
+/**
+ * Wraps a draw context so every colour the effect paints becomes the LIVE
+ * accent (`accentFn` is called per colour, so a cycle change recolours the
+ * running scene instead of restarting it).
+ */
+function tintedCtx(ctx: CanvasRenderingContext2D, accentFn: () => Rgb): CanvasRenderingContext2D {
+  /** One colour string → accent, unless the live accent is near-white. */
+  const paint = (color: string) => {
+    const live = accentFn();
+    return isNearWhite(live) ? color : tint(color, live);
+  };
   const proxy = new Proxy(ctx, {
     get(target, prop) {
       if (prop === "createRadialGradient" || prop === "createLinearGradient") {
@@ -121,8 +136,7 @@ function tintedCtx(ctx: CanvasRenderingContext2D, accent: Rgb): CanvasRenderingC
           return new Proxy(grad, {
             get(g, p) {
               if (p === "addColorStop") {
-                return (offset: number, color: string) =>
-                  grad.addColorStop(offset, tint(String(color), accent));
+                return (offset: number, color: string) => grad.addColorStop(offset, paint(String(color)));
               }
               const v = Reflect.get(g, p, g);
               return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(grad) : v;
@@ -138,7 +152,7 @@ function tintedCtx(ctx: CanvasRenderingContext2D, accent: Rgb): CanvasRenderingC
         (prop === "fillStyle" || prop === "strokeStyle" || prop === "shadowColor") &&
         typeof value === "string"
       ) {
-        target[prop] = tint(value, accent);
+        target[prop] = paint(value);
         return true;
       }
       return Reflect.set(target, prop, value);
@@ -1525,6 +1539,13 @@ export function BackgroundEffects() {
   const { color } = useCustomization();
   useEffect(() => setMounted(true), []);
 
+  // LIVE accent for the running animation. A colour change only updates this
+  // ref (what the drawing proxy reads), never the canvas or its clock — this
+  // is what keeps the effect flowing through a colour cycle instead of
+  // restarting from the beginning.
+  const accentRef = useRef<Rgb>(hexToRgb(accentColorValue(color)));
+  accentRef.current = hexToRgb(accentColorValue(color));
+
   // Overlay (play-over-screen) mode: same engine, canvas lifted above the app
   // content so the animation floats over cards, charts and settings.
   useEffect(() => {
@@ -1552,8 +1573,9 @@ export function BackgroundEffects() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    const accentRgb = hexToRgb(accentColorValue(color));
-    const draw = tintedCtx(ctx, accentRgb);
+    // The accent is read on every coloured draw (see tintedCtx), so swapping
+    // colours mid-animation is a recolour — no teardown, no restart.
+    const draw = tintedCtx(ctx, () => accentRef.current);
 
     let raf = 0;
     let w = 0;
@@ -1604,7 +1626,9 @@ export function BackgroundEffects() {
       ctx.clearRect(0, 0, w, h);
       if (!enabled) return;
 
-      const key = `${type}@${w}x${h}@${color}`;
+      // NOT keyed by colour: the tint is applied per draw, so a colour change
+      // must never rebuild (restart) the effect's state.
+      const key = `${type}@${w}x${h}`;
       if (key !== builtFor || !stepper) {
         const factory = FACTORIES[type];
         stepper = factory ? factory(draw, w, h) : null;
@@ -1630,7 +1654,9 @@ export function BackgroundEffects() {
       window.removeEventListener("storage", refresh);
       document.body.classList.remove("eamp-bg-on");
     };
-  }, [mounted, color]);
+    // Deps deliberately exclude `color`: a colour change must not tear the
+    // animation down (that restarted it and flashed the screens opaque).
+  }, [mounted]);
 
   if (!mounted) return null;
 
