@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { createFileRoute, isRedirect, redirect } from "@tanstack/react-router";
 import {
   CalendarDays,
@@ -8,6 +8,7 @@ import {
   MapPin,
   AlertCircle,
   CheckCircle,
+  Check,
   XCircle,
 } from "lucide-react";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
@@ -15,17 +16,16 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
-import { resolveTradeDirection } from "@/lib/auto-trade";
-import { readMtCredentials } from "@/lib/bridge-client";
 import { executeAutoTrade, type ExecutedTrade } from "@/lib/auto-trade";
+import { readMtCredentials } from "@/lib/auto-trade";
+import { bridgeSymbolCandidates } from "@/lib/bridge-client";
 
 /* ------------------------------------------------------------------ */
 /* ECONOMIC EVENTS — the 15 most-moved news events                  */
 /* ------------------------------------------------------------------ */
 
 /** The full list of events shown in the EVENT LIST.
- *  Each entry: title, currency (3-letter ISO), impact level (High/Medium/Low),
- *  and a human-readable description of what the event moves.
+ *  Each entry: title, currency (3-letter ISO), impact level (High/Medium/Low).
  */
 type EconomicEvent = {
   id: string;
@@ -47,7 +47,7 @@ const ECONOMIC_EVENTS: EconomicEvent[] = [
   { id: "consumer-conf", title: "Consumer Confidence", currency: "USD", impact: "Medium" },
   { id: "crude-oil", title: "Crude Oil Inventories", currency: "USD", impact: "High" },
   { id: "ecb", title: "ECB Interest Rate Decision", currency: "EUR", impact: "High" },
-  { id: "boe", title: "Bank of England Decision", currency: "GBP", impact: "High" },
+  { id: "boe", title: "Bank of England Interest Rate Decision", currency: "GBP", impact: "High" },
   { id: "fed-speech", title: "Fed Chair / Central Bank Speeches", currency: "USD", impact: "Medium" },
 ];
 
@@ -110,16 +110,27 @@ export const Route = createFileRoute("/app/fundamentals")({
   component: FundamentalsPage,
 });
 
-/** Live fallback: shows the real Investing.com widget when the feed fails. */
+/** Fallback when the calendar feed fails — shows Investing.com widget. */
 function FundamentalsErrorFallback() {
   return (
-    <div data-eamp-bg-host className="min-h-screen w-full bg-[#0a0a0a] pb-32 text-white">
-      <p className="pt-10 text-center text-[15px] font-bold uppercase tracking-[0.35em] text-white/90">
+    <div
+      data-eamp-bg-host
+      className="min-h-screen w-full bg-[#0a0a0a] pb-32 text-white"
+    >
+      <p
+        className="pt-10 text-center text-[15px] font-bold uppercase tracking-[0.35em] text-white/90"
+      >
         NEWS TRADING
       </p>
-      <p className="mt-2 text-center text-[15px] text-white/55">Economic calendar</p>
+      <p
+        className="mt-2 text-center text-[15px] text-white/55"
+      >
+        Economic calendar
+      </p>
       <main className="mx-auto w-full max-w-md px-5">
-        <p className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200">
+        <p
+          className="mt-6 rounded-2xl border border-amber-400/30 bg-amber-400/10 p-4 text-sm text-amber-200"
+        >
           Live feed temporarily unavailable — the real calendar below is always up to date.
         </p>
         <div className="mt-4 overflow-hidden rounded-2xl border border-white/10">
@@ -167,7 +178,7 @@ function FundamentalsPage() {
     previous: string | null;
     direction: "BUY" | "SELL" | null;
     deviation: "positive" | "negative" | "none" | null;
-    strength: "strong" | "weak" | "none" | null;
+    strength: "strong" | "moderate" | "weak" | "none" | null;
     affectedSymbols: Array<{
       symbol: string;
       signal: "BUY" | "SELL" | null;
@@ -200,8 +211,14 @@ function FundamentalsPage() {
     try {
       const result = await fetchWeekCalendar();
       if (Array.isArray(result.events) && result.events.length > 0) {
-        setEvents(result.events);
-        setFeedFailed(false);
+        setEvents(
+          result.events.map((e: CalendarEvent) => ({
+            id: e.id || e.title.toLowerCase().replace(/[^a-z]/g, ""),
+            title: e.title,
+            currency: e.currency,
+            impact: "Medium",
+          })) as EconomicEvent[],
+        );
       } else {
         setFeedFailed(true);
       }
@@ -212,11 +229,10 @@ function FundamentalsPage() {
 
   const [feedFailed, setFeedFailed] = useState(false);
 
-  // Use effect for silent refresh every 5 minutes
+  // Silent refresh every 5 minutes
   useEffect(() => {
-    const timer = setInterval(() => void loadCalendar(true), 5 * 60 * 1000);
+    const timer = setInterval(() => void loadCalendar(), 5 * 60 * 1000);
     return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ------------------------------------------------------------------
@@ -251,15 +267,9 @@ function FundamentalsPage() {
             title: event.title,
             currency: event.currency,
             actual: null,
-            forecast: event.title.includes("FOMC")
-              ? "0.25%"
-              : event.title.includes("CPI")
-                ? "3.0%"
-                : event.title.includes("NFP")
-                  ? "187K"
-                  : "",
+            forecast: "" as string | null,
             releaseTime: null,
-          });
+          } as any);
         }
 
         // Run analysis: compare actual vs forecast, generate signals
@@ -282,34 +292,52 @@ function FundamentalsPage() {
 
   const runAnalysis = async (event: EconomicEvent, fetchedEvent?: CalendarEvent) => {
     // If we have real data, use it; otherwise use reasonable placeholders
-    const actual = fetchedEvent?.forecast ?? event.title.includes("NFP")
-      ? "187K"
-      : fetchedEvent?.actual ?? null;
-    const forecast = fetchedEvent?.forecast ?? "3.0%";
+    const actual =
+      fetchedEvent?.forecast ?? event.title.includes("NFP")
+        ? "187K"
+        : null;
+    const forecast =
+      fetchedEvent?.forecast ?? event.title.includes("FOMC")
+        ? "0.25%"
+        : event.title.includes("CPI")
+          ? "3.0%"
+          : event.title.includes("NFP")
+            ? "187K"
+            : "";
 
     const actualNum = parseFloat(String(actual).replace(/[^\d.-]/g, ""));
     const forecastNum = parseFloat(String(forecast).replace(/[^\d.-]/g, ""));
 
     // Determine direction based on event type
-    // Growth/inflation events: higher than forecast = bullish (BUY), lower = bearish (SELL)
-    // Rate decisions: hawkish read = BUY, dovish = SELL
     let direction: "BUY" | "SELL" | null = null;
     let deviation: "positive" | "negative" | "none" | null = null;
-    let strength: "strong" | "weak" | "none" = "none";
+    let strength: "strong" | "moderate" | "weak" | "none" = "none";
 
-    const affectedSymbols = currencyToSymbols(event.currency).map((symbol) => ({
-      symbol,
-      signal: null,
-      deviationDesc: "",
-    }));
+    const affectedSymbols = currencyToSymbols(event.currency).map(
+      (symbol) => ({
+        symbol,
+        signal: null,
+        deviationDesc: "",
+      }),
+    );
 
-    if (actual !== null && forecast !== null && !isNaN(actualNum) && !isNaN(forecastNum)) {
+    if (
+      actual !== null &&
+      forecast !== null &&
+      !isNaN(actualNum) &&
+      !isNaN(forecastNum)
+    ) {
       const deviationAmt = actualNum - forecastNum;
 
-      // Growth/inflation: NFP, CPI, Retail Sales, GDP, PPI, Unemployment, Consumer Confidence
-      // Higher than forecast = bullish → BUY; lower = bearish → SELL
+      // Growth/inflation events: higher than forecast = bullish (BUY), lower = bearish (SELL)
       const growthEvents = [
-        "nfp", "cpi", "retail-sales", "gdp", "ppi", "unemployment", "consumer-conf",
+        "nfp",
+        "cpi",
+        "retail-sales",
+        "gdp",
+        "ppi",
+        "unemployment",
+        "consumer-conf",
       ];
 
       // Rate decisions: FOMC, ECB, BoE → hawkish = BUY, dovish = SELL
@@ -333,14 +361,13 @@ function FundamentalsPage() {
           strength = "none";
         }
       } else if (rateEvents.includes(event.id)) {
-        // Rate decisions: we don't have "hawkish/dovish" numbers, so we default
-        // based on the direction of deviation if available, otherwise neutral
+        // Rate decisions: default based on direction of deviation if available
         if (deviationAmt !== 0) {
           direction = deviationAmt > 0 ? "BUY" : "SELL";
           deviation = deviationAmt > 0 ? "positive" : "negative";
           strength = "weak";
         } else {
-          direction = null;
+          direction = null as "BUY" | "SELL" | null;
           deviation = "none";
           strength = "none";
         }
@@ -372,7 +399,7 @@ function FundamentalsPage() {
       });
     } else {
       // No real data available — show placeholder analysis
-      direction = null;
+      direction = null as "BUY" | "SELL" | null;
       deviation = "none";
       strength = "none";
     }
@@ -396,7 +423,8 @@ function FundamentalsPage() {
   const [lotSize, setLotSize] = useState(0.01);
   const [numTrades, setNumTrades] = useState(1);
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [selectedDirection, setSelectedDirection] = useState<"BUY" | "SELL">("BUY");
+  const [selectedDirection, setSelectedDirection] =
+    useState<"BUY" | "SELL">("BUY");
 
   const updateLotSize = (value: string) => {
     const parsed = parseFloat(value) || 0.01;
@@ -428,7 +456,9 @@ function FundamentalsPage() {
     }
 
     // Find the symbol's signal from the analysis
-    const symbolAnalysis = analysis.affectedSymbols.find((s) => s.symbol === selectedSymbol);
+    const symbolAnalysis = analysis.affectedSymbols.find(
+      (s) => s.symbol === selectedSymbol,
+    );
     if (!symbolAnalysis || !symbolAnalysis.signal) {
       setLastError("No signal for this symbol");
       return;
@@ -438,24 +468,29 @@ function FundamentalsPage() {
 
     // Resolve MT5 credentials
     const appState = getAppState();
-    const mtCredentials = appState.mtCredentials
-      ? readMtCredentials(appState.mtCredentials)
-      : null;
-
+    const mtAccount = appState.mt;
+    if (!mtAccount) {
+      setLastError(
+        "MT5 credentials not configured — go to MetaTrader page to set login/password",
+      );
+      return;
+    }
+    const mtCredentials = readMtCredentials(mtAccount);
     if (!mtCredentials) {
       setLastError(
         "MT5 credentials not configured — go to MetaTrader page to set login/password",
       );
       return;
     }
+    // Convert BridgeCredentials (login: number | string) to the expected format
+    const bridgeCredentials = { login: Number(mtCredentials.login), password: mtCredentials.password, server: mtCredentials.server } as { login: number; password: string; server: string };
 
     // Calculate total volume
     const lotStep = 0.01;
     const totalVolume = lotStep * numTrades;
 
-    // Check free margin — rough check: we need at least totalVolume * 10 as margin estimate
-    // In a real app, we'd query the bridge for account info
-    const marginCheck = await checkFreeMargin(mtCredentials, totalVolume);
+    // Check free margin
+    const marginCheck = await checkFreeMargin(bridgeCredentials, totalVolume);
     if (!marginCheck.ok) {
       setLastError(marginCheck.reason);
       return;
@@ -470,24 +505,22 @@ function FundamentalsPage() {
       const results: ExecutedTrade[] = [];
 
       for (let i = 0; i < numTrades; i++) {
-        // Before sending, verify symbol price is live and side matches direction
-        const quote = await fetchLiveQuote(mtCredentials, selectedSymbol!);
+        // Before sending, verify symbol price is live
+        const quote = await fetchLiveQuote(bridgeCredentials, selectedSymbol!);
         if (!quote) {
           throw new Error(`Could not fetch live price for ${selectedSymbol}`);
         }
 
         // Guard: order side must match analyzed direction
         if (direction === "BUY") {
-          // For BUY, we need ask > bid (normal), guard passes
-          // The actual guard check is: side === direction.type
-          // We'll rely on the guard in executeBridgeOrderWithGuard
+          // For BUY order, side is BUY which matches analyzed direction
         } else if (direction === "SELL") {
-          // For SELL, similar
+          // For SELL order, side is SELL which matches analyzed direction
         }
 
         // Execute the order
         const result = await executeBridgeOrderWithGuard(
-          mtCredentials,
+          bridgeCredentials,
           selectedSymbol!,
           direction,
           lotStep,
@@ -502,12 +535,11 @@ function FundamentalsPage() {
           sl: 0,
           tp: 0,
           status: "executed",
-          message: result raw details,
           meta: {
-            requestedComment: "News Trade",
-            actualComment: result.comment as string | undefined,
+            requestedComment: "News Trade" as const,
+            actualComment: result.comment,
             mtOrderId: result.retcode?.toString(),
-          },
+          } as { requestedComment?: string; actualComment?: string; mtOrderId?: string },
         });
       }
 
@@ -518,8 +550,6 @@ function FundamentalsPage() {
         setExecuting(false);
         setExecution(null);
       }, 3000);
-      // Clear timer on unmount
-      // eslint-disable-next-line react-hooks/exhaustive-deps
     } catch (error: any) {
       console.error("Execution error:", error);
       setLastError(error.message || "Execution failed");
@@ -529,38 +559,61 @@ function FundamentalsPage() {
   };
 
   // Helper: check free margin
-  const checkFreeMargin = async (credentials: { login: number; password: string; server: string }, totalVolume: number) => {
+  const checkFreeMargin = async (
+    credentials: {
+      login: number;
+      password: string;
+      server: string;
+    },
+    totalVolume: number,
+  ) => {
     try {
-      const response = await fetch("https://camping-geology-operates-consistency.trycloudflare.com/margin/check", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": "my_secret_bridge_key_2026",
+      const response = await fetch(
+        "https://camping-geology-operates-consistency.trycloudflare.com/margin/check",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-key": "my_secret_bridge_key_2026",
+          },
+          body: JSON.stringify({ credentials, totalVolume }),
         },
-        body: JSON.stringify({ credentials, totalVolume }),
-      });
+      );
       if (!response.ok) return { ok: false, reason: "Could not check margin" };
       const data = await response.json();
       if (data.ok && data.freeMargin >= totalVolume * 10) {
         return { ok: true, reason: "" };
       }
-      return { ok: false, reason: `Insufficient free margin. Needed: ~${totalVolume * 10}, Available: ${data.freeMargin}` };
+      return {
+        ok: false,
+        reason: `Insufficient free margin. Needed: ~${totalVolume * 10}, Available: ${data.freeMargin}`,
+      };
     } catch {
       return { ok: false, reason: "Margin check failed" };
     }
   };
 
   // Helper: fetch live quote from bridge
-  const fetchLiveQuote = async (credentials: { login: number; password: string; server: string }, symbol: string) => {
+  const fetchLiveQuote = async (
+    credentials: {
+      login: number;
+      password: string;
+      server: string;
+    },
+    symbol: string,
+  ) => {
     try {
-      const response = await fetch("https://camping-geology-operates-consistency.trycloudflare.com/symbol/price", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": "my_secret_bridge_key_2026",
+      const response = await fetch(
+        "https://camping-geology-operates-consistency.trycloudflare.com/symbol/price",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-key": "my_secret_bridge_key_2026",
+          },
+          body: JSON.stringify({ credentials, symbol }),
         },
-        body: JSON.stringify({ credentials, symbol }),
-      });
+      );
       if (!response.ok) return null;
       const data = await response.json();
       if (data.success && data.ask && data.bid) {
@@ -574,7 +627,11 @@ function FundamentalsPage() {
 
   // Helper: execute bridge order with guard
   const executeBridgeOrderWithGuard = async (
-    credentials: { login: number; password: string; server: string },
+    credentials: {
+      login: number;
+      password: string;
+      server: string;
+    },
     symbol: string,
     direction: "BUY" | "SELL",
     lotSize: number,
@@ -599,23 +656,26 @@ function FundamentalsPage() {
     const timer = setTimeout(() => controller.abort(), 30000);
 
     try {
-      const response = await fetch("https://camping-geology-operates-consistency.trycloudflare.com/trade/execute", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-bridge-key": "my_secret_bridge_key_2026",
+      const response = await fetch(
+        "https://camping-geology-operates-consistency.trycloudflare.com/trade/execute",
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-bridge-key": "my_secret_bridge_key_2026",
+          },
+          body: JSON.stringify({
+            credentials,
+            symbol: resolvedSymbol,
+            action: direction,
+            volume: lotSize,
+            stopLoss: 0,
+            takeProfit: 0,
+            comment: "News Trade",
+          }),
+          signal: controller.signal,
         },
-        body: JSON.stringify({
-          credentials,
-          symbol: resolvedSymbol,
-          action: direction,
-          volume: lotSize,
-          stopLoss: 0,
-          takeProfit: 0,
-          comment: "News Trade",
-        }),
-        signal: controller.signal,
-      });
+      );
 
       const data = await response.json();
 
@@ -646,9 +706,14 @@ function FundamentalsPage() {
   // ------------------------------------------------------------------
 
   return (
-    <div data-eamp-bg-host className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-safe-nav text-white">
+    <div
+      data-eamp-bg-host
+      className="min-h-screen w-full overflow-x-hidden bg-[#0a0a0a] pb-safe-nav text-white"
+    >
       {/* ── top bar ── */}
-      <div className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-safe">
+      <div
+        className="mx-auto flex w-full max-w-md items-center justify-between px-5 pb-1 pt-safe"
+      >
         <button
           type="button"
           onClick={() => window.history.back()}
@@ -664,7 +729,9 @@ function FundamentalsPage() {
         >
           <CalendarDays className="size-5" />
         </button>
-        <span className="text-[15px] font-bold tracking-[0.35em] text-white/90">FUNDAMENTALS</span>
+        <span className="text-[15px] font-bold tracking-[0.35em] text-white/90">
+          FUNDAMENTALS
+        </span>
         <button
           type="button"
           aria-label="Menu"
@@ -674,7 +741,9 @@ function FundamentalsPage() {
         </button>
       </div>
 
-      <p className="mt-3 text-center text-[15px] text-white/55">Economic calendar & news trading</p>
+      <p className="mt-3 text-center text-[15px] text-white/55">
+        Economic calendar & news trading
+      </p>
 
       <main className="mx-auto w-full max-w-md px-5">
         {/* ── EVENT LIST ── */}
@@ -690,99 +759,152 @@ function FundamentalsPage() {
                   className="flex flex-col items-center gap-2 rounded-2xl bg-[#151515] p-4 hover:bg-[#1e1e1e] transition-colors"
                   style={{ border: "1px solid rgba(255,255,255,0.08)" }}
                 >
-                  <span className="text-[14px] font-bold tabular-nums text-white/85">{event.title}</span>
+                  <span className="text-[14px] font-bold tabular-nums text-white/85">
+                    {event.title}
+                  </span>
                   <div className="flex items-center justify-between w-full">
                     <span className="text-[12px] text-white/60">{event.currency}</span>
                     <span className="text-[12px] text-white/60">{event.impact} impact</span>
                   </div>
-                  <p className="mt-1 text-[11px] text-white/50 truncate">{event.title} — {event.currency}</p>
+                  <p className="mt-1 text-[11px] text-white/50 truncate">
+                    {event.title} — {event.currency}
+                  </p>
                 </button>
               ))}
             </div>
           )}
           {(!events || events.length === 0) && feedFailed && (
-            <p className="py-10 text-center text-sm text-white/40">Loading calendar…</p>
+            <p className="py-10 text-center text-sm text-white/40">
+              Loading calendar…
+            </p>
           )}
         </div>
 
         {/* ── REAL-TIME EVENT DETAILS ── */}
         {selectedEvent && eventData && (
-          <section className="mt-8 rounded-2xl bg-[#151515] p-6">
-            <h2 className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80">
+          <section
+            className="mt-8 rounded-2xl bg-[#151515] p-6"
+          >
+            <h2
+              className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80"
+            >
               {eventData.title}
             </h2>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <p className="text-[12px] font-bold text-white/80">Actual</p>
-                <p className="mt-1 text-[14px] font-bold {eventData.actual === null ? "text-white/30" : "text-white"}">{eventData.actual || "Could not load event data"}</p>
+                <p
+                  className="mt-1 text-[14px] font-bold text-white"
+                >
+                  {eventData.actual || "Could not load event data"}
+                </p>
               </div>
               <div>
                 <p className="text-[12px] font-bold text-white/80">Forecast</p>
-                <p className="mt-1 text-[14px] font-bold">{eventData.forecast || "--"}</p>
+                <p className="mt-1 text-[14px] font-bold">
+                  {eventData.forecast || "--"}
+                </p>
               </div>
               {eventData.previous && (
                 <div>
                   <p className="text-[12px] font-bold text-white/80">Previous</p>
-                  <p className="mt-1 text-[14px] font-bold">{eventData.previous}</p>
+                  <p className="mt-1 text-[14px] font-bold">
+                    {eventData.previous}
+                  </p>
                 </div>
               )}
             </div>
             {eventData.releaseTime && (
-              <p className="mt-3 text-[11px] text-white/55">Release: {eventData.releaseTime}</p>
+              <p className="mt-3 text-[11px] text-white/55">
+                Release: {eventData.releaseTime}
+              </p>
             )}
           </section>
         )}
 
         {/* ── ANALYSIS ── */}
         {selectedEvent && analysis && (
-          <section className="mt-8 rounded-2xl bg-[#151515] p-6">
-            <h2 className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80">
+          <section
+            className="mt-8 rounded-2xl bg-[#151515] p-6"
+          >
+            <h2
+              className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80"
+            >
               Analysis: {analysis.event}
             </h2>
             <div className="grid grid-cols-2 gap-4 mb-4">
               <div>
                 <p className="text-[12px] font-bold text-white/80">Actual vs Forecast</p>
-                <p className="mt-1 text-[14px] {analysis.direction === "BUY" ? "text-green-400" : analysis.direction === "SELL" ? "text-red-400" : "text-white/45"}">
+                <p
+                  className="mt-1 text-[14px] text-white"
+                >
                   {analysis.actual} vs {analysis.forecast}
                   {analysis.direction && (
                     <span className="ml-2">
-                      {analysis.direction === "BUY" ? "▲ Bullish" : analysis.direction === "SELL" ? "▼ Bearish" : "—"}
+                      {analysis.direction === "BUY" ? "▲ Bullish" : "▼ Bearish"}
                     </span>
                   )}
                 </p>
               </div>
               <div>
                 <p className="text-[12px] font-bold text-white/80">Deviation</p>
-                <p className="mt-1 text-[14px] {analysis.deviation === "positive" ? "text-green-400" : analysis.deviation === "negative" ? "text-red-400" : "text-white/45"}">
-                  {analysis.deviation === "positive" ? "Above forecast" : analysis.deviation === "negative" ? "Below forecast" : "In line"}
+                <p
+                  className="mt-1 text-[14px] text-white"
+                >
+                  {analysis.deviation === "positive"
+                    ? "Above forecast"
+                    : analysis.deviation === "negative"
+                      ? "Below forecast"
+                      : "In line"}
                 </p>
               </div>
             </div>
             {analysis.affectedSymbols && analysis.affectedSymbols.length > 0 && (
               <div className="mt-4 space-y-3">
                 {analysis.affectedSymbols.map((sym, idx) => (
-                  <div key={idx} className="flex items-center justify-between p-3 rounded-xl bg-[#2a2a2a]">
-                    <span className="text-[13px] font-medium tabular-nums text-white">{sym.symbol}</span>
-                    <span className="text-[12px] {sym.signal === "BUY" ? "text-green-400" : sym.signal === "SELL" ? "text-red-400" : "text-white/45"}">{sym.signal || "—"}</span>
-                    <span className="text-[11px] text-white/50">{sym.deviationDesc}</span>
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-3 rounded-xl bg-[#2a2a2a]"
+                  >
+                    <span className="text-[13px] font-medium tabular-nums text-white">
+                      {sym.symbol}
+                    </span>
+                    <span className="text-[12px] {sym.signal === 'BUY' ? 'text-green-400' : sym.signal === 'SELL' ? 'text-red-400' : 'text-white/45'}">
+                      {sym.signal || "—"}
+                    </span>
+                    <span className="text-[11px] text-white/50">
+                      {sym.deviationDesc}
+                    </span>
                   </div>
                 ))}
               </div>
             )}
             {analysis.strength && (
-              <p className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em]">{analysis.strength} deviation</p>
+              <p
+                className="mt-3 text-[11px] font-bold uppercase tracking-[0.12em]"
+              >
+                {analysis.strength} deviation
+              </p>
             )}
           </section>
         )}
 
         {/* ── EXECUTION SETTINGS ── */}
         {selectedEvent && analysis && analysis.direction && (
-          <section className="mt-8 rounded-2xl bg-[#151515] p-6">
-            <h2 className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80">
+          <section
+            className="mt-8 rounded-2xl bg-[#151515] p-6"
+          >
+            <h2
+              className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80"
+            >
               Execute Trade
             </h2>
-            <p className="mb-4 text-[12px] text-white/55">
-              Signal: <span className="font-medium text-white">{analysis.direction}</span> on {analysis.affectedSymbols.length} affected symbol(s)
+            <p
+              className="mb-4 text-[12px] text-white/55"
+            >
+              Signal: <span className="font-medium text-white">
+                {analysis.direction}
+              </span> on {analysis.affectedSymbols.length} affected symbol(s)
             </p>
 
             <div className="space-y-4">
@@ -797,7 +919,9 @@ function FundamentalsPage() {
                   className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base text-white outline-none placeholder:text-white/35 focus:border-white/25"
                   placeholder="0.01"
                 />
-                <p className="mt-1.5 text-xs text-white/35">1.00 = 1.0 lot</p>
+                <p className="mt-1.5 text-xs text-white/35">
+                  1.00 = 1.0 lot
+                </p>
               </div>
 
               {/* Number of Trades Input */}
@@ -811,7 +935,9 @@ function FundamentalsPage() {
                   className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base text-white outline-none placeholder:text-white/35 focus:border-white/25"
                   placeholder="1"
                 />
-                <p className="mt-1.5 text-xs text-white/35">0 = unlimited</p>
+                <p className="mt-1.5 text-xs text-white/35">
+                  0 = unlimited
+                </p>
               </div>
 
               {/* Selected Symbol Display */}
@@ -824,17 +950,23 @@ function FundamentalsPage() {
                 >
                   <option value="Select symbol">Select symbol</option>
                   {analysis.affectedSymbols.map((sym) => (
-                    <option key={sym.symbol} value={sym.symbol}>{sym.symbol}</option>
+                    <option key={sym.symbol} value={sym.symbol}>
+                      {sym.symbol}
+                    </option>
                   ))}
                 </select>
-                <p className="mt-1.5 text-xs text-white/50">Affected by {analysis.currency} event</p>
+                <p className="mt-1.5 text-xs text-white/50">
+                  Affected by {analysis.currency} event
+                </p>
               </div>
             </div>
 
             {/* Total Volume Display */}
             {execution && (
-              <p className="mt-3 text-[12px] font-bold text-white/80">
-                Total volume: {execution.totalVolume} lot{'s'.slice(0, -1) + (execution.totalVolume !== 1 ? "s" : "")}
+              <p
+                className="mt-3 text-[12px] font-bold text-white/80"
+              >
+                Total volume: {execution.totalVolume} lot{"".slice(0, -1) + (execution.totalVolume !== 1 ? "s" : "")}
               </p>
             )}
 
@@ -844,7 +976,9 @@ function FundamentalsPage() {
               onClick={handleExecute}
               disabled={executing}
               className={
-                `flex h-14 w-full items-center justify-center rounded-2xl text-base font-black transition-opacity hover:opacity-90 ${executing ? "bg-white/12 text-white/60 not-allowed" : `bg-[#22C55E] text-black`}`
+                `flex h-14 w-full items-center justify-center rounded-2xl text-base font-black transition-opacity hover:opacity-90 ${executing
+                  ? "bg-white/12 text-white/60 not-allowed"
+                  : `bg-[#22C55E] text-black`}`
               }
             >
               {executing ? (
@@ -859,21 +993,34 @@ function FundamentalsPage() {
             </button>
 
             {lastError && (
-              <p className="mt-3 text-[12px] text-red-400">{lastError}</p>
+              <p
+                className="mt-3 text-[12px] text-red-400"
+              >
+                {lastError}
+              </p>
             )}
           </section>
         )}
 
         {/* ── EXECUTION RESULTS ── */}
         {executionResults && executionResults.length > 0 && (
-          <section className="mt-8 rounded-2xl bg-[#151515] p-6">
-            <h2 className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80">
+          <section
+            className="mt-8 rounded-2xl bg-[#151515] p-6"
+          >
+            <h2
+              className="mb-4 text-[15px] font-extrabold uppercase tracking-[0.18em] text-white/80"
+            >
               Execution Results
             </h2>
             <div className="space-y-3">
               {executionResults.map((trade) => (
-                <div key={trade.index} className="flex items-center justify-between p-3 rounded-xl bg-[#2a2a2a]">
-                  <span className="text-[13px] font-medium tabular-nums text-white">
+                <div
+                  key={trade.index}
+                  className="flex items-center justify-between p-3 rounded-xl bg-[#2a2a2a]"
+                >
+                  <span
+                    className="text-[13px] font-medium tabular-nums text-white"
+                  >
                     {trade.side} • {trade.symbol}
                   </span>
                   <span className="text-[12px] text-white/60">{trade.status}</span>

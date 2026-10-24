@@ -1643,34 +1643,3 @@ export function calculateLots(entry: number, sl: number, ask: number, bid: numbe
  * Uses the last `period` candles ( typical 8-14).
  * ATR = max(high - low, abs(high - prevClose), abs(low - prevClose)) averaged.
  */
-export function calculateATR(candles: Array<{ high: number; low: number; close: number; open?: number }>, period: number = 8): number {
-  if (!candles || candles.length < 2) return 0;
-  const typicalPrice = candles.map(c => (c.high + c.low + c.close) / 3);
-  const trueRange = [];
-  for (let i = 1; i < candles.length; i++) {
-    const prevClose = candles[i - 1].close;
-    const tr = Math.max(
-      candles[i].high - candles[i].low,
-      Math.abs(candles[i].high - prevClose),
-      Math.abs(candles[i].low - prevClose)
-    );
-    trueRange.push(tr);
-  }
-  const avg = trueRange.slice(1).reduce((a, b) => a + b, 0) / (trueRange.length - 1);
-  return isNaN(avg) ? 0 : avg;
-}
-
-/**
- * Calculate position lots based on entry, stop loss, and account size.
- * Uses a simple risk-based calculation: risk a fixed % of entry-to-SL distance.
- */
-export function calculateLots(entry: number, sl: number, ask: number, bid: number): number {
-  // Risk 10% of the distance between entry and SL, capped at reasonable limits
-  const pointValue = 10; // Default forex point value
-  const riskPerTradePct = 0.10; // 10% risk per trade
-  const priceDiff = Math.abs(entry - sl);
-  const riskAmount = priceDiff * pointValue * riskPerTradePct;
-  // Rough lot calculation: each pip/lot movement is pointValue
-  const lots = riskAmount / (priceDiff * pointValue);
-  return Math.max(0.01, Math.min(10, lots));
-}

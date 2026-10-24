@@ -27,7 +27,7 @@
  */
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
-import { extractFetchErrorDetails, retryStoreFetchOnce } from "./lib/payment-gate";
+import { extractFetchErrorDetails, retryStoreFetchOnce } from "./payment-gate";
 
 export type RegistrationOutcome = "allow" | "checkout";
 
