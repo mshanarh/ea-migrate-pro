@@ -185,6 +185,11 @@ public class MainActivity extends Activity {
         return true;
     }
 
+    /** Theme palette — keep the dark base, make red the primary contact colour. */
+    private static final int THEME_RED = Color.parseColor("#E11D48");
+    private static final int THEME_AMBER = Color.parseColor("#F97316");
+    private static final int THEME_GREEN = Color.parseColor("#22C55E");
+
     /** Native speech — the WebView's own speechSynthesis is silent on Android. */
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
@@ -237,10 +242,6 @@ public class MainActivity extends Activity {
             settings.setSafeBrowsingEnabled(true);
         }
         web.setBackgroundColor(Color.parseColor("#0A0F1E"));
-        // Theme palette — keep the dark base, make red the primary contact color.
-        static final int THEME_RED = Color.parseColor("#E11D48");
-        static final int THEME_AMBER = Color.parseColor("#F97316");
-        static final int THEME_GREEN = Color.parseColor("#22C55E");
         web.addJavascriptInterface(new Bridge(), "EAMigrate");
         // EXTERNAL LINKS LEAVE THE APP. The payment redirect is a plain
         // location.replace() to whop.com, and a WebView that tries to render

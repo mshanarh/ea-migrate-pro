@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { createFileRoute, isRedirect, redirect } from "@tanstack/react-router";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { createFileRoute, redirect } from "@tanstack/react-router";
 import { ChevronLeft, ChevronRight, Loader2, RefreshCw, Zap } from "lucide-react";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
@@ -28,20 +28,20 @@ type EventDef = {
 };
 
 const EVENTS: EventDef[] = [
-  { id: "nfp", label: "Non-Farm Payrolls", currency: "USD", match: ["non-farm employment change", "nonfarm payrolls"] },
-  { id: "cpi", label: "CPI", currency: "USD", match: ["cpi m/m", "cpi y/y", "core cpi"] },
-  { id: "fomc", label: "FOMC Interest Rate Decision", currency: "USD", match: ["federal funds rate", "fomc statement", "fomc economic projections"] },
-  { id: "gdp", label: "GDP", currency: "USD", match: ["prelim gdp", "final gdp", "gdp q/q"] },
-  { id: "unemployment", label: "Unemployment Claims", currency: "USD", match: ["unemployment claims"], invert: true },
-  { id: "retail-sales", label: "Retail Sales", currency: "USD", match: ["retail sales"] },
-  { id: "ppi", label: "PPI", currency: "USD", match: ["ppi m/m", "core ppi"] },
+  { id: "nfp", label: "Non-Farm Payrolls", currency: "USD", match: ["non farm payrolls", "non-farm payrolls", "nonfarm payrolls"] },
+  { id: "cpi", label: "CPI", currency: "USD", match: ["cpi", "cpi mom", "cpi yoy", "core cpi"] },
+  { id: "fomc", label: "FOMC Interest Rate Decision", currency: "USD", match: ["fed interest rate decision", "federal funds rate"] },
+  { id: "gdp", label: "GDP", currency: "USD", match: ["gdp growth rate qoq", "gdp growth rate q/q", "gdp growth rate"] },
+  { id: "unemployment", label: "Unemployment Claims", currency: "USD", match: ["initial jobless claims", "jobless claims"], invert: true },
+  { id: "retail-sales", label: "Retail Sales", currency: "USD", match: ["retail sales mom", "retail sales"] },
+  { id: "ppi", label: "PPI", currency: "USD", match: ["ppi mom", "ppi"] },
   { id: "ism-mfg", label: "ISM Manufacturing PMI", currency: "USD", match: ["ism manufacturing pmi"] },
   { id: "ism-services", label: "ISM Services PMI", currency: "USD", match: ["ism services pmi"] },
   { id: "consumer-confidence", label: "Consumer Confidence", currency: "USD", match: ["cb consumer confidence", "consumer confidence"] },
-  { id: "crude-oil", label: "Crude Oil Inventories", currency: "USD", match: ["crude oil inventories"], invert: true },
-  { id: "ecb", label: "ECB Interest Rate Decision", currency: "EUR", match: ["main refinancing rate", "ecb press conference", "ecb monetary policy"] },
-  { id: "boe", label: "Bank of England Rate Decision", currency: "GBP", match: ["official bank rate", "boe monetary policy", "mpc votes"] },
-  { id: "fed-chair", label: "Fed Chair Speeches", currency: "USD", match: ["fed chair", "fomc member", "fed chair powell"] },
+  { id: "crude-oil", label: "Crude Oil Inventories", currency: "USD", match: ["eia crude oil stocks change", "crude oil stocks change"], invert: true },
+  { id: "ecb", label: "ECB Interest Rate Decision", currency: "EUR", match: ["ecb interest rate decision"] },
+  { id: "boe", label: "Bank of England Rate Decision", currency: "GBP", match: ["boe interest rate decision", "bank rate"] },
+  { id: "fed-chair", label: "Fed Chair Speeches", currency: "USD", match: ["fed chair", "fomc member"] },
 ];
 
 // ------------------------------------------------------------------ helpers
@@ -85,51 +85,82 @@ type ResolvedRelease = {
   direction: "BUY" | "SELL" | null;
   released: boolean;
   detail: string;
+  releaseDate: string;
 };
 
 /**
  * The newest calendar entry for an event. Releases print before the calendar
  * refreshes, so a matching entry with no `actual` still means "not yet
- * released" rather than "no data".
+ * released" rather than "no data". A released row is ALWAYS preferred over an
+ * upcoming one, so the screen shows the last real number first.
  */
+function matchScore(title: string, fragments: string[]): number {
+  const lower = title.toLowerCase();
+  let best = 0;
+  for (const fragment of fragments) {
+    const needle = fragment.toLowerCase();
+    const score = lower === needle ? 3 : lower.startsWith(needle) ? 2 : lower.includes(needle) ? 1 : 0;
+    if (score > best) best = score;
+  }
+  return best;
+}
+
 function resolveRelease(event: EventDef, calendar: CalendarEvent[]): ResolvedRelease | null {
   const matches = calendar
     .filter(
       (entry) =>
         entry.currency === event.currency &&
-        event.match.some((fragment) => entry.title.toLowerCase().includes(fragment)),
+        matchScore(entry.title, event.match) > 0,
     )
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  const chosen = matches[0];
-  if (!chosen) return null;
+    .map((entry) => ({ entry, score: matchScore(entry.title, event.match) }));
+  if (matches.length === 0) return null;
+
+  // A RELEASED row always wins over an upcoming one, and among those the
+  // closest title match ("CPI" over "CPI s.a") wins, then the newest print.
+  const byImportance = [...matches].sort((a, b) => {
+    const releasedA = toNumber(a.entry.actual) !== null ? 1 : 0;
+    const releasedB = toNumber(b.entry.actual) !== null ? 1 : 0;
+    if (releasedA !== releasedB) return releasedB - releasedA;
+    if (a.score !== b.score) return b.score - a.score;
+    return new Date(b.entry.date).getTime() - new Date(a.entry.date).getTime();
+  });
+  const chosen = byImportance[0]!.entry;
 
   const actual = formatValue(chosen.actual);
   const forecast = formatValue(chosen.forecast);
   const previous = formatValue(chosen.previous);
   const actualNumber = toNumber(chosen.actual);
   const forecastNumber = toNumber(chosen.forecast);
-  const released = actualNumber !== null;
+  const isReleased = actualNumber !== null;
 
   let direction: "BUY" | "SELL" | null = null;
-  let detail = "not yet released";
-  if (released && forecastNumber !== null) {
+  let detail = "Not yet released";
+  if (isReleased && forecastNumber !== null) {
     const delta = actualNumber - forecastNumber;
     if (delta === 0) {
-      detail = "actual matched forecast — no directional edge";
+      detail = "Actual matched forecast — no directional edge";
     } else {
       const positive = event.invert ? delta < 0 : delta > 0;
       direction = positive ? "BUY" : "SELL";
-      detail = `actual ${delta > 0 ? "above" : "below"} forecast by ${
-        Math.abs(delta) === 0 ? "0" : Math.abs(delta).toLocaleString("en-US", { maximumFractionDigits: 4 })
-      }`;
+      detail = `Actual ${delta > 0 ? "above" : "below"} forecast by ${Math.abs(delta).toLocaleString("en-US", {
+        maximumFractionDigits: 4,
+      })}`;
     }
-  } else if (!released) {
-    detail = "not yet released";
-  } else {
-    detail = "actual is not a number — no directional read";
+  } else if (isReleased) {
+    detail = "Actual is not a number — no directional read";
   }
 
-  return { event, calendar: chosen, actual, forecast, previous, direction, released, detail };
+  return {
+    event,
+    calendar: chosen,
+    actual,
+    forecast,
+    previous,
+    direction,
+    released: isReleased,
+    detail,
+    releaseDate: releaseTime(chosen),
+  };
 }
 
 /** Allowed Quotes whose symbol contains the event's currency. */
@@ -138,19 +169,33 @@ function affectedSymbols(currency: string, allowed: string[]): string[] {
   return allowed.filter((symbol) => symbol.toUpperCase().includes(upper));
 }
 
+type FeedState = "loading" | "ready" | "error";
+
 // ------------------------------------------------------------------ page
 
 function FundamentalsPage() {
-  useAppState();
+  const app = useAppState();
   const { tradingPairs } = useTradingPairsStore();
-  const allowedSymbols = useMemo(
-    () => tradingPairs.filter((pair) => pair.active).map((pair) => pair.symbol),
-    [tradingPairs],
-  );
 
-  const [calendar, setCalendar] = useState<CalendarEvent[] | null>(null);
-  const [calendarError, setCalendarError] = useState(false);
-  const [loadingFeed, setLoadingFeed] = useState(false);
+  /** ALLOWED QUOTES: the mentor's active list, plus the quotes the user's own
+   *  robots trade — so an event always resolves to real, tradeable symbols. */
+  const allowedSymbols = useMemo(() => {
+    const fromMentor = tradingPairs.filter((pair) => pair.active).map((pair) => pair.symbol);
+    const fromRobots = app.robots.flatMap((robot) => (robot.pairs ?? []).map((pair) => pair.symbol));
+    const seen = new Set<string>();
+    const all: string[] = [];
+    for (const symbol of [...fromMentor, ...fromRobots]) {
+      const clean = (symbol ?? "").trim();
+      if (!clean) continue;
+      if (seen.has(clean.toUpperCase())) continue;
+      seen.add(clean.toUpperCase());
+      all.push(clean);
+    }
+    return all;
+  }, [tradingPairs, app.robots]);
+
+  const [calendar, setCalendar] = useState<CalendarEvent[]>([]);
+  const [feedState, setFeedState] = useState<FeedState>("loading");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const [lot, setLot] = useState("0.01");
@@ -159,28 +204,27 @@ function FundamentalsPage() {
   const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const loadCalendar = async () => {
-    setLoadingFeed(true);
-    setCalendarError(false);
+  const loadCalendar = useCallback(async (force: boolean) => {
+    setFeedState("loading");
     try {
-      const reply = await fetchWeekCalendar();
-      if (!reply.ok) {
-        setCalendarError(true);
-        setCalendar(null);
+      const reply = await fetchWeekCalendar({ data: { force } });
+      if (!reply.ok || reply.events.length === 0) {
+        setCalendar([]);
+        setFeedState("error");
         return;
       }
       setCalendar(reply.events);
-    } catch {
-      setCalendarError(true);
-      setCalendar(null);
-    } finally {
-      setLoadingFeed(false);
+      setFeedState("ready");
+    } catch (error) {
+      console.warn("[fundamentals] calendar fetch failed", error);
+      setCalendar([]);
+      setFeedState("error");
     }
-  };
+  }, []);
 
   useEffect(() => {
-    void loadCalendar();
-  }, []);
+    void loadCalendar(false);
+  }, [loadCalendar]);
 
   useEffect(() => {
     setResult(null);
@@ -189,7 +233,7 @@ function FundamentalsPage() {
 
   const selected = selectedId ? EVENTS.find((event) => event.id === selectedId) ?? null : null;
   const release = useMemo(
-    () => (selected && calendar ? resolveRelease(selected, calendar) : null),
+    () => (selected && calendar.length > 0 ? resolveRelease(selected, calendar) : null),
     [selected, calendar],
   );
   const symbols = useMemo(
@@ -222,7 +266,7 @@ function FundamentalsPage() {
     }
     const symbol = symbols[0];
     if (!symbol) {
-      setFormError("No Allowed Quote is affected by this event");
+      setFormError(`No Allowed Quote is affected by ${selected.currency}`);
       return;
     }
     const userId = getAppState().email;
@@ -252,6 +296,8 @@ function FundamentalsPage() {
     }
   };
 
+  const eventName = selected?.label ?? "event";
+
   return (
     <div
       data-eamp-bg-host
@@ -275,22 +321,51 @@ function FundamentalsPage() {
         </div>
         <button
           type="button"
-          onClick={() => void loadCalendar()}
+          onClick={() => void loadCalendar(true)}
           aria-label="Refresh releases"
           className="flex size-10 items-center justify-center rounded-full border border-white/10 bg-[#141414]"
         >
-          <RefreshCw className={`size-4 text-white/70 ${loadingFeed ? "animate-spin" : ""}`} />
+          <RefreshCw className={`size-4 text-white/70 ${feedState === "loading" ? "animate-spin" : ""}`} />
         </button>
       </header>
 
       <main className="mx-auto w-full max-w-md flex-1 px-4">
+        {/* ── EVENT LIST ─────────────────────────────────────────────── */}
         {!selected && (
           <div className="space-y-2 pb-6">
-            <p className="mb-1 px-1 text-[11px] font-bold uppercase tracking-[0.18em] text-white/35">
-              Tap an event for its latest release
-            </p>
+            <div className="mb-1 flex items-center justify-between px-1">
+              <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/35">
+                Tap an event for its latest release
+              </p>
+              {feedState === "error" && (
+                <button
+                  type="button"
+                  onClick={() => void loadCalendar(true)}
+                  className="text-[11px] font-bold text-amber-300"
+                >
+                  Retry
+                </button>
+              )}
+            </div>
+
+            {feedState === "loading" && calendar.length === 0 && (
+              <div className={`${CARD} flex items-center gap-2 text-[12px] text-white/50`}>
+                <Loader2 className="size-4 animate-spin" /> Loading this week&apos;s releases…
+              </div>
+            )}
+
+            {feedState === "error" && (
+              <button
+                type="button"
+                onClick={() => void loadCalendar(true)}
+                className={`${CARD} w-full text-left text-[12px] text-amber-200`}
+              >
+                Could not load the economic calendar — tap to retry
+              </button>
+            )}
+
             {EVENTS.map((event) => {
-              const resolved = calendar ? resolveRelease(event, calendar) : null;
+              const resolved = calendar.length > 0 ? resolveRelease(event, calendar) : null;
               return (
                 <button
                   key={event.id}
@@ -306,13 +381,13 @@ function FundamentalsPage() {
                       </span>
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-white/40">
-                      {calendarError
+                      {feedState === "error"
                         ? "Could not load event data"
-                        : resolved
-                          ? resolved.released
+                        : !resolved
+                          ? "No release in this week's calendar"
+                          : resolved.released
                             ? `${resolved.direction ?? "NO EDGE"} · ${resolved.actual} vs ${resolved.forecast}`
-                            : `Not yet released · forecast ${resolved.forecast}`
-                          : "No release in this week's calendar"}
+                            : `Not yet released · forecast ${resolved.forecast}`}
                     </span>
                   </span>
                   <ChevronRight className="size-4 shrink-0 text-white/30" />
@@ -322,28 +397,49 @@ function FundamentalsPage() {
           </div>
         )}
 
+        {/* ── EVENT DETAIL ───────────────────────────────────────────── */}
         {selected && (
           <div className="space-y-3 pb-6">
-            {loadingFeed && !calendar && (
-              <div className={`${CARD} flex items-center gap-2 text-[12px] text-white/50`}>
-                <Loader2 className="size-4 animate-spin" /> Loading this week's releases…
+            {/* ALWAYS SOMETHING: loading / error / content — never a blank body. */}
+            {feedState === "loading" && (
+              <div className={`${CARD} flex items-center gap-2 text-[12px] text-white/55`}>
+                <Loader2 className="size-4 animate-spin" /> Loading {eventName} data…
               </div>
             )}
 
-            {(calendarError || (calendar && !release)) && (
-              <div className={`${CARD} text-[12px] text-amber-200`}>
-                {calendarError
-                  ? "Could not load event data"
-                  : "No matching release in this week's calendar — nothing to trade yet."}
-              </div>
+            {feedState === "error" && (
+              <button
+                type="button"
+                onClick={() => void loadCalendar(true)}
+                className={`${CARD} w-full text-left text-[12px] text-amber-200`}
+              >
+                Could not load {eventName} data — tap to retry
+              </button>
             )}
 
-            {release && (
+            {feedState === "ready" && !release && (
+              <button
+                type="button"
+                onClick={() => void loadCalendar(true)}
+                className={`${CARD} w-full text-left text-[12px] text-white/60`}
+              >
+                No {eventName} release in this week&apos;s calendar — tap to refresh
+              </button>
+            )}
+
+            {feedState === "ready" && release && (
               <>
                 <div className={CARD}>
-                  <p className={HEADING}>{release.event.label} · {release.event.currency}</p>
+                  <div className="flex items-start justify-between gap-2">
+                    <p className={HEADING}>
+                      {release.event.label} · {release.event.currency}
+                    </p>
+                    <span className="shrink-0 text-[9px] font-bold uppercase tracking-[0.14em] text-white/35">
+                      {release.calendar.impact} impact
+                    </span>
+                  </div>
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                    {releaseTime(release.calendar)} SAST · {release.calendar.impact} impact
+                    {release.released ? "Released" : "Next release"} {release.releaseDate} SAST
                   </p>
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     {[
@@ -357,9 +453,7 @@ function FundamentalsPage() {
                       </div>
                     ))}
                   </div>
-                  <p className="mt-3 text-[12px] text-white/55">
-                    {release.detail}
-                  </p>
+                  <p className="mt-3 text-[12px] text-white/55">{release.detail}</p>
                 </div>
 
                 <div className={CARD}>
@@ -367,8 +461,8 @@ function FundamentalsPage() {
                   {release.direction ? (
                     <>
                       <p className="mt-1 text-[13px] font-extrabold text-white/90">
-                        {release.direction} · {release.event.currency} moving{" "}
-                        {release.direction === "BUY" ? "higher" : "lower"} than forecast
+                        {release.direction} · {release.event.currency}{" "}
+                        {release.direction === "BUY" ? "stronger" : "weaker"} than forecast
                       </p>
                       {symbols.length === 0 ? (
                         <p className="mt-2 text-[12px] text-amber-200">
@@ -391,7 +485,15 @@ function FundamentalsPage() {
                       )}
                     </>
                   ) : (
-                    <p className="mt-1 text-[12px] text-white/50">{release.detail}</p>
+                    <>
+                      <p className="mt-1 text-[13px] font-extrabold text-white/90">
+                        Not yet released, next release: {release.releaseDate}
+                      </p>
+                      <p className="mt-1 text-[12px] text-white/55">
+                        Forecast to watch: <span className="font-black text-white/85">{release.forecast}</span>
+                        {release.previous !== "—" ? ` · previous ${release.previous}` : ""}
+                      </p>
+                    </>
                   )}
                 </div>
 
@@ -530,6 +632,3 @@ export const Route = createFileRoute("/app/fundamentals")({
   errorComponent: FundamentalsErrorFallback,
   component: FundamentalsPage,
 });
-
-// Kept referenced so the redirect helper stays part of this module's contract.
-void isRedirect;
