@@ -19,17 +19,17 @@ export function InterfaceThemeSync() {
   const { theme, font } = useCustomization();
   const definition = interfaceDefinitionFor(theme);
 
+  // THE INTERFACE GOES ON FIRST, THEN THE FONT — ALWAYS.
+  //
+  // One effect, in this order, so the user's face is applied ON TOP of whatever
+  // tokens the style publishes: switching CRIMSON NAVIGATOR → ULTRON MEGA can
+  // repaint colours, radii and nav, but cannot reset the font. `font` is a
+  // separate preference (ea_migrate_font) written only by the font picker, so
+  // this effect re-publishes the SAME face when only the style changed.
   useEffect(() => {
     applyInterfaceDefinition(definition);
-  }, [definition]);
-
-  // THE USER'S FONT WINS ON EVERY INTERFACE STYLE. Publishing it as a variable
-  // (instead of per-component inline styles) is what makes a font change
-  // reach text no single screen owns — nav labels, popups, numbers — with no
-  // reload, and it survives switching CRIMSON NAVIGATOR → ULTRON MEGA.
-  useEffect(() => {
     applyFontStack(font);
-  }, [font]);
+  }, [definition, font]);
 
   if (!definition) return null;
 

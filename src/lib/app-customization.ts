@@ -83,26 +83,15 @@ export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
 export type AccentColorId = (typeof ACCENT_COLORS)[number]["id"];
 export type FontOptionId = (typeof FONT_OPTIONS)[number]["id"];
 
-/** Each interface style carries its signature font — picking a style applies it. */
-export const THEME_FONT: Record<InterfaceThemeId, FontOptionId> = {
-  "NOVA CORE": "Orbitron",
-  "PHANTOM PULSE": "Space Grotesk",
-  "TITAN EDGE": "Rajdhani",
-  "PRIME FORGE": "Inter",
-  "BLUEPRINT EDGE": "Inter",
-  "CRIMSON NAVIGATOR": "Russo One",
-  "NAVIGATOR PLUS": "Russo One",
-  "PABLO CRIMSON": "Teko",
-  "PABLO ELITE": "Teko",
-  "QUANTUM BLUE": "Space Grotesk",
-  "DARKWEB AI": "JetBrains Mono",
-  "SUPREME EQUINOX": "Russo One",
-  "ULTRON MEGA": "Rajdhani",
-  "EA CLOUD": "Inter",
-  "SNIFFER": "Orbitron",
-  "PHOENIX": "Space Grotesk",
-  "VORTEX 1": "Russo One",
-};
+/**
+ * FONT AND INTERFACE STYLE ARE INDEPENDENT PREFS.
+ *
+ * An interface style owns colour, background, radii, borders, shadows, header
+ * treatment and the bottom nav — never a typeface. Picking a style used to
+ * overwrite the chosen font with the style's "signature" face, which is why
+ * switching Quantum Blue → Ultron Mega silently reset the Settings choice.
+ * There is deliberately no theme → font map any more.
+ */
 
 const DEFAULT_COLOR: AccentColorId = "solar-orange";
 const DEFAULT_THEME: InterfaceThemeId = "NOVA CORE";
@@ -220,8 +209,10 @@ export function setAccentColor(id: AccentColorId) {
 
 export function setInterfaceTheme(id: InterfaceThemeId) {
   load();
-  // The interface style also drives the font — its signature typeface ships with it.
-  state = { ...state, theme: id, font: THEME_FONT[id] };
+  // STYLE TOKENS ONLY. The font is a SEPARATE app-level preference
+  // (`ea_migrate_font` → `--app-font`) and is never rewritten here, so a style
+  // switch cannot reset the user's chosen face.
+  state = { ...state, theme: id };
   persist();
   // A styled interface is a WHOLE definition (lib/interface-themes.ts): its
   // nav shape ships with it and is applied immediately, exactly like its
@@ -237,6 +228,13 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
 
 export function setFontOption(id: FontOptionId) {
   load();
+  // The ONLY writer of the font preference — no interface style touches it.
   state = { ...state, font: id };
   persist();
+}
+
+/** Non-hook snapshot (route guards/tests) — never used to mutate state. */
+export function getCustomization(): Customization {
+  load();
+  return state;
 }

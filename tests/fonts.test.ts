@@ -1,8 +1,17 @@
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { APP_FONT_VAR, FONT_OPTIONS, applyFontStack, fontStack } from "../src/lib/app-customization";
-import { INTERFACE_DEFINITIONS } from "../src/lib/interface-themes";
+import {
+  APP_FONT_VAR,
+  FONT_OPTIONS,
+  applyFontStack,
+  fontStack,
+  getCustomization,
+  setFontOption,
+  setInterfaceTheme,
+} from "../src/lib/app-customization";
+import { INTERFACE_DEFINITIONS, applyInterfaceDefinition } from "../src/lib/interface-themes";
+import { vi } from "vitest";
 
 /**
  * THE FONT CONTRACT.
@@ -67,6 +76,56 @@ describe("one app font, every interface style", () => {
   it("no interface definition brings a typeface of its own", () => {
     for (const [id, definition] of Object.entries(INTERFACE_DEFINITIONS)) {
       expect(definition.numbers.font, `${id} must follow the user's font`).toBe("inherit");
+    }
+  });
+
+  it("switching interface styles never touches the chosen font", () => {
+    window.localStorage.clear();
+    setFontOption("Rubik Glitch");
+
+    for (const id of Object.keys(INTERFACE_DEFINITIONS)) {
+      setInterfaceTheme(id as Parameters<typeof setInterfaceTheme>[0]);
+      // The style is persisted…
+      expect(window.localStorage.getItem("ea_migrate_theme")).toBe(id);
+      // …and the font preference is exactly as the user left it.
+      expect(window.localStorage.getItem("ea_migrate_font")).toBe("Rubik Glitch");
+      expect(getCustomization().font).toBe("Rubik Glitch");
+    }
+
+    // Back to a legacy layout: still untouched.
+    setInterfaceTheme("NOVA CORE");
+    expect(getCustomization().font).toBe("Rubik Glitch");
+  });
+
+  it("applies the font on top of every interface definition's tokens", () => {
+    for (const definition of Object.values(INTERFACE_DEFINITIONS)) {
+      applyFontStack("Rubik Glitch");
+      applyInterfaceDefinition(definition);
+      expect(document.documentElement.style.getPropertyValue(APP_FONT_VAR)).toContain("'Rubik Glitch'");
+      // No definition publishes a typeface token either.
+      expect(document.documentElement.style.getPropertyValue("--if-number-font")).toBe("inherit");
+    }
+  });
+
+  it("survives a restart (the preference is re-read from storage)", async () => {
+    window.localStorage.clear();
+    setFontOption("Rubik Glitch");
+    setInterfaceTheme("DARKWEB AI");
+
+    // A fresh module graph is what a relaunched app gets.
+    vi.resetModules();
+    const fresh = await import("../src/lib/app-customization");
+    expect(fresh.getCustomization().font).toBe("Rubik Glitch");
+    expect(fresh.getCustomization().theme).toBe("DARKWEB AI");
+  });
+
+  it("no theme definition declares a font family at all", () => {
+    const themes = readFileSync(path.join(root, "src/lib/interface-themes.ts"), "utf8");
+    expect(themes).not.toMatch(/fontFamily|font-family/);
+    // No `html[data-interface=…]` block in the stylesheet sets a typeface.
+    for (const block of css.split("html[data-interface=").slice(1)) {
+      const body = block.slice(0, block.indexOf("}"));
+      expect(body).not.toContain("font-family");
     }
   });
 
