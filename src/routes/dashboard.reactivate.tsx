@@ -14,8 +14,9 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
-import { OWNER_EMAILS, isPaymentExemptEmail, useCurrentAccount } from "@/lib/auth-store";
-import { emailHasLicenseKey, getReactivationEnabled, getUserByEmail } from "@/lib/supabase-users";
+import { OWNER_EMAILS, useCurrentAccount } from "@/lib/auth-store";
+import { getReactivationEnabled } from "@/lib/supabase-users";
+import { checkReactivationEmail } from "@/lib/reactivation-check";
 
 export const Route = createFileRoute("/dashboard/reactivate")({
   ssr: false,
@@ -67,6 +68,9 @@ function ReactivateClientPage() {
   const [copied, setCopied] = useState(false);
   const [clientEmail, setClientEmail] = useState("");
   const [error, setError] = useState("");
+  // Which stores were asked and what each answered — shown with a refusal so a
+  // missing registration is identifiable instead of guessed at.
+  const [diagnostic, setDiagnostic] = useState("");
   const [busy, setBusy] = useState(false);
 
   // Token state
@@ -165,6 +169,7 @@ function ReactivateClientPage() {
 
     setBusy(true);
     setError("");
+    setDiagnostic("");
 
     if (!isAdmin) {
       const stillAllowed = await getReactivationEnabled(account.email);
@@ -176,28 +181,25 @@ function ReactivateClientPage() {
       }
     }
 
-    const user = await getUserByEmail(cleanEmail);
-    if (!user) {
+    // VALIDATE AGAINST THE SAME STORES THE LOGIN FLOW TRUSTS — the KV
+    // registration store and the paid ledger, plus the users row, mentor
+    // licence keys and portal accounts. A client the KV store knows is a real
+    // client even when no Supabase `users` row exists yet.
+    const check = await checkReactivationEmail(cleanEmail);
+    console.info(check.diagnostic);
+    if (!check.registered || !check.paid) {
       setBusy(false);
-      setError("Not reactivated — this is not your client's registered email. Reactivation works only for registered clients.");
-      return;
-    }
-    // PAID means any of: users.is_paid (set by the admin console's Paid
-    // button, which now writes the cloud), a license key issued to this
-    // email (the key IS the payment), or a platform admin/owner email —
-    // an admin's device can always be released so THEY are also asked to
-    // reactivate after delete + reinstall.
-    const paid =
-      user.is_paid ||
-      isPaymentExemptEmail(cleanEmail) ||
-      OWNER_EMAILS.includes(cleanEmail) ||
-      (await emailHasLicenseKey(cleanEmail));
-    if (!paid) {
-      setBusy(false);
-      setError("Not reactivated — this email has not paid. Reactivation works only for paid users.");
+      setError(
+        check.error ??
+          "Not reactivated — this email is registered but not marked paid. Ask the platform admin to mark it paid, then try again.",
+      );
+      setDiagnostic(check.diagnostic);
       return;
     }
 
+    // DEVICE UNBINDING ONLY — the device columns are cleared and nothing else.
+    // Expiry dates, licence keys, subscriptions and the payment flag are never
+    // written here.
     const { supabase } = await import("@/lib/supabase");
     const { error: updateError } = await supabase!
       .from("users")
@@ -207,6 +209,7 @@ function ReactivateClientPage() {
     setBusy(false);
     if (updateError) {
       setError(updateError.message);
+      setDiagnostic(check.diagnostic);
       return;
     }
 
@@ -352,6 +355,7 @@ function ReactivateClientPage() {
                 onChange={(event) => {
                   setClientEmail(event.target.value);
                   setError("");
+                  setDiagnostic("");
                 }}
                 placeholder="user@example.com"
                 className="mt-2 h-14 w-full rounded-2xl border border-white/10 bg-white/[0.04] px-5 text-base outline-none placeholder:text-white/30 focus:border-primary/60"
@@ -360,6 +364,16 @@ function ReactivateClientPage() {
             {error && (
               <p role="alert" className="rounded-2xl border border-red-400/40 bg-red-400/10 p-3 text-sm font-semibold text-red-300">
                 {error}
+              </p>
+            )}
+            {/* WHICH STORES WERE CHECKED — the answer to "why was my client
+                refused", readable and copyable instead of a guess. */}
+            {diagnostic && (
+              <p
+                data-testid="reactivation-diagnostic"
+                className="rounded-2xl border border-white/10 bg-white/[0.03] p-3 font-mono text-[10px] leading-relaxed break-words text-white/55"
+              >
+                {diagnostic}
               </p>
             )}
             <Button type="submit" size="lg" disabled={busy} className="h-14 w-full rounded-full text-base font-bold">

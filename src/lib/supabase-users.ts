@@ -711,77 +711,42 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * The affected user, on next login, goes straight to the license key screen
  * like a fresh paid user (no OTP code for paid emails).
  *
- * PAID CHECK: uses the same stores the login flow uses — the KV registration
- * store AND the Supabase paid_emails ledger. If EITHER says paid, reactivation
- * is allowed. Only emails that are paid in NONE of these stores are rejected.
+ * REGISTRATION + PAID CHECK: delegates to `checkReactivationEmail`, which asks
+ * the SAME stores the login gate asks — the KV registration record, the
+ * paid_emails ledger, /api/check-access, the KV/Supabase licence keys and the
+ * portal account — instead of requiring one Supabase `users` row that a
+ * KV-registered client may not have yet. Only emails that are registered in
+ * NONE of those stores are refused, and an email that is registered but unpaid
+ * gets its own message.
  */
 export async function reactivateEmail(email: string): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
   const address = clean(email);
   if (!address) return { ok: false, error: "Missing email." };
-  // Verify the email exists in the database
-  const { data: existing, error: readError } = await dbClient
-    .from("users")
-    .select("id, email, is_paid, device_id")
-    .eq("email", address)
-    .maybeSingle();
-  if (readError) {
-    if (readError.code === "42703") return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
-    return { ok: false, error: readError.message };
-  }
-  if (!existing) {
-    return { ok: false, error: "That email is not registered." };
-  }
-  // Check if this email is marked paid in ANY paid store (same stores login uses).
-  // KV store first (fast), then Supabase paid_emails ledger as fallback.
-  const isPaidInKv = await isPaidInKvStore(address);
-  if (isPaidInKv) {
-    // Clear the device binding — this is what lets the user sign in again.
-    // Payment state (is_paid) is NOT touched. Reactivation only clears the
-    // used/bound state of an already-paid account.
-    const clearedAt = new Date().toISOString();
-    const { error } = await dbClient
-      .from("users")
-      .update({ device_email: null, device_id: null })
-      .eq("email", address);
-    if (error?.code === "42703") {
-      return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
-    }
-    if (error) return { ok: false, error: error.message };
-    return { ok: true, clearedAt };
-  }
-  // Check Supabase paid_emails ledger (same fallback login uses)
-  const isPaidInLedger = await emailPaidInLedger(address);
-  if (isPaidInLedger) {
-    // Clear the device binding
-    const clearedAt = new Date().toISOString();
-    const { error } = await dbClient
-      .from("users")
-      .update({ device_email: null, device_id: null })
-      .eq("email", address);
-    if (error?.code === "42703") {
-      return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
-    }
-    if (error) return { ok: false, error: error.message };
-    return { ok: true, clearedAt };
-  }
-  // Not paid in any store — reject. Reactivation only works for paid accounts.
-  return { ok: false, error: "Not reactivated — this email is not marked as paid in any store." };
-}
 
-/**
- * Check if an email is paid in the KV registration store (same store the
- * admin dashboard writes to via "Mark paid").
- */
-async function isPaidInKvStore(email: string): Promise<boolean> {
-  try {
-    const { getRegistration, storeConfigured } = await import("../../api/_handlers/_registry");
-    if (!storeConfigured()) return false;
-    const record = await getRegistration(email);
-    if (record && record.isPaid === true && record.paidAt != null) return true;
-  } catch {
-    // KV unavailable — fall through to ledger check
+  // Dynamic import: reactivation-check imports this module's read helpers.
+  const { checkReactivationEmail } = await import("./reactivation-check");
+  const check = await checkReactivationEmail(address);
+  console.info(check.diagnostic);
+  if (!check.registered) {
+    return { ok: false, error: check.error ?? "That email is not registered in any store." };
   }
-  return false;
+  if (!check.paid) {
+    return { ok: false, error: check.error ?? "Not reactivated — this email is registered but not marked paid." };
+  }
+
+  // DEVICE UNBINDING ONLY. A KV-registered client may have no `users` row yet;
+  // updating by email then matches nothing, which is correct — there is no
+  // device bound. Payment, keys, expiry and subscription are never written.
+  const clearedAt = new Date().toISOString();
+  const { error } = await dbClient
+    .from("users")
+    .update({ device_email: null, device_id: null })
+    .eq("email", address);
+  if (error?.code === "42703") {
+    return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+  }
+  if (error) return { ok: false, error: error.message };
+  return { ok: true, clearedAt };
 }
