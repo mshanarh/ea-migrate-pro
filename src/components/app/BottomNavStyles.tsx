@@ -24,10 +24,57 @@ const PREVIEW_TABS = [
  */
 export function BottomNavStyles() {
   const { color } = useCustomization();
+<<<<<<< HEAD
   const accent = accentColorValue(color);
   const selected = useBottomNavStyle();
+=======
+  const accent = color;
+
+  const [selectedStyle, setSelectedStyle] = useState<BottomNavStyle>("floating-pill");
+  const [applied, setApplied] = useState(false);
+
+  // One shared subscription, read from the same store the real nav and Settings both read.
+  const activeStyle = useNavStyle(selectedStyle);
+
+  // Keep the Settings picker in sync with the real nav's live value.
+  useEffect(() => {
+    if (activeStyle && BOTTOM_NAV_STYLES.some((s) => s.id === activeStyle)) {
+      setSelectedStyle(activeStyle);
+    }
+  }, [activeStyle]);
+
+  // Load saved style from localStorage
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("eamp.bottomNavStyle");
+      if (saved && BOTTOM_NAV_STYLES.some((s) => s.id === saved)) {
+        setSelectedStyle(saved as BottomNavStyle);
+      }
+    } catch {
+      // ignore
+    }
+  }, []);
+
+  const handleSelect = (style: BottomNavStyle) => {
+    setSelectedStyle(style);
+    try {
+      window.localStorage.setItem("eamp.bottomNavStyle", style);
+    } catch {
+      // ignore
+    }
+    // Re-read from the shared store so the real nav picks it up.
+  };
+
+  const handleApply = () => {
+    setApplied(true);
+    setTimeout(() => setApplied(false), 2000);
+  };
+>>>>>>> origin/main
+
+  const isSelected = (style: BottomNavStyle) => activeStyle === style;
 
   return (
+<<<<<<< HEAD
     <div className="space-y-3">
       {BOTTOM_NAV_STYLE_OPTIONS.map((option) => {
         const isSelected = selected === option.id;
@@ -53,14 +100,67 @@ export function BottomNavStyles() {
           </button>
         );
       })}
+=======
+    <div className="space-y-4">
+      {/* Style options */}
+      <div className="grid grid-cols-1 gap-3">
+        {BOTTOM_NAV_STYLES.map((style) => {            const selected = isSelected(style.id);
+            return (
+              <button
+                key={style.id}
+                type="button"
+                onClick={() => handleSelect(style.id)}
+                className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-all ${
+                  selected
+                    ? "border-primary/50 bg-primary/10 shadow-[0_0_20px_rgba(8,168,239,0.3)]"
+                    : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
+                }`}
+                style={selected ? { borderColor: `var(--accent)` } : undefined}
+              >
+                <span className="text-xl" aria-hidden>
+                  {style.icon}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-black text-white">{style.name}</p>
+                  <p className="text-xs text-white/50 truncate">{style.description}</p>
+                </div>
+                {selected && (
+                  <Check className="size-5 shrink-0" style={{ color: `var(--accent)` }} strokeWidth={3} />
+                )}
+              </button>
+            );
+          })}
+      </div>
+>>>>>>> origin/main
 
       <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
+<<<<<<< HEAD
         <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-white/40">Preview</p>
         <NavPreview style={selected} accent={accent} />
       </div>
 
       <p className="text-center text-xs text-white/40">
         Applies instantly on every screen and is saved on this device.
+=======
+        <p className="text-xs font-bold uppercase tracking-[0.18em] text-white/40 mb-3">Preview</p>
+        <div className="flex justify-center">
+          <BottomNavPreview style={activeStyle ?? selectedStyle} accent={accent} />
+        </div>
+      </div>
+
+      {/* Apply button — no longer does anything; the switch is live. */}
+      <button
+        type="button"
+        disabled
+        className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-white/5 text-sm font-semibold text-white/30 cursor-not-allowed"
+      >
+        <Save className="size-5" />
+        Applied automatically
+      </button>
+
+      <p className="text-xs text-white/40 text-center">
+        Changes apply instantly across all screens and are saved on this device.
+>>>>>>> origin/main
       </p>
     </div>
   );

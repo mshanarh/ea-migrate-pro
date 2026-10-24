@@ -27,6 +27,7 @@
  */
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { supabase, supabaseConfigured, type UserRow } from "./supabase";
+import { extractFetchErrorDetails, retryStoreFetchOnce } from "./lib/payment-gate";
 
 export type RegistrationOutcome = "allow" | "checkout";
 
@@ -759,6 +760,7 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * The affected user, on next login, goes straight to the license key screen
  * like a fresh paid user (no OTP code for paid emails).
  *
+<<<<<<< HEAD
  * REGISTRATION + PAID CHECK: delegates to `checkReactivationEmail`, which asks
  * the SAME stores the login gate asks — the KV registration record, the
  * paid_emails ledger, /api/check-access, the KV/Supabase licence keys and the
@@ -766,12 +768,19 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * KV-registered client may not have yet. Only emails that are registered in
  * NONE of those stores are refused, and an email that is registered but unpaid
  * gets its own message.
+=======
+ * PAID CHECK: uses ONLY the KV registration store (Upstash) — same store the
+ * admin dashboard writes to via "Mark paid". The Supabase `paid_emiles` ledger
+ * is NOT consulted. Reactivation only clears the used/bound state of an already-paid
+ * account.
+>>>>>>> origin/main
  */
 export async function reactivateEmail(email: string): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
   const dbClient = db();
   if (!dbClient) return { ok: false, error: "Supabase is not configured" };
   const address = clean(email);
   if (!address) return { ok: false, error: "Missing email." };
+<<<<<<< HEAD
 
   // Dynamic import: reactivation-check imports this module's read helpers.
   const { checkReactivationEmail } = await import("./reactivation-check");
@@ -779,6 +788,85 @@ export async function reactivateEmail(email: string): Promise<{ ok: boolean; err
   console.info(check.diagnostic);
   if (!check.registered) {
     return { ok: false, error: check.error ?? "That email is not registered in any store." };
+=======
+  // Verify the email exists in the database
+  const { data: existing, error: readError } = await dbClient
+    .from("users")
+    .select("id, email, is_paid, device_id")
+    .eq("email", address)
+    .maybeSingle();
+  if (readError) {
+    if (readError.code === "42703") return { ok: false, error: "Reactivation is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    return { ok: false, error: readError.message };
+  }
+  if (!existing) {
+    return { ok: false, error: "That email is not registered." };
+  }
+  // Check if this email is marked paid in the KV registration store (same
+  // store the admin dashboard writes to via "Mark paid"). This is the sole
+  // authority for reactivation — the Supabase paid_emiles ledger is not consulted.
+  let kvPaid = false;
+  let kvErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
+  try {
+    const kvResult = await retryStoreFetchOnce(() => isPaidInKvStore(address));
+    if (kvResult.success && kvResult.value) {
+      kvPaid = kvResult.value;
+    } else {
+      kvErrorDetails = kvResult.errorDetails;
+    }
+  } catch (error: any) {
+    console.warn("[REACTIVATE] KV store error for", address, error);
+    kvErrorDetails = extractFetchErrorDetails(error);
+  }
+
+  if (kvPaid) {
+    // Clear the device binding — this is what lets the user sign in again.
+    // Payment state (is_paid) is NOT touched. Reactivation only clears the
+    // used/bound state of an already-paid account.
+    const clearedAt = new Date().toISOString();
+    const { error } = await dbClient
+      .from("users")
+      .update({ device_email: null, device_id: null })
+      .eq("email", address);
+    if (error?.code === "42703") {
+      return { ok: false, error: "Device binding columns not found — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+    }
+    if (error) return { ok: false, error: error.message };
+    // Log error details in diagnostics (technical only, not shown to user)
+    // if the store had a failure
+    if (kvErrorDetails) {
+      console.info("[REACTIVATE] store errors during paid verification", kvErrorDetails);
+    }
+    return { ok: true, clearedAt };
+  }
+  // Not paid in KV store — reject. Reactivation only works for paid accounts.
+  // If the KV store was unreachable, show a plain message, technical detail
+  // in diagnostics only.
+  if (kvErrorDetails) {
+    // At least one store was unreachable — show plain message, technical detail in diagnostics
+    return { ok: false, error: "Re-activation check could not complete — one record source was unreachable" };
+  }
+  // Neither KV showed paid, and no errors occurred — honest refusal
+  return { ok: false, error: "Not reactivated — this email is not marked as paid in KV store." };
+}
+
+/**
+ * Check if an email is paid in the KV registration store (same store the
+ * admin dashboard writes to via "Mark paid").
+ *
+ * This is the SOLE store used for reactivation. The Supabase paid_emiles
+ * ledger is intentionally NOT consulted for re-activation.
+ */
+async function isPaidInKvStore(email: string): Promise<boolean> {
+  try {
+    const { getRegistration, storeConfigured } = await import("../../api/_handlers/_registry");
+    if (!storeConfigured()) return false;
+    const record = await getRegistration(email);
+    if (record && record.isPaid === true && record.paidAt != null) return true;
+  } catch {
+    // KV unavailable — reactivation is blocked; the caller will show the
+    // diagnostic message.
+>>>>>>> origin/main
   }
   if (!check.paid) {
     return { ok: false, error: check.error ?? "Not reactivated — this email is registered but not marked paid." };

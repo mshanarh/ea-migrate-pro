@@ -1,3 +1,5 @@
+
+
 import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
@@ -6,30 +8,10 @@ import { ALREADY_IN_USE, claimKeyWithoutServer } from "@/lib/license-lock";
 import { claimLicenseKeyFor } from "@/lib/activation-client";
 import { lookupLicenseInKv } from "@/lib/license-cloud";
 
-/** Same checkout the app login redirects unpaid users to. */
 export const WHOP_CHECKOUT_URL =
   (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
 
-/**
- * LEAVE FOR CHECKOUT — a plain document navigation, deliberately NOT a
- * router redirect.
- *
- * `throw redirect({ href: "https://whop.com/…" })` was the original bug and
- * it failed silently for weeks: TanStack resolves `href` as an APP path, so
- * an external URL never resolved and an unpaid user simply stayed where they
- * were. Every "you must pay" decision in the app now goes through here, and
- * `location.replace` is honoured by every container that allows leaving at
- * all — browser tab, Android WebView, PWA.
- */
-export function leaveForCheckout(): void {
-  if (typeof window === "undefined") return;
-  try {
-    window.location.replace(WHOP_CHECKOUT_URL);
-  } catch {
-    // A container that refuses to leave (an iOS home-screen app) keeps the
-    // caller on a checkout card that hands the link over by hand instead.
-  }
-}
+export const NAV_STYLE_KEY = "eamp.bottomNavStyle";
 
 /**
  * Route-guard outcome from the app access rules (same gates the /app login
@@ -71,10 +53,14 @@ export async function requireAppAccess(email: string | null): Promise<AppAccessC
   return requireVerifiedAccess(email);
 }
 
-/** Non-hook snapshot of the app state — safe inside route beforeLoad guards. */
-export function getAppState(): AppState {
-  load();
-  return state;
+export function leaveForCheckout(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.location.replace(WHOP_CHECKOUT_URL);
+  } catch {
+    // A container that refuses to leave (an iOS home-screen app) keeps the
+    // caller on a checkout card that hands the link over by hand instead.
+  }
 }
 
 export type Robot = {
@@ -324,7 +310,13 @@ export function useAppState() {
   );
 }
 
-export function getDeviceId() {
+/** Non-hook snapshot of the app state — safe inside route beforeLoad guards. */
+export function getAppState(): AppState {
+  load();
+  return state;
+}
+
+export function getDeviceId(): string {
   if (typeof window === "undefined") return "server";
   const key = "eamp.device.id";
   const saved = window.localStorage.getItem(key);
