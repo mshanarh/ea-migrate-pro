@@ -238,12 +238,14 @@ export async function analyzeChartForScanner(
 
 export function isSymbolSupported(symbol: string): { supported: boolean; error?: string } {
   const normalized = symbol.toUpperCase().trim();
+  // The refusal quotes the symbol exactly as the EA spells it.
+  const label = symbol.trim();
 
   // Check if it's a proxy symbol
   if (PROXY_SYMBOLS.has(normalized)) {
     return {
       supported: false,
-      error: `${normalized} is a proxy/synthetic symbol. Use actual broker symbol.`,
+      error: `${label} is a proxy/synthetic symbol. Use actual broker symbol.`,
     };
   }
 
@@ -254,7 +256,7 @@ export function isSymbolSupported(symbol: string): { supported: boolean; error?:
   if (!hasVerifiedMarketData(symbol)) {
     return {
       supported: false,
-      error: `No verified market data for ${normalized}.`,
+      error: `No verified market data for ${label}.`,
     };
   }
 

@@ -271,7 +271,11 @@ export default function ChartScanner({
     const first = symbols[0];
     if (!first) return;
     setSymbol(first);
-    const saved = pairs.find((pair) => pair.symbol === first);
+    // Case-insensitive: settings saved before the portal spelling was kept
+    // must still match (BTCUSDM ≡ BTCUSDm).
+    const saved = pairs.find(
+      (pair) => pair.symbol.trim().toUpperCase() === first.trim().toUpperCase(),
+    );
     setLot(saved?.lotSize || "0.01");
     const savedTrades = Number(saved?.maxTrades ?? 0);
     setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
@@ -417,7 +421,9 @@ export default function ChartScanner({
   const selectSymbol = (item: string) => {
     if (item === symbol) return;
     setSymbol(item);
-    const saved = pairs.find((pair) => pair.symbol === item);
+    const saved = pairs.find(
+      (pair) => pair.symbol.trim().toUpperCase() === item.trim().toUpperCase(),
+    );
     setLot(saved?.lotSize || "0.01");
     const savedTrades = Number(saved?.maxTrades ?? 0);
     setTrades(savedTrades > 0 ? Math.min(savedTrades, 20) : 5);
@@ -446,7 +452,10 @@ export default function ChartScanner({
     if (!executionGate(analysis).allowed) return;
     // Pair type filter (Quotes page): BUY ONLY / SELL ONLY pairs refuse
     // setups on the other side of the market.
-    const pairDirection = pairs.find((pair) => pair.symbol === analysis.symbol)?.direction ?? "BOTH";
+    const pairDirection =
+      pairs.find(
+        (pair) => pair.symbol.trim().toUpperCase() === analysis.symbol.trim().toUpperCase(),
+      )?.direction ?? "BOTH";
     if (pairDirection !== "BOTH" && analysis.signal !== pairDirection) {
       setConfirmOpen(false);
       setExecError(

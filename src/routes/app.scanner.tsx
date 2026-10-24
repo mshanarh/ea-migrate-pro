@@ -487,7 +487,7 @@ function AppScanner() {
               new CustomEvent("eamp:execution-result", {
                 detail: {
                   ok: false,
-                  message: `${lastError.toUpperCase()} — CONNECTION CLOSED`,
+                  message: `${lastError} — connection closed`,
                   status: "failed",
                   symbol,
                   side: direction,
@@ -506,7 +506,7 @@ function AppScanner() {
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `TRADE ${index} REFUSED — ${refused.toUpperCase()}`,
+                message: `TRADE ${index} REFUSED — ${refused}`,
                 status: "failed",
                 symbol,
                 side: direction,
@@ -578,7 +578,7 @@ function AppScanner() {
         new CustomEvent("eamp:execution-result", {
           detail: {
             ok: true,
-            message: finalMessage.toUpperCase(),
+            message: finalMessage,
             summary: true,
             symbol,
             robotName: robot?.name,

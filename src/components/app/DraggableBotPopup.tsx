@@ -340,7 +340,9 @@ export function DraggableBotPopup() {
         // Refusals and connection chatter would only buzz the phone for
         // something that never happened — suppress those.
         if (!/REFUSED|CONNECTING|STALE|NO TRADE/i.test(result.message)) {
-          return [...demoted, { text: result.message.toUpperCase(), kind: "info" as const }];
+          // The message carries the symbol exactly as the portal spells it —
+          // uppercasing it here would turn BTCUSDm into BTCUSDM.
+          return [...demoted, { text: result.message, kind: "info" as const }];
         }
         return demoted;
       });

@@ -4,7 +4,7 @@ import { ArrowLeft, Check, ChevronDown, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
-import { getAppState, leaveForCheckout, refreshRobotConfigs, setRobotPairs, useAppState } from "@/lib/app-store";
+import { canonicalEaSymbol, getAppState, leaveForCheckout, refreshRobotConfigs, setRobotPairs, useAppState } from "@/lib/app-store";
 import { EaConfigNote } from "@/components/app/EaConfigNote";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
@@ -108,13 +108,28 @@ function TradingPairsScreen() {
   const pull = usePullToRefresh(() => refreshRobotConfigs());
 
   // The EA's own symbol universe — set while the EA was created in the portal,
-  // displayed exactly as the bot added it.
-  const eaSymbols = useMemo(
-    () => (robot ? [...new Set(robot.symbols.map(symbolKey).filter(Boolean))] : []),
+  // displayed exactly as the bot added it (BTCUSDm stays BTCUSDm). Only the
+  // duplicate CHECK is case-insensitive.
+  const eaSymbols = useMemo(() => {
+    if (!robot) return [];
+    const seen = new Set<string>();
+    const list: string[] = [];
+    for (const raw of robot.symbols) {
+      const symbol = raw.trim();
+      if (!symbol) continue;
+      const key = symbolKey(symbol);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      list.push(symbol);
+    }
+    return list;
+  }, [robot]);
+  // Selected Quotes = the robot's active selection (settings per symbol). A
+  // pair saved by an older build in uppercase reads back in the EA's spelling.
+  const mine = useMemo(
+    () => (robot?.pairs ?? []).map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, robot?.symbols) })),
     [robot],
   );
-  // Selected Quotes = the robot's active selection (settings per symbol).
-  const mine = useMemo(() => (robot?.pairs ?? []).map((pair) => ({ ...pair })), [robot]);
   const mineSymbols = useMemo(() => new Set(mine.map((pair) => symbolKey(pair.symbol))), [mine]);
   // The two tabs hold DISJOINT halves of the EA's symbol universe, so a symbol
   // always lives in exactly one of them and visibly crosses between them:

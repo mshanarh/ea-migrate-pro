@@ -24,11 +24,14 @@ export type LiveQuote = {
 const BROWSER_UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
-/** Normalise a broker symbol for a title row ("XAUUSD.m" → "XAUUSD"). */
+/**
+ * Normalise a broker symbol for a title row ("XAUUSD.m" → "XAUUSD").
+ * The broker's own case is kept — only the branding prefix/suffix is removed.
+ */
 export function quoteLabel(symbol: string): string {
   return symbol
-    .toUpperCase()
-    .replace(/^[A-Z]{2,5}_/, "")
+    .trim()
+    .replace(/^[A-Za-z]{2,5}_/, "")
     .replace(/\.(M|PRO|I|C|Z)$/i, "");
 }
 

@@ -99,6 +99,21 @@ export type PairSetting = {
   direction?: "BOTH" | "BUY" | "SELL";
 };
 
+/**
+ * SYMBOL SPELLING — the portal's exact case wins.
+ *
+ * A broker's symbol name is case-sensitive (Exness lists BTCUSDm/XAUUSDm, not
+ * BTCUSDM/XAUUSDM), so a saved pair is matched case-insensitively against the
+ * EA's own portal list and rewritten with the portal's spelling. Only a symbol
+ * the EA does not list keeps whatever it already had.
+ */
+export function canonicalEaSymbol(symbol: string, eaSymbols: readonly string[] | undefined | null): string {
+  const clean = symbol.trim();
+  if (!clean) return clean;
+  const match = (eaSymbols ?? []).find((candidate) => candidate.trim().toUpperCase() === clean.toUpperCase());
+  return match ? match.trim() : clean;
+}
+
 export type MtAccount = {
   platform: "MT5";
   broker: string;
@@ -226,7 +241,13 @@ function load() {
             // user presses Configure.
             pairs: Array.isArray(robot.pairs) && robot.pairs.length > 0
               ? robot.pairs.map((pair) => ({
-                  symbol: typeof pair?.symbol === "string" ? pair.symbol : "",
+                  // Pairs saved by older builds were uppercased — restore the
+                  // portal's spelling so the symbol reads exactly as the EA
+                  // lists it (comparison stays case-insensitive).
+                  symbol:
+                    typeof pair?.symbol === "string"
+                      ? canonicalEaSymbol(pair.symbol, Array.isArray(robot.symbols) ? robot.symbols : [])
+                      : "",
                   lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
                   maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
                 })).filter((pair) => pair.symbol)
@@ -993,9 +1014,9 @@ export async function syncRobotsFromPortal() {
       // the list (it used to assign [], throwing away every symbol the user
       // had allowed on each sync) and never seed new ones in.
       const portalSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
-      const pairs: PairSetting[] = oldPairs.filter((pair) =>
-        portalSymbolKeys.has(pair.symbol.trim().toUpperCase()),
-      );
+      const pairs: PairSetting[] = oldPairs
+        .filter((pair) => portalSymbolKeys.has(pair.symbol.trim().toUpperCase()))
+        .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && ea.image === robot.image && ea.video === robot.video && (!ea.name || ea.name === robot.name)) {
@@ -1254,7 +1275,9 @@ export async function syncRobotsFromCloudPortal(): Promise<number> {
       // symbols they never allowed straight into "Allowed Quotes" (and START
       // then traded them).
       const cloudSymbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
-      const pairs = oldPairs.filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()));
+      const pairs = oldPairs
+        .filter((pair) => cloudSymbolKeys.has(pair.symbol.trim().toUpperCase()))
+        .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
       const sameSymbols = symbols.length === robot.symbols.length && symbols.every((symbol, index) => symbol === robot.symbols[index]);
       const samePairs = pairs.length === oldPairs.length && pairs.every((pair, index) => pair === oldPairs[index]);
       if (sameSymbols && samePairs && image === robot.image && fresh.video === robot.video && (!fresh.name || fresh.name === robot.name)) return robot;
@@ -1347,7 +1370,10 @@ export function refreshRobotConfigs(): Promise<{ ok: boolean; updated: number; a
         const symbols = config.symbols === null ? robot.symbols : config.symbols;
         const symbolKeys = new Set(symbols.map((symbol) => symbol.trim().toUpperCase()));
         const oldPairs = robot.pairs ?? [];
-        const pairs = oldPairs.filter((pair) => symbolKeys.has(pair.symbol.trim().toUpperCase()));
+        const pairs = oldPairs
+          .filter((pair) => symbolKeys.has(pair.symbol.trim().toUpperCase()))
+          // Rewrite an old uppercased spelling to the server's exact one.
+          .map((pair) => ({ ...pair, symbol: canonicalEaSymbol(pair.symbol, symbols) }));
         const name = config.eaName || robot.name;
         const image = config.image ? await travelSizedImage(config.image) : robot.image;
         const sameSymbols =
@@ -1389,8 +1415,11 @@ export function refreshRobotConfigs(): Promise<{ ok: boolean; updated: number; a
 
 export function setRobotPairs(id: string, pairs: PairSetting[]) {
   load();
+  // The EA's portal list is the spelling authority — saved symbols keep its
+  // exact case (BTCUSDm stays BTCUSDm), never a forced uppercase.
+  const eaSymbols = state.robots.find((robot) => robot.id === id)?.symbols ?? [];
   const safePairs = pairs.filter((pair) => pair.symbol.trim()).map((pair) => ({
-    symbol: pair.symbol.trim().toUpperCase(),
+    symbol: canonicalEaSymbol(pair.symbol, eaSymbols),
     lotSize: pair.lotSize || "0.01",
     maxTrades: pair.maxTrades || "0",
     ...(pair.direction && pair.direction !== "BOTH" ? { direction: pair.direction } : {}),

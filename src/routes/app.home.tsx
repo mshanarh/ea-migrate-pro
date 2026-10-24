@@ -480,7 +480,7 @@ function AppHome() {
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `${symbol.toUpperCase()} NO TRADE (${kind}) — ${analysis.direction.reason}`,
+                message: `${symbol} NO TRADE (${kind}) — ${analysis.direction.reason}`,
                 status: "blocked",
                 symbol,
                 robotName: target.name,
@@ -568,7 +568,7 @@ function AppHome() {
           new CustomEvent("eamp:execution-result", {
             detail: {
               ok: false,
-              message: `${symbol.toUpperCase()} FAILED — ${error instanceof Error ? error.message.toUpperCase() : "UNKNOWN ERROR"}`,
+              message: `${symbol} FAILED — ${error instanceof Error ? error.message : "Unknown error"}`,
               status: "failed",
               symbol,
               robotName: target.name,

@@ -76,7 +76,7 @@ export default function LiveQuotesSheet({
               className="flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-white/[0.04] p-4"
             >
               <div className="min-w-0">
-                <p className="truncate text-sm font-bold">{quote.symbol.toUpperCase()}</p>
+                <p className="truncate text-sm font-bold">{quote.symbol}</p>
                 <p className="text-[11px] text-muted-foreground">
                   {quote.simulated
                     ? "Simulated — no public feed for this symbol"
