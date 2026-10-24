@@ -44,7 +44,7 @@
  */
 import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
 import { countLicensesInKv } from "./license-cloud";
-import { describeError, readPortalAccount, PORTAL_RETRY_DELAY_MS } from "./portal-paid";
+import { describeError, readPortalAccount, PORTAL_RETRY_DELAY_MS, readPortalPayment } from "./portal-paid";
 import {
   checkAccessServer,
   emailHasLicenseKey,
@@ -211,15 +211,18 @@ async function askKvRegistration(email: string): Promise<ReactivationStoreAnswer
 /** The mentor portal account row plus the portal's own payment record. */
 async function askPortalAccounts(email: string): Promise<ReactivationStoreAnswer> {
   const store: ReactivationStoreName = "portalAccounts";
-  const portal = await readPortalAccount(email);
+  // READ THE PORTAL'S OWN PAYMENT RECORD FROM UPSTASH, NOT THE SUPABASE
+  // portal_accounts ROW. The upstroke of the portal's access rights is a
+  // KV payment flag, and the supabase account row is only a mirror.
+  const portalPayment = await readPortalPayment(email);
 
-  if (portal.state === "unavailable") {
-    return unavailable(store, portal.detail);
+  if (portalPayment.state === "unavailable") {
+    return unavailable(store, portalPayment.detail);
   }
-  if (portal.state === "not-configured") {
+  if (portalPayment.state === "not-configured") {
     return {
       store,
-      answer: `not checked — ${portal.detail}`,
+      answer: `not checked — ${portalPayment.detail}`,
       registered: false,
       paid: false,
       unavailable: true,
@@ -227,9 +230,9 @@ async function askPortalAccounts(email: string): Promise<ReactivationStoreAnswer
   }
   return {
     store,
-    answer: portal.detail,
-    registered: portal.state === "account",
-    paid: portal.paid,
+    answer: portalPayment.detail,
+    registered: true,
+    paid: portalPayment.state === "paid",
   };
 }
 

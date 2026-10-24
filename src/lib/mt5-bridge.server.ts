@@ -249,6 +249,66 @@ export const executeMt5ForUser = createServerFn({ method: "POST" })
   });
 
 /** \n * 4. Execute one trade directly to MT5 — internal, credentials in hand. */
+export type ExecuteHatOrderInput = {
+  currency: string;
+  direction: "BUY" | "SELL";
+};
+
+export type ExecuteHatOrderResult =
+  | { ok: true; ticket: string; entry: string; symbol: string }
+  | { ok: false; reason: string };
+
+export async function executeHatOrder(input: ExecuteHatOrderInput): Promise<ExecuteHatOrderResult> {
+  const BRIDGE_URL =
+    process.env["MT5_BRIDGE_URL"] ||
+    process.env["VITE_MT5_BRIDGE_URL"] ||
+    "https://eating-investors-geometry-loans.trycloudflare.com";
+
+  // Resolve the broker symbol from the currency before touching the bridge (the
+  // bridge normalises `currency` to the broker's own symbol name and aborts
+  // with a logged mismatch on every send).
+  let brokerSymbol = input.currency;
+  if (input.currency === "XAU") brokerSymbol = "XAUUSDm";
+  else if (input.currency === "EUR") brokerSymbol = "EURUSDm";
+  else if (input.currency === "GBP") brokerSymbol = "GBPUSDm";
+
+  // The bridge accepts the order in the analyzed direction and compares the
+  // echoed broker side with it: a mismatch is aborted and logged rather than
+  // blindly executed.
+  const orderBody = {
+    currency: input.currency,
+    symbol: brokerSymbol,
+    direction: input.direction,
+  };
+
+  const result = await bridgeFetch("/order/execute-hat", orderBody, 12_000);
+  if (result.transportError) {
+    return { ok: false, reason: `Hat order failed to reach the bridge (${result.transportError})` };
+  }
+  if (!result.ok) {
+    const res = result.data as { detail?: string; message?: string; error?: string };
+    return { ok: false, reason: res.detail || res.message || res.error || `Hat order rejected (HTTP ${result.status})` };
+  }
+
+  const echo = result.data as Record<string, unknown>;
+  const echoedSide = typeof echo["side"] === "string" ? echo["side"].toUpperCase() : "";
+  const echoedSymbol = typeof echo["symbol"] === "string" ? echo["symbol"] : "";
+  if (echoedSide !== input.direction.toUpperCase() || echoedSymbol !== brokerSymbol) {
+    console.error(`[hat-order] side/symbol mismatch: requested ${input.direction}/${brokerSymbol}, bridge echoed ${echoedSide}/${echoedSymbol}`);
+    return { ok: false, reason: `Order was not executed — side or symbol mismatch (${echoedSide}/${echoedSymbol})` };
+  }
+
+  // A live entry price and ticket number are required before we say "executed".
+  // The bridge only ships them when MT5 has confirmed the fill.
+  const ticket = typeof echo["ticket"] === "string" ? echo["ticket"] : undefined;
+  const entry = (typeof echo["entry"] === "number" || typeof echo["entry"] === "string") ? echo["entry"] : undefined;
+  if (!ticket || entry === undefined) {
+    return { ok: false, reason: "Order not executed — the bridge did not confirm with a ticket and entry price" };
+  }
+
+  return { ok: true, ticket, entry: String(entry), symbol: brokerSymbol };
+}
+
 async function executeVpsTradeInternal(input: {
   login: number | string;
   password: string;

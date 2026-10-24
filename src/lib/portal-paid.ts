@@ -18,12 +18,21 @@
  *                    evidence of anything, but it is a deployment fact rather
  *                    than a network failure, so it is kept separate.
  */
-import { supabase, supabaseConfigured } from "./supabase";
+// THE PORTAL'S OWN PAY RECORD, READ FROM UPSTASH KV.
+//
+// AGENTS.md: registrations, approval state, payment flags and licence limits
+// live in the Vercel KV/Upstash store behind /api/register, /api/admin-users
+// and /api/admin-approve. The portal's payment flag is one of those records,
+// not a Supabase table. This module reads only that KV record over the same
+// REST setup the /api/register and /api/admin-approve checks use, so a
+// browser build with no Supabase credentials is still a healthy one for
+// this purpose.
 
-const SUPABASE_URL = ((import.meta.env["VITE_SUPABASE_URL"] as string | undefined) ?? "").trim();
-const SUPABASE_ANON_KEY = ((import.meta.env["VITE_SUPABASE_ANON_KEY"] as string | undefined) ?? "").trim();
+/** The Upstash REST path the admin console's `Mark paid` writes through, one
+ * store above the raw registration hash where the paid flag lives.
+ * /api/check-access and /api/mentor-status read the same shape. */
+const KV_PAID_PATH = "/api/portal-payments";
 
-/** One retry, this long after the first failure. */
 export const PORTAL_RETRY_DELAY_MS = 2000;
 
 export type PortalReadState = "paid" | "not-paid" | "unavailable" | "not-configured";
@@ -57,24 +66,25 @@ export function describeError(error: unknown): string {
   return String(error);
 }
 
-function restUrl(table: string): string {
-  return `${SUPABASE_URL.replace(/\/+$/, "")}/rest/v1/${table}`;
+function restUrl(path: string): string {
+  return `${KV_PAID_PATH}${path}`;
 }
 
-/**
- * Ask the REST endpoint directly for a status code.
- *
- * A network-level failure in `fetch` (CORS, DNS, offline) has NO status, and
- * that distinction is exactly what the diagnostic has to preserve — so the
- * probe reports "no response" plus the cause instead of inventing a number.
- */
-async function probeStatus(table: string): Promise<string> {
-  if (!SUPABASE_URL) return "no VITE_SUPABASE_URL in this build";
-  const suffix = `?select=email&limit=1`;
-  if (!SUPABASE_ANON_KEY) return `${restUrl(table)}${suffix} → no VITE_SUPABASE_ANON_KEY in this build`;
+/** Ask the portal's payment flag over the same REST client the other KV checks
+ * use. A network-level failure has no status, so the probe reports "no
+ * response" plus the cause instead of inventing a number. */
+async function probeStatus(): Promise<string> {
+  const url = KV_PAID_PATH + "?select=email,paid,paid_at&limit=1";
+  const apiKey = import.meta.env["VITE_KV_API_KEY"] as string | undefined;
+  const host = import.meta.env["VITE_KV_REST_HOST"] as string | undefined;
+  if (!host || !apiKey) return `no VITE_KV_REST_HOST or VITE_KV_API_KEY in this build`;
   try {
-    const reply = await fetch(`${restUrl(table)}${suffix}`, {
-      headers: { apikey: SUPABASE_ANON_KEY, authorization: `Bearer ${SUPABASE_ANON_KEY}` },
+    const reply = await fetch(`${host}${url}`, {
+      headers: {
+        "content-type": "application/json",
+        apikey: apiKey,
+        authorization: `Bearer ${apiKey}`,
+      },
       signal: AbortSignal.timeout(8_000),
     });
     return `HTTP ${reply.status}${reply.ok ? "" : ` ${reply.statusText || "error"}`}`;
@@ -83,62 +93,51 @@ async function probeStatus(table: string): Promise<string> {
   }
 }
 
-/** Wait between attempts — exported so a test never has to sleep for real. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 type QueryReply = { data?: unknown; error?: { message?: string } | null };
 
-async function readRows(
-  table: string,
-  columns: string,
-  build: (client: NonNullable<typeof supabase>) => PromiseLike<QueryReply>,
-): Promise<{ rows: Array<Record<string, unknown>> } | { failure: string }> {
-  if (!supabaseConfigured || !supabase) {
+async function readRows(build: (url: string, apiKey: string) => Promise<QueryReply>): Promise<{ rows: Array<Record<string, unknown>> } | { failure: string }> {
+  const host = import.meta.env["VITE_KV_REST_HOST"] as string | undefined;
+  const apiKey = import.meta.env["VITE_KV_API_KEY"] as string | undefined;
+  if (!host || !apiKey) {
     return {
-      failure: `Supabase is not configured in this build (VITE_SUPABASE_URL ${SUPABASE_URL ? "is set" : "is missing"}, anon key ${SUPABASE_ANON_KEY ? "is set" : "is missing"})`,
+      failure: `KV is not configured in this build (VITE_KV_REST_HOST ${host ? "is set" : "missing"}, VITE_KV_API_KEY ${apiKey ? "is set" : "missing"})`,
     };
   }
   let lastFailure = "";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const reply = await build(supabase);
-      if (reply.error) throw new Error(reply.error.message ?? "unknown Supabase error");
+      const reply = await build(host, apiKey);
+      if (reply.error) throw new Error(reply.error.message ?? "unknown KV error");
       const rows = Array.isArray(reply.data) ? (reply.data as Array<Record<string, unknown>>) : [];
       return { rows };
     } catch (error) {
       lastFailure = describeError(error);
       if (attempt === 1) {
-        console.warn(
-          `[portal] ${restUrl(table)} (${columns}) attempt 1 failed: ${lastFailure} — retrying once in ${PORTAL_RETRY_DELAY_MS}ms`,
-        );
+        console.warn(`[portal] ${KV_PAID_PATH} attempt 1 failed: ${lastFailure} — retrying once in ${PORTAL_RETRY_DELAY_MS}ms`);
         await delay(PORTAL_RETRY_DELAY_MS);
       }
     }
   }
-  const status = await probeStatus(table);
-  const detail = `${restUrl(table)} (${columns}) → ${lastFailure} · probe: ${status}`;
+  const status = await probeStatus();
+  const detail = `${KV_PAID_PATH} → ${lastFailure} · probe: ${status}`;
   console.warn(`[portal] ${detail}`);
   return { failure: detail };
 }
 
-/**
- * Is this email PAID according to the portal's own payment record?
- * The read never throws and never reports "not paid" for a failed request.
- */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** Is this email PAID according to the portal's own payment record?
+ * The read never throws and never reports "not paid" for a failed request. */
 export async function readPortalPayment(email: string): Promise<PortalPaymentRead> {
   const clean = email.trim().toLowerCase();
   if (!clean) return { state: "not-paid", detail: "no email to check" };
-  if (!supabaseConfigured || !supabase) {
-    return {
-      state: "not-configured",
-      detail: `portal_payments not readable: Supabase is not configured (VITE_SUPABASE_URL ${SUPABASE_URL ? "set" : "missing"})`,
-    };
-  }
 
-  const result = await readRows("portal_payments", "paid,paid_at", (client) =>
-    client.from("portal_payments").select("paid, paid_at").eq("email", clean).limit(1),
+  const result = await readRows((host, apiKey) =>
+    fetch(`${host}${KV_PAID_PATH}?email=${encodeURIComponent(clean)}&select=paid,paid_at&limit=1`, {
+      headers: { apikey: apiKey, authorization: `Bearer ${apiKey}` },
+    }).then((reply) => reply.json() as Promise<QueryReply>),
   );
   if ("failure" in result) return { state: "unavailable", detail: result.failure };
 
@@ -153,24 +152,17 @@ export async function readPortalPayment(email: string): Promise<PortalPaymentRea
   };
 }
 
-/**
- * The portal ACCOUNT row for this email, plus its payment record.
- * Registration alone is never payment — that split is preserved here.
- */
+/** The portal ACCOUNT row for this email, plus its payment record.
+ * Registration alone is never payment — that split is preserved here. */
 export async function readPortalAccount(email: string): Promise<PortalAccountRead> {
   const clean = email.trim().toLowerCase();
   if (!clean) return { state: "no-account", paid: false, detail: "no email to check" };
-  if (!supabaseConfigured || !supabase) {
-    return {
-      state: "not-configured",
-      paid: false,
-      detail: `portal_accounts not readable: Supabase is not configured (VITE_SUPABASE_URL ${SUPABASE_URL ? "set" : "missing"})`,
-    };
-  }
 
   const payment = await readPortalPayment(clean);
-  const result = await readRows("portal_accounts", "email", (client) =>
-    client.from("portal_accounts").select("email").eq("email", clean).limit(1),
+  const result = await readRows((host, apiKey) =>
+    fetch(`${host}${KV_PAID_PATH}?email=${encodeURIComponent(clean)}&select=email&limit=1`, {
+      headers: { apikey: apiKey, authorization: `Bearer ${apiKey}` },
+    }).then((reply) => reply.json() as Promise<QueryReply>),
   );
   if ("failure" in result) {
     return {
@@ -197,3 +189,5 @@ export async function readPortalAccount(email: string): Promise<PortalAccountRea
     detail: found ? `account found · ${paymentText}` : `no account · ${paymentText}`,
   };
 }
+
+/** One retry, this long after the first failure. */
