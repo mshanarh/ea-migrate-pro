@@ -242,9 +242,10 @@ export function TradeAnalysisPopup({
                 Waiting for the broker&apos;s own levels — nothing is shown until they arrive.
               </p>
             )}
-            {/* THE ENTRY FILTER, MEASURED. Trend and extension in ATR(14) are
-                always shown when the analysis reported them; the reason line
-                says whether the entry was taken or skipped and why. */}
+            {/* ENTRY CONTEXT, MEASURED. Trend and extension in ATR(14) are
+                shown when the analysis reported them. They are context only:
+                the short-term direction trades immediately, and the only
+                refusals are the hard safety blocks named elsewhere. */}
             {plan?.entryReason || typeof plan?.extensionAtr === "number" || plan?.trend ? (
               <div className="space-y-0.5 rounded-[10px] border border-white/10 px-2 py-1.5">
                 <p className="if-num if-text text-[12px] font-bold">
@@ -254,13 +255,7 @@ export function TradeAnalysisPopup({
                     : ""}
                 </p>
                 {plan?.entryReason ? (
-                  <p
-                    className={`text-[11px] leading-snug ${
-                      plan.entryGate === "enter" ? "if-muted" : "text-amber-300/90"
-                    }`}
-                  >
-                    {plan.entryReason}
-                  </p>
+                  <p className="if-muted text-[11px] leading-snug">{plan.entryReason}</p>
                 ) : null}
               </div>
             ) : null}

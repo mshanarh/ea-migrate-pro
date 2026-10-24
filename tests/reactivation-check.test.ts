@@ -52,6 +52,25 @@ vi.mock("@/lib/supabase-users", () => ({
   }),
 }));
 
+/**
+ * THE PORTAL PAYMENT RECORD LIVES IN UPSTASH NOW. It is mocked at the module
+ * boundary so the decision — not the KV configuration of the test machine —
+ * is what these assertions prove.
+ */
+vi.mock("@/lib/portal-paid", () => ({
+  PORTAL_RETRY_DELAY_MS: 0,
+  describeError: (error: unknown) => String(error),
+  readPortalAccount: async () => ({
+    state: state.portalAccount ? "account" : "no-account",
+    paid: state.portalAccount,
+    detail: state.portalAccount ? "account found" : "no account",
+  }),
+  readPortalPayment: async () => ({
+    state: state.portalAccount ? "paid" : "not-paid",
+    detail: state.portalAccount ? "paid" : "no account",
+  }),
+}));
+
 vi.mock("@/lib/license-cloud", () => ({
   countLicensesInKv: async () => ({ enabled: true, ok: true, count: state.kvKeys }),
 }));

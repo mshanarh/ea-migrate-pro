@@ -383,3 +383,188 @@ export const executeVpsTrade = createServerFn({ method: "POST" })
     });
     return result.success ? { success: true } : { success: false, error: result.error };
   });
+
+// ----------------------------------------------------------------------------
+// FUNDAMENTALS — news-event execution
+// ----------------------------------------------------------------------------
+
+/**
+ * One news-signal execution through the VPS bridge.
+ *
+ * The order is only reported as executed when MT5 itself answered with a real
+ * ticket and fill price. Every safety check runs BEFORE the first order:
+ *   • the broker's own symbol name (never a guessed contract),
+ *   • a live price that actually exists,
+ *   • free margin above the standing 20% buffer,
+ *   • order side exactly equal to the analysed signal side.
+ */
+export type FundamentalsOrderInput = {
+  userId: string;
+  symbol: string;
+  direction: "BUY" | "SELL";
+  lotSize: number;
+  trades: number;
+  stopLoss?: number | undefined;
+  takeProfit?: number | undefined;
+};
+
+export type FundamentalsOrderFill = {
+  index: number;
+  status: "executed" | "failed";
+  ticket?: string;
+  entry?: number;
+  error?: string;
+};
+
+export type FundamentalsOrderResult = {
+  ok: boolean;
+  message: string;
+  brokerSymbol?: string | undefined;
+  livePrice?: number | undefined;
+  freeMargin?: number | undefined;
+  equity?: number | undefined;
+  orders: FundamentalsOrderFill[];
+};
+
+const normalizeSymbol = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+export const executeFundamentalsTrades = createServerFn({ method: "POST" })
+  .validator((data: FundamentalsOrderInput) => data)
+  .handler(async ({ data }): Promise<FundamentalsOrderResult> => {
+    const orders: FundamentalsOrderFill[] = [];
+    const trades = Math.max(1, Math.min(Math.floor(data.trades), 20));
+    const lotSize = Number(data.lotSize);
+    if (!Number.isFinite(lotSize) || lotSize <= 0) {
+      return { ok: false, message: "Lot size must be greater than 0", orders };
+    }
+    if (data.direction !== "BUY" && data.direction !== "SELL") {
+      return { ok: false, message: "No analysed direction to execute", orders };
+    }
+
+    const record = await getMt5RecordWithSecret(data.userId);
+    if (!record || !record.mtPassword) {
+      return {
+        ok: false,
+        message: "No saved MT5 credentials — save them on the MetaTrader page first.",
+        orders,
+      };
+    }
+    const credentials = { login: Number(record.loginId), password: record.mtPassword, server: record.server };
+
+    // 1. Broker symbol name + live price, from the broker itself.
+    const price = await bridgeFetch("/symbol/price", { credentials, symbol: data.symbol });
+    if (price.transportError) {
+      return { ok: false, message: price.transportError, orders };
+    }
+    const priceData = price.data as {
+      success?: boolean;
+      symbol?: string;
+      bid?: number;
+      ask?: number;
+      message?: string;
+    };
+    if (!price.ok || priceData.success === false || !priceData.symbol) {
+      return { ok: false, message: priceData.message || `Broker refused the symbol ${data.symbol}`, orders };
+    }
+    const brokerSymbol = String(priceData.symbol);
+    const wanted = normalizeSymbol(data.symbol);
+    const got = normalizeSymbol(brokerSymbol);
+    if (!got.includes(wanted) && !wanted.includes(got)) {
+      console.error(`[fundamentals] symbol mismatch: requested ${data.symbol}, broker resolved ${brokerSymbol}`);
+      return {
+        ok: false,
+        message: `Order aborted — broker symbol ${brokerSymbol} does not match the analysed symbol ${data.symbol}`,
+        brokerSymbol,
+        orders,
+      };
+    }
+    const livePrice = data.direction === "BUY" ? Number(priceData.ask) : Number(priceData.bid);
+    if (!Number.isFinite(livePrice) || livePrice <= 0) {
+      return {
+        ok: false,
+        message: `No live price for ${data.symbol} right now`,
+        brokerSymbol,
+        orders,
+      };
+    }
+
+    // 2. Free margin — the standing 20% buffer applies before any order fires.
+    const account = await bridgeFetch("/account/verify", credentials);
+    if (account.transportError) {
+      return { ok: false, message: account.transportError, brokerSymbol, livePrice, orders };
+    }
+    const info = (account.data as { account?: { margin_free?: number; equity?: number } }).account;
+    const freeMargin = Number(info?.margin_free);
+    const equity = Number(info?.equity);
+    if (Number.isFinite(freeMargin) && Number.isFinite(equity) && equity > 0 && freeMargin < equity * 0.2) {
+      return {
+        ok: false,
+        message: `Order aborted — free margin ${freeMargin.toFixed(2)} is below the 20% buffer (${(equity * 0.2).toFixed(2)} of equity ${equity.toFixed(2)})`,
+        brokerSymbol,
+        livePrice,
+        freeMargin,
+        equity,
+        orders,
+      };
+    }
+
+    // 3. Fire the orders one at a time. The side we send is the analysed side,
+    //    and each fill is recorded only with MT5's own ticket and price.
+    for (let i = 0; i < trades; i++) {
+      const sentSide = data.direction;
+      if (sentSide !== data.direction) {
+        console.error(`[fundamentals] direction mismatch: signal=${data.direction}, order=${sentSide}`);
+        orders.push({ index: i + 1, status: "failed", error: `Direction mismatch — signal ${data.direction}, order ${sentSide}` });
+        break;
+      }
+      const result = await bridgeFetch("/trade/execute", {
+        credentials,
+        symbol: brokerSymbol,
+        action: sentSide,
+        volume: lotSize,
+        stop_loss: data.stopLoss || 0,
+        take_profit: data.takeProfit || 0,
+        comment: "EA Migrate news signal",
+      });
+      if (result.transportError) {
+        orders.push({ index: i + 1, status: "failed", error: result.transportError });
+        if (i === 0) break;
+        continue;
+      }
+      const fill = result.data as {
+        success?: boolean;
+        message?: string;
+        order?: number | string;
+        deal?: number | string;
+        price?: number;
+      };
+      const ticket = fill.order ?? fill.deal;
+      const entry = Number(fill.price);
+      if (!result.ok || fill.success === false || ticket === undefined || !Number.isFinite(entry) || entry <= 0) {
+        orders.push({
+          index: i + 1,
+          status: "failed",
+          error: fill.message || `MT5 did not confirm the fill (HTTP ${result.status})`,
+        });
+        // A refused first order means the market/broker is not accepting this
+        // order — do not hammer the rest of the batch.
+        if (i === 0) break;
+        continue;
+      }
+      orders.push({ index: i + 1, status: "executed", ticket: String(ticket), entry });
+    }
+
+    const executed = orders.filter((order) => order.status === "executed").length;
+    return {
+      ok: executed > 0,
+      message:
+        executed === trades
+          ? `${executed}/${trades} ${brokerSymbol} ${data.direction} orders confirmed by MT5`
+          : `${executed}/${trades} ${brokerSymbol} ${data.direction} orders confirmed — ${orders.find((order) => order.status === "failed")?.error ?? "the rest were not accepted"}`,
+      brokerSymbol,
+      livePrice,
+      freeMargin: Number.isFinite(freeMargin) ? freeMargin : undefined,
+      equity: Number.isFinite(equity) ? equity : undefined,
+      orders,
+    };
+  });

@@ -1,5 +1,5 @@
-import { Check, House, ScanLine, Server } from "lucide-react";
-import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { Check, House, ScanLine, Server, Save } from "lucide-react";
+import { useCustomization } from "@/lib/app-customization";
 import {
   BOTTOM_NAV_STYLE_OPTIONS,
   setBottomNavStyle,
@@ -24,60 +24,13 @@ const PREVIEW_TABS = [
  */
 export function BottomNavStyles() {
   const { color } = useCustomization();
-<<<<<<< HEAD
-  const accent = accentColorValue(color);
-  const selected = useBottomNavStyle();
-=======
   const accent = color;
-
-  const [selectedStyle, setSelectedStyle] = useState<BottomNavStyle>("floating-pill");
-  const [applied, setApplied] = useState(false);
-
-  // One shared subscription, read from the same store the real nav and Settings both read.
-  const activeStyle = useNavStyle(selectedStyle);
-
-  // Keep the Settings picker in sync with the real nav's live value.
-  useEffect(() => {
-    if (activeStyle && BOTTOM_NAV_STYLES.some((s) => s.id === activeStyle)) {
-      setSelectedStyle(activeStyle);
-    }
-  }, [activeStyle]);
-
-  // Load saved style from localStorage
-  useEffect(() => {
-    try {
-      const saved = window.localStorage.getItem("eamp.bottomNavStyle");
-      if (saved && BOTTOM_NAV_STYLES.some((s) => s.id === saved)) {
-        setSelectedStyle(saved as BottomNavStyle);
-      }
-    } catch {
-      // ignore
-    }
-  }, []);
-
-  const handleSelect = (style: BottomNavStyle) => {
-    setSelectedStyle(style);
-    try {
-      window.localStorage.setItem("eamp.bottomNavStyle", style);
-    } catch {
-      // ignore
-    }
-    // Re-read from the shared store so the real nav picks it up.
-  };
-
-  const handleApply = () => {
-    setApplied(true);
-    setTimeout(() => setApplied(false), 2000);
-  };
->>>>>>> origin/main
-
-  const isSelected = (style: BottomNavStyle) => activeStyle === style;
+  const activeStyle = useBottomNavStyle();
 
   return (
-<<<<<<< HEAD
     <div className="space-y-3">
       {BOTTOM_NAV_STYLE_OPTIONS.map((option) => {
-        const isSelected = selected === option.id;
+        const isSelected = activeStyle === option.id;
         return (
           <button
             key={option.id}
@@ -100,67 +53,26 @@ export function BottomNavStyles() {
           </button>
         );
       })}
-=======
-    <div className="space-y-4">
-      {/* Style options */}
-      <div className="grid grid-cols-1 gap-3">
-        {BOTTOM_NAV_STYLES.map((style) => {            const selected = isSelected(style.id);
-            return (
-              <button
-                key={style.id}
-                type="button"
-                onClick={() => handleSelect(style.id)}
-                className={`flex w-full items-center gap-4 rounded-2xl border p-4 text-left transition-all ${
-                  selected
-                    ? "border-primary/50 bg-primary/10 shadow-[0_0_20px_rgba(8,168,239,0.3)]"
-                    : "border-white/10 bg-white/[0.03] hover:bg-white/[0.06]"
-                }`}
-                style={selected ? { borderColor: `var(--accent)` } : undefined}
-              >
-                <span className="text-xl" aria-hidden>
-                  {style.icon}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-black text-white">{style.name}</p>
-                  <p className="text-xs text-white/50 truncate">{style.description}</p>
-                </div>
-                {selected && (
-                  <Check className="size-5 shrink-0" style={{ color: `var(--accent)` }} strokeWidth={3} />
-                )}
-              </button>
-            );
-          })}
-      </div>
->>>>>>> origin/main
 
       <div className="rounded-2xl border border-white/10 bg-black/40 p-4">
-<<<<<<< HEAD
         <p className="mb-3 text-xs font-bold uppercase tracking-[0.18em] text-white/40">Preview</p>
-        <NavPreview style={selected} accent={accent} />
-      </div>
-
-      <p className="text-center text-xs text-white/40">
-        Applies instantly on every screen and is saved on this device.
-=======
-        <p className="text-xs font-bold uppercase tracking-[0.18em] text-white/40 mb-3">Preview</p>
         <div className="flex justify-center">
-          <BottomNavPreview style={activeStyle ?? selectedStyle} accent={accent} />
+          <NavPreview style={activeStyle} accent={accent} />
         </div>
       </div>
 
-      {/* Apply button — no longer does anything; the switch is live. */}
+      {/* The switch is live — nothing to apply. */}
       <button
         type="button"
         disabled
-        className="flex h-14 w-full items-center justify-center gap-2 rounded-2xl bg-white/5 text-sm font-semibold text-white/30 cursor-not-allowed"
+        className="flex h-14 w-full cursor-not-allowed items-center justify-center gap-2 rounded-2xl bg-white/5 text-sm font-semibold text-white/30"
       >
         <Save className="size-5" />
         Applied automatically
       </button>
 
-      <p className="text-xs text-white/40 text-center">
+      <p className="text-center text-xs text-white/40">
         Changes apply instantly across all screens and are saved on this device.
->>>>>>> origin/main
       </p>
     </div>
   );
@@ -175,10 +87,7 @@ function NavPreview({ style, accent }: { style: BottomNavStyle; accent: string }
       <span key={tab.key} className="flex flex-col items-center justify-center gap-0.5">
         <Icon className="size-4" style={{ color: active ? accent : "rgba(255,255,255,0.45)" }} strokeWidth={2.2} />
         {labels && (
-          <span
-            className="text-[8px] font-semibold tracking-wide"
-            style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}
-          >
+          <span className="text-[8px] font-semibold tracking-wide" style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}>
             {tab.label}
           </span>
         )}
@@ -194,19 +103,18 @@ function NavPreview({ style, accent }: { style: BottomNavStyle; accent: string }
       >
         {PREVIEW_TABS.map((tab, index) => {
           const Icon = tab.icon;
-          const active = index === 1;
           if (index === 1) {
             return (
               <span
                 key={tab.key}
                 className="-mt-5 flex size-9 items-center justify-center rounded-full"
-                style={{ backgroundColor: accent, color: "#08080a", boxShadow: `0 0 0 4px rgba(10,10,12,0.95)` }}
+                style={{ backgroundColor: accent, color: "#08080a", boxShadow: "0 0 0 4px rgba(10,10,12,0.95)" }}
               >
                 <Icon className="size-4" strokeWidth={2.6} />
               </span>
             );
           }
-          return item(tab, active);
+          return item(tab, false);
         })}
       </div>
     );
@@ -250,9 +158,7 @@ function NavPreview({ style, accent }: { style: BottomNavStyle; accent: string }
           return (
             <span key={tab.key} className="relative flex flex-1 flex-col items-center py-1">
               {item(tab, active)}
-              {active && (
-                <span className="absolute bottom-0 h-px w-6 rounded-full" style={{ backgroundColor: accent }} />
-              )}
+              {active && <span className="absolute bottom-0 h-px w-6 rounded-full" style={{ backgroundColor: accent }} />}
             </span>
           );
         }

@@ -7,7 +7,7 @@
  * announces through `speakBot` which no-ops when disabled or unsupported.
  */
 
-import { callNative, hasNativeBridge } from "@/lib/native-bridge";
+import { callNative, hasNativeBridge, queryNative } from "@/lib/native-bridge";
 import {
   EXECUTION_REPEAT_WINDOW_MS,
   executionSignature,
@@ -104,8 +104,12 @@ function pickVoice(): SpeechSynthesisVoice | null {
  * the same moment the caller renders it.
  */
 export function speakBot(text: string): void {
-  if (!isBotVoiceEnabled()) return; // voice off → say nothing
   if (typeof window === "undefined") return;
+  if (!diagnosticsLogged) {
+    diagnosticsLogged = true;
+    console.info("[voice] path", voiceDiagnostics());
+  }
+  if (!isBotVoiceEnabled()) return; // voice off → say nothing
   const phrase = text.trim();
   if (!phrase) return;
   const volume = getBotVoiceVolume();
@@ -146,6 +150,62 @@ export function speakBot(text: string): void {
     /* unsupported — silent */
   }
 }
+
+/**
+ * ARM THE VOICE FROM A REAL USER TAP.
+ *
+ * A browser silently drops speechSynthesis before the page has had a gesture,
+ * and the first announcement of a run (the welcome, the first fill) is exactly
+ * the one that used to be swallowed. Inside the Android wrapper the native
+ * engine is warmed instead — no gesture rule applies there, but priming makes
+ * the first line immediate.
+ *
+ * Safe to call on every tap: it is idempotent and never speaks a word the
+ * trader can hear.
+ */
+export function unlockBotVoice(): void {
+  if (typeof window === "undefined") return;
+  if (hasNativeBridge()) {
+    callNative("primeVoice");
+    return;
+  }
+  if (!("speechSynthesis" in window)) return;
+  try {
+    const synth = window.speechSynthesis;
+    synth.resume?.();
+    if (synth.speaking || synth.pending) return;
+    const primer = new SpeechSynthesisUtterance(" ");
+    primer.volume = 0;
+    synth.speak(primer);
+    warmBotVoice();
+  } catch {
+    /* engine unavailable — the next real utterance still tries */
+  }
+}
+
+/**
+ * WHAT THE VOICE PATH ACTUALLY LOOKS LIKE RIGHT NOW — the answer to "why is it
+ * silent?". Logged once on the first announcement and available to Settings.
+ */
+export type VoiceDiagnostics = {
+  enabled: boolean;
+  volume: number;
+  nativeBridge: boolean;
+  nativeEngineReady: boolean | null;
+  speechSynthesis: boolean;
+};
+
+export function voiceDiagnostics(): VoiceDiagnostics {
+  return {
+    enabled: isBotVoiceEnabled(),
+    volume: getBotVoiceVolume(),
+    nativeBridge: hasNativeBridge(),
+    nativeEngineReady: hasNativeBridge() ? Boolean(queryNative("isVoiceReady")) : null,
+    speechSynthesis: typeof window !== "undefined" && "speechSynthesis" in window,
+  };
+}
+
+let diagnosticsLogged = false;
 
 /** Warm the voice list so the first announcement is instant. */
 export function warmBotVoice(): void {

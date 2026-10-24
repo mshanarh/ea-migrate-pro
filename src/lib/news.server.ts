@@ -29,6 +29,8 @@ export type CalendarEvent = {
   forecast: string;
   /** The last printed number. */
   previous: string;
+  /** The released number, once the event has printed. Empty until then. */
+  actual: string;
 };
 
 type RawEvent = {
@@ -38,6 +40,7 @@ type RawEvent = {
   impact?: string;
   forecast?: string;
   previous?: string;
+  actual?: string;
 };
 
 const SOURCES = [
@@ -63,6 +66,7 @@ async function fetchSource(url: string): Promise<CalendarEvent[]> {
       impact: e.impact ?? "Low",
       forecast: (e.forecast ?? "").trim(),
       previous: (e.previous ?? "").trim(),
+      actual: (e.actual ?? "").trim(),
     }));
 }
 

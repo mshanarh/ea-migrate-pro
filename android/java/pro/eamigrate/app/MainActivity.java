@@ -188,6 +188,15 @@ public class MainActivity extends Activity {
     /** Native speech — the WebView's own speechSynthesis is silent on Android. */
     private TextToSpeech tts;
     private volatile boolean ttsReady = false;
+    /**
+     * The last line that arrived before the engine reported ready. Android's
+     * TTS init is asynchronous, so the FIRST announcement of a run (the
+     * welcome, or the first fill after a cold start) used to be dropped with
+     * no trace — the app "played sounds but never spoke". It is held here and
+     * spoken the moment OnInit succeeds.
+     */
+    private volatile String pendingSpeech = null;
+    private volatile float pendingVolume = 1.0f;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -197,19 +206,7 @@ public class MainActivity extends Activity {
         // because the WebView's speechSynthesis never speaks on Android.
         // Initialising here — not on the first utterance — means the engine
         // is ready by the time the page says anything.
-        try {
-            tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-                @Override
-                public void OnInit(int status) {
-                    ttsReady = status == TextToSpeech.SUCCESS;
-                    if (ttsReady && tts != null) {
-                        tts.setLanguage(Locale.US);
-                    }
-                }
-            });
-        } catch (Throwable t) {
-            android.util.Log.e("EAMIGRATE", "TextToSpeech init failed: " + t);
-        }
+        ensureTts();
         // Trade alerts must work from the first fill, whether or not the floating
         // bubble happens to be running: register the channel, then ask for the
         // permission Android 13+ requires. Both are cheap and neither can throw
@@ -502,44 +499,18 @@ public class MainActivity extends Activity {
          * Speak a phrase through the native TextToSpeech engine. The WebView's
          * speechSynthesis is silent on Android, so every app announcement
          * (welcome, trade plan, counts) arrives here instead. QUEUE_ADD: the
-         * lines queue in order instead of cutting each other off. The lazy
-         * init below is a safety net — onCreate normally starts the engine.
+         * lines queue in order instead of cutting each other off.
          */
         @JavascriptInterface
         public void speak(final String text) {
-            if (text == null || text.trim().isEmpty()) {
-                return;
-            }
-            runOnUiThread(new Runnable() {
-                @Override
-                public void run() {
-                    try {
-                        if (tts == null) {
-                            tts = new TextToSpeech(MainActivity.this, new TextToSpeech.OnInitListener() {
-                                @Override
-                                public void OnInit(int status) {
-                                    ttsReady = status == TextToSpeech.SUCCESS;
-                                    if (ttsReady && tts != null) {
-                                        tts.setLanguage(Locale.US);
-                                    }
-                                }
-                            });
-                        }
-                        if (ttsReady && tts != null) {
-                            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "eamigrate");
-                        }
-                    } catch (Throwable t) {
-                        android.util.Log.e("EAMIGRATE", "speak bridge failed: " + t);
-                    }
-                }
-            });
+            speakWithVolume(text, 1.0d);
         }
 
         /**
          * Speak a phrase at a chosen level (0…1) through the same native
-         * engine. The app's voice setting trims the announcement on top of
-         * the device's own media volume. A missing or invalid level falls
-         * back to the device default.
+         * engine. The level is applied through the engine's own volume bundle
+         * — the only API that actually changes the utterance level. A missing
+         * or invalid level falls back to the device default.
          */
         @JavascriptInterface
         public void speakWithVolume(final String text, final double volume) {
@@ -549,29 +520,25 @@ public class MainActivity extends Activity {
             final float level = (volume < 0.0d || volume > 1.0d || Double.isNaN(volume))
                     ? 1.0f
                     : (float) volume;
+            queueSpeech(text, level);
+        }
+
+        /** Warm the engine from a user tap — never needed for a gesture rule,
+         *  but it makes the first spoken line immediate. */
+        @JavascriptInterface
+        public void primeVoice() {
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    try {
-                        if (tts == null) {
-                            tts = new TextToSpeech(MainActivity.this, new TextToSpeech.OnInitListener() {
-                                @Override
-                                public void OnInit(int status) {
-                                    ttsReady = status == TextToSpeech.SUCCESS;
-                                    if (ttsReady && tts != null) {
-                                        tts.setLanguage(Locale.US);
-                                    }
-                                }
-                            });
-                        }
-                        if (ttsReady && tts != null) {
-                            tts.speak(text, TextToSpeech.QUEUE_ADD, null, "eamigrate", level);
-                        }
-                    } catch (Throwable t) {
-                        android.util.Log.e("EAMIGRATE", "speakWithVolume bridge failed: " + t);
-                    }
+                    ensureTts();
                 }
             });
+        }
+
+        /** Can the engine actually speak right now? Asked by the diagnostics. */
+        @JavascriptInterface
+        public boolean isVoiceReady() {
+            return ttsReady && tts != null;
         }
 
         /**
@@ -730,8 +697,97 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Create the engine once and flush anything that arrived too early. */
+    private void ensureTts() {
+        if (tts != null) {
+            return;
+        }
+        try {
+            tts = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
+                @Override
+                public void OnInit(int status) {
+                    ttsReady = status == TextToSpeech.SUCCESS;
+                    if (ttsReady && tts != null) {
+                        // A device without the US voice pack must still
+                        // speak: try the user's own language, then accept
+                        // whatever the engine has.
+                        int language = tts.setLanguage(Locale.US);
+                        if (language == TextToSpeech.LANG_MISSING_DATA
+                                || language == TextToSpeech.LANG_NOT_SUPPORTED) {
+                            tts.setLanguage(Locale.getDefault());
+                        }
+                        android.util.Log.i("EAMIGRATE", "TextToSpeech ready");
+                    } else {
+                        android.util.Log.e("EAMIGRATE", "TextToSpeech init status " + status);
+                    }
+                    flushPendingSpeech();
+                }
+            });
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "TextToSpeech init failed: " + t);
+        }
+    }
+
+    /** Speak on the UI thread; hold the line until the engine is ready. */
+    private void queueSpeech(final String text, final float level) {
+        if (!ttsReady || tts == null) {
+            pendingSpeech = text;
+            pendingVolume = level;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    ensureTts();
+                }
+            });
+            return;
+        }
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                speakNow(text, level);
+            }
+        });
+    }
+
+    /** The ONE place the engine is called, with its volume bundle. */
+    private void speakNow(String text, float level) {
+        try {
+            ensureTts();
+            if (!ttsReady || tts == null) {
+                pendingSpeech = text;
+                pendingVolume = level;
+                return;
+            }
+            android.os.Bundle params = new android.os.Bundle();
+            params.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, level);
+            int result = tts.speak(text, TextToSpeech.QUEUE_ADD, params, "eamigrate");
+            if (result != TextToSpeech.SUCCESS) {
+                android.util.Log.e("EAMIGRATE", "speak returned " + result);
+            }
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "speak failed: " + t);
+        }
+    }
+
+    /** Speak the line that arrived before the engine finished starting. */
+    private void flushPendingSpeech() {
+        final String text = pendingSpeech;
+        final float level = pendingVolume;
+        if (text == null) {
+            return;
+        }
+        pendingSpeech = null;
+        runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                speakNow(text, level);
+            }
+        });
+    }
+
     @Override
     protected void onDestroy() {
+
         if (tts != null) {
             try {
                 tts.shutdown();

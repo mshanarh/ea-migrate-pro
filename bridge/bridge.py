@@ -291,6 +291,10 @@ class TradeRequest(BaseModel):
     take_profit: float = 0
     slippage: int = 20
     comment: Optional[str] = None
+    # Every order carries a magic number so the app can later find and close
+    # ONLY the positions it opened itself — never manual trades, never another
+    # EA's positions.
+    magic: int = 0
 
 
 @app.post("/trade/execute")
@@ -319,7 +323,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "type": order_type,
             "price": price,
             "deviation": req.slippage,
-            "magic": 0,
+            "magic": req.magic,
             "comment": (req.comment or "Web Platform Order")[:31],
             "type_time": mt5.ORDER_TIME_GTC,
         }
@@ -362,6 +366,123 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "volume": last_result.volume,
             "comment": last_result.comment,
             "stops_removed": stops_removed,
+        }
+    finally:
+        disconnect()
+
+
+class PositionsRequest(BaseModel):
+    credentials: Credentials
+    magic: Optional[int] = None
+
+
+class CloseRequest(BaseModel):
+    credentials: Credentials
+    ticket: int
+    slippage: int = 30
+
+
+def _position_row(position) -> dict:
+    return {
+        "ticket": int(position.ticket),
+        "symbol": position.symbol,
+        "type": "BUY" if position.type == mt5.POSITION_TYPE_BUY else "SELL",
+        "volume": float(position.volume),
+        "price_open": float(position.price_open),
+        "price_current": float(position.price_current),
+        "sl": float(position.sl),
+        "tp": float(position.tp),
+        "profit": float(position.profit),
+        "swap": float(getattr(position, "swap", 0.0)),
+        "magic": int(getattr(position, "magic", 0)),
+        "comment": getattr(position, "comment", ""),
+    }
+
+
+@app.post("/positions/list")
+def positions_list(req: PositionsRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Open positions, optionally limited to one magic number (the app's own)."""
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    try:
+        positions = mt5.positions_get()
+        if positions is None:
+            return {"success": False, "message": f"positions_get failed: {mt5.last_error()}"}
+        rows = [
+            _position_row(position)
+            for position in positions
+            if req.magic is None or int(getattr(position, "magic", 0)) == int(req.magic)
+        ]
+        return {"success": True, "positions": rows, "total": len(rows)}
+    finally:
+        disconnect()
+
+
+@app.post("/positions/close")
+def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Close ONE position by ticket, in its own opposite direction."""
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    try:
+        found = mt5.positions_get(ticket=req.ticket)
+        if not found:
+            return {"success": False, "message": f"Position {req.ticket} is no longer open"}
+        position = found[0]
+        symbol = position.symbol
+        if not mt5.symbol_select(symbol, True):
+            return {"success": False, "message": f"Could not select {symbol} to close it"}
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return {"success": False, "message": f"No live price for {symbol} to close it"}
+
+        is_buy = position.type == mt5.POSITION_TYPE_BUY
+        # Closing a BUY means selling it back, and the other way round.
+        order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+        price = tick.bid if is_buy else tick.ask
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": int(position.ticket),
+            "symbol": symbol,
+            "volume": float(position.volume),
+            "type": order_type,
+            "price": price,
+            "deviation": req.slippage,
+            "magic": int(getattr(position, "magic", 0)),
+            "comment": "EA Migrate scalp close",
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+
+        last_result = None
+        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            if result is None:
+                return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
+            last_result = result
+            if result.retcode == 10030:  # unsupported filling mode — try the next
+                continue
+            break
+        if last_result is None:
+            return {"success": False, "message": "Close was not sent"}
+
+        closed = last_result.retcode in (10008, 10009, 10010)
+        return {
+            "success": closed,
+            "retcode": last_result.retcode,
+            "ticket": int(position.ticket),
+            "symbol": symbol,
+            "order": last_result.order,
+            "deal": last_result.deal,
+            "price": float(last_result.price),
+            "profit": float(position.profit),
+            "message": "" if closed else f"Close rejected (retcode {last_result.retcode})",
         }
     finally:
         disconnect()

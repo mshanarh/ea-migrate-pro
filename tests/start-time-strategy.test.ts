@@ -160,7 +160,7 @@ describe("evaluateMomentum — the market picture at start time", () => {
     // The card's measurement travels with the plan.
     expect(plan.gate.direction).toBe("BUY");
     expect(plan.gate.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
-    expect(plan.reason).toContain("Entry filter");
+    expect(plan.reason).toContain("Entry context");
   });
 
   it("SELLs when the last 5 closes net down, SL above the 10-bar high", () => {
@@ -204,18 +204,19 @@ describe("evaluateMomentum — the market picture at start time", () => {
     const flat = Array<number>(11).fill(100);
 
     const up = evaluateMomentum({ candles: bars(flat), ask: 100.3, bid: 100.2 });
-    expect(up.kind).toBe("no-trade");
-    if (up.kind !== "no-trade") return;
-    expect(up.setup?.basis).toBe("live quote");
-    expect(up.gate?.direction).toBe("BUY");
-    expect(up.gate?.verdict).toBe("waiting-confirmation");
+    expect(up.kind).toBe("signal");
+    if (up.kind !== "signal") return;
+    expect(up.plan.setup.basis).toBe("live quote");
+    expect(up.plan.signal).toBe("BUY");
+    expect(up.plan.gate?.direction).toBe("BUY");
 
     vi.restoreAllMocks();
     const down = evaluateMomentum({ candles: bars(flat), ask: 99.8, bid: 99.7 });
-    expect(down.kind).toBe("no-trade");
-    if (down.kind !== "no-trade") return;
-    expect(down.setup?.basis).toBe("live quote");
-    expect(down.gate?.direction).toBe("SELL");
+    expect(down.kind).toBe("signal");
+    if (down.kind !== "signal") return;
+    expect(down.plan.setup.basis).toBe("live quote");
+    expect(down.plan.signal).toBe("SELL");
+    expect(down.plan.gate?.direction).toBe("SELL");
   });
 
   it("skips a genuinely zero-flat market with \"market flat\"", () => {
@@ -256,27 +257,29 @@ describe("overextension filter — when an entry is allowed", () => {
     const dropCloses = Array.from({ length: 21 }, (_, index) => 130 - index * 3);
     const result = evaluateMomentum({ candles: bars(dropCloses, 0.5), ask: 69.9, bid: 69.8 });
 
-    expect(result.kind).toBe("no-trade");
-    if (result.kind !== "no-trade") return;
-    expect(result.gate?.direction).toBe("SELL");
-    expect(result.gate?.verdict).toBe("too-extended");
-    expect(result.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
-    expect(result.reason).toContain("move too extended, waiting for pullback");
-    expect(result.reason).toContain("trend SELL");
-    expect(result.reason).toContain("extension");
-    expect(result.reason).toContain("ATR");
-    expect(classifyNoTrade(result.reason)).toBe("waiting for pullback");
+    // The overextension measurement is still reported, but it is NOT a veto:
+    // the short-term direction trades immediately.
+    expect(result.kind).toBe("signal");
+    if (result.kind !== "signal") return;
+    expect(result.plan.signal).toBe("SELL");
+    expect(result.plan.gate?.direction).toBe("SELL");
+    expect(result.plan.gate?.verdict).toBe("too-extended");
+    expect(result.plan.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
+    expect(result.plan.reason).toContain("trend SELL");
+    expect(result.plan.reason).toContain("extension");
+    expect(result.plan.reason).toContain("ATR");
   });
 
   it("skips a BUY at the top of a completed rally the same way", () => {
     const rallyCloses = Array.from({ length: 21 }, (_, index) => 70 + index * 3);
     const result = evaluateMomentum({ candles: bars(rallyCloses, 0.5), ask: 130.2, bid: 130.1 });
 
-    expect(result.kind).toBe("no-trade");
-    if (result.kind !== "no-trade") return;
-    expect(result.gate?.direction).toBe("BUY");
-    expect(result.gate?.verdict).toBe("too-extended");
-    expect(result.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
+    expect(result.kind).toBe("signal");
+    if (result.kind !== "signal") return;
+    expect(result.plan.signal).toBe("BUY");
+    expect(result.plan.gate?.direction).toBe("BUY");
+    expect(result.plan.gate?.verdict).toBe("too-extended");
+    expect(result.plan.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
   });
 
   it("waits for a pullback when price is still at the recent extreme", () => {
@@ -285,12 +288,12 @@ describe("overextension filter — when an entry is allowed", () => {
     const closes = Array.from({ length: 21 }, (_, index) => 1.1 + index * 0.00008);
     const result = evaluateMomentum({ candles: bars(closes, 0.0004), ask: 1.10205, bid: 1.10195 });
 
-    expect(result.kind).toBe("no-trade");
-    if (result.kind !== "no-trade") return;
-    expect(result.gate?.direction).toBe("BUY");
-    expect(result.gate!.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
-    expect(result.gate?.verdict).toBe("waiting-pullback");
-    expect(result.reason).toContain("waiting for pullback");
+    expect(result.kind).toBe("signal");
+    if (result.kind !== "signal") return;
+    expect(result.plan.signal).toBe("BUY");
+    expect(result.plan.gate?.direction).toBe("BUY");
+    expect(result.plan.gate!.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
+    expect(result.plan.gate?.verdict).toBe("waiting-pullback");
   });
 
   it("waits for a completed candle that confirms the side", () => {
@@ -302,12 +305,12 @@ describe("overextension filter — when an entry is allowed", () => {
     ];
     const result = evaluateMomentum({ candles: bars(closes, 0.0004), ask: 1.0987, bid: 1.0986 });
 
-    expect(result.kind).toBe("no-trade");
-    if (result.kind !== "no-trade") return;
-    expect(result.gate?.direction).toBe("SELL");
-    expect(result.gate?.confirmed).toBe(false);
-    expect(result.gate?.verdict).toBe("waiting-confirmation");
-    expect(result.reason).toContain("waiting for confirmation");
+    expect(result.kind).toBe("signal");
+    if (result.kind !== "signal") return;
+    expect(result.plan.signal).toBe("SELL");
+    expect(result.plan.gate?.direction).toBe("SELL");
+    expect(result.plan.gate?.confirmed).toBe(false);
+    expect(result.plan.gate?.verdict).toBe("waiting-confirmation");
   });
 });
 

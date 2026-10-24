@@ -25,7 +25,6 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { signOut, updateProfile, useCurrentAccount, type PortalStatus } from "@/lib/auth-store";
 import { isPortalPaused, portalCloudConfigured, portalEnsureMentorId, setPortalPaused } from "@/lib/portal-cloud";
 import { mirrorAccount } from "@/routes/dashboard.eas";
-import { useAccentColorValue } from "@/lib/theme-tokens";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; badge?: boolean; mentorOnly?: boolean; adminOnly?: boolean };
 
@@ -121,11 +120,11 @@ function MentorIdBadge({
   if (!id) return null;
   return (
     <div
-      className="flex items-center gap-2 rounded-xl border border-[#00a8ff]/40 bg-[#00a8ff]/10 px-3 py-2"
+      className="flex items-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-3 py-2"
       title="Your unique mentor ID — quote this to support."
     >
-      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-[#00a8ff]/80">Mentor ID</span>
-      <span className="font-mono text-base leading-none font-black tracking-[0.18em] text-[#00a8ff] tabular-nums">
+      <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-primary/80">Mentor ID</span>
+      <span className="font-mono text-base leading-none font-black tracking-[0.18em] text-primary tabular-nums">
         {id}
       </span>
     </div>
@@ -166,18 +165,18 @@ function PendingMenu({
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <BrandMark />
         <p className="text-xl font-black tracking-tight">
-          EA <span className="text-[#00a8ff]">Migrate</span>
+          EA <span className="text-primary">Migrate</span>
         </p>
       </div>
 
       <div className="flex flex-1 flex-col items-center justify-center px-6 py-10 text-center">
-        <span className="glow-ring flex size-24 items-center justify-center rounded-full border-2 border-[#00a8ff]/60 bg-[#00a8ff]/10">
+        <span className="glow-ring flex size-24 items-center justify-center rounded-full border-2 border-primary/60 bg-primary/10">
           <motion.span
             animate={paused ? { opacity: 0.55 } : { rotate: 360 }}
             transition={spin}
             className="flex size-full items-center justify-center"
           >
-            <Clock className="size-11 text-[#00a8ff]" aria-hidden="true" />
+            <Clock className="size-11 text-primary" aria-hidden="true" />
           </motion.span>
         </span>
 
@@ -199,7 +198,7 @@ function PendingMenu({
               setPortalPaused(!paused);
               setPaused(!paused);
             }}
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:border-white/40 hover:text-[#00a8ff]"
+            className="flex h-12 w-full items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/[0.04] text-sm font-bold text-white/80 transition-colors hover:border-primary/40 hover:text-primary"
           >
             {paused ? <Play className="size-4" /> : <Pause className="size-4" />}
             {paused ? "Resume work" : "Pause work"}
@@ -219,9 +218,16 @@ function PendingMenu({
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  const [bright, setBright] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("eamp.portal.bright") === "1");
   const account = useCurrentAccount();
   const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
+
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    document.documentElement.classList.toggle("portal-bright", bright);
+    window.localStorage.setItem("eamp.portal.bright", bright ? "1" : "0");
+  }, [bright]);
 
   // CLOUD EA MIRROR — re-publish the mentor's account (EAs with their
   // pictures included) once per browser session, from ANY portal page.
@@ -235,12 +241,8 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
     void mirrorAccount(account);
   }, [account?.email, account?.eas.length]);
 
-  // PORTAL OWN DESIGN TOKENS — hardcoded, never read from app settings.
-  // The portal has its own dark background and accent color, hardcoded below.
-  // These are the portal's original design, never read from app localStorage.
-  const portalAccent = "#00a8ff";
-  const pageBg = "bg-[#0A0A0A]";
-  const surfaceBg = "bg-[#0A0A0A]";
+  const pageBg = bright ? "bg-[#10151c]" : "bg-[#0A0A0A]";
+  const surfaceBg = bright ? "bg-[#151b23]" : "bg-[#0A0A0A]";
 
   // AN UNAPPROVED ACCOUNT GETS NO NAVIGATION AT ALL. Not a disabled one, not a
   // filtered one — none. Every item in `sections` leads to a page that needs an
@@ -271,7 +273,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
       <div className="flex items-center gap-3 border-b border-white/10 px-5 py-5">
         <BrandMark />
         <p className="text-xl font-black tracking-tight">
-          EA <span className="text-[#00a8ff]">Migrate</span>
+          EA <span className="text-primary">Migrate</span>
         </p>
       </div>
 
@@ -279,18 +281,18 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
         <Link
           to="/dashboard/profile"
           onClick={() => setOpen(false)}
-          className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 transition-colors hover:border-[#00a8ff]/40"
+          className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.03] p-3 transition-colors hover:border-primary/40"
         >
-          <span className="flex size-12 items-center justify-center rounded-xl border-2 border-[#00a8ff]/70 text-[#00a8ff]">
+          <span className="flex size-12 items-center justify-center rounded-xl border-2 border-primary/70 text-primary">
             <CircleUserRound className="size-6" />
           </span>
           <span className="min-w-0 flex-1">
             <span className="block truncate text-sm font-bold">{account?.username ?? "Guest"}</span>
-            <span className="block text-xs font-semibold capitalize text-[#00a8ff]">{account?.role ?? "mentor"}</span>
+            <span className="block text-xs font-semibold capitalize text-primary">{account?.role ?? "mentor"}</span>
             {/* The same ID as the header badge, so the desktop sidebar carries
                 it too — this card is where a mentor looks when support asks. */}
             {account?.mentorId ? (
-              <span className="mt-0.5 block font-mono text-[11px] font-bold tracking-[0.16em] text-[#00a8ff]/90 tabular-nums">
+              <span className="mt-0.5 block font-mono text-[11px] font-bold tracking-[0.16em] text-primary/90 tabular-nums">
                 ID {account.mentorId}
               </span>
             ) : null}
@@ -314,7 +316,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
                   onClick={() => setOpen(false)}
                   className={`flex h-12 items-center gap-3 rounded-2xl px-4 text-sm font-semibold transition-colors ${
                     active
-                      ? "border border-[#00a8ff]/40 bg-[#00a8ff]/10 text-[#00a8ff]"
+                      ? "border border-primary/40 bg-primary/10 text-primary"
                       : "text-white/65 hover:bg-white/5 hover:text-white"
                   }`}
                 >
@@ -341,7 +343,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className={`min-h-screen ${pageBg} text-white`}>
-      <header className={`sticky top-0 z-50 border-b border-white/10 ${pageBg} bg-gradient-to-r from-[#00a8ff]/35 via-[#00a8ff]/10 to-transparent`}>
+      <header className={`sticky top-0 z-50 border-b border-white/10 ${pageBg} bg-gradient-to-r from-primary/35 via-primary/10 to-transparent`}>
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-3 px-4">
           <div className="flex items-center gap-3">
             <Sheet open={open} onOpenChange={setOpen}>
@@ -369,7 +371,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             <Link to="/dashboard" className="flex items-center gap-2 lg:hidden">
               <BrandMark size="size-8" />
               <span className="text-base font-black tracking-tight">
-                EA <span className="text-[#00a8ff]">Migrate</span>
+                EA <span className="text-primary">Migrate</span>
               </span>
             </Link>
           </div>
@@ -380,7 +382,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             <Link
               to="/dashboard/wallet"
               aria-label="Open wallet"
-              className="flex size-11 items-center justify-center rounded-full border border-[#00a8ff]/50 bg-[#00a8ff]/10 text-[#00a8ff] transition-colors hover:bg-[#00a8ff]/20"
+              className="flex size-11 items-center justify-center rounded-full border border-primary/50 bg-primary/10 text-primary transition-colors hover:bg-primary/20"
             >
               <Wallet className="size-5" />
             </Link>
@@ -388,7 +390,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
               type="button"
               aria-label={bright ? "Dim the portal" : "Brighten the portal"}
               onClick={() => setBright((value) => !value)}
-              className="flex size-11 items-center justify-center rounded-full border border-[#00a8ff]/50 bg-[#00a8ff]/10 text-[#00a8ff] transition-colors hover:bg-[#00a8ff]/20"
+              className="flex size-11 items-center justify-center rounded-full border border-primary/50 bg-primary/10 text-primary transition-colors hover:bg-primary/20"
             >
               <Sun className="size-5" />
             </button>
@@ -409,7 +411,7 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
               <div className="flex items-center gap-3">
                 <BrandMark size="size-8" />
                 <p className="text-sm font-black">
-                  EA <span className="text-[#00a8ff]">Migrate</span>
+                  EA <span className="text-primary">Migrate</span>
                   <span className="ml-3 font-normal text-white/45">© 2026 All rights reserved.</span>
                 </p>
               </div>

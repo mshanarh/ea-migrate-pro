@@ -120,7 +120,7 @@ import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { loadBridgeConfig } from "@/lib/bridge-client";
 import { applyShellScope, isPortalPath } from "@/lib/shell-scope";
-import { speakTradeExecution } from "@/lib/bot-voice";
+import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -289,6 +289,23 @@ function RootComponent() {
   // A missing endpoint or an offline start keeps the address already cached.
   useEffect(() => {
     void loadBridgeConfig();
+  }, []);
+
+  // FIRST GESTURE ARMS THE VOICE. Browsers refuse speechSynthesis before the
+  // page has been touched, which silently swallowed the first announcement of
+  // a run; the Android wrapper's native engine is primed the same way.
+  useEffect(() => {
+    const arm = () => {
+      unlockBotVoice();
+      window.removeEventListener("pointerdown", arm);
+      window.removeEventListener("keydown", arm);
+    };
+    window.addEventListener("pointerdown", arm, { once: true });
+    window.addEventListener("keydown", arm, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", arm);
+      window.removeEventListener("keydown", arm);
+    };
   }, []);
 
   // DYNAMIC TRADE VOICE — one listener for the whole app.

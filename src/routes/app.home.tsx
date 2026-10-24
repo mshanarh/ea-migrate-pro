@@ -20,9 +20,10 @@ import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type A
 import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
-import { speakBot } from "@/lib/bot-voice";
+import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
+import { startScalpLoop, type ScalpLoopHandle } from "@/lib/scalp-loop";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -289,8 +290,24 @@ function WelcomeMaster() {
   );
 }
 
+/** Remembered bot mode — the last choice is the default next time. */
+const BOT_MODE_KEY = "eamp.botMode.v1";
+type BotMode = "scalper" | "normal";
+
+function readBotMode(): BotMode {
+  try {
+    const saved = window.localStorage.getItem(BOT_MODE_KEY);
+    if (saved === "scalper" || saved === "normal") return saved;
+  } catch {
+    /* storage blocked — default below */
+  }
+  return "scalper";
+}
+
 function AppHome() {
   const app = useAppState();
+  const { color: accentChoice } = useCustomization();
+  const accent = accentColorValue(accentChoice);
   // SPA navigation for the QUOTES / SCANNER / METATRADER buttons — a
   // window.location.* call reloaded the whole document, which rebooted the
   // app and flashed the full-screen "Loading…" splash on EVERY press.
@@ -304,6 +321,10 @@ function AppHome() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
+  // START offers the two modes; the last one chosen is the remembered default.
+  const [modeOpen, setModeOpen] = useState(false);
+  const [botMode, setBotMode] = useState<BotMode>(() => readBotMode());
+  const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -491,9 +512,9 @@ function AppHome() {
         // candles (oldest→newest), not the fixture tables.
         const analysis = await resolveTradeDirection(symbol, { credentials });
 
-        // THE ENTRY FILTER, ON THE CARD. The direction derivation is unchanged;
-        // this only shows what was measured (trend, extension in ATR) and why
-        // the entry was allowed or skipped.
+        // ENTRY CONTEXT, ON THE CARD. The direction derivation is unchanged;
+        // this only shows what was measured (trend, extension in ATR). It is
+        // never a veto — the trade proceeds on the short-term direction.
         const gate = analysis.gate ?? null;
         if (gate) {
           updateExecutionPlan({
@@ -631,23 +652,83 @@ function AppHome() {
 
   const handleStart = () => {
     if (!robot) return;
+    // The START tap arms audio, so the first announcement of the run is heard.
+    unlockBotVoice();
     // START/STOP SHOWS NOTHING — no toast, no popup, no voice. Only the
     // floating bubble changes state. The execution popup and its voice
-    // belong to runConfiguredPairs below (scanner Execute / auto trading).
+    // belong to the runs below (scanner Execute / auto trading).
     if (robot.running) {
+      scalpRef.current?.stop();
+      scalpRef.current = null;
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
       return;
     }
+    // STOP ANY PREVIOUS LOOP, then ask which mode this run uses.
+    scalpRef.current?.stop();
+    scalpRef.current = null;
+    setModeOpen(true);
+  };
+
+  /** SCALPER — trade, take the profit, re-analyse, open again, non-stop. */
+  const runScalper = (target: Robot) => {
+    const pairs = (target.pairs ?? []).filter((pair) => pair.symbol?.trim());
+    if (pairs.length === 0) {
+      toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
+      return;
+    }
+    const credentials = readMtCredentials(app.mt);
+    if (!credentials) {
+      toast.message(`${target.name} is running`, {
+        description:
+          "Add your MT5 login, password and server on the MetaTrader page — the scalper trades live with them saved.",
+      });
+      return;
+    }
+    setExecutionStage("Analysing the last 8 completed M15 candles...");
+    scalpRef.current = startScalpLoop({
+      symbols: pairs.map((pair) => ({
+        symbol: pair.symbol.trim(),
+        lotSize: Number(pair.lotSize) || 0.01,
+        maxTrades: safeTradeCount(pair.maxTrades),
+      })),
+      eaName: target.name,
+      credentials,
+    });
+    toast.success(`${target.name} scalping`, {
+      description: "Trades close at TP1 or spread + 0.2 ATR, then the next trade opens.",
+    });
+  };
+
+  /** Choose a mode: remembered as the default, then the bot starts. */
+  const chooseMode = (mode: BotMode) => {
+    if (!robot) return;
+    setBotMode(mode);
+    try {
+      window.localStorage.setItem(BOT_MODE_KEY, mode);
+    } catch {
+      /* storage blocked — this session still uses the choice */
+    }
+    setModeOpen(false);
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
-
-    // Fire-and-forget auto-trade with safety checks
+    if (mode === "scalper") {
+      runScalper(robot);
+      return;
+    }
     console.log("[START DEBUG] robot.pairs:", robot?.pairs?.map(p => ({symbol: p?.symbol, lotSize: p?.lotSize, maxTrades: p?.maxTrades})));
     void runConfiguredPairs(robot).catch((error: unknown) => {
       console.warn("[start] auto-trade run failed:", error);
     });
   };
+
+  // A mode chooser left open, or a running loop, must not outlive the screen.
+  useEffect(() => {
+    return () => {
+      scalpRef.current?.stop();
+      scalpRef.current = null;
+    };
+  }, []);
 
   // The QUOTES / Symbols button lives on /app/trading-pairs (route id
   // "/app/trading-pairs"). It goes through the router now — the path is
@@ -696,6 +777,46 @@ function AppHome() {
           />
         </main>
       </div>
+
+      <Dialog open={modeOpen} onOpenChange={setModeOpen}>
+        <DialogContent className="max-w-sm border-white/10 bg-[#0d0d0d] text-white">
+          <DialogHeader>
+            <DialogTitle className="text-[15px] font-black tracking-wide">Choose how {robot?.name ?? "the bot"} trades</DialogTitle>
+            <DialogDescription className="text-[12px] text-white/50">
+              Your last choice is remembered as the default.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-3 space-y-2">
+            {([
+              {
+                mode: "scalper" as BotMode,
+                title: "Scalper mode",
+                body: "Opens immediately on the last 8 M15 candles, closes each position at TP1 or spread + 0.2 ATR, then re-analyses and opens again — non-stop.",
+              },
+              {
+                mode: "normal" as BotMode,
+                title: "Normal mode",
+                body: "Opens the configured batch once and manages it with the broker's SL/TP, as the bot does today.",
+              },
+            ]).map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                onClick={() => chooseMode(option.mode)}
+                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99]"
+                style={{
+                  borderColor: botMode === option.mode ? accent : "rgba(255,255,255,0.12)",
+                  borderWidth: botMode === option.mode ? 2 : 1,
+                  backgroundColor: botMode === option.mode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                }}
+              >
+                <span className="block text-[13px] font-black text-white">{option.title}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-white/50">{option.body}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
 
