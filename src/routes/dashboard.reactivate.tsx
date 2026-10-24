@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/button";
 import { OWNER_EMAILS, useCurrentAccount } from "@/lib/auth-store";
 import { getReactivationEnabled } from "@/lib/supabase-users";
 import { checkReactivationEmail } from "@/lib/reactivation-check";
+import { describeError as formatReactivationFailure } from "@/lib/portal-paid";
 
 export const Route = createFileRoute("/dashboard/reactivate")({
   ssr: false,
@@ -185,7 +186,19 @@ function ReactivateClientPage() {
     // registration store and the paid ledger, plus the users row, mentor
     // licence keys and portal accounts. A client the KV store knows is a real
     // client even when no Supabase `users` row exists yet.
-    const check = await checkReactivationEmail(cleanEmail);
+    //
+    // NO RAW NETWORK ERROR IS EVER SHOWN. Each store read is already isolated
+    // (see reactivation-check); this guard covers anything that still escapes,
+    // and the technical detail stays in the diagnostic block.
+    let check: Awaited<ReturnType<typeof checkReactivationEmail>>;
+    try {
+      check = await checkReactivationEmail(cleanEmail);
+    } catch (error) {
+      setBusy(false);
+      setError("Re-activation check could not complete — one record source was unreachable. Please try again.");
+      setDiagnostic(`[reactivation] ${cleanEmail} — check failed: ${formatReactivationFailure(error)}`);
+      return;
+    }
     console.info(check.diagnostic);
     if (!check.registered || !check.paid) {
       setBusy(false);
@@ -200,16 +213,22 @@ function ReactivateClientPage() {
     // DEVICE UNBINDING ONLY — the device columns are cleared and nothing else.
     // Expiry dates, licence keys, subscriptions and the payment flag are never
     // written here.
-    const { supabase } = await import("@/lib/supabase");
-    const { error: updateError } = await supabase!
-      .from("users")
-      .update({ device_email: null, device_id: null })
-      .eq("email", cleanEmail);
+    let updateError: { message?: string } | null = null;
+    try {
+      const { supabase } = await import("@/lib/supabase");
+      const { error } = await supabase!
+        .from("users")
+        .update({ device_email: null, device_id: null })
+        .eq("email", cleanEmail);
+      updateError = error ?? null;
+    } catch (error) {
+      updateError = { message: formatReactivationFailure(error) };
+    }
 
     setBusy(false);
     if (updateError) {
-      setError(updateError.message);
-      setDiagnostic(check.diagnostic);
+      setError("The device binding could not be cleared — one record source was unreachable. Please try again.");
+      setDiagnostic(`${check.diagnostic} | device unbind failed: ${updateError.message ?? "unknown"}`);
       return;
     }
 

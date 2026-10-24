@@ -189,6 +189,34 @@ describe("checkReactivationEmail — the authoritative stores", () => {
     );
 
     const check = await checkReactivationEmail("client@example.com");
-    expect(check.diagnostic).toContain("KV registrations: store unavailable");
+    // "unavailable" — never "no registration": a read that failed is not a
+    // verdict, and the line carries the URL and HTTP status that failed.
+    expect(check.diagnostic).toContain("KV registrations: unavailable");
+    expect(check.diagnostic).toContain("/api/mentor-status");
+    expect(check.diagnostic).toContain("HTTP 503");
+  });
+
+  it("never surfaces a raw TypeError for an unreachable source", async () => {
+    // The reported bug: the portal-accounts read threw `TypeError: Failed to
+    // fetch` and that aborted the whole reactivation.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Promise.reject(new TypeError("Failed to fetch"))),
+    );
+
+    const check = await checkReactivationEmail("client@example.com");
+
+    expect(check.error ?? "").not.toContain("TypeError");
+    expect(check.error ?? "").not.toContain("Failed to fetch");
+    // Every store was still asked, and the diagnostic keeps the technical detail.
+    expect(check.stores.map((store) => store.store)).toEqual([
+      "users",
+      "kvRegistered",
+      "paidLedger",
+      "cloudAccess",
+      "mentorKeys",
+      "portalAccounts",
+    ]);
+    expect(check.diagnostic).toContain("KV registrations: unavailable");
   });
 });

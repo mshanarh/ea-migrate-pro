@@ -165,6 +165,14 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   const { isAdminEmail, getRegistration } = await import("./_registry.js");
 
   let answer: AccessAnswer | null = null;
+  /**
+   * SOURCES THAT COULD NOT BE READ — NEVER EVIDENCE OF NON-PAYMENT.
+   *
+   * A paid customer whose portal/ledger read fails is not unpaid; the answer
+   * is "we could not check", and the client turns that into a retry message
+   * instead of the plan chooser. Only a source that ANSWERED can deny.
+   */
+  const unreadable: string[] = [];
   if (isAdminEmail(email)) {
     answer = { ok: true, isPaid: true, status: "admin" };
   } else {
@@ -183,6 +191,7 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
       record = await getRegistration(email);
     } catch (error) {
       console.warn("[check-access] registration store unavailable:", error);
+      unreadable.push(`KV registrations → ${errorText(error)}`);
     }
     if (record) {
       if (record.isPaid && record.paidAt) {
@@ -198,8 +207,9 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
     if (!answer) {
       // Fallback 1: the same payment ledger the console reads.
       const paid = await paidEmailInSupabase(email);
-      if (paid) {
-        answer = { ok: true, isPaid: true, status: "paid", paidAt: paid };
+      if (!paid.readable) unreadable.push(paid.detail);
+      if (paid.paidAt) {
+        answer = { ok: true, isPaid: true, status: "paid", paidAt: paid.paidAt };
       } else {
         // Fallback 1b: read the Supabase `users` row for `license_key`.
         // This is holder-bound proof: the column is only written after the
@@ -229,8 +239,9 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
                 }
               }
             }
-          } catch {
-            // DB read failure — continue to next fallback.
+          } catch (error) {
+            // DB read failure — record it and continue to the next fallback.
+            unreadable.push(`users row → ${errorText(error)}`);
           }
         }
         if (deviceMismatch) {
@@ -239,7 +250,7 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
           // license_key IS the payment proof — even when KV and paid_emails
           // both cannot answer, a set license_key means the account is paid.
           answer = { ok: true, isPaid: true, status: "paid" };
-        } else if (await claimedLicenseKeyProof(email, deviceId)) {
+        } else if (await claimedLicenseKeyProof(email, deviceId, unreadable)) {
           // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
           //
           // api/activation.ts writes `users.license_key` only after the paid
@@ -250,23 +261,58 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
           // ledger) and is sent back to the email + code form.
           answer = { ok: true, isPaid: true, status: "paid" };
         } else {
-          answer = { ok: true, isPaid: false, status: "unpaid" };
+          // ── ANY AUTHORITATIVE PAID RECORD IS ENOUGH ──
+          //
+          // The portal's own payment table is a paid source in its own right:
+          // being marked paid there opens the app. And a source that could not
+          // be READ is not a "no" — the answer is "we could not check", which
+          // the client shows as a retry message, never as the plan chooser.
+          const portal = await portalPaymentInSupabase(email);
+          if (portal.paid) {
+            answer = {
+              ok: true,
+              isPaid: true,
+              status: "paid",
+              ...(portal.paidAt ? { paidAt: portal.paidAt } : {}),
+            };
+          } else if (unreadable.length > 0) {
+            console.warn("[check-access] undecided — unreadable sources:", unreadable.join(" | "));
+            answer = {
+              ok: false,
+              isPaid: false,
+              status: "undecided",
+              error: "Access check could not complete — one record source was unreachable",
+              unreadable,
+            };
+          } else {
+            answer = { ok: true, isPaid: false, status: "unpaid" };
+          }
         }
       }
     }
   }
+
+  // NOTHING DECIDED (only reachable when an unexpected branch falls through) —
+  // never a refusal: the client shows the retry line for this answer.
+  const decided: AccessAnswer = answer ?? {
+    ok: false,
+    isPaid: false,
+    status: "undecided",
+    error: "Access check could not complete — one record source was unreachable",
+    unreadable,
+  };
 
   // THE BINDING, IN THE SAME ANSWER — see readDeviceBinding above. The keys are
   // only added when the read succeeded, so an unreadable database can never be
   // mistaken for "this email is unbound".
   const binding = await readDeviceBinding(email);
   if (binding.readable) {
-    answer["deviceBinding"] = binding.value;
+    decided["deviceBinding"] = binding.value;
     if (deviceId) {
-      answer["deviceMatches"] = binding.value?.deviceId === deviceId;
+      decided["deviceMatches"] = binding.value?.deviceId === deviceId;
     }
   }
-  return answer;
+  return decided;
 }
 
 /**
@@ -278,40 +324,112 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
  * device and the caller names a different one, the account is activated on
  * another phone and must be answered unpaid.
  */
-async function claimedLicenseKeyProof(email: string, requestDeviceId: string | null): Promise<boolean> {
+async function claimedLicenseKeyProof(
+  email: string,
+  requestDeviceId: string | null,
+  unreadable: string[],
+): Promise<boolean> {
   const db = await serviceClient();
-  if (!db) return false;
+  if (!db) {
+    unreadable.push("licence key → database not configured");
+    return false;
+  }
   try {
     const { data, error } = await db
       .from("users")
       .select("license_key, device_id")
       .eq("email", email)
       .maybeSingle();
-    if (error || !data) return false;
+    if (error) {
+      unreadable.push(`licence key → ${error.message}`);
+      return false;
+    }
+    if (!data) return false;
     const row = data as { license_key?: string | null; device_id?: string | null };
     const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
     if (!key) return false;
     if (row.device_id && requestDeviceId && row.device_id !== requestDeviceId) return false;
     return true;
-  } catch {
+  } catch (error) {
+    unreadable.push(`licence key → ${errorText(error)}`);
     return false;
   }
 }
 
-async function paidEmailInSupabase(email: string): Promise<string | null> {
+type LedgerRead = { paidAt: string | null; readable: boolean; detail: string };
+
+/** The console's payment ledger — one of the authoritative paid sources. */
+async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
   const db = await serviceClient();
-  if (!db) return null;
+  if (!db) {
+    return { paidAt: null, readable: false, detail: "paid ledger → database not configured" };
+  }
+  try {
+    const { data, error } = await db
+      .from("paid_emails")
+      .select("paid_at")
+      .eq("email", email)
+      .neq("paid_at", null)
+      .order("paid_at", { ascending: false })
+      .limit(1);
 
-  const { data, error } = await db
-    .from("paid_emails")
-    .select("paid_at")
-    .eq("email", email)
-    .neq("paid_at", null)
-    .order("paid_at", { ascending: false })
-    .limit(1)
-    .single();
+    if (error) {
+      return { paidAt: null, readable: false, detail: `paid ledger → ${error.message}` };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    const paidAt = row && typeof (row as { paid_at?: unknown }).paid_at === "string"
+      ? ((row as { paid_at: string }).paid_at as string)
+      : null;
+    return { paidAt, readable: true, detail: paidAt ? `paid ledger → paid at ${paidAt}` : "paid ledger → no paid row" };
+  } catch (error) {
+    return { paidAt: null, readable: false, detail: `paid ledger → ${errorText(error)}` };
+  }
+}
 
-  if (error || !data) return null;
-  const paidAt = data["paid_at"];
-  return typeof paidAt === "string" && paidAt.length > 0 ? paidAt : null;
+type PortalPayment = { paid: boolean; paidAt?: string; readable: boolean; detail: string };
+
+/**
+ * THE PORTAL'S OWN PAYMENT RECORD (`portal_payments`).
+ *
+ * A mentor marks a client paid on the portal; that record is payment on its
+ * own, exactly like the ledger. Read here with the service role so a broken
+ * browser read of the same table can never deny a paid client.
+ */
+async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
+  const db = await serviceClient();
+  if (!db) {
+    return { paid: false, readable: false, detail: "portal payments → database not configured" };
+  }
+  try {
+    const { data, error } = await db
+      .from("portal_payments")
+      .select("paid, paid_at")
+      .eq("email", email)
+      .limit(1);
+    if (error) {
+      return { paid: false, readable: false, detail: `portal payments → ${error.message}` };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    if (!row) return { paid: false, readable: true, detail: "portal payments → no row" };
+    const record = row as { paid?: unknown; paid_at?: unknown };
+    const paidAt = typeof record.paid_at === "string" ? record.paid_at : undefined;
+    const paid = record.paid === true || Boolean(paidAt);
+    return {
+      paid,
+      ...(paidAt ? { paidAt } : {}),
+      readable: true,
+      detail: paid ? "portal payments → paid" : "portal payments → not paid",
+    };
+  } catch (error) {
+    return { paid: false, readable: false, detail: `portal payments → ${errorText(error)}` };
+  }
+}
+
+/** One line describing any thrown value, `cause` included. */
+function errorText(error: unknown): string {
+  if (error instanceof Error) {
+    const cause = (error as { cause?: unknown }).cause;
+    return `${error.name}: ${error.message}${cause ? ` (cause: ${String(cause)})` : ""}`;
+  }
+  return String(error);
 }

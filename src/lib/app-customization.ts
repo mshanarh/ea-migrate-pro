@@ -121,6 +121,20 @@ export function fontStack(id: string): string {
   return `'${id}', system-ui, -apple-system, "Segoe UI", sans-serif`;
 }
 
+/**
+ * REMOVE THE APP FONT — used when the document becomes the mentor portal.
+ *
+ * The app's picked face is a user preference for the APP; the portal has its
+ * own hardcoded font (src/styles.css). Dropping the inline variable lets the
+ * stylesheet's value apply instead of leaking a glitch/techno face into the
+ * portal.
+ */
+export function clearFontStack(): void {
+  if (typeof document === "undefined") return;
+  document.documentElement.style.removeProperty(APP_FONT_VAR);
+  document.documentElement.removeAttribute("data-app-font");
+}
+
 /** Publish the selected font to <html>; safe to call on every render/effect. */
 export function applyFontStack(id: string): string {
   const stack = fontStack(id);

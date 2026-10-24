@@ -225,7 +225,11 @@ describe("the gate after a key activation", () => {
 
     const verdict = await gate.requireVerifiedAccess(EMAIL);
 
-    expect(verdict.action, "an undecided cloud is a refusal, never a pass").toBe("pay");
+    // A store that could not be read is not "unpaid": the answer is `retry`
+    // with the plain message, so a paying customer is never sent to the plan
+    // chooser because a read failed. It is still never a pass.
+    expect(verdict.action, "an undecided cloud is a refusal, never a pass").toBe("retry");
+    expect(verdict.message).toBe(gate.VERIFY_RETRY_MESSAGE);
     expect(appStore.getAppState().email).toBe(EMAIL);
   });
 

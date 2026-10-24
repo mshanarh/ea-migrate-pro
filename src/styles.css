@@ -368,6 +368,39 @@ body * {
   font-family: var(--font-sample, var(--app-font)) !important;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   THE MENTOR PORTAL KEEPS ITS OWN DESIGN
+   ══════════════════════════════════════════════════════════════════════
+   `data-portal` is stamped on <html> for /dashboard, /admin, /mentor and the
+   portal's auth screens (src/lib/shell-scope.ts). Everything below is the
+   portal's ORIGINAL identity, hardcoded — it never reads the app's saved font,
+   interface style or accent. A face picked in the Android app therefore cannot
+   reach the portal, and neither can a yellow/orange accent.
+
+   The font stays an ordinary font-family declaration rather than
+   `--app-font`, so the portal does not even share that variable with the app. */
+html[data-portal] {
+  --portal-font: "Inter", "Space Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --portal-mono: ui-monospace, SFMono-Regular, Menlo, "JetBrains Mono", monospace;
+  --primary: #00a8ff;
+  --accent: #1a2332;
+  --ring: #38bdf8;
+  --chart-1: #00a8ff;
+  --chart-2: #38bdf8;
+  --chart-3: #60a5fa;
+  --chart-4: #93c5fd;
+  --chart-5: #bae6fd;
+}
+html[data-portal] body,
+html[data-portal] body * {
+  font-family: var(--portal-font) !important;
+}
+/* The mentor-ID badge and other numeric chrome keep their monospace face. */
+html[data-portal] .font-mono,
+html[data-portal] [data-font-sample] {
+  font-family: var(--portal-mono) !important;
+}
+
 #root,
 [data-slot="router-outlet"],
 [data-viewport] {

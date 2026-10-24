@@ -87,7 +87,7 @@ function AppAdmin() {
   useEffect(() => {
     let cancelled = false;
     void (async () => {
-      let result: { action: "pass" | "signin" | "pay" | "deactivate" };
+      let result: { action: "pass" | "signin" | "pay" | "deactivate" | "retry" };
       try {
         result = await requireVerifiedAccess(app.email);
       } catch {
@@ -102,6 +102,11 @@ function AppAdmin() {
       // already signed it out; land it on the first page with the notice.
       if (result.action === "deactivate") {
         window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      if (result.action === "retry") {
+        // A source was unreadable — show the plain retry line, not the plans.
+        window.location.replace("/app/login?verify=1");
         return;
       }
       if (result.action === "pay") {

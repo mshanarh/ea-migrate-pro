@@ -84,6 +84,19 @@ export const Route = createFileRoute("/app/home")({
         invalidateAccessCache(email);
         throw redirect({ href: "/app/login?deactivated=1" });
       }
+      // NO VERDICT IS NOT A REFUSAL. A paid-record source that could not be
+      // READ answers `retry`, and the destination for that is the plain retry
+      // line on the login screen (`?verify=1`) — never the plan chooser. An
+      // activated device stays put and asks again quietly instead of losing the
+      // dashboard to a store that was briefly down.
+      if (access.action === "retry") {
+        if (getAppState().robots.length > 0) {
+          scheduleActivatedRetry(email);
+          return;
+        }
+        invalidateAccessCache(email);
+        throw redirect({ href: "/app/login?verify=1" });
+      }
       if (access.action === "pay") {
         // AN ACTIVATED DEVICE IS NOT EJECTED BY A CLOUD THAT DID NOT ANSWER.
         // Only a positive unpaid/revoked verdict sends them to checkout; a
@@ -336,6 +349,13 @@ function AppHome() {
       }
       if (result.action === "deactivate") {
         window.location.replace("/app/login?deactivated=1");
+        return;
+      }
+      if (result.action === "retry") {
+        // A source was unreadable — retry quietly rather than eject the
+        // dashboard to the plans. Nothing here grants access: the next check
+        // still has to come back clean before the session is confirmed.
+        scheduleActivatedRetry(app.email);
         return;
       }
       if (result.action === "pay") {

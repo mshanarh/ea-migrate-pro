@@ -44,6 +44,12 @@ export type RegistrationResult = {
   user: UserRow | null;
   verified: boolean;
   error?: string;
+  /**
+   * The access service could NOT decide (unreachable / one of its sources was
+   * down). This is not an unpaid verdict: the login screen shows a plain
+   * retry message instead of the plan chooser.
+   */
+  unavailable?: boolean;
 };
 
 function clean(email: string) {
@@ -75,17 +81,35 @@ export type AccessServerAnswer = {
   paidAt?: string;
   deviceBinding?: ServerDeviceBinding;
   deviceMatches?: boolean;
+  /** No verdict was reached — a source could not be read. Never "unpaid". */
+  unavailable?: boolean;
+  /** Technical detail for logs/diagnostics, never for the user-facing message. */
+  detail?: string;
 };
 
 export async function checkAccessServer(email: string, deviceId?: string): Promise<AccessServerAnswer> {
+  const url = "/api/check-access";
   try {
-    const reply = await fetch("/api/check-access", {
+    const reply = await fetch(url, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(deviceId ? { email, deviceId } : { email }),
       signal: AbortSignal.timeout(15_000),
     });
-    if (!reply.ok) return { ok: false, isPaid: false, status: "unpaid" };
+    const failed = (detail: string): AccessServerAnswer => ({
+      ok: false,
+      isPaid: false,
+      status: "unpaid",
+      unavailable: true,
+      detail: `${url} → ${detail}`,
+    });
+    if (!reply.ok) {
+      const body = (await reply.json().catch(() => ({}))) as { error?: unknown; unreadable?: unknown };
+      const sources = Array.isArray(body.unreadable) ? body.unreadable.join(", ") : "";
+      return failed(
+        `HTTP ${reply.status} ${reply.statusText || ""}${sources ? ` — unreadable: ${sources}` : typeof body.error === "string" ? ` — ${body.error}` : ""}`.trim(),
+      );
+    }
     const payload = (await reply.json().catch(() => ({}))) as {
       ok?: boolean;
       isPaid?: boolean;
@@ -93,8 +117,13 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
       paidAt?: string;
       deviceBinding?: unknown;
       deviceMatches?: unknown;
+      error?: string;
+      unreadable?: unknown;
     };
-    if (!payload.ok || payload.status == null) return { ok: false, isPaid: false, status: "unpaid" };
+    if (!payload.ok || payload.status == null) {
+      const sources = Array.isArray(payload.unreadable) ? payload.unreadable.join(", ") : "";
+      return failed(`${payload.error ?? "no verdict"}${sources ? ` — unreadable: ${sources}` : ""}`);
+    }
     const status = payload.status as "admin" | "paid" | "revoked" | "rejected" | "unpaid";
     if (!["admin", "paid", "revoked", "rejected", "unpaid"].includes(status)) return { ok: false, isPaid: false, status: "unpaid" };
     const answer: AccessServerAnswer = {
@@ -115,8 +144,14 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
     }
     if (typeof payload.deviceMatches === "boolean") answer.deviceMatches = payload.deviceMatches;
     return answer;
-  } catch {
-    return { ok: false, isPaid: false, status: "unpaid" };
+  } catch (error) {
+    return {
+      ok: false,
+      isPaid: false,
+      status: "unpaid",
+      unavailable: true,
+      detail: `${url} → no response (${error instanceof Error ? `${error.name}: ${error.message}` : String(error)})`,
+    };
   }
 }
 
@@ -159,7 +194,20 @@ export async function registerWithEmail(
   // browser could not import the old KV client. Ask the server, which already
   // owns the decision, and let the address through if the ledger says paid.
   const access = await checkAccessServer(address);
-  if (access.ok && access.isPaid) {
+  // NO VERDICT IS NOT "UNPAID". A source that could not be read leaves the
+  // account undecided, and the login screen's answer to that is a retry
+  // message — never the plan chooser.
+  if (!access.ok) {
+    console.warn(`[access] ${address}: undecided — ${access.detail ?? "no detail"}`);
+    return {
+      outcome: "checkout",
+      user: null,
+      verified: false,
+      unavailable: true,
+      ...(access.detail ? { error: access.detail } : {}),
+    };
+  }
+  if (access.isPaid) {
     // Keep a row for the app later — bindDeviceToEmail at sign-in wants it.
     const { data: inserted, error: upsertError } = await dbClient
       .from("users")

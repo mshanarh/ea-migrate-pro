@@ -36,7 +36,14 @@ export function leaveForCheckout(): void {
  * view enforces): an unsigned-in visitor goes to the app login, an unpaid
  * email goes to checkout, and paid/admin emails pass through.
  */
-export type AppAccessCheck = { action: "pass" | "signin" | "pay" | "deactivate" };
+/**
+ * `retry` = a paid-record source could not be READ. It is not a refusal, so
+ * callers answer it with the plain retry line — never the plan chooser.
+ */
+export type AppAccessCheck = {
+  action: "pass" | "signin" | "pay" | "deactivate" | "retry";
+  message?: string;
+};
 
 /**
  * LEGACY route guard — now a FAIL-CLOSED wrapper over the cloud gate.
