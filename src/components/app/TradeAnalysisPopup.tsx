@@ -242,6 +242,28 @@ export function TradeAnalysisPopup({
                 Waiting for the broker&apos;s own levels — nothing is shown until they arrive.
               </p>
             )}
+            {/* THE ENTRY FILTER, MEASURED. Trend and extension in ATR(14) are
+                always shown when the analysis reported them; the reason line
+                says whether the entry was taken or skipped and why. */}
+            {plan?.entryReason || typeof plan?.extensionAtr === "number" || plan?.trend ? (
+              <div className="space-y-0.5 rounded-[10px] border border-white/10 px-2 py-1.5">
+                <p className="if-num if-text text-[12px] font-bold">
+                  Trend {plan?.trend ?? side ?? "—"}
+                  {typeof plan?.extensionAtr === "number"
+                    ? ` · Extension ${plan.extensionAtr.toFixed(2)} ATR`
+                    : ""}
+                </p>
+                {plan?.entryReason ? (
+                  <p
+                    className={`text-[11px] leading-snug ${
+                      plan.entryGate === "enter" ? "if-muted" : "text-amber-300/90"
+                    }`}
+                  >
+                    {plan.entryReason}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             {lotText ? (
               <p className="if-muted text-[12px]">Lot size {lotText}</p>
             ) : null}

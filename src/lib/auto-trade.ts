@@ -76,6 +76,8 @@ export interface AnalysisResult {
   timestamp: number;
   /** Present for a LIVE decision — the market picture it was read from. */
   setup?: MarketSetup | null;
+  /** Present for a LIVE decision — what the overextension filter measured. */
+  gate?: EntryGateRead | null;
 }
 
 
@@ -864,9 +866,15 @@ export async function verifyDirectionAgainstTrend(
 //   • SL        = below the lowest low (buy) / above the highest high (sell)
 //                 of the last 10 completed bars;
 //   • TP1       = 1× the SL distance from entry, TP2 = 2×;
-//   • NO TRADE only for missing/stale candles, an invalid or zero price, a
-//                 proxy/unresolvable symbol or invalid SL/TP levels. "Weak
-//                 setup", "inside range" and "no breakout" are not reasons.
+//   • ENTRY     = gated by the overextension filter (measureEntryGate): the
+//                 move must be within 2 ATR of the 20-candle average, price
+//                 must have pulled back off the recent extreme and the newest
+//                 COMPLETED candle must close the signal's way. The direction
+//                 is never changed by the filter — only the timing;
+//   • NO TRADE for missing/stale candles, an invalid or zero price, a
+//                 proxy/unresolvable symbol, invalid SL/TP levels, or an
+//                 exhausted move that has not pulled back yet. "Weak setup",
+//                 "inside range" and "no breakout" are not reasons.
 //
 // The old indicator-vote engine below (`resolveFixtureDirection`) still serves
 // callers that have NO MT5 credentials to sign a bridge request (the public
@@ -882,9 +890,61 @@ export const STOP_LOOKBACK = 10;
 /** Stop clearance beyond the measured extreme, as a fraction of its range. */
 export const STOP_PAD_RATIO = 0.0005;
 
+// ── OVEREXTENSION FILTER ───────────────────────────────────────────────────
+// A direction that is RIGHT can still be a terrible entry: selling the bottom
+// of a completed drop buys the bounce. The filter measures, before any order:
+//
+//   • how far the live price is from the average of the last 20 completed
+//     closes, in ATR(14) units. More than 2 ATR in the signal's direction is
+//     an EXHAUSTED move — the signal is skipped and the bot waits;
+//   • whether price has pulled back off the recent extreme (5 completed bars)
+//     by at least 0.25 ATR, i.e. it is coming back toward that average instead
+//     of being chased at the extreme;
+//   • whether the newest COMPLETED candle closed in the signal's direction —
+//     a completed bearish candle for a SELL, a completed bullish candle for a
+//     BUY.
+//
+// This gates the ENTRY only. The direction itself is still read exactly as
+// before (the last-five-closes comparison, live quote only on a tie).
+export const EXTENSION_LOOKBACK = 20;
+export const ATR_PERIOD = 14;
+export const MAX_EXTENSION_ATR = 2;
+/** Completed bars whose extreme the pullback is measured from. */
+export const PULLBACK_BARS = 5;
+/** How far price must have come back off that extreme, in ATR units. */
+export const MIN_PULLBACK_ATR = 0.25;
+
+export type EntryGateVerdict =
+  | "enter"
+  | "too-extended"
+  | "waiting-pullback"
+  | "waiting-confirmation";
+
+export type EntryGateRead = {
+  /** The side the closes read — the derivation itself is unchanged. */
+  direction: "BUY" | "SELL";
+  /** Average close of the last `barsInMean` completed candles (max 20). */
+  mean: number;
+  barsInMean: number;
+  /** Average true range of the last `atrBars` completed candles (max 14). */
+  atr: number;
+  atrBars: number;
+  /** Distance from the average, in ATR units, in the signal's direction. */
+  extensionAtr: number;
+  /** How far price has come back off the recent extreme, in ATR units. */
+  pullbackAtr: number;
+  /** The newest COMPLETED candle closed in the signal's direction. */
+  confirmed: boolean;
+  verdict: EntryGateVerdict;
+  /** One line for the popup and the log — what was measured and why. */
+  summary: string;
+};
+
 export type MarketPlan = {
   signal: "BUY" | "SELL";
   setup: MarketSetup;
+  /** The overextension read that allowed this entry. */
+  gate: EntryGateRead;
   entry: number;
   sl: number;
   tp1: number;
@@ -894,11 +954,135 @@ export type MarketPlan = {
 
 export type MarketEvaluation =
   | { kind: "signal"; plan: MarketPlan }
-  | { kind: "no-trade"; setup: MarketSetup | null; reason: string; price: number };
+  | {
+      kind: "no-trade";
+      setup: MarketSetup | null;
+      reason: string;
+      price: number;
+      /** Present when the refusal came from the overextension filter. */
+      gate?: EntryGateRead | null;
+    };
 
 /** Print a price without inventing precision. */
 function level(value: number): string {
   return String(Number(value.toFixed(8)));
+}
+
+/** Average close of the last `lookback` completed candles (20 on live data). */
+function meanCloseOf(
+  candles: ReadonlyArray<BrokerCandle>,
+  lookback: number = EXTENSION_LOOKBACK,
+): { mean: number; bars: number } | null {
+  const closes = candles
+    .slice(-lookback)
+    .map((candle) => candle.close)
+    .filter((close) => Number.isFinite(close));
+  if (closes.length === 0) return null;
+  const mean = closes.reduce((sum, close) => sum + close, 0) / closes.length;
+  return Number.isFinite(mean) ? { mean, bars: closes.length } : null;
+}
+
+/**
+ * ATR of the completed candles — the true range includes the gap from the
+ * previous close, so a weekend gap cannot be read as a tiny range.
+ * Uses the last `period` true ranges (14 on live data).
+ */
+function atrOf(
+  candles: ReadonlyArray<BrokerCandle>,
+  period: number = ATR_PERIOD,
+): { atr: number; bars: number } | null {
+  if (candles.length < 2) return null;
+  const ranges: number[] = [];
+  for (let i = 1; i < candles.length; i += 1) {
+    const current = candles[i]!;
+    const previous = candles[i - 1]!;
+    const range = Math.max(
+      current.high - current.low,
+      Math.abs(current.high - previous.close),
+      Math.abs(current.low - previous.close),
+    );
+    if (Number.isFinite(range)) ranges.push(Math.max(0, range));
+  }
+  const window = ranges.slice(-period);
+  if (window.length === 0) return null;
+  const atr = window.reduce((sum, range) => sum + range, 0) / window.length;
+  return Number.isFinite(atr) && atr > 0 ? { atr, bars: window.length } : null;
+}
+
+/**
+ * THE OVEREXTENSION FILTER — pure, so the read can be pinned by a test.
+ *
+ * Returns null only when the series cannot be measured at all (fewer than two
+ * completed bars or a zero ATR); the caller treats that as missing data.
+ */
+export function measureEntryGate(input: {
+  candles: ReadonlyArray<BrokerCandle>;
+  price: number;
+  direction: "BUY" | "SELL";
+}): EntryGateRead | null {
+  const { candles, price, direction } = input;
+  if (!Array.isArray(candles) || candles.length < 2 || !Number.isFinite(price)) return null;
+
+  const meanRead = meanCloseOf(candles);
+  const atrRead = atrOf(candles);
+  if (!meanRead || !atrRead) return null;
+
+  const { mean, bars: barsInMean } = meanRead;
+  const { atr, bars: atrBars } = atrRead;
+
+  // Extension in the SIGNAL's direction: a SELL is extended when price sits
+  // far BELOW the average, a BUY when it sits far above it.
+  const extensionAtr =
+    direction === "SELL" ? (mean - price) / atr : (price - mean) / atr;
+
+  // Where the impulse came from: the recent extreme of the completed bars.
+  const window = candles.slice(-PULLBACK_BARS);
+  const swing =
+    direction === "SELL"
+      ? Math.min(...window.map((candle) => candle.low))
+      : Math.max(...window.map((candle) => candle.high));
+  const pullbackAtr =
+    direction === "SELL" ? (price - swing) / atr : (swing - price) / atr;
+
+  // Confirmation is a COMPLETED candle that closed the signal's way.
+  const newest = candles[candles.length - 1]!;
+  const confirmed =
+    direction === "SELL" ? newest.close < newest.open : newest.close > newest.open;
+
+  const verdict: EntryGateVerdict =
+    extensionAtr > MAX_EXTENSION_ATR
+      ? "too-extended"
+      : !(pullbackAtr >= MIN_PULLBACK_ATR)
+        ? "waiting-pullback"
+        : !confirmed
+          ? "waiting-confirmation"
+          : "enter";
+
+  const measured =
+    `trend ${direction} · extension ${extensionAtr.toFixed(2)} ATR from the ${barsInMean}-candle average ${level(mean)} ` +
+    `(ATR ${level(atr)}) · pullback ${pullbackAtr.toFixed(2)} ATR off the ${PULLBACK_BARS}-bar extreme`;
+
+  const summary =
+    verdict === "too-extended"
+      ? `${measured} · SKIPPED: move too extended, waiting for pullback (more than ${MAX_EXTENSION_ATR} ATR)`
+      : verdict === "waiting-pullback"
+        ? `${measured} · SKIPPED: no pullback toward the average yet, waiting for pullback (needs ${MIN_PULLBACK_ATR} ATR)`
+        : verdict === "waiting-confirmation"
+          ? `${measured} · SKIPPED: no completed ${direction === "SELL" ? "bearish" : "bullish"} candle yet, waiting for confirmation`
+          : `${measured} · ENTRY ALLOWED: within ${MAX_EXTENSION_ATR} ATR, pulled back, completed ${direction === "SELL" ? "bearish" : "bullish"} candle confirms`;
+
+  return {
+    direction,
+    mean,
+    barsInMean,
+    atr,
+    atrBars,
+    extensionAtr,
+    pullbackAtr,
+    confirmed,
+    verdict,
+    summary,
+  };
 }
 
 /**
@@ -1038,13 +1222,36 @@ export function evaluateMomentum(input: {
     };
   }
 
+  // ── OVEREXTENSION FILTER — the ENTRY gate, never the direction.
+  // A correct SELL at the bottom of a completed drop is still a bad entry, so
+  // the move's exhaustion is measured before anything is sent.
+  const gate = measureEntryGate({ candles, price, direction: signal });
+  if (!gate) {
+    return {
+      kind: "no-trade",
+      setup,
+      price,
+      reason: `Missing or unavailable broker data: ATR(${ATR_PERIOD}) could not be measured from the last ${candles.length} completed ${timeframe} candles (need at least 2 with a non-zero range). No order was sent.`,
+    };
+  }
+  if (gate.verdict !== "enter") {
+    return {
+      kind: "no-trade",
+      setup,
+      price,
+      gate,
+      reason: `${gate.summary} No order was sent.`,
+    };
+  }
+
   const reason =
     `Start-time ${signal} on ${timeframe} (${basis}): closes ${level(reference.close)} → ${level(newest.close)} ` +
     `(net ${netMove >= 0 ? "+" : ""}${level(netMove)}), live price ${level(price)}. ` +
     `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
-    `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance).`;
+    `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
+    `Entry filter: ${gate.summary}.`;
 
-  return { kind: "signal", plan: { signal, setup, entry, sl, tp1, tp2, reason } };
+  return { kind: "signal", plan: { signal, setup, gate, entry, sl, tp1, tp2, reason } };
 }
 
 /**
@@ -1107,7 +1314,12 @@ async function resolveMomentumDirection(
       : null;
   const noTrade = (
     reason: string,
-    extra: { source?: AnalysisResult["source"]; setup?: MarketSetup | null; strength?: AnalysisResult["strength"] } = {},
+    extra: {
+      source?: AnalysisResult["source"];
+      setup?: MarketSetup | null;
+      strength?: AnalysisResult["strength"];
+      gate?: EntryGateRead | null;
+    } = {},
   ): AnalysisResult => {
     console.warn(`[auto-trade] BLOCKED ${symbol}: ${reason}`);
     return {
@@ -1125,6 +1337,7 @@ async function resolveMomentumDirection(
       reason,
       timestamp,
       setup: extra.setup ?? null,
+      gate: extra.gate ?? null,
     };
   };
 
@@ -1173,19 +1386,25 @@ async function resolveMomentumDirection(
   // and the verdict, so the trade can be checked against the chart.
   const setupForLog = evaluation.kind === "signal" ? evaluation.plan.setup : evaluation.setup;
   const priceForLog = evaluation.kind === "signal" ? evaluation.plan.entry : evaluation.price;
+  const gateForLog = evaluation.kind === "signal" ? evaluation.plan.gate : (evaluation.gate ?? null);
   console.log(
     `[auto-trade] ${symbol} START ${TRADE_TIMEFRAME}: closes ${setupForLog ? `${level(setupForLog.referenceClose)} → ${level(setupForLog.lastClose)}` : "—"} | ` +
       `net move ${setupForLog ? `${setupForLog.netMove >= 0 ? "+" : ""}${level(setupForLog.netMove)}` : "—"} | ` +
       `stop extreme ${setupForLog ? level(setupForLog.stopExtreme) : "—"} | ` +
       `price ${level(priceForLog)} | ` +
+      `${gateForLog ? `extension ${gateForLog.extensionAtr.toFixed(2)} ATR | ` : ""}` +
       `${evaluation.kind === "signal" ? `${evaluation.plan.signal} (${evaluation.plan.setup.basis})` : "NO TRADE"}`,
   );
 
   if (evaluation.kind === "no-trade") {
+    if (evaluation.gate) {
+      console.log(`[auto-trade] ${symbol} ENTRY FILTER: ${evaluation.gate.summary}`);
+    }
     return noTrade(evaluation.reason, {
       source: "mt5_broker",
       setup: evaluation.setup,
       strength: "none",
+      gate: evaluation.gate ?? null,
     });
   }
 
@@ -1219,6 +1438,7 @@ async function resolveMomentumDirection(
     reason: plan.reason,
     timestamp,
     setup: plan.setup,
+    gate: plan.gate,
   };
 }
 
@@ -2356,7 +2576,13 @@ export function preserveEaName(name: string): string {
  */
 export function classifyNoTrade(
   reason: string,
-): "weak setup" | "stale quote" | "no data" | "direction mismatch" | "flat market" {
+):
+  | "weak setup"
+  | "stale quote"
+  | "no data"
+  | "direction mismatch"
+  | "flat market"
+  | "waiting for pullback" {
   // The direction guard is its own refusal: the data said one thing, the
   // chosen side said the other, so nothing was sent.
   if (/direction guard/i.test(reason)) return "direction mismatch";
@@ -2368,6 +2594,11 @@ export function classifyNoTrade(
   if (/invalid sl\/tp levels|invalid or zero price/i.test(reason)) return "no data";
   // The live direction turned between orders, so the batch was stopped.
   if (/direction changed/i.test(reason)) return "direction mismatch";
+  // The overextension filter held the entry: the direction was readable, the
+  // move was simply exhausted — say so instead of calling it missing data.
+  if (/move too extended|waiting for pullback|waiting for confirmation/i.test(reason)) {
+    return "waiting for pullback";
+  }
   if (/stale|execution conditions not met/i.test(reason)) return "stale quote";
   if (/weak|no clear direction|conflicting|requires both indicators|neutral/i.test(reason)) return "weak setup";
   // Missing/unverifiable data, proxy symbols, bad levels — none of it can be

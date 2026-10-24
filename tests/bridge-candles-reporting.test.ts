@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CANDLE_RETRY_DELAY_MS, resolveTradeDirection, type BridgeCredentials } from "../src/lib/auto-trade";
-import { bridgeSeries, type Candle } from "./breakout-fixtures";
+import { pullbackSeries, type Candle } from "./breakout-fixtures";
 
 /**
  * BRIDGE CANDLE REPORTING — a 200 with no usable payload must never be
@@ -20,8 +20,12 @@ const CREDENTIALS: BridgeCredentials = {
 
 type Captured = { url: string; body: Record<string, unknown> };
 
-/** The breakout series a broker would serve for a BUY (range 100–110). */
-const SERIES = bridgeSeries({ low: 100, high: 110, breakoutClose: 112 });
+/**
+ * The completed series a broker would serve for a BUY. It is a TRADEABLE
+ * market (gentle drift, pullback, confirming bullish candle): the entry filter
+ * refuses an exhausted move, and these tests are about payload reading.
+ */
+const SERIES = pullbackSeries({ direction: "BUY", forming: true });
 
 type BridgeScript = {
   /** One candle payload per candle request, in order. The last entry repeats. */
@@ -49,10 +53,10 @@ function stubBridge(script: BridgeScript): Captured[] {
         status: 200,
         json: async () => ({
           success: true,
-          bid: 112.4,
-          ask: 112.5,
-          digits: 2,
-          point: 0.01,
+          bid: SERIES.bid,
+          ask: SERIES.ask,
+          digits: 5,
+          point: 0.00001,
           stops_level: 0,
           ...(script.quote ?? {}),
         }),
@@ -69,16 +73,16 @@ afterEach(() => {
 
 describe("candle payload shapes", () => {
   it("reads candles nested under a data key", async () => {
-    stubBridge({ candleReplies: [{ ok: true, data: { candles: SERIES } }] });
+    stubBridge({ candleReplies: [{ ok: true, data: { candles: SERIES.candles } }] });
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
     expect(result.direction.type).toBe("BUY");
-    expect(result.setup?.lastClose).toBe(112);
+    expect(result.setup?.lastClose).toBe(SERIES.closes[SERIES.closes.length - 1]);
   });
 
   it("reads MT5-style tuple rows served under `rates`", async () => {
-    const tuples = SERIES.map((candle: Candle) => [
+    const tuples = SERIES.candles.map((candle: Candle) => [
       candle.time,
       candle.open,
       candle.high,
@@ -91,11 +95,11 @@ describe("candle payload shapes", () => {
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
     expect(result.direction.type).toBe("BUY");
-    expect(result.setup?.lastClose).toBe(112);
+    expect(result.setup?.lastClose).toBe(SERIES.closes[SERIES.closes.length - 1]);
   });
 
   it("reads a bare array payload", async () => {
-    stubBridge({ candleReplies: [SERIES] });
+    stubBridge({ candleReplies: [SERIES.candles] });
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
@@ -167,7 +171,7 @@ describe("one retry after the broker resolves the symbol", () => {
     vi.spyOn(console, "warn").mockImplementation(() => {});
     const captured = stubBridge({
       // Empty on the first attempt, the real series once the broker's name is used.
-      candleReplies: [{ ok: true, candles: [] }, { ok: true, candles: SERIES }],
+      candleReplies: [{ ok: true, candles: [] }, { ok: true, candles: SERIES.candles }],
       quote: { symbol: "USTEC" },
     });
 

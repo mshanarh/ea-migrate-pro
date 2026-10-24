@@ -471,6 +471,19 @@ function AppHome() {
         // candles (oldest→newest), not the fixture tables.
         const analysis = await resolveTradeDirection(symbol, { credentials });
 
+        // THE ENTRY FILTER, ON THE CARD. The direction derivation is unchanged;
+        // this only shows what was measured (trend, extension in ATR) and why
+        // the entry was allowed or skipped.
+        const gate = analysis.gate ?? null;
+        if (gate) {
+          updateExecutionPlan({
+            trend: gate.direction,
+            extensionAtr: gate.extensionAtr,
+            entryGate: gate.verdict,
+            entryReason: gate.summary,
+          });
+        }
+
         if (analysis.direction.type === "NO_TRADE") {
           blocked += 1;
           // NO TRADE (…) with the specific reason — a refusal the trader can

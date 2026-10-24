@@ -359,6 +359,8 @@ const GATE_HINTS = {
   "direction mismatch":
     "The chosen side disagreed with the recent candle trend — no order is sent. The closes that disagreed are in the reasons above.",
   "flat market": "The market shows no net movement in either direction — no order is sent.",
+  "waiting for pullback":
+    "The direction is readable but the move is exhausted — the entry waits for a pullback and a confirming candle instead of chasing it.",
 } as const;
 
 export function executionGate(analysis: ScannerAnalysis): ExecutionGate {

@@ -4,7 +4,7 @@ import {
   resolveTradeDirection,
   type BridgeCredentials,
 } from "../src/lib/auto-trade";
-import { BAR_SECONDS, BASE_TIME, bridgeSeries, type Candle } from "./breakout-fixtures";
+import { BAR_SECONDS, BASE_TIME, bridgeSeries, pullbackSeries, type Candle } from "./breakout-fixtures";
 
 /**
  * CANDLE ORDER — the bug that made auto-trading trade the opposite way.
@@ -103,7 +103,9 @@ afterEach(() => {
 
 describe("Bridge candles are read oldest→newest", () => {
   it("a rising broker series BUYs — never the inverse", async () => {
-    stubBridge(candlesFromCloses(rising()));
+    // A tradeable rise (pullback + confirming candle): a vertical ramp is
+    // refused by the overextension filter, so it cannot prove the direction.
+    stubBridge(pullbackSeries({ direction: "BUY", forming: true }).candles);
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
@@ -113,7 +115,7 @@ describe("Bridge candles are read oldest→newest", () => {
   });
 
   it("a falling broker series SELLs", async () => {
-    stubBridge(candlesFromCloses(falling()));
+    stubBridge(pullbackSeries({ direction: "SELL", forming: true }).candles);
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 

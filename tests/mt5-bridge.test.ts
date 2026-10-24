@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 import { executeAutoTrade, preserveEaName } from "../src/lib/auto-trade";
 import { mt5OrderComment } from "../src/lib/utils";
-import { bridgeSeries } from "./breakout-fixtures";
+import { pullbackSeries } from "./breakout-fixtures";
 
 /**
  * THE ORDER COMMENT MUST REACH THE BRIDGE UNCHANGED.
@@ -27,12 +27,14 @@ type Captured = { url: string; body: Record<string, unknown> };
 type BridgeReply = { status?: number; payload: Record<string, unknown> };
 
 /**
- * A live AUDUSD breakout: 20 completed bars in a 0.6500–0.6540 range, then a
- * completed bar closing at 0.6560. The quote below sits just above the range
- * high, so the breakout holds and the order is allowed to fire.
+ * A live AUDUSD market the ENTRY FILTER allows: a gentle drift, a pullback
+ * into the 20-candle average and a completed bullish candle. (A vertical
+ * breakout is refused now — that is the point of the filter — so these
+ * order-comment tests use a tradeable series.)
  */
-const QUOTE = { bid: 0.655, ask: 0.6552, digits: 5, point: 0.00001, stops_level: 0 };
-const CANDLES = bridgeSeries({ low: 0.65, high: 0.654, breakoutClose: 0.656 });
+const FIXTURE = pullbackSeries({ direction: "BUY", base: 0.655, forming: true });
+const QUOTE = { bid: FIXTURE.bid, ask: FIXTURE.ask, digits: 5, point: 0.00001, stops_level: 0 };
+const CANDLES = FIXTURE.candles;
 
 /**
  * Stub the bridge: /symbol/candles returns the breakout series, /symbol/price

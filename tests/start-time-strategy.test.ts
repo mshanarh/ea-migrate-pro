@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  MAX_EXTENSION_ATR,
   MOMENTUM_LOOKBACK,
   STOP_LOOKBACK,
   classifyNoTrade,
@@ -8,6 +9,7 @@ import {
   resolveTradeDirection,
   type BridgeCredentials,
 } from "../src/lib/auto-trade";
+import { pullbackSeries } from "./breakout-fixtures";
 
 /**
  * THE START-TIME STRATEGY — auto-trading's only decision engine on live data.
@@ -108,17 +110,26 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-/** 11 completed bars climbing 100 → 105. */
-const RISING = [100, 100.5, 101, 101.5, 102, 102.5, 103, 103.5, 104, 104.5, 105];
-/** The mirror image, 110 → 105. */
-const FALLING = [110, 109.5, 109, 108.5, 108, 107.5, 107, 106.5, 106, 105.5, 105];
+/**
+ * A tradeable BUY / SELL: a gentle drift inside 2 ATR of the 20-candle
+ * average, then a pullback bar and a completed candle closing with the trend.
+ * A straight vertical ramp is now REFUSED by the overextension filter — see
+ * the gate tests below.
+ */
+const BUY_FIXTURE = pullbackSeries({ direction: "BUY" });
+const SELL_FIXTURE = pullbackSeries({ direction: "SELL" });
+/** The same series with the still-forming bar a real bridge payload ends with. */
+const BUY_SERIES = pullbackSeries({ direction: "BUY", forming: true });
+const SELL_SERIES = pullbackSeries({ direction: "SELL", forming: true });
+/** The same live price level as BUY_SERIES, reading SELL — for the flip test. */
+const SELL_AT_BUY_PRICES = pullbackSeries({ direction: "SELL", base: 1.104, forming: true });
 /** Sideways chop that still ends 0.6 up — a range the old engine refused. */
 const CHOP = [101, 100, 101, 100, 101, 100, 101, 100, 101, 100, 100.6];
 
 describe("evaluateMomentum — the market picture at start time", () => {
   it("BUYs when the last 5 closes net up, with the 10-bar stop and 1×/2× targets", () => {
-    const candles = bars(RISING);
-    const result = evaluateMomentum({ candles, ask: 105.2, bid: 105.1 });
+    const { candles, closes, ask, bid } = BUY_FIXTURE;
+    const result = evaluateMomentum({ candles, ask, bid });
 
     expect(result.kind).toBe("signal");
     if (result.kind !== "signal") return;
@@ -126,9 +137,12 @@ describe("evaluateMomentum — the market picture at start time", () => {
 
     expect(plan.signal).toBe("BUY");
     expect(plan.setup.basis).toBe("last 5 closes");
-    expect(plan.setup.lastClose).toBe(105);
-    expect(plan.setup.referenceClose).toBe(RISING[RISING.length - 1 - MOMENTUM_LOOKBACK]);
-    expect(plan.setup.netMove).toBeCloseTo(2.5, 10);
+    expect(plan.setup.lastClose).toBe(closes[closes.length - 1]);
+    expect(plan.setup.referenceClose).toBe(closes[closes.length - 1 - MOMENTUM_LOOKBACK]);
+    expect(plan.setup.netMove).toBeCloseTo(
+      closes[closes.length - 1]! - closes[closes.length - 1 - MOMENTUM_LOOKBACK]!,
+      10,
+    );
     expect(plan.setup.stopBars).toBe(STOP_LOOKBACK);
 
     // SL sits BELOW the lowest low of the last 10 completed bars.
@@ -137,24 +151,31 @@ describe("evaluateMomentum — the market picture at start time", () => {
     expect(plan.sl).toBeLessThan(lowest);
 
     // Entry is the ask a BUY pays; TP1 = 1× the SL distance, TP2 = 2×.
-    expect(plan.entry).toBe(105.2);
+    expect(plan.entry).toBe(ask);
     const risk = plan.entry - plan.sl;
     expect(plan.tp1 - plan.entry).toBeCloseTo(risk, 10);
     expect(plan.tp2 - plan.entry).toBeCloseTo(risk * 2, 10);
     expect(plan.reason).toContain("TP1");
     expect(plan.reason).toContain("TP2");
+    // The card's measurement travels with the plan.
+    expect(plan.gate.direction).toBe("BUY");
+    expect(plan.gate.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
+    expect(plan.reason).toContain("Entry filter");
   });
 
   it("SELLs when the last 5 closes net down, SL above the 10-bar high", () => {
-    const candles = bars(FALLING);
-    const result = evaluateMomentum({ candles, ask: 105, bid: 104.9 });
+    const { candles, closes, ask, bid } = SELL_FIXTURE;
+    const result = evaluateMomentum({ candles, ask, bid });
 
     expect(result.kind).toBe("signal");
     if (result.kind !== "signal") return;
     const { plan } = result;
 
     expect(plan.signal).toBe("SELL");
-    expect(plan.setup.netMove).toBeCloseTo(-2.5, 10);
+    expect(plan.setup.netMove).toBeCloseTo(
+      closes[closes.length - 1]! - closes[closes.length - 1 - MOMENTUM_LOOKBACK]!,
+      10,
+    );
     const highest = Math.max(...candles.slice(-STOP_LOOKBACK).map((candle) => candle.high));
     expect(plan.setup.stopExtreme).toBe(highest);
     expect(plan.sl).toBeGreaterThan(highest);
@@ -177,18 +198,24 @@ describe("evaluateMomentum — the market picture at start time", () => {
   });
 
   it("hands flat closes to the live quote instead of defaulting a side", () => {
+    // The quote still decides the side (no default), and that side is what the
+    // filter measures. A zero-body candle cannot CONFIRM it, so the entry waits
+    // — the derivation itself is unchanged.
     const flat = Array<number>(11).fill(100);
+
     const up = evaluateMomentum({ candles: bars(flat), ask: 100.3, bid: 100.2 });
-    expect(up.kind).toBe("signal");
-    if (up.kind !== "signal") return;
-    expect(up.plan.signal).toBe("BUY");
-    expect(up.plan.setup.basis).toBe("live quote");
+    expect(up.kind).toBe("no-trade");
+    if (up.kind !== "no-trade") return;
+    expect(up.setup?.basis).toBe("live quote");
+    expect(up.gate?.direction).toBe("BUY");
+    expect(up.gate?.verdict).toBe("waiting-confirmation");
 
     vi.restoreAllMocks();
     const down = evaluateMomentum({ candles: bars(flat), ask: 99.8, bid: 99.7 });
-    expect(down.kind).toBe("signal");
-    if (down.kind !== "signal") return;
-    expect(down.plan.signal).toBe("SELL");
+    expect(down.kind).toBe("no-trade");
+    if (down.kind !== "no-trade") return;
+    expect(down.setup?.basis).toBe("live quote");
+    expect(down.gate?.direction).toBe("SELL");
   });
 
   it("skips a genuinely zero-flat market with \"market flat\"", () => {
@@ -213,7 +240,7 @@ describe("evaluateMomentum — the market picture at start time", () => {
   });
 
   it("refuses an invalid or zero price", () => {
-    const result = evaluateMomentum({ candles: bars(RISING), ask: 0, bid: 0 });
+    const result = evaluateMomentum({ candles: BUY_FIXTURE.candles, ask: 0, bid: 0 });
 
     expect(result.kind).toBe("no-trade");
     if (result.kind !== "no-trade") return;
@@ -222,29 +249,95 @@ describe("evaluateMomentum — the market picture at start time", () => {
   });
 });
 
+describe("overextension filter — when an entry is allowed", () => {
+  it("skips a SELL into a completed drop that is more than 2 ATR below the average", () => {
+    // A vertical slide: 3.00 per bar, so the live price ends ~8 ATR below the
+    // 20-candle average. Selling here is selling the bottom of the move.
+    const dropCloses = Array.from({ length: 21 }, (_, index) => 130 - index * 3);
+    const result = evaluateMomentum({ candles: bars(dropCloses, 0.5), ask: 69.9, bid: 69.8 });
+
+    expect(result.kind).toBe("no-trade");
+    if (result.kind !== "no-trade") return;
+    expect(result.gate?.direction).toBe("SELL");
+    expect(result.gate?.verdict).toBe("too-extended");
+    expect(result.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
+    expect(result.reason).toContain("move too extended, waiting for pullback");
+    expect(result.reason).toContain("trend SELL");
+    expect(result.reason).toContain("extension");
+    expect(result.reason).toContain("ATR");
+    expect(classifyNoTrade(result.reason)).toBe("waiting for pullback");
+  });
+
+  it("skips a BUY at the top of a completed rally the same way", () => {
+    const rallyCloses = Array.from({ length: 21 }, (_, index) => 70 + index * 3);
+    const result = evaluateMomentum({ candles: bars(rallyCloses, 0.5), ask: 130.2, bid: 130.1 });
+
+    expect(result.kind).toBe("no-trade");
+    if (result.kind !== "no-trade") return;
+    expect(result.gate?.direction).toBe("BUY");
+    expect(result.gate?.verdict).toBe("too-extended");
+    expect(result.gate!.extensionAtr).toBeGreaterThan(MAX_EXTENSION_ATR);
+  });
+
+  it("waits for a pullback when price is still at the recent extreme", () => {
+    // Gentle drift (well inside 2 ATR) but the live price sits on the high —
+    // there is no pullback to enter on yet.
+    const closes = Array.from({ length: 21 }, (_, index) => 1.1 + index * 0.00008);
+    const result = evaluateMomentum({ candles: bars(closes, 0.0004), ask: 1.10205, bid: 1.10195 });
+
+    expect(result.kind).toBe("no-trade");
+    if (result.kind !== "no-trade") return;
+    expect(result.gate?.direction).toBe("BUY");
+    expect(result.gate!.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
+    expect(result.gate?.verdict).toBe("waiting-pullback");
+    expect(result.reason).toContain("waiting for pullback");
+  });
+
+  it("waits for a completed candle that confirms the side", () => {
+    // A pullback is there, but the newest COMPLETED candle closed UP while the
+    // signal is SELL — the entry waits for a finished bearish candle.
+    const closes = [
+      1.102, 1.1018, 1.1016, 1.1014, 1.1012, 1.101, 1.1008, 1.1006, 1.1004, 1.1002,
+      1.1, 1.0998, 1.0996, 1.0994, 1.0992, 1.099, 1.0988, 1.0986, 1.0984, 1.0982, 1.0986,
+    ];
+    const result = evaluateMomentum({ candles: bars(closes, 0.0004), ask: 1.0987, bid: 1.0986 });
+
+    expect(result.kind).toBe("no-trade");
+    if (result.kind !== "no-trade") return;
+    expect(result.gate?.direction).toBe("SELL");
+    expect(result.gate?.confirmed).toBe(false);
+    expect(result.gate?.verdict).toBe("waiting-confirmation");
+    expect(result.reason).toContain("waiting for confirmation");
+  });
+});
+
 describe("resolveTradeDirection — live start-time decision", () => {
   it("returns the side, its setup and TP1/TP2 for the order", async () => {
-    stubBridge([bridgeSeries(RISING)], { bid: 105.1, ask: 105.2 });
+    stubBridge([BUY_SERIES.candles], { bid: BUY_SERIES.bid, ask: BUY_SERIES.ask });
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
     expect(result.direction.type).toBe("BUY");
     if (result.direction.type === "NO_TRADE") return;
-    expect(result.direction.entry).toBe(105.2);
+    expect(result.direction.entry).toBe(BUY_SERIES.ask);
     // The broker order carries TP1; TP2 rides alongside.
     expect(result.direction.tp).toBeCloseTo(result.direction.tp1!, 10);
     const risk = result.direction.entry - result.direction.sl;
     expect(result.direction.tp2! - result.direction.entry).toBeCloseTo(risk * 2, 10);
     expect(result.direction.rrRatio).toBeGreaterThan(0);
-    expect(result.setup?.lastClose).toBe(105);
+    expect(result.setup?.lastClose).toBe(BUY_SERIES.closes[BUY_SERIES.closes.length - 1]);
     expect(result.setup?.basis).toBe("last 5 closes");
     expect(result.strength).toBe("strong");
     expect(result.executionReady).toBe(true);
     expect(result.timeframe).toBe("15m");
+    // What the popup shows: trend and extension in ATR.
+    expect(result.gate?.direction).toBe("BUY");
+    expect(result.gate?.verdict).toBe("enter");
+    expect(result.gate?.extensionAtr).toBeLessThanOrEqual(MAX_EXTENSION_ATR);
   });
 
   it("SELLs a falling series", async () => {
-    stubBridge([bridgeSeries(FALLING)], { bid: 104.9, ask: 105 });
+    stubBridge([SELL_SERIES.candles], { bid: SELL_SERIES.bid, ask: SELL_SERIES.ask });
 
     const result = await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
@@ -259,15 +352,20 @@ describe("resolveTradeDirection — live start-time decision", () => {
     vi.spyOn(console, "log").mockImplementation((...args: unknown[]) => {
       logs.push(args.map(String).join(" "));
     });
-    stubBridge([bridgeSeries(RISING)], { bid: 105.1, ask: 105.2 });
+    stubBridge([BUY_SERIES.candles], { bid: BUY_SERIES.bid, ask: BUY_SERIES.ask });
 
     await resolveTradeDirection("XAUUSD", { credentials: CREDENTIALS });
 
+    const closes = BUY_SERIES.closes;
+    const reference = closes[closes.length - 1 - MOMENTUM_LOOKBACK]!;
+    const newest = closes[closes.length - 1]!;
     const decisionLines = logs.filter((line) => line.includes("START 15m:"));
     expect(decisionLines).toHaveLength(1);
-    expect(decisionLines[0]).toContain("closes 102.5 → 105");
-    expect(decisionLines[0]).toContain("net move +2.5");
-    expect(decisionLines[0]).toContain("price 105.2");
+    expect(decisionLines[0]).toContain(`closes ${reference} → ${newest}`);
+    expect(decisionLines[0]).toContain(`price ${BUY_SERIES.ask}`);
+    // The measurement is on the same line — extension in ATR(14).
+    expect(decisionLines[0]).toContain("extension");
+    expect(decisionLines[0]).toContain("ATR");
     expect(decisionLines[0]).toContain("BUY");
   });
 });
@@ -298,7 +396,10 @@ describe("executeAutoTrade — start-time entry and the batch direction re-check
   it("stops the remaining orders when the direction flips between them", async () => {
     // Order 1 reads a rising series (BUY); by order 2 the broker serves a
     // falling one (SELL) — the batch must stop, not fire the other way.
-    const captured = stubBridge([bridgeSeries(RISING), bridgeSeries(FALLING)], { bid: 105.1, ask: 105.2 });
+    const captured = stubBridge(
+      [BUY_SERIES.candles, SELL_AT_BUY_PRICES.candles],
+      { bid: BUY_SERIES.bid, ask: BUY_SERIES.ask },
+    );
 
     const results = await executeAutoTrade({
       symbol: "XAUUSD",

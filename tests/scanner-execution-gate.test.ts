@@ -7,7 +7,7 @@ import {
   resolveTradeDirection,
 } from "../src/lib/auto-trade";
 import type { BridgeCredentials } from "../src/lib/auto-trade";
-import { bridgeSeries, type Candle } from "./breakout-fixtures";
+import { bridgeSeries, pullbackSeries, type Candle } from "./breakout-fixtures";
 
 /**
  * WHY THESE TESTS EXIST — "AUTO-TRADING GIVES AN ERROR ON EVERY SYMBOL".
@@ -299,11 +299,13 @@ describe("Direction safety and order shape", () => {
     const scan = await analyzeMarket({ symbol: "US30", timeframe: "1h" });
     expect(scan.analysis!.signal).toBe("SELL");
 
+    // A TRADEABLE falling series: a gentle drift, a bounce into the average
+    // and a completed bearish candle — what the entry filter requires. A
+    // vertical drop is refused, so it cannot be used to test the order shape.
+    const fixture = pullbackSeries({ direction: "SELL", base: 42150, forming: true });
     const captured = stubBridge({
-      // A completed 15m bar closes at 42160, below the 42200–42300 range, and
-      // the live bid (42148) is still under the range low.
-      candles: { US30: breakout("SELL", 42200, 42300) },
-      quote: pinnedQuote("US30"),
+      candles: { US30: fixture.candles },
+      quote: { success: true, bid: fixture.bid, ask: fixture.ask, digits: 1, point: 0.1, stops_level: 0 },
     });
     const results = await executeAutoTrade({
       symbol: "US30",
@@ -318,7 +320,7 @@ describe("Direction safety and order shape", () => {
     const order = captured.find((request) => request.url.endsWith("/trade/execute"))!;
     expect(order.body["action"], "the detected direction must be what MT5 receives").toBe("SELL");
     // SELL: stop-loss ABOVE the live price, take-profit BELOW it.
-    const liveBid = 42148.0;
+    const liveBid = fixture.bid;
     expect(Number(order.body["stop_loss"])).toBeGreaterThan(liveBid);
     expect(Number(order.body["take_profit"])).toBeLessThan(liveBid);
   });
@@ -328,10 +330,12 @@ describe("Direction safety and order shape", () => {
     expect(analysis.direction.type).toBe("BUY");
     expect(analysis.executionReady).toBe(true);
 
+    // A TRADEABLE rising series: a gentle drift, a dip back toward the average
+    // and a completed bullish candle.
+    const fixture = pullbackSeries({ direction: "BUY", base: 2650, forming: true });
     const captured = stubBridge({
-      // A completed 15m bar closes at 2645, above the 2600–2640 range.
-      candles: { XAUUSD: breakout("BUY", 2600, 2640) },
-      quote: pinnedQuote("XAUUSD"),
+      candles: { XAUUSD: fixture.candles },
+      quote: { success: true, bid: fixture.bid, ask: fixture.ask, digits: 2, point: 0.01, stops_level: 0 },
     });
     const results = await executeAutoTrade({
       symbol: "XAUUSD",
@@ -341,12 +345,12 @@ describe("Direction safety and order shape", () => {
       credentials: CREDENTIALS,
     });
 
-    expect(results[0]!.status).toBe("executed");
+    expect(results[0]!.status, results[0]!.message).toBe("executed");
     expect(results[0]!.side).toBe("BUY");
     const order = captured.find((request) => request.url.endsWith("/trade/execute"))!;
     expect(order.body["action"]).toBe("BUY");
     // BUY: stop-loss BELOW the live price, take-profit ABOVE it.
-    const liveAsk = 2650.0;
+    const liveAsk = fixture.ask;
     expect(Number(order.body["stop_loss"])).toBeLessThan(liveAsk);
     expect(Number(order.body["take_profit"])).toBeGreaterThan(liveAsk);
   });
@@ -355,9 +359,20 @@ describe("Direction safety and order shape", () => {
     // The old guard compared the analysis price with the broker quote using an
     // ABSOLUTE tolerance of 0.0005 — a live AUDUSD seven big-hands away was
     // refused as "Market moved against setup" on every attempt.
+    // The execution quote is a REAL second round trip to the bridge; it is no
+    // longer compared against the analysis price in absolute pips, only the
+    // analysis' own age is checked.
+    const fixture = pullbackSeries({ direction: "BUY", base: 0.7014, forming: true });
     stubBridge({
-      candles: { AUDUSD: breakout("BUY", 0.69, 0.7) },
-      quote: { success: true, bid: 0.7012, ask: 0.7015, digits: 5, point: 0.00001, stops_level: 0 },
+      candles: { AUDUSD: fixture.candles },
+      quote: {
+        success: true,
+        bid: fixture.bid,
+        ask: fixture.ask,
+        digits: 5,
+        point: 0.00001,
+        stops_level: 0,
+      },
     });
 
     const results = await executeAutoTrade({
