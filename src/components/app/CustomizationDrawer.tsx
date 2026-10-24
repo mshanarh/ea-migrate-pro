@@ -213,7 +213,10 @@ export function CustomizationPanel() {
               >
                 <span
                   className="if-chip flex size-12 shrink-0 items-center justify-center rounded-xl text-xl font-black"
-                  style={{ fontFamily: fontStack(option.id) }}
+                  /* Drawn in its own face on purpose — the app font rule has
+                     this single exception so the choice stays legible. */
+                  data-font-sample
+                  style={{ "--font-sample": fontStack(option.id) } as React.CSSProperties}
                 >
                   Aa
                 </span>

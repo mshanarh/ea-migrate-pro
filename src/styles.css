@@ -1,8 +1,18 @@
 /* EA Migrate app theme fonts — must precede all rules */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400..900&family=Space+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;700&family=Orbitron:wght@400..900&family=Rajdhani:wght@400..700&family=Audiowide&family=Michroma&family=Teko:wght@400..700&family=Syncopate:wght@400;700&family=Cinzel:wght@400..900&family=Major+Mono+Display&family=Bruno+Ace+SC&family=Russo+One&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400..900&family=Space+Grotesk:wght@400..700&family=JetBrains+Mono:wght@400;700&family=Orbitron:wght@400..900&family=Rajdhani:wght@400..700&family=Audiowide&family=Michroma&family=Teko:wght@400..700&family=Syncopate:wght@400;700&family=Cinzel:wght@400..900&family=Major+Mono+Display&family=Bruno+Ace+SC&family=Russo+One&family=Rubik+Glitch&display=swap");
 @import "tailwindcss" source(none);
 @source "../src";
 @import "tw-animate-css";
+
+/* ── THE APP FONT ──────────────────────────────────────────────────────
+   The Settings font picker publishes the chosen face here as a full stack
+   (src/lib/app-customization.ts → applyFontStack). Every element reads it,
+   so a font change reaches text on every screen and every interface style.
+   `display=swap` on the Google Fonts import above means text paints in the
+   fallback immediately and swaps in — it never flashes invisible. */
+:root {
+  --app-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -317,6 +327,26 @@ html.light-mode .hero-glow {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   ONE FONT FOR THE WHOLE APP — THE USER'S, ON EVERY INTERFACE STYLE
+   ══════════════════════════════════════════════════════════════════════
+   Unlayered on purpose: an interface definition, a Tailwind `font-mono`
+   utility, a `font-family` baked into a heading or the browser's default on
+   form controls must all yield to the selected font. Without the `!important`
+   an inline style (or a higher-specificity rule) could still win, which is
+   exactly how some interface styles kept their own typeface.
+
+   `data-font-sample` is the ONE exception: the Settings pickers render each
+   option in its own face, otherwise every preview would look identical and
+   the picker would be useless. It sets `--font-sample` inline. */
+body,
+body * {
+  font-family: var(--app-font) !important;
+}
+[data-font-sample] {
+  font-family: var(--font-sample, var(--app-font)) !important;
+}
+
 #root,
 [data-slot="router-outlet"],
 [data-viewport] {
@@ -583,9 +613,10 @@ html[data-if-styled] .if-header-rule.if-header-rule {
   padding-bottom: 0.4rem;
 }
 
-/* Numbers: monospace studio figures where the interface asks for them. */
+/* Numbers: tabular figures in the USER'S font. Interfaces no longer supply a
+   typeface of their own — the font choice wins on every style. */
 html[data-if-styled] .if-num.if-num {
-  font-family: var(--if-number-font);
+  font-family: var(--app-font);
   font-variant-numeric: tabular-nums;
 }
 
@@ -721,7 +752,8 @@ html.platform-ios body {
 
 /* Platform utilities — components opt in with these classes. */
 @utility plat-title {
-  font-family: var(--plat-font-display);
+  /* The interface's title metrics, in the USER'S font — never a hardcoded face. */
+  font-family: var(--app-font);
   font-size: clamp(var(--plat-title-size), 7vw, calc(var(--plat-title-size) + 6px));
   line-height: 1.12;
   letter-spacing: -0.01em;

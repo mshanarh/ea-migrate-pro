@@ -72,6 +72,11 @@ export const FONT_OPTIONS = [
   { id: "Major Mono Display", name: "Major Mono Display", description: "Brutalist Mono", pro: true },
   { id: "Bruno Ace SC", name: "Bruno Ace SC", description: "Hyper Modern", pro: true },
   { id: "Russo One", name: "Russo One", description: "Heavy Display", pro: true },
+  {
+    id: "Rubik Glitch",
+    name: "Rubik Glitch",
+    description: "Glitched Display",
+  },
 ] as const;
 
 export type InterfaceThemeId = (typeof INTERFACE_THEMES)[number]["id"];
@@ -111,8 +116,30 @@ export function accentColorValue(id: string): string {
   return (ACCENT_COLORS.find((color) => color.id === id) ?? ACCENT_COLORS[1]).value;
 }
 
+/**
+ * THE WHOLE-APP FONT — ONE STACK, PUBLISHED AS A CSS VARIABLE.
+ *
+ * Every element in the app reads `--app-font` (see the font block in
+ * styles.css), so the Settings choice reaches headers, body copy, numbers, the
+ * bottom nav and the popups on EVERY interface style. Interface definitions no
+ * longer carry a typeface of their own: a theme supplies colour, shape and
+ * layout, the user supplies the font. The only face that may override the
+ * choice is the choice itself (Rubik Glitch included, once it is picked).
+ */
+export const APP_FONT_VAR = "--app-font";
+
 export function fontStack(id: string): string {
-  return `'${id}', system-ui, sans-serif`;
+  return `'${id}', system-ui, -apple-system, "Segoe UI", sans-serif`;
+}
+
+/** Publish the selected font to <html>; safe to call on every render/effect. */
+export function applyFontStack(id: string): string {
+  const stack = fontStack(id);
+  if (typeof document !== "undefined") {
+    document.documentElement.style.setProperty(APP_FONT_VAR, stack);
+    document.documentElement.setAttribute("data-app-font", id);
+  }
+  return stack;
 }
 
 type Customization = {

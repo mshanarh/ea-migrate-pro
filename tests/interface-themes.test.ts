@@ -85,7 +85,11 @@ describe("interface definitions", () => {
     expect(interfaceDefinitionFor("QUANTUM BLUE")!.navStyle).toBe("glass-bar");
     expect(interfaceDefinitionFor("QUANTUM BLUE")!.glass).toBe(true);
     expect(interfaceDefinitionFor("DARKWEB AI")!.navStyle).toBe("outlined-pill");
-    expect(interfaceDefinitionFor("DARKWEB AI")!.numbers.font).toContain("monospace");
+    // Numbers keep tabular figures, but NOT a typeface of their own: the
+    // Settings font choice is authoritative on every interface style (see
+    // tests/fonts.test.ts), so Darkweb AI inherits it instead of forcing mono.
+    expect(interfaceDefinitionFor("DARKWEB AI")!.numbers.font).toBe("inherit");
+    expect(interfaceDefinitionFor("DARKWEB AI")!.numbers.tabular).toBe(true);
     expect(interfaceDefinitionFor("SUPREME EQUINOX")!.navStyle).toBe("circle-dock");
     expect(interfaceDefinitionFor("ULTRON MEGA")!.navStyle).toBe("square-tiles");
     expect(interfaceDefinitionFor("ULTRON MEGA")!.borderWidth).toBe("2px");

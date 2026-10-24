@@ -128,7 +128,7 @@ function Mt5Logo() {
       <circle cx="33" cy="57" r="19" fill="url(#mt5-gold)" />
       <circle cx="63" cy="57" r="19" fill="url(#mt5-blue)" />
       <circle cx="48" cy="46" r="21" fill="url(#mt5-silver)" />
-      <text x="48" y="47" textAnchor="middle" dominantBaseline="central" fontSize="30" fontWeight="900" fontFamily="Arial, sans-serif" fill="#3c4350" stroke="#ffffff" strokeWidth="0.6">5</text>
+      <text x="48" y="47" textAnchor="middle" dominantBaseline="central" fontSize="30" fontWeight="900" fill="#3c4350" stroke="#ffffff" strokeWidth="0.6">5</text>
     </svg>
   );
 }

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { useCustomization } from "@/lib/app-customization";
+import { applyFontStack, useCustomization } from "@/lib/app-customization";
 import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interface-themes";
 
 /**
@@ -16,12 +16,20 @@ import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interfac
  * console line) shows exactly which definition the real UI is reading.
  */
 export function InterfaceThemeSync() {
-  const { theme } = useCustomization();
+  const { theme, font } = useCustomization();
   const definition = interfaceDefinitionFor(theme);
 
   useEffect(() => {
     applyInterfaceDefinition(definition);
   }, [definition]);
+
+  // THE USER'S FONT WINS ON EVERY INTERFACE STYLE. Publishing it as a variable
+  // (instead of per-component inline styles) is what makes a font change
+  // reach text no single screen owns — nav labels, popups, numbers — with no
+  // reload, and it survives switching CRIMSON NAVIGATOR → ULTRON MEGA.
+  useEffect(() => {
+    applyFontStack(font);
+  }, [font]);
 
   if (!definition) return null;
 

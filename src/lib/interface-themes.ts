@@ -70,7 +70,11 @@ export type InterfaceDefinition = {
     rule?: boolean;
   };
   numbers: {
-    /** Font stack for prices/numbers — "inherit" follows the user's font. */
+    /**
+     * Font stack for prices/numbers. Interface definitions do NOT bring a
+     * typeface any more — the Settings font choice is authoritative on every
+     * style, so this stays "inherit" (kept as a token for tabular figures).
+     */
     font: string;
     tabular: boolean;
   };
@@ -89,7 +93,6 @@ export type InterfaceDefinition = {
   navBlur?: string;
 };
 
-const MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace';
 const INHERIT = "inherit";
 
 export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
@@ -264,7 +267,7 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     text: "#F2F5F8",
     muted: "rgba(242,245,248,0.42)",
     header: { weight: 700, tracking: "0.18em", transform: "uppercase", size: "1.45rem" },
-    numbers: { font: MONO, tabular: true },
+    numbers: { font: INHERIT, tabular: true },
     decor: "grid",
     navStyle: "outlined-pill",
     navBg: "rgba(0,0,0,0.96)",

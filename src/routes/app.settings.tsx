@@ -226,7 +226,10 @@ function FontSection({ accent }: { accent: string }) {
           <span className="min-w-0 flex-1">
             <span
               className="block truncate text-2xl font-bold text-white"
-              style={{ fontFamily: fontStack(option.id) }}
+              /* The picker's ONE intentional exception to the app font: each
+                 option is drawn in its own face so the choice is visible. */
+              data-font-sample
+              style={{ "--font-sample": fontStack(option.id) } as React.CSSProperties}
             >
               {option.name}
             </span>

@@ -50,7 +50,7 @@ function RobotHeading({ robot, accent }: { robot: Robot | undefined; accent: str
       </p>
       <h1
         className="mx-auto mt-3 max-w-[22rem] break-words text-4xl font-black uppercase leading-[0.98] text-white sm:text-5xl"
-        style={{ fontFamily: "'Teko', 'Arial Black', sans-serif", textShadow: "0 2px 0 rgba(255,255,255,.18)" }}
+        style={{ textShadow: "0 2px 0 rgba(255,255,255,.18)" }}
       >
         {robot?.name ?? "YOUR ROBOT"}
       </h1>

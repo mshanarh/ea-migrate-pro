@@ -74,7 +74,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
         className="flex flex-col items-center rounded-[28px] px-4 pb-2 pt-1"
       >
-        <h2 className="max-w-full truncate px-2 text-center text-sm font-bold" style={{ color: accent, fontFamily: "'Montserrat', sans-serif" }}>
+        <h2 className="max-w-full truncate px-2 text-center text-sm font-bold" style={{ color: accent }}>
           {eaName}
         </h2>
 
@@ -88,7 +88,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
         <p className="mt-5 font-sans text-base font-medium text-white">Your Trading With</p>
         <h1
           className="mx-auto mt-1 max-w-full break-words px-2 text-center text-[34px] font-black leading-tight tracking-wide text-white uppercase"
-          style={{ fontFamily: "'Montserrat', sans-serif", textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
+          style={{ textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
         >
           {eaName}
         </h1>
@@ -136,7 +136,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                 {selected && (
                   <span
                     className="relative px-4 text-center text-base font-black uppercase tracking-wide"
-                    style={{ color: accent, textShadow: `0 0 14px ${accent}, 0 2px 10px rgba(0,0,0,0.9)`, fontFamily: "'Montserrat', sans-serif" }}
+                    style={{ color: accent, textShadow: `0 0 14px ${accent}, 0 2px 10px rgba(0,0,0,0.9)` }}
                   >
                     {candidate.name}
                   </span>
