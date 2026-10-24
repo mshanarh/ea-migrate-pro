@@ -11,7 +11,7 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { saveMt5Credentials } from "@/lib/mt5-bridge.server";
 import { friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, BRIDGE_URL } from "@/lib/bridge-client";
+import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
 import { syncDeleteMt5Account, syncGetMt5Account } from "@/lib/account-sync.server";
 import { brokerLogoUrl, companyFromBridgeReply, serverFromBridgeReply } from "@/lib/broker-identity";
 
@@ -457,7 +457,7 @@ function AppMetatrader() {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 15_000);
     try {
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+      const response = await fetch(`${getBridgeUrl()}/account/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
         body: JSON.stringify({ login: Number(login) || login, password: pass, server: srv }),
@@ -705,7 +705,7 @@ function AppMetatrader() {
       // Direct browser → bridge verification: the static production build has
       // no server functions, so this goes to the bridge exactly like trade
       // execution does.
-      const response = await fetch(`${BRIDGE_URL}/account/verify`, {
+      const response = await fetch(`${getBridgeUrl()}/account/verify`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
         body: JSON.stringify({
@@ -759,8 +759,11 @@ function AppMetatrader() {
           (equity !== null ? ` · Equity: ${fmt(equity)}` : "") +
           " — ready to execute.",
       );
-    } catch {
-      const message = "Could not reach the bridge — check your connection and try again.";
+    } catch (error) {
+      // The address being called is part of the message — "Failed to fetch"
+      // alone cannot tell a dead tunnel from a network problem.
+      console.warn(`[metatrader] bridge verify failed at ${getBridgeUrl()}/account/verify`, error);
+      const message = bridgeUnreachableMessage(error instanceof Error ? error.message : undefined);
       setErrorMessage(message);
       toast.error(message);
     } finally {

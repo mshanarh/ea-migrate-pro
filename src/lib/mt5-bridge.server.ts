@@ -1,9 +1,13 @@
 import { createServerFn } from "@tanstack/react-start";
 import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/lib/account-sync.server";
 
+// Server-side calls use the private env var; the fallback is the bridge's
+// current quick-tunnel address (the browser resolves the same address at
+// runtime through /api/bridge-config — see src/lib/bridge-client.ts).
 const BRIDGE_URL =
   process.env["MT5_BRIDGE_URL"] ||
-  "https://camping-geology-operates-consistency.trycloudflare.com";
+  process.env["VITE_MT5_BRIDGE_URL"] ||
+  "https://eating-investors-geometry-loans.trycloudflare.com";
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
 /** Hard cap on any single bridge request — a dead bridge must fail FAST with
  *  a clear message, never hang the scanner on "EXECUTING" forever. */

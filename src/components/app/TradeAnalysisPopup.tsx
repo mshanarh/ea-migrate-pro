@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { BRIDGE_URL } from "@/lib/bridge-client";
+import { getBridgeUrl } from "@/lib/bridge-client";
 import { formatLot, formatPrice, type ExecutionSide } from "@/lib/execution-events";
 import { recordExecutionResult, useExecutionState } from "@/lib/execution-state";
 import { useAppState } from "@/lib/app-store";
@@ -48,13 +48,20 @@ const BRIDGE_POLL_MS = 20_000;
  * the READY chip never pretends to know more than it does.
  */
 async function readBridgeOnline(): Promise<boolean> {
+  const url = getBridgeUrl();
   try {
-    const response = await fetch(`${BRIDGE_URL}/health`, { cache: "no-store" });
+    const response = await fetch(`${url}/health`, { cache: "no-store" });
     if (!response.ok) return false;
     const payload = (await response.json().catch(() => null)) as { status?: string } | null;
     const status = (payload?.status ?? "").toLowerCase();
     return status === "online" || status === "ok";
-  } catch {
+  } catch (error) {
+    // Say WHICH address was polled — a stale URL and an offline bridge look
+    // identical from the UI otherwise.
+    console.warn(
+      `[bridge] health check failed at ${url}/health:`,
+      error instanceof Error ? error.message : error,
+    );
     return false;
   }
 }

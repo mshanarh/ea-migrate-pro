@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { createFileRoute, redirect } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
-import { Check, RotateCcw, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
+import { Check, RadioTower, RotateCcw, ShieldCheck, ShieldOff, UserCheck, UserX } from "lucide-react";
 import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
@@ -10,6 +10,7 @@ import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from 
 import { supabaseConfigured } from "@/lib/supabase";
 import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin } from "@/lib/supabase.server";
 import { setAdminActor, setUserPaid as writePaymentLedger } from "@/lib/admin-store";
+import { getBridgeUrl, setBridgeUrl } from "@/lib/bridge-client";
 import type { UserRow } from "@/lib/supabase";
 
 /**
@@ -291,6 +292,8 @@ function AppAdmin() {
         </div>
       </div>
 
+      <BridgeUrlPanel actorEmail={app.email ?? ""} />
+
       {error && (
         <div className="mt-6 rounded-2xl border border-red-400/30 bg-red-400/10 p-4 text-sm text-red-200">
           {error}
@@ -341,6 +344,126 @@ function AppAdmin() {
       <DraggableBotPopup />
     </>
   );
+}
+
+/**
+ * THE TRADING BRIDGE'S ADDRESS — editable here, applied without a redeploy.
+ *
+ * The bridge runs behind a cloudflared quick tunnel whose hostname changes on
+ * every restart. It used to be a build-time constant in the app, so a new
+ * tunnel meant a code change and a deploy before any quote or order could go
+ * through again. The address now lives in KV (`/api/bridge-config`) and the app
+ * reads it at start-up; saving here re-points every device at the new tunnel on
+ * its next launch.
+ */
+function BridgeUrlPanel({ actorEmail }: { actorEmail: string }) {
+  const [value, setValue] = useState(getBridgeUrl());
+  const [saved, setSaved] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const reply = await fetch("/api/bridge-config", { cache: "no-store", headers: { accept: "application/json" } });
+        const payload = (await reply.json().catch(() => null)) as { ok?: boolean; url?: unknown } | null;
+        if (cancelled) return;
+        if (payload && payload.ok === true && typeof payload.url === "string" && payload.url.trim()) {
+          setValue(payload.url.trim());
+          setSaved(payload.url.trim());
+          setNote(null);
+          return;
+        }
+        if (!reply.ok) setNote("Bridge settings store is unavailable — this device keeps its current address.");
+      } catch {
+        if (!cancelled) setNote("Bridge settings store is unreachable — this device keeps its current address.");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const save = async () => {
+    if (!actorEmail.trim()) {
+      toast.error("Sign in as an admin to change the bridge address.");
+      return;
+    }
+    setBusy(true);
+    setNote(null);
+    try {
+      const reply = await fetch("/api/bridge-config", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-admin-email": actorEmail },
+        body: JSON.stringify({ url: value.trim() }),
+      });
+      const payload = (await reply.json().catch(() => null)) as { ok?: boolean; url?: unknown; error?: string } | null;
+      if (!reply.ok || !payload || payload.ok !== true) {
+        toast.error(payload?.error ?? "Could not save the bridge address.");
+        setNote("Save refused by the server — nothing changed.");
+        return;
+      }
+      const url = typeof payload.url === "string" ? payload.url : normalizeBridgeInput(value);
+      const applied = setBridgeUrl(url);
+      if (applied) {
+        setValue(applied);
+        setSaved(applied);
+      }
+      toast.success("Bridge address saved — devices pick it up on their next launch.");
+    } catch {
+      toast.error("Bridge settings store is unreachable — nothing changed.");
+      setNote("Bridge settings store is unreachable — nothing changed.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <section className="panel mt-6 p-5">
+      <div className="flex items-start gap-3">
+        <span className="flex size-10 shrink-0 items-center justify-center rounded-2xl bg-primary/15 text-primary">
+          <RadioTower className="size-5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-bold">Trading bridge</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            The address the app calls for prices, candles and orders. The tunnel hostname changes whenever
+            cloudflared restarts — paste the new one here and it applies to every device on its next launch, no deploy
+            needed.
+          </p>
+        </div>
+      </div>
+      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
+        <input
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="https://your-tunnel.trycloudflare.com"
+          spellCheck={false}
+          autoCapitalize="off"
+          autoCorrect="off"
+          className="h-12 min-w-0 flex-1 rounded-2xl border border-white/12 bg-white/[0.04] px-4 font-mono text-xs outline-none placeholder:text-white/25 focus:border-primary/60"
+        />
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={busy || !value.trim()}
+          className="h-12 shrink-0 rounded-2xl bg-primary px-5 text-xs font-black uppercase text-primary-foreground disabled:opacity-60"
+        >
+          {busy ? "Saving…" : "Save address"}
+        </button>
+      </div>
+      {note && <p className="mt-2 text-xs leading-relaxed text-amber-300">{note}</p>}
+      <p className="mt-2 text-[11px] text-muted-foreground">
+        In use now: <span className="font-mono text-white/70">{saved ?? getBridgeUrl()}</span>
+      </p>
+    </section>
+  );
+}
+
+/** The same http(s) rule the endpoint applies, so the UI shows what was stored. */
+function normalizeBridgeInput(input: string): string {
+  return input.trim().replace(/\/+$/, "");
 }
 
 /**

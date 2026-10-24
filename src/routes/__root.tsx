@@ -117,6 +117,7 @@ import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
 import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
+import { loadBridgeConfig } from "@/lib/bridge-client";
 import { speakTradeExecution } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -260,6 +261,14 @@ function RootComponent() {
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
     applyColourMatrixFromStorage();
+  }, []);
+
+  // READ THE BRIDGE'S CURRENT ADDRESS once per app start. The tunnel hostname
+  // changes whenever cloudflared restarts, so the address is an admin setting
+  // read at runtime (KV via /api/bridge-config) instead of a build constant.
+  // A missing endpoint or an offline start keeps the address already cached.
+  useEffect(() => {
+    void loadBridgeConfig();
   }, []);
 
   // DYNAMIC TRADE VOICE — one listener for the whole app.

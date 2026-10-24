@@ -16,7 +16,7 @@ import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "@/lib/bridge-client";
+import { BRIDGE_KEY, bridgeSymbolCandidates, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { verifyDirectionAgainstTrend } from "@/lib/auto-trade";
@@ -225,7 +225,7 @@ function AppScanner() {
       let brokerDigits: number | null = null;
       if (planStop > 0 || planTp > 0) {
         try {
-          const priceResponse = await fetch(`${BRIDGE_URL}/symbol/price`, {
+          const priceResponse = await fetch(`${getBridgeUrl()}/symbol/price`, {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
             body: JSON.stringify({ credentials, symbol }),
@@ -277,7 +277,7 @@ function AppScanner() {
       setExecutionStage(`Executing ${total} trades one by one...`);
 
       const executeOnce = async (symbol: string): Promise<Record<string, unknown>> => {
-        const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
+        const response = await fetch(`${getBridgeUrl()}/trade/execute`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -481,7 +481,7 @@ function AppScanner() {
             // one clear error instead of firing N identical failures.
             lastError =
               error instanceof TypeError
-                ? "Could not reach the execution bridge — check your connection and try again."
+                ? bridgeUnreachableMessage()
                 : (error instanceof Error ? error.message : "Execution failed.");
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
@@ -591,7 +591,7 @@ function AppScanner() {
     } catch (error) {
       const message =
         error instanceof TypeError
-          ? "Could not reach the execution bridge — check your connection and try again."
+          ? bridgeUnreachableMessage()
           : (error instanceof Error ? error.message : "Could not reach the execution service.");
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {

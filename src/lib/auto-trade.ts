@@ -1,5 +1,5 @@
 import type { Position, TradeSignal } from "@/types/trading";
-import { BRIDGE_KEY, BRIDGE_URL, bridgeSymbolCandidates } from "./bridge-client";
+import { BRIDGE_KEY, bridgeHost, bridgeSymbolCandidates, getBridgeUrl } from "./bridge-client";
 import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
 import { recordTrade } from "./trade-history";
 import { mt5OrderComment } from "./utils";
@@ -293,7 +293,7 @@ async function fetchBridgeCandlesResult(
     attempt,
   };
   try {
-    const response = await fetch(BRIDGE_URL + "/symbol/candles", {
+    const response = await fetch(getBridgeUrl() + "/symbol/candles", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -339,7 +339,10 @@ async function fetchBridgeCandlesResult(
     }
     return { failure: "unavailable", detail: describeCandleResponse(summary), summary };
   } catch (error) {
-    const detail = (error as Error)?.message || "bridge unreachable";
+    // THE ADDRESS IS PART OF THE FAILURE. "Failed to fetch" alone cannot tell
+    // a dead tunnel (the URL moved) from a broker problem, and the card shows
+    // this detail verbatim.
+    const detail = `${(error as Error)?.message || "bridge unreachable"} (bridge ${bridgeHost()})`;
     summary.error = detail;
     console.warn(`[auto-trade] candles → ${describeCandleAttempt(summary)}`);
     return { failure: "unreachable", detail, summary };
@@ -433,7 +436,7 @@ function computeMomentum(closes: number[], lookback: number = 10): number | null
  */
 async function fetchLiveBrokerQuoteFromBridge(symbol: string, credentials: { login: number; password: string; server: string }): Promise<{ symbol: string; ask: number; bid: number; spread: number; timestamp: number; isFresh: boolean } | null> {
   try {
-    const response = await fetch(BRIDGE_URL + "/symbol/price", {
+    const response = await fetch(getBridgeUrl() + "/symbol/price", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -1753,7 +1756,7 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
   try {
-    const response = await fetch(`${BRIDGE_URL}/symbol/price`, {
+    const response = await fetch(`${getBridgeUrl()}/symbol/price`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
       body: JSON.stringify({ credentials, symbol }),
@@ -1783,8 +1786,12 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
     return { quote: { symbol: resolvedSymbol, bid, ask, digits, point, minDistance } };
   } catch (error) {
     const message = (error as Error)?.message || "Broker unavailable";
-    console.warn(`[auto-trade] Failed to fetch live quote for ${symbol}: ${message}`);
-    return { failure: "unreachable", detail: message };
+    // The ADDRESS is part of the failure: a dead tunnel and a refused broker
+    // are different problems and must not read the same.
+    console.warn(
+      `[auto-trade] Failed to fetch live quote for ${symbol} from ${getBridgeUrl()}/symbol/price (${bridgeHost()}): ${message}`,
+    );
+    return { failure: "unreachable", detail: `${message} (bridge ${bridgeHost()})` };
   } finally {
     clearTimeout(timer);
   }
@@ -1799,7 +1806,7 @@ async function sendBridgeOrder(
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ORDER_TIMEOUT_MS);
   try {
-    const response = await fetch(`${BRIDGE_URL}/trade/execute`, {
+    const response = await fetch(`${getBridgeUrl()}/trade/execute`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
       body: JSON.stringify({

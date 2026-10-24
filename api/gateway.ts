@@ -62,6 +62,7 @@ const ROUTES: Record<string, () => Promise<HandlerModule>> = {
   "admin-approve": () => import("./_handlers/admin-approve.js"),
   "admin-backfill": () => import("./_handlers/admin-backfill.js"),
   "admin-users": () => import("./_handlers/admin-users.js"),
+  "bridge-config": () => import("./_handlers/bridge-config.js"),
   "check-access": () => import("./_handlers/check-access.js"),
   "device/register": () => import("./_handlers/device/register.js"),
   "ea-media": () => import("./_handlers/ea-media.js"),
