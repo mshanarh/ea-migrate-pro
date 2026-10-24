@@ -51,6 +51,8 @@ export type ExecutionPlan = {
   entryGate?: string;
   /** What the filter measured, and why it entered or skipped. */
   entryReason?: string;
+  /** Which behaviour is running — shown on the card as SCALPER/NORMAL MODE. */
+  mode?: "scalper" | "normal";
 };
 
 export type ExecutionState = {

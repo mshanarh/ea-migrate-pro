@@ -34,10 +34,20 @@ const M15_MS = 15 * 60 * 1000;
 
 export type ScalpSymbol = { symbol: string; lotSize: number; maxTrades: number };
 
+/**
+ * SCALPER — open, take the profit, re-open, non-stop.
+ * NORMAL   — open on the same short-term direction and let SL/TP1/TP2 manage
+ *            it; it re-analyses on each NEW completed M15 candle, but it never
+ *            force-closes a winner early.
+ */
+export type BotMode = "scalper" | "normal";
+
 export type ScalpLoopOptions = {
   symbols: ScalpSymbol[];
   eaName: string;
   credentials: BridgeCredentials;
+  /** Which behaviour this run uses. Defaults to the scalper. */
+  mode?: BotMode;
 };
 
 export type ScalpLoopHandle = {
@@ -104,8 +114,11 @@ async function bridgePost<T>(path: string, body: unknown): Promise<{ ok: boolean
 
 export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const { symbols, eaName, credentials } = options;
+  const mode: BotMode = options.mode ?? "scalper";
   const tracks = new Map<string, Track>();
   const waitUntil = new Map<string, number>();
+  /** The M15 bucket each symbol was last analysed in (normal mode gating). */
+  const lastBucket = new Map<string, number>();
   const waitingNotice = new Set<string>();
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
@@ -232,6 +245,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       const forSymbol = positions.filter((position) => position.symbol.toUpperCase() === symbol.toUpperCase());
       const cap = Math.max(1, Math.floor(entry.maxTrades));
 
+      // ── NORMAL MODE — nothing to do while a position is open. SL/TP1/TP2
+      // are the broker's job, and a winner is never pulled early.
+      if (mode === "normal" && forSymbol.length > 0) continue;
+
       // ── An open position this loop owns: take the profit or leave it be.
       if (forSymbol.length > 0) {
         const position = forSymbol[0]!;
@@ -271,6 +288,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         );
         continue;
       }
+
+      // NORMAL MODE re-analyses once per NEW completed M15 candle — never on
+      // every poll, and never mid-candle.
+      const bucket = Math.floor(Date.now() / M15_MS);
+      if (mode === "normal" && lastBucket.get(symbol) === bucket) continue;
+      lastBucket.set(symbol, bucket);
 
       const holdUntil = waitUntil.get(symbol) ?? 0;
       if (Date.now() < holdUntil) {

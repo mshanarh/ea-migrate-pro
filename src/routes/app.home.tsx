@@ -23,7 +23,7 @@ import { usePlatform } from "@/lib/platform";
 import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
-import { startScalpLoop, type ScalpLoopHandle } from "@/lib/scalp-loop";
+import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -292,8 +292,6 @@ function WelcomeMaster() {
 
 /** Remembered bot mode — the last choice is the default next time. */
 const BOT_MODE_KEY = "eamp.botMode.v1";
-type BotMode = "scalper" | "normal";
-
 function readBotMode(): BotMode {
   try {
     const saved = window.localStorage.getItem(BOT_MODE_KEY);
@@ -670,8 +668,14 @@ function AppHome() {
     setModeOpen(true);
   };
 
-  /** SCALPER — trade, take the profit, re-analyse, open again, non-stop. */
-  const runScalper = (target: Robot) => {
+  /**
+   * BOTH MODES RUN THE SAME LOOP.
+   *   SCALPER — trade, take the profit, re-analyse, open again, non-stop.
+   *   NORMAL  — open on the same short-term direction and let the broker's
+   *             SL/TP manage it; re-analyses on each new M15 candle without
+   *             ever force-closing a winner.
+   */
+  const runBotLoop = (target: Robot, mode: BotMode) => {
     const pairs = (target.pairs ?? []).filter((pair) => pair.symbol?.trim());
     if (pairs.length === 0) {
       toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
@@ -685,7 +689,20 @@ function AppHome() {
       });
       return;
     }
-    setExecutionStage("Analysing the last 8 completed M15 candles...");
+    const totalTrades = pairs.reduce((sum, pair) => sum + safeTradeCount(pair.maxTrades), 0);
+    // THE CARD NAMES THE MODE, so the trader always knows what is running.
+    startExecution({
+      symbol: pairs[0]?.symbol?.trim() ?? "",
+      ...(Number.isFinite(Number(pairs[0]?.lotSize)) ? { lotSize: Number(pairs[0]?.lotSize) } : {}),
+      totalTrades,
+      robotName: target.name,
+      mode,
+    });
+    setExecutionStage(
+      mode === "scalper"
+        ? "Scalper mode — analysing the last 8 completed M15 candles..."
+        : "Normal mode — analysing the last 8 completed M15 candles...",
+    );
     scalpRef.current = startScalpLoop({
       symbols: pairs.map((pair) => ({
         symbol: pair.symbol.trim(),
@@ -694,9 +711,13 @@ function AppHome() {
       })),
       eaName: target.name,
       credentials,
+      mode,
     });
-    toast.success(`${target.name} scalping`, {
-      description: "Trades close at TP1 or spread + 0.2 ATR, then the next trade opens.",
+    toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
+      description:
+        mode === "scalper"
+          ? "Trades close at TP1 or spread + 0.2 ATR, then the next trade opens."
+          : "Trades run with the broker's SL/TP; re-analysis happens on each new M15 candle.",
     });
   };
 
@@ -712,14 +733,7 @@ function AppHome() {
     setModeOpen(false);
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
-    if (mode === "scalper") {
-      runScalper(robot);
-      return;
-    }
-    console.log("[START DEBUG] robot.pairs:", robot?.pairs?.map(p => ({symbol: p?.symbol, lotSize: p?.lotSize, maxTrades: p?.maxTrades})));
-    void runConfiguredPairs(robot).catch((error: unknown) => {
-      console.warn("[start] auto-trade run failed:", error);
-    });
+    runBotLoop(robot, mode);
   };
 
   // A mode chooser left open, or a running loop, must not outlive the screen.
@@ -796,7 +810,7 @@ function AppHome() {
               {
                 mode: "normal" as BotMode,
                 title: "Normal mode",
-                body: "Opens the configured batch once and manages it with the broker's SL/TP, as the bot does today.",
+                body: "Opens on the same short-term direction and lets the broker's SL/TP1/TP2 manage each trade — re-analysed on every new M15 candle, winners never force-closed.",
               },
             ]).map((option) => (
               <button
