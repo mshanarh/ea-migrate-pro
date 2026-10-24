@@ -79,21 +79,21 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
         </h2>
 
         <span
-          className="mt-4 flex size-52 items-center justify-center overflow-hidden rounded-full border-[5px] bg-white p-2"
+          className="app-hero-orb mt-3 flex items-center justify-center overflow-hidden rounded-full border-[5px] bg-white p-2"
           style={{ borderColor: accent, boxShadow: `0 0 42px ${accent}, 0 0 90px ${accent}66` }}
         >
           <RobotMedia image={eaImage} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </span>
 
-        <p className="mt-5 font-sans text-base font-medium text-white">Your Trading With</p>
+        <p className="mt-4 font-sans text-base font-medium text-white">Your Trading With</p>
         <h1
-          className="mx-auto mt-1 max-w-full break-words px-2 text-center text-[34px] font-black leading-tight tracking-wide text-white uppercase"
+          className="mx-auto mt-1 max-w-full break-words px-2 text-center text-3xl font-black leading-tight tracking-wide text-white uppercase"
           style={{ textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
         >
           {eaName}
         </h1>
 
-        <span className="mt-4 inline-flex items-center gap-1.5 rounded-full border bg-black/85 px-7 py-2.5 text-sm font-bold text-white" style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}>
+        <span className="mt-3 inline-flex items-center gap-1.5 rounded-full border bg-black/85 px-6 py-2 text-sm font-bold text-white" style={{ borderColor: accent, boxShadow: `0 0 22px ${accent}40` }}>
           Powered By <span style={{ color: accent }}>EA MIGRATE</span>
         </span>
       </motion.section>
@@ -117,7 +117,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
                 key={candidate.id}
                 type="button"
                 onClick={() => onSelectRobot(candidate.id)}
-                className="relative flex h-24 w-full items-center justify-center overflow-hidden rounded-full transition-transform active:scale-[0.99]"
+                className="relative flex h-20 w-full items-center justify-center overflow-hidden rounded-full transition-transform active:scale-[0.99]"
                 style={{
                   border: `2px solid ${accent}`,
                   boxShadow: selected ? `0 0 30px ${accent}99` : `0 0 14px ${accent}33`,

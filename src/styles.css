@@ -253,14 +253,35 @@ html.light-mode .hero-glow {
   }
 
   /* Kill every source of the right-edge line: no visible scrollbar chrome
-     anywhere (touch scrolling still works, content just never shows a bar). */
-  html {
+     anywhere (touch scrolling still works, content just never shows a bar).
+     `scrollbar-width` and `-ms-overflow-style` only hide the bar for the
+     element they sit on and do NOT inherit, so they are declared on every
+     element — the document, the app's own `.app-scroll-area`, dialogs, the
+     customisation drawer, admin tables, dropdowns and every `overflow-*`
+     panel. Hiding the bar never touches scrolling: the overflow, the momentum
+     and the pull-to-refresh handler all stay exactly as they were. */
+  html,
+  body,
+  * {
     scrollbar-width: none;
     -ms-overflow-style: none;
+  }
+  html::-webkit-scrollbar,
+  body::-webkit-scrollbar,
+  *::-webkit-scrollbar {
+    width: 0 !important;
+    height: 0 !important;
+    display: none;
   }
   ::-webkit-scrollbar {
     width: 0 !important;
     height: 0 !important;
+    display: none;
+  }
+  ::-webkit-scrollbar-thumb,
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner {
+    background: transparent;
     display: none;
   }
 
@@ -424,6 +445,64 @@ body * {
 
 .app-fullscreen .app-scroll-area {
   min-height: 100dvh;
+}
+
+/* The shell scroller is vertical only — a wide child can never create a
+   sideways scrollbar (or a bar on the right edge) on any screen. `clip` keeps
+   the vertical overflow untouched: unlike `hidden` it does NOT turn the box
+   into a scroll container, so the page keeps scrolling exactly as before. */
+.app-fullscreen,
+.app-scroll-area {
+  max-width: 100vw;
+  overflow-x: clip;
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+   PHONE-HEIGHT FITTING — SIZE IN dvh, NEVER IN A GUESSED PIXEL VALUE
+   ══════════════════════════════════════════════════════════════════════
+   The home hero, the robot portrait and the signature layouts used fixed
+   pixel/vh heights (65vh, size-52, min-h-[430px]) that overflowed a phone
+   screen and pushed the action buttons under the bottom nav. They now take
+   a clamp() share of the VISIBLE viewport: `dvh` follows the mobile browser
+   chrome (unlike `vh`), the lower bound keeps a small handset usable and
+   the upper bound stops a tall screen stretching the hero into a poster.
+
+   Reference: dvh is the dynamic viewport height — it shrinks when the
+   address bar is showing, so the whole screen fits before any scrolling. */
+:root {
+  --home-hero-h: clamp(15rem, 47dvh, 30rem);
+  --home-hero-min: clamp(17rem, 52dvh, 32rem);
+  --home-orb: clamp(8.5rem, 27dvh, 12.5rem);
+  --home-portrait: clamp(7rem, 22dvh, 11rem);
+}
+
+.app-hero-fold {
+  height: var(--home-hero-h);
+}
+.app-hero-fold-min {
+  min-height: var(--home-hero-min);
+}
+.app-hero-orb {
+  width: var(--home-orb);
+  height: var(--home-orb);
+  max-width: 100%;
+  flex: none;
+}
+.app-portrait {
+  width: var(--home-portrait);
+  height: var(--home-portrait);
+  flex: none;
+}
+
+/* Short phones (small Android, landscape) get smaller proportions again so
+   nothing is clipped and the action row stays reachable. */
+@media (max-height: 700px) {
+  :root {
+    --home-hero-h: clamp(13rem, 45dvh, 24rem);
+    --home-hero-min: clamp(14rem, 48dvh, 26rem);
+    --home-orb: clamp(7rem, 24dvh, 10rem);
+    --home-portrait: clamp(6rem, 20dvh, 9rem);
+  }
 }
 
 /* When a background animation is enabled, the app screens must be transparent
@@ -771,9 +850,15 @@ html.platform-ios body {
    (max/calc) and grows only where the system reports a real inset, so
    Android-browser spacing is unchanged while iPhone notch/home-indicator
    clearances become correct. */
-@utility pt-safe { padding-top: max(2rem, var(--sa-top)); }
+/* The floors are small on purpose: the floor is the spacing on a device with
+   NO reported inset, and the max() still gives the notch / status bar its
+   real clearance. A 2rem floor plus the hero pushed the action row below the
+   fold on a phone. */
+@utility pt-safe { padding-top: max(1rem, var(--sa-top)); }
+/* Nav height + the home indicator + one card's breathing room — enough that
+   the last card clears the floating nav, without 5rem of dead scroll. */
 @utility pb-safe-nav {
-  padding-bottom: calc(var(--plat-nav-h) + var(--sa-bottom) + 5rem);
+  padding-bottom: calc(var(--plat-nav-h) + var(--sa-bottom) + 2.5rem);
 }
 @utility pb-safe-base { padding-bottom: max(1.25rem, var(--sa-bottom)); }
 @utility pb-safe-xl { padding-bottom: max(5rem, var(--sa-bottom)); }
