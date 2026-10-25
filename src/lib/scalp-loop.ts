@@ -84,6 +84,10 @@ type Track = {
   /** The exact levels the broker was given — used to name a broker-side close. */
   sl: number;
   tp: number;
+  /** True while a close or open request is awaiting a broker confirmation.
+   *  Blocks further orders for this symbol until the broker reports the real
+   *  position state. */
+  pending?: boolean;
 };
 
 /** What one analyse-and-open pass did — the scalper combines it with a close. */
@@ -403,27 +407,60 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
           // Nothing can be closed without the endpoint, and nothing must be
           // stacked either — the position stays and the loop waits.
           continue;
-        }
-        const position = bridgePositions[0]!;
-        const quote = await bridgePost<{ success?: boolean; bid?: number; ask?: number }>("/symbol/price", {
-          credentials,
-          symbol,
+        }        const scalperPosition = bridgePositions[0]!;
+        const scalperQuote = await bridgePost<{ success?: boolean; bid?: number; ask?: number }>("/symbol/price", {
+          credentials, symbol,
         });
-        const bid = Number(quote.data?.bid);
-        const ask = Number(quote.data?.ask);
+        const bid = Number(scalperQuote.data?.bid);
+        const ask = Number(scalperQuote.data?.ask);
+        // ── PENDING / DUPLICATE GUARD ────────────────────────────────────────────
+        // Track a merge of "this trade is waiting for a broker confirmation" and
+        // "an open or close request is already in flight". A pending trade blocks
+        // every further order for that symbol until the broker answers, so one
+        // close or one open can never spawn several repeated orders.
+        if (track?.pending) {
+          // A close or open request is still awaiting the broker. Do not submit
+          // another one inside this cycle or any later cycle of the same pass,
+          // and re-check the live position as soon as the broker answers.
+          continue;
+        }
+
+        // ── STOPPED SESSION → NO REPLACEMENT ────────────────────────────────────
+        // A stop is only honoured when it has been requested; a close that has
+        // already returned does not restart a loop that has been told to stop.
+        if (stopped) {
+          log(`${symbol}: session stopped — no replacement trade opened`);
+          continue;
+        }
+
+
+        // A position exits ONLY on a configured target: TP1 or the strategy
+        // profit take. `track.tp1Distance` is the only reliable scalar target
+        // here; a bare `moveInFavour > 0` is removed (unconditional exit).
         const spread = Number.isFinite(bid) && Number.isFinite(ask) && ask > bid ? ask - bid : 0;
         const atr = track?.atr ?? 0;
         const moveInFavour =
-          position.type === "BUY"
-            ? position.price_current - position.price_open
-            : position.price_open - position.price_current;
+          scalperPosition.type === "BUY"
+            ? scalperPosition.price_current - scalperPosition.price_open
+            : scalperPosition.price_open - scalperPosition.price_current;
         const scalpTarget = spread + atr * 0.2;
-        // tp1 is handled as `moveInFavour >= tp1Distance`, which is the
-        // continuous-cycle guard below; a simpler scalar profit target is
-        // what the close/re-open cycle needs to fire consistently.
-        if (atr > 0 && moveInFavour >= scalpTarget && moveInFavour > 0) {
+        // A position exits ONLY on a configured target: TP1 or the strategy
+        // profit take. `track.tp1Distance` is the only reliable scalar target
+        // here; a bare `moveInFavour > 0` is removed (unconditional exit).
+        const hasConfiguredTarget = track !== undefined && moveInFavour >= track.tp1Distance;
+        if (hasConfiguredTarget) {
+          // A close or open request is now in flight for this symbol. Until the
+          // broker comes back with the actual position state, no further order
+          // is submitted — this is what stops duplicate orders.
+          const alreadyPending = track?.pending === true;
+          if (alreadyPending) {
+            // The broker has not answered yet. Keep the loop alive and let the
+            // next cycle re-check the live position when it answers.
+            continue;
+          }
+          tracks.set(symbol, { ...track, pending: true });
           const closedTrack = tracks.get(symbol);
-          const profit = await closePosition(position);
+          const profit = await closePosition(scalperPosition);
           if (profit !== null) {
             const closeInfo: ClosedTrade = { number: closedTrack?.tradeNo ?? 0, profit };
             tracks.delete(symbol);
@@ -434,7 +471,11 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
             // ── SCALPER CONTINUOUS CYCLE ──
             // After a confirmed close the SAME pass re-analyses and re-opens the
             // same symbol, so the trader never has to press Start again.
+            // `pending` is cleared below: if the replacement is skipped or failed,
+            // the session stays active and the next scheduled cycle re-tries
+            // evaluation safely — it never submits a duplicate.
             const outcome = await openFor(symbol, lotSize, cap, { deferNotify: true });
+            if (track) tracks.set(symbol, { ...track, pending: false });
             if (outcome.kind === "opened" && outcome.opens.length > 0) {
               notifyCloseThenOpen(closeInfo, outcome.opens);
             } else {
