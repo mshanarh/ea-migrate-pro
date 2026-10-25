@@ -38,7 +38,7 @@ import {
 } from "@/lib/admin-store";
 import { OWNER_EMAILS, signOut, useCurrentAccount } from "@/lib/auth-store";
 import { sendPortalEmail } from "@/lib/send-email";
-import { supabaseConfigured } from "@/lib/supabase";
+import { portalStoreConfigured } from "@/lib/portal-store";
 
 export const Route = createFileRoute("/admin")({
   ssr: false,
@@ -661,9 +661,9 @@ function AdminConsole() {
             Some data could not be read ({snapshot.error}). Showing the rest.
           </p>
         ) : null}
-        {!supabaseConfigured ? (
+        {!portalStoreConfigured ? (
           <p className="border-t border-amber-400/25 bg-amber-400/10 px-4 py-2 text-[11px] text-amber-200">
-            The database is not connected — this console can only show what it can read.
+            The account store is not connected — this console can only show what it can read.
           </p>
         ) : null}
         {/* A refused WRITE is a database problem, not an access one — the

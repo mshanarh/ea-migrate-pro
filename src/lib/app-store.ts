@@ -4,6 +4,7 @@ import { useSyncExternalStore } from "react";
 import { bindEmailToDevice, getEmailDeviceBinding, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { travelSizedImage, travelSizedVideo } from "@/lib/media-store";
 import { supabase, supabaseConfigured } from "@/lib/supabase";
+import { START } from "@/lib/startup-timing";
 import { ALREADY_IN_USE, claimKeyWithoutServer } from "@/lib/license-lock";
 import { claimLicenseKeyFor } from "@/lib/activation-client";
 import { lookupLicenseInKv } from "@/lib/license-cloud";
@@ -213,7 +214,7 @@ const LAYOUT_ALIASES: Record<string, string> = {
   layout_sniper_vertical: "pablo_elite",
 };function load() {
   bootLog("load-start");
-  START("app-store-load-start");
+  START.start("app-store-load-start");
   if (loaded || typeof window === "undefined") return;
   loaded = true;
   // The epoch kick runs BEFORE the saved state is read: a bumped epoch must
@@ -275,7 +276,7 @@ const LAYOUT_ALIASES: Record<string, string> = {
     /* ignore */
   }
   bootLog("state-restore-done");
-  START("app-store-load-end");
+  START.start("app-store-load-end");
   if (epochKick) {
 
     // Sign everyone out locally — the cloud gate on the next route decides
@@ -978,7 +979,7 @@ export async function activateKey(key: string): Promise<{ error?: string; robot?
   // bounced the freshly-activated user to Whop checkout (the "activated my
   // key and got kicked out" bug).
   if (activationEmail) {
-    const { recordKeyActivationInCloud } = await import("@/lib/supabase-users");
+    const { recordKeyActivationInCloud } = await import("@/lib/portal-store");
     const proof = await recordKeyActivationInCloud(clean, activationEmail, getDeviceId());
     if (!proof.ok && proof.error) console.warn("[key-activation] cloud proof failed:", proof.error);
   }

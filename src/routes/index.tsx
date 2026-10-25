@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Blocks,
   Cpu,
@@ -320,7 +320,6 @@ function LandingChatbot() {
  * registered so iOS visitors can still “Add to Home screen” the PWA.
  */
 function Home() {
-  const navigate = useNavigate();
   const [installResult, setInstallResult] = useState<string | null>(
     null,
   );
@@ -355,7 +354,13 @@ function Home() {
   };
 
   return (
-    <div className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-background text-foreground">
+    /* PUBLIC PAGE — `data-eamp-no-cycle` keeps the app-wide tap gesture
+       (Settings → colour cycle) from ever running here. The landing page is
+       marketing: no bot cycle, no theme mutation, no app logic of any kind. */
+    <div
+      data-eamp-no-cycle
+      className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-background text-foreground"
+    >
       <SiteHeader />
 
       <main>
@@ -598,13 +603,10 @@ function Home() {
               <Button size="lg" className="h-14 rounded-full text-base font-semibold" onClick={() => void handleAndroidDownload()}>
                 Download Android
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-14 rounded-full text-base font-semibold"
-                onClick={() => navigate({ to: "/app" })}
-              >
-                Get iOS App
+              <Button asChild size="lg" variant="outline" className="h-14 rounded-full text-base font-semibold">
+                {/* An anchor, not navigate(): iOS keeps href navigation reliable
+                    where a programmatic push can be dropped. */}
+                <Link to="/app">Get iOS App</Link>
               </Button>
               {installResult && (
                 <p className="text-sm font-semibold text-emerald-400">{installResult}</p>

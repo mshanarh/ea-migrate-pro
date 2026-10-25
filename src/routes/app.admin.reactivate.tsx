@@ -5,8 +5,7 @@ import { ArrowLeft, RotateCcw, ShieldCheck, Loader2 } from "lucide-react";
 import { appSignOut, getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
-import { getUserByEmail, reactivateEmail } from "@/lib/supabase-users";
-import { supabaseConfigured } from "@/lib/supabase";
+import { getUserByEmail, reactivateEmail } from "@/lib/portal-store";
 
 /** Reactivation is admin-only: only biyasentobeko222@gmail.com (the sole admin)
  * may access this page. The route guard and the API call both verify admin status. */

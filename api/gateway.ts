@@ -58,6 +58,7 @@ type HandlerModule = { default: Handler };
  * light one (ping).
  */
 const ROUTES: Record<string, () => Promise<HandlerModule>> = {
+  account: () => import("./_handlers/account.js"),
   activation: () => import("./_handlers/activation.js"),
   "admin-approve": () => import("./_handlers/admin-approve.js"),
   "admin-backfill": () => import("./_handlers/admin-backfill.js"),

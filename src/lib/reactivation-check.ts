@@ -50,7 +50,7 @@ import {
   emailHasLicenseKey,
   emailPaidInLedger,
   getUserByEmail,
-} from "./supabase-users";
+} from "./portal-store";
 
 export type ReactivationStoreName =
   | "users"

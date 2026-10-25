@@ -1558,7 +1558,6 @@ async function resolveFixtureDirection(
 
   // The block above returns whenever any read is missing; repeat the check as
   // an explicit narrowing step so the strict checks below see defined values.
-<<<<<<< HEAD
   if (
     rsi15mValue === null ||
     rsi1hValue === null ||
@@ -1566,9 +1565,6 @@ async function resolveFixtureDirection(
     momentum1hValue === null ||
     !quoteResult
   ) {
-=======
-  if (!rsi15mResult || !rsi1hResult || !mom15mResult || !mom1hResult || !quoteResult || !candlesResult) {
->>>>>>> origin/main
     const reason = "Broker data became unavailable mid-analysis. Cannot make trade decision.";
     console.warn(`[auto-trade] BLOCKED ${symbol}: ${reason}`);
     return {
@@ -2385,7 +2381,6 @@ export async function executeAutoTrade(
         throw new Error(`Live quote unavailable for ${symbol} at order time`);
       }
 
-<<<<<<< HEAD
       // DIRECTION RE-CHECK — the quote above is fetched fresh for THIS order,
       // and the batch must still be trading the side it started with. When the
       // market has turned (the fresh reading says the other way, or the live
@@ -2405,20 +2400,10 @@ export async function executeAutoTrade(
           index: i + 1,
           symbol,
           side: "BLOCKED",
-=======
-      // HARD GUARD: signal direction must match order side exactly.
-      // If they differ, abort the order and log the mismatch so it's visible instantly.
-      if (side !== direction.type) {
-        const mismatchExecuted: ExecutedTrade = {
-          index: i + 1,
-          symbol,
-          side,
->>>>>>> origin/main
           lotSize,
           entry: 0,
           sl: 0,
           tp: 0,
-<<<<<<< HEAD
           status: "blocked",
           message,
           meta: { requestedComment: eaName },
@@ -2436,34 +2421,6 @@ export async function executeAutoTrade(
         break;
       }
       if (batchSide === null) batchSide = side;
-=======
-          status: "aborted",
-          message: `TRADE ABORTED: signal=${direction.type}, order=${side} — direction and order side must match exactly`,
-          meta: {
-            requestedComment: eaName,
-            mismatch: `signal=${direction.type}, order=${side}`,
-          },
-        };
-        results.push(mismatchExecuted);
-
-        if (emitEvent) {
-          emitEvent("eamp:execution-result", {
-            event: `TRADE ${i + 1}/${maxTrades} ABORTED - DIRECTION MISMATCH`,
-            symbol,
-            signalDirection: direction.type,
-            orderSide: side,
-            mismatch: `signal=${direction.type}, order=${side}`,
-          });
-        }
-
-        if (onTradeExecute) {
-          onTradeExecute(mismatchExecuted, i + 1, maxTrades);
-        }
-
-        console.error(`[auto-trade] ${symbol}: DIRECTION MISMATCH — signal=${direction.type}, order=${side}. Aborting order.`);
-        break;
-      }
->>>>>>> origin/main
 
       // FRESHNESS — the analysis must be seconds old when the order fires.
       //

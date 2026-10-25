@@ -36,6 +36,18 @@ export type Registration = {
   licenseLimitSet?: boolean;
   /** Device Id this email is bound to (from the app's sign-in flow). Null = not bound. */
   deviceId?: string | null;
+  /**
+   * May this account release a client's device? Locked unless an admin turned
+   * it on (the 🔒 next to Approve). Admins and owners are always unlocked.
+   */
+  reactivationEnabled?: boolean;
+  /**
+   * CONSOLE ADMIN — written only by "Make Admin". The fixed OWNER_ADMIN_EMAILS
+   * list and ADMIN_EMAILS still identify platform admins without a record, so
+   * the owner can always get in; this flag lets an admin promote somebody the
+   * list has never heard of. It is a ROLE, never a payment receipt.
+   */
+  isAdmin?: boolean;
 };
 
 /** What the admin console receives — never the password hash/salt. */
@@ -191,6 +203,98 @@ export async function setDeviceIdForEmail(email: string, deviceId: string): Prom
       deviceId,
     });
   }
+}
+
+/**
+ * WRITE ONE FIELD OF AN EXISTING RECORD, leaving everything else intact.
+ *
+ * Every mutation below goes through here so a payment write can never rewrite
+ * a mentor's licence limit, a device bind can never clear a payment flag, and
+ * a reactivation can never touch an expiry. Returns false when there is no
+ * record to patch — a write that matched nothing is not a success.
+ */
+async function patchRegistration(
+  email: string,
+  patch: Partial<Registration>,
+): Promise<{ ok: boolean; record: Registration | null }> {
+  const existing = await getRegistration(email);
+  if (!existing) return { ok: false, record: null };
+  const next: Registration = { ...existing, ...patch, email: existing.email, updatedAt: new Date().toISOString() };
+  await saveRegistration(next);
+  return { ok: true, record: next };
+}
+
+/**
+ * MARK AN ACCOUNT PAID / UNPAID — the admin console's "Mark paid".
+ *
+ * `paidAt` is the receipt and `isPaid` follows it, EXCEPT for an explicit
+ * revocation, which writes `isPaid: false, paidAt: null` (the marker the access
+ * check reads as "revoked" rather than "never paid").
+ */
+export async function setPaidStatus(
+  email: string,
+  paid: boolean,
+): Promise<{ ok: boolean; error?: string; record?: Registration }> {
+  const address = normalizeEmail(email);
+  if (!address) return { ok: false, error: "email is required" };
+  const existing = await getRegistration(address);
+  if (!existing) {
+    return { ok: false, error: "That email is not registered — it must sign up before it can be marked paid." };
+  }
+  const paidAt = paid ? new Date().toISOString() : null;
+  const patched = await patchRegistration(address, { isPaid: paid, paidAt });
+  return patched.ok && patched.record ? { ok: true, record: patched.record } : { ok: false, error: "The record could not be written" };
+}
+
+/**
+ * HOW MANY ADMINS EXIST — the owner-bootstrap question, answered from KV.
+ * The fixed allowlist counts as admins even with no record, because those
+ * emails already have console access.
+ */
+export async function countAdmins(): Promise<number> {
+  const rows = await listRegistrations();
+  return rows.filter((row) => row.isAdmin === true || isAdminEmail(row.email)).length;
+}
+
+/** ADMIN ROLE — a role is not a receipt: this never changes payment. */
+export async function setAdminFlag(email: string, admin: boolean): Promise<{ ok: boolean; error?: string }> {
+  const address = normalizeEmail(email);
+  if (!address) return { ok: false, error: "email is required" };
+  const patched = await patchRegistration(address, { isAdmin: admin });
+  return patched.ok ? { ok: true } : { ok: false, error: "That email is not registered" };
+}
+
+/** The 🔒 toggle: may this account release a client's device? */
+export async function setReactivationFlag(
+  email: string,
+  enabled: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const address = normalizeEmail(email);
+  if (!address) return { ok: false, error: "email is required" };
+  const patched = await patchRegistration(address, { reactivationEnabled: enabled });
+  return patched.ok ? { ok: true } : { ok: false, error: "That email is not registered" };
+}
+
+/**
+ * CLEAR ONLY THE DEVICE BINDING.
+ *
+ * Payment, `paidAt`, licence limit, approval status, EA config and the licence
+ * keys themselves are all left exactly as they were — releasing a device is a
+ * device action, not a subscription action. Returns the record so the caller
+ * can prove the payment flag survived.
+ */
+export async function clearDeviceBinding(
+  email: string,
+): Promise<{ ok: boolean; error?: string; clearedAt?: string; record?: Registration }> {
+  const address = normalizeEmail(email);
+  if (!address) return { ok: false, error: "email is required" };
+  const patched = await patchRegistration(address, { deviceId: null });
+  if (!patched.ok) return { ok: false, error: "That email is not registered" };
+  return {
+    ok: true,
+    clearedAt: new Date().toISOString(),
+    ...(patched.record ? { record: patched.record } : {}),
+  };
 }
 
 /**

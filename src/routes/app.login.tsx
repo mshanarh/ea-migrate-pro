@@ -20,7 +20,6 @@ import {
 } from "@/lib/app-store";
 import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
-import { supabase } from "@/lib/supabase";
 import {
   VERIFY_RETRY_MESSAGE,
   verifyPaymentReturn,
@@ -30,7 +29,7 @@ import {
   type AppAccessCheck,
   type CloudAccess,
 } from "@/lib/payment-gate";
-import { bindDeviceToEmail, checkDeviceBinding, registerWithEmail } from "@/lib/supabase-users";
+import { bindDeviceToEmail, checkDeviceBinding, emailHasLicenseKey, registerWithEmail } from "@/lib/portal-store";
 import { checkActivationCode, requestActivationCode } from "@/lib/activation-client";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
@@ -102,7 +101,7 @@ export const Route = createFileRoute("/app/login")({
    * are the deliberate hand-offs and must survive the redirect.
    */
   beforeLoad: ({ location }) => {
-    START("login-beforeLoad");
+    START.start("login-beforeLoad");
     const params = new URLSearchParams(location.search);
     for (const flag of RESUME_EXEMPT_FLAGS) {
       if (params.get(flag) === "1" || params.get(flag) === "true") return;
@@ -1110,22 +1109,11 @@ function AppAccess() {
       // VERIFIED — the account is proved, so the session is opened.
       await finishSignIn(codeStage.email);
 
-      // After sign-in, check whether this account is recognized as paid.
-      // The key claim (users.license_key) IS the payment proof for key customers.
-      // If the license key is set, the account is paid and goes to /app/home
-      // even without a robot activated yet.
-      let hasLicenseKey = false;
-      if (supabase) {
-        // Direct null-safe access — the withDeadline wrapper creates type
-        // mismatches because it expects Promise<T> but the supabase single()
-        // returns nullable data. Use the client directly.
-        const { data: userData, error } = await supabase
-          .from("users")
-          .select("license_key")
-          .eq("email", codeStage.email)
-          .single();
-        hasLicenseKey = !error && userData?.license_key;
-      }
+      // After sign-in, check whether this account holds a licence key.
+      // A CLAIMED KEY IS THE PAYMENT PROOF for key customers, and it is read
+      // from the KV licence store (server-side) — there is no second store to
+      // disagree with it any more.
+      const hasLicenseKey = await withDeadline(emailHasLicenseKey(codeStage.email), 10_000, false);
 
       if (hasLicenseKey) {
         // The account has a license key — it IS the payment proof.
@@ -1193,20 +1181,39 @@ function AppAccess() {
     // There is no "no payment required" path here any more: every account,
     // admins and platform owners included, is opened by a payment record.
 
-    // Bind THIS device in the cloud before letting them in. The access gate
-    // treats a missing binding as a stale session (the global access reset),
-    // so an entitled person must be bound on THIS device or the very next
-    // route change would sign them straight back out again. A bind failure
-    // is never worth an error toast here — it says nothing the customer can
-    // act on, and a red banner over a working sign-in reads as a failure.
+    // ── ONE EMAIL, ONE DEVICE — ENFORCED HERE, AT SIGN-IN ──────────────
+    //
+    // Binding this device is part of signing in, not a background nicety. The
+    // bind used to be `console.warn`-only, so an account already bound to a
+    // phone in another country opened on a brand-new device without a word —
+    // that is exactly the "iOS opened it without asking for reactivation" bug.
+    //
+    // The three outcomes are now distinct:
+    //   • bound to THIS device / unbound → the bind succeeds, sign-in continues
+    //   • bound to ANOTHER device        → sign OUT and show "Account already
+    //                                      used — Contact admin for reactivation"
+    //   • store unreachable / timed out → continue (a network blip is not
+    //                                      proof of a foreign device; the route
+    //                                      guard's own check still applies)
     try {
       const bound = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, {
         ok: false,
         error: "Device binding timed out",
       });
-      if (!bound.ok && bound.error) console.warn("[app-login] device bind:", bound.error);
-    } catch {
-      /* a failed bind must never block sign-in */
+      if (!bound.ok) {
+        const otherDevice = bound.boundToOtherDevice === true || /already used|another device/i.test(bound.error ?? "");
+        if (otherDevice) {
+          console.warn(`[app-login] ${clean}: bound to another device — signing out`);
+          appSignOut();
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+        console.warn("[app-login] device bind:", bound.error ?? "unknown failure");
+      }
+    } catch (error) {
+      console.warn("[app-login] device bind threw:", error);
     }
 
     // ENTITLED — the database just said so, so drop any remembered refusal

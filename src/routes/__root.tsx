@@ -28,7 +28,7 @@ const PushPermissionBanner = lazy(() =>
 
 import { START } from "@/lib/startup-timing";
 
-START("boot-start");
+START.start("boot-start");
 
 import appCss from "../styles.css?url";
 
@@ -124,7 +124,7 @@ import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { loadBridgeConfig } from "@/lib/bridge-client";
 import { applyShellScope, isPortalPath } from "@/lib/shell-scope";
-import { speakTradeExecution } from "@/lib/bot-voice";
+import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 
@@ -308,6 +308,23 @@ function RootComponent() {
     };
     window.addEventListener(EXECUTION_EVENT, handler);
     return () => window.removeEventListener(EXECUTION_EVENT, handler);
+  }, []);
+
+  // UNLOCK SPEECH ON THE FIRST GESTURE — tapping Start is what makes the bot's
+  // voice audible on mobile. Browsers keep speechSynthesis silent until the
+  // page has been touched, and the unlock must happen INSIDE that gesture: the
+  // execution event arrives long after it, so unlocking from the trade handler
+  // would itself be blocked. Listeners are one-shot and passive.
+  useEffect(() => {
+    const unlock = () => unlockBotVoice();
+    window.addEventListener("pointerdown", unlock, { once: true, passive: true });
+    window.addEventListener("touchstart", unlock, { once: true, passive: true });
+    window.addEventListener("keydown", unlock, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", unlock);
+      window.removeEventListener("touchstart", unlock);
+      window.removeEventListener("keydown", unlock);
+    };
   }, []);
 
   // DEFERRED UNTIL AFTER FIRST PAINT — see PushPermissionBanner above. The

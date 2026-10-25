@@ -6,26 +6,11 @@ import { Check, RadioTower, RotateCcw, ShieldCheck, ShieldOff, UserCheck, UserX 
 import { appSignOut, getAppState, leaveForCheckout, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { OWNER_EMAILS } from "@/lib/auth-store";
-import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/supabase-users";
-import { supabaseConfigured } from "@/lib/supabase";
-import { adminClaimFirstAdmin, adminListUsers, adminSetUserAdmin } from "@/lib/supabase.server";
+import { countAdminsAnon, getUserByEmail, listUsersAnon, setUserFlagAnon } from "@/lib/portal-store";
+import { portalStoreConfigured } from "@/lib/portal-store";
 import { setAdminActor, setUserPaid as writePaymentLedger } from "@/lib/admin-store";
 import { getBridgeUrl, setBridgeUrl } from "@/lib/bridge-client";
-import type { UserRow } from "@/lib/supabase";
-
-/**
- * Run a server function, falling back to the direct anon-key call when the
- * server side is unreachable — production builds this app as a STATIC Vite
- * site where TanStack Start server functions do not exist (the fetch 404s
- * and throws). The anon fallbacks keep the admin page fully working there.
- */
-async function withAnonFallback<T>(serverCall: () => Promise<T>, anonCall: () => Promise<T>): Promise<T> {
-  try {
-    return await serverCall();
-  } catch {
-    return anonCall();
-  }
-}
+import type { UserRow } from "@/lib/portal-store";
 
 export const Route = createFileRoute("/app/admin")({
   ssr: false,
@@ -123,13 +108,8 @@ function AppAdmin() {
 
   const refresh = useCallback(async () => {
     setLoading(true);
-    const result = await withAnonFallback(
-      () => adminListUsers(),
-      async () => {
-        const anon = await listUsersAnon();
-        return { enabled: supabaseConfigured, users: anon.users, ...(anon.error ? { error: anon.error } : {}) };
-      },
-    );
+    const anon = await listUsersAnon();
+    const result = { enabled: portalStoreConfigured, users: anon.users, ...(anon.error ? { error: anon.error } : {}) };
     if (result.enabled && !result.error) {
       setUsers(result.users);
       setError(null);
@@ -142,7 +122,7 @@ function AppAdmin() {
   useEffect(() => {
     let cancelled = false;
     const boot = async () => {
-      if (!supabaseConfigured) {
+      if (!portalStoreConfigured) {
         setLoading(false);
         return;
       }
@@ -216,10 +196,7 @@ function AppAdmin() {
 
   const setAdmin = async (user: UserRow, value: boolean) => {
     setBusyEmail(user.email);
-    const result = await withAnonFallback(
-      () => adminSetUserAdmin({ data: { email: user.email, value } }),
-      () => setUserFlagAnon(user.email, { is_admin: value }),
-    );
+    const result = await setUserFlagAnon(user.email, { is_admin: value });
     setBusyEmail(null);
     if (!result.ok) {
       toast.error(result.error ?? "Could not update user");
@@ -238,13 +215,12 @@ function AppAdmin() {
     );
   }
 
-  if (!supabaseConfigured) {
+  if (!portalStoreConfigured) {
     return (
-      <Panel title="Supabase is not connected">
+      <Panel title="Account store is not connected">
         <p className="text-sm leading-6 text-white/60">
-          Add <Key>VITE_SUPABASE_URL</Key> and <Key>VITE_SUPABASE_ANON_KEY</Key> in Settings → Environment,
-          plus <Key>SUPABASE_SERVICE_ROLE_KEY</Key> for the approve / make-admin buttons, then run the SQL in{" "}
-          <span className="font-mono text-white/80">supabase/schema.sql</span>.
+          Set <Key>KV_REST_API_URL</Key> and <Key>KV_REST_API_TOKEN</Key> in Settings → Environment. Every
+          account, payment, licence key and device binding lives in that one store.
         </p>
       </Panel>
     );
@@ -480,14 +456,17 @@ function OwnerBootstrap({ email, onClaimed }: { email: string | null; onClaimed:
   if (!email) return null;
   const claim = async () => {
     setBusy(true);
-    const result = await withAnonFallback(
-      () => adminClaimFirstAdmin({ data: { email } }),
-      async () => {
-        if (!OWNER_EMAILS.includes(email.toLowerCase())) return { ok: false, error: "Only the platform owner can bootstrap the first admin" };
-        if ((await countAdminsAnon()) > 0) return { ok: false, error: "An admin already exists" };
-        return setUserFlagAnon(email, { is_admin: true });
-      },
-    );
+    if (!OWNER_EMAILS.includes(email.toLowerCase())) {
+      toast.error("Only the platform owner can bootstrap the first admin");
+      setBusy(false);
+      return;
+    }
+    if ((await countAdminsAnon()) > 0) {
+      toast.error("An admin already exists");
+      setBusy(false);
+      return;
+    }
+    const result = await setUserFlagAnon(email, { is_admin: true });
     setBusy(false);
     if (!result.ok) {
       toast.error(result.error ?? "Could not claim admin");

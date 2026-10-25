@@ -63,8 +63,8 @@
  */
 import { markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
-import { checkAccessServer } from "@/lib/supabase-users";
-import { getDeviceBinding, bindDeviceToEmail } from "@/lib/supabase-users";
+import { checkAccessServer } from "@/lib/portal-store";
+import { getDeviceBinding, bindDeviceToEmail } from "@/lib/portal-store";
 import { readPortalPayment } from "@/lib/portal-paid";
 
 /**
@@ -165,7 +165,7 @@ type Resolution = {
   binding: DeviceBinding | null;
   /**
    * FALSE when the server could not read the binding and the answer was
-   * therefore NOT stored as fact — see ServerDeviceBinding in supabase-users.
+   * therefore NOT stored as fact — see ServerDeviceBinding in portal-store.
    */
   bindingKnown: boolean;
 };
@@ -474,138 +474,6 @@ const verdictLog = (parts: string[]) => {
  * consults them. Returns an array of {store, verdict, success} objects so the
  * caller can compose the final answer.
  */
-type StoreVerdict = {
-  store: string;
-  verdict: CloudAccess | "unavailable";
-  success: boolean;
-};
-
-async function evaluateStores(clean: string): Promise<StoreVerdict[]> {
-  const results: StoreVerdict[] = [];
-
-  // STORE 1: KV registration record (the admin console's source of truth)
-  // This is the primary paid source — the console's "Mark paid" lives here.
-  let kvVerdict: CloudAccess | "unavailable" = "unavailable";
-  let kvSuccess = false;
-  let kvErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
-  try {
-    const result = await retryStoreFetchOnce(() => resolveBundle(clean, true));
-    if (result.success && result.value.status === "paid" || result.value.status === "admin") {
-      kvVerdict = result.value.status;
-      kvSuccess = true;
-    } else if (result.success && result.value.status === null) {
-      // Cloud could not decide — treat as unavailable, not as a refusal
-      kvVerdict = "unavailable";
-    } else {
-      kvVerdict = result.value.status ?? "unpaid";
-    }
-    kvErrorDetails = result.errorDetails;
-  } catch (error: any) {
-    console.warn("[ACCESS_CHECK] KV store error for", clean, error);
-    kvVerdict = "unavailable";
-    kvErrorDetails = extractFetchErrorDetails(error);
-  }
-  results.push({ store: "kv", verdict: kvVerdict, success: kvSuccess, errorDetails: kvErrorDetails });
-  verdictLog(["kv", kvVerdict, "success=" + kvSuccess, "email=" + clean, "details=" + JSON.stringify(kvErrorDetails)]);
-
-  // STORE 2: Supabase paid_emails table
-  let paidEmailsVerdict: CloudAccess | "unavailable" = "unavailable";
-  let paidEmailsSuccess = false;
-  let paidEmailsErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
-  try {
-    const result = await retryStoreFetchOnce(() => paidEmailInSupabase(clean));
-    if (result.success && result.value) {
-      paidEmailsVerdict = "paid";
-      paidEmailsSuccess = true;
-    } else {
-      paidEmailsVerdict = "unpaid";
-    }
-    paidEmailsErrorDetails = result.errorDetails;
-  } catch (error: any) {
-    console.warn("[ACCESS_CHECK] paid_emails store error for", clean, error);
-    paidEmailsVerdict = "unavailable";
-    paidEmailsErrorDetails = extractFetchErrorDetails(error);
-  }
-  results.push({ store: "paid_emails", verdict: paidEmailsVerdict, success: paidEmailsSuccess, errorDetails: paidEmailsErrorDetails });
-  verdictLog(["paid_emails", paidEmailsVerdict, "success=" + paidEmailsSuccess, "email=" + clean, "details=" + JSON.stringify(paidEmailsErrorDetails)]);
-
-  // STORE 3: Supabase users table (is_paid, license_key)
-  let usersVerdict: CloudAccess | "unavailable" = "unavailable";
-  let usersSuccess = false;
-  let usersErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
-  try {
-    const db = await serviceClient();
-    if (db) {
-      const result = await retryStoreFetchOnce(() => db
-        .from("users")
-        .select("is_paid, license_key, device_id")
-        .eq("email", clean)
-        .maybeSingle());
-      if (!result.success) {
-        usersVerdict = "unavailable";
-        usersErrorDetails = result.errorDetails;
-      } else if (!result.value) {
-        usersVerdict = "unavailable";
-      } else {
-        const { data, error } = result.value;
-        if (!error && data) {
-          const row = data as { is_paid?: boolean | null; license_key?: string | null; device_id?: string | null };
-          if (row.is_paid === true) {
-            usersVerdict = "paid";
-          } else if (row.license_key && row.license_key.trim().length > 0) {
-            // A claimed license key IS proof of access — the column is only
-            // written after the paid check AND the single-use claim succeeded.
-            usersVerdict = "paid";
-          } else if (row.is_paid === false) {
-            usersVerdict = "revoked";
-          } else {
-            usersVerdict = "unpaid";
-          }
-        } else {
-          usersVerdict = "unavailable";
-        }
-      }
-      usersSuccess = true;
-    } else {
-      usersVerdict = "unavailable";
-    }
-    usersSuccess = true;
-  } catch (error: any) {
-    console.warn("[ACCESS_CHECK] users store error for", clean, error);
-    usersVerdict = "unavailable";
-    usersErrorDetails = extractFetchErrorDetails(error);
-  }
-  results.push({ store: "users", verdict: usersVerdict, success: usersSuccess, errorDetails: usersErrorDetails });
-  verdictLog(["users", usersVerdict, "success=" + usersSuccess, "email=" + clean, "details=" + JSON.stringify(usersErrorDetails)]);
-
-  // STORE 4: KV license_keys (claimed key proof)
-  let licenseKeysVerdict: CloudAccess | "unavailable" = "unavailable";
-  let licenseKeysSuccess = false;
-  let licenseKeysErrorDetails: { url?: string; status?: number; cause?: string } | null = null;
-  try {
-    // A non-empty license_key in the users table is holder-bound proof.
-    // This is checked in the users store above, but we also check KV directly
-    // as a separate source for the audit log.
-    const { whopVerifyMembership } = await import("@/lib/supabase.server");
-    const whop = await whopVerifyMembership({ data: { email: clean } });
-    if (whop.ok && whop.paid) {
-      licenseKeysVerdict = "paid";
-    } else if (whop.ok && whop.status === "revoked") {
-      licenseKeysVerdict = "revoked";
-    } else {
-      licenseKeysVerdict = "unpaid";
-    }
-    licenseKeysSuccess = true;
-  } catch (error: any) {
-    console.warn("[ACCESS_CHECK] whop/license_keys store error for", clean, error);
-    licenseKeysErrorDetails = extractFetchErrorDetails(error);
-    licenseKeysVerdict = "unavailable";
-  }
-  results.push({ store: "license_keys", verdict: licenseKeysVerdict, success: licenseKeysSuccess });
-  verdictLog(["license_keys", licenseKeysVerdict, "success=" + licenseKeysSuccess, "email=" + clean, "details=" + JSON.stringify(licenseKeysErrorDetails)]);
-
-  return results;
-}
 
 /**
  * Extract URL, HTTP status and cause from a fetch/API error.
@@ -1188,7 +1056,7 @@ export async function verifyPaymentReturn(email: string): Promise<boolean> {
   // resolveCloudAccess already ran the Whop check inside computeFromUpstash
   // for the unpaid branch — run it explicitly here for a fresh answer.
   try {
-    const { whopVerifyMembership } = await import("@/lib/supabase.server");
+    const { whopVerifyMembership } = await import("@/lib/whop.server");
     const whop = await whopVerifyMembership({ data: { email: clean } });
     if (whop.ok && whop.paid) {
       markEmailPaid(clean);

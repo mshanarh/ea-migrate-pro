@@ -4,7 +4,7 @@ import { Send } from "lucide-react";
 import { toast } from "sonner";
 import { useCurrentAccount } from "@/lib/auth-store";
 import { sendPortalEmail } from "@/lib/send-email";
-import { listUsersAnon } from "@/lib/supabase-users";
+import { listUsersAnon } from "@/lib/portal-store";
 import { portalListAccounts } from "@/lib/portal-cloud";
 
 export const Route = createFileRoute("/dashboard/broadcast")({

@@ -45,7 +45,7 @@
  * be verified without a secret is not a code, it is a checkbox. When the
  * endpoint is genuinely missing the caller is told so plainly.
  */
-import { supabaseConfigured } from "@/lib/supabase";
+import { portalStoreConfigured } from "@/lib/portal-store";
 
 export type ActivationOutcome =
   | { status: "ok"; ok: boolean; alreadyInUse?: boolean; notPaid?: boolean; error?: string }
@@ -155,7 +155,7 @@ async function post(payload: Record<string, unknown>): Promise<ActivationOutcome
     error: "Activation is unavailable right now.",
   };
   if (typeof window === "undefined") return missing;
-  if (!supabaseConfigured) return missing;
+  if (!portalStoreConfigured) return missing;
 
   const answered = await send(payload);
   if (answered) return answered;

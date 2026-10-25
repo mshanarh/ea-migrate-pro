@@ -130,7 +130,14 @@ export function speakBot(text: string): void {
     return;
   }
   // 2. Browser fallback.
-  if (!("speechSynthesis" in window)) return;
+  if (!("speechSynthesis" in window)) {
+    console.warn("[bot-voice] no speechSynthesis in this browser — silent");
+    return;
+  }
+  // A mobile browser that has never seen a gesture refuses speak() silently,
+  // so the very first announcement also unlocks the engine (it is already
+  // inside a user-initiated run by then).
+  unlockBotVoice();
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
@@ -144,6 +151,46 @@ export function speakBot(text: string): void {
     synth.speak(utterance);
   } catch {
     /* unsupported — silent */
+  }
+}
+
+let voiceUnlocked = false;
+
+/**
+ * UNLOCK SPEECH ON THE FIRST USER GESTURE.
+ *
+ * Mobile browsers refuse `speechSynthesis.speak()` until the page has seen a
+ * gesture from the user, and the refusal is silent — which is exactly how a
+ * trade executed, the toast appeared, and the bot said nothing. The gesture
+ * that starts a run (tapping Start) is the natural place to unlock, but the
+ * unlock has to happen IN that gesture, not later from a timer or an event
+ * handler: by the time the execution lands the gesture context is gone.
+ *
+ * So the app calls this on the first pointerdown/keydown anywhere (see
+ * __root.tsx). It speaks one empty utterance, which is inaudible but marks the
+ * engine as user-activated for the rest of the session.
+ *
+ * This is NOT gated on the Bot Voice setting and does not gate anything else:
+ * voice and notifications stay independent — a trader with voice off still gets
+ * their toasts, and the unlock never makes a sound.
+ */
+export function unlockBotVoice(): void {
+  if (voiceUnlocked || typeof window === "undefined") return;
+  if (!("speechSynthesis" in window)) {
+    voiceUnlocked = true;
+    return;
+  }
+  try {
+    const synth = window.speechSynthesis;
+    // resume() clears a paused/blocked engine on iOS Safari.
+    synth.resume?.();
+    const primer = new SpeechSynthesisUtterance(" ");
+    primer.volume = 0;
+    synth.speak(primer);
+    voiceUnlocked = true;
+    console.log("[bot-voice] speech unlocked by user gesture");
+  } catch (error) {
+    console.warn("[bot-voice] unlock failed:", error);
   }
 }
 
@@ -257,19 +304,45 @@ export function buildTradeAnnouncement(execution: NormalizedExecution): string {
  *  • A refused order is announced as a failure, never as a success.
  */
 export function speakTradeExecution(payload: unknown): void {
-  if (!isBotVoiceEnabled()) return; // voice off → say nothing
-  if (typeof window === "undefined") return;
+  // EACH STEP OF THE CHAIN IS LOGGED so a silent trade can be diagnosed from
+  // the console instead of guessed at: event received → normalised → voice
+  // enabled → spoken (or the exact reason it stopped).
+  console.log("[bot-voice] execution-result received", payload);
+  if (typeof window === "undefined") {
+    console.log("[bot-voice] stop: no window (SSR)");
+    return;
+  }
+  if (!isBotVoiceEnabled()) {
+    console.log("[bot-voice] stop: botVoiceEnabled=false (voice off in Settings)");
+    return;
+  }
   const execution = normalizeExecution(payload);
-  if (!execution) return;
+  if (!execution) {
+    console.log("[bot-voice] stop: payload did not normalise");
+    return;
+  }
   // A plan without a symbol is not a trade yet — nothing to announce.
-  if (!execution.symbol) return;
+  if (!execution.symbol) {
+    console.log("[bot-voice] stop: no symbol");
+    return;
+  }
   // Progress chatter carries no outcome — it is not an execution.
-  if (execution.status === null) return;
+  if (execution.status === null) {
+    console.log("[bot-voice] stop: no status (not an execution)", execution);
+    return;
+  }
 
   const signature = executionSignature(execution);
-  if (alreadyAnnounced(signature)) return;
+  if (alreadyAnnounced(signature)) {
+    console.log("[bot-voice] stop: already announced", signature);
+    return;
+  }
 
   const sentence = buildTradeAnnouncement(execution);
-  if (!sentence) return;
+  if (!sentence) {
+    console.log("[bot-voice] stop: empty sentence");
+    return;
+  }
+  console.log(`[bot-voice] speaking: ${sentence}`);
   speakBot(sentence);
 }

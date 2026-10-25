@@ -15,7 +15,7 @@ import {
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { OWNER_EMAILS, useCurrentAccount } from "@/lib/auth-store";
-import { getReactivationEnabled } from "@/lib/supabase-users";
+import { getReactivationEnabled, reactivateEmail } from "@/lib/portal-store";
 import { checkReactivationEmail } from "@/lib/reactivation-check";
 import { describeError as formatReactivationFailure } from "@/lib/portal-paid";
 
@@ -210,34 +210,43 @@ function ReactivateClientPage() {
       return;
     }
 
-    // DEVICE UNBINDING ONLY — the device columns are cleared and nothing else.
-    // Expiry dates, licence keys, subscriptions and the payment flag are never
-    // written here.
-    let updateError: { message?: string } | null = null;
+    // DEVICE UNBINDING ONLY — through /api/account, server-side, KV only.
+    // The browser never writes the store: the KV token is server-side, and the
+    // endpoint clears `deviceId` and nothing else (payment, paidAt, licence
+    // keys, expiry and the subscription are untouched).
+    //
+    // THIS REPLACED A BROWSER-SIDE SUPABASE UPDATE, which is what threw the raw
+    // "TypeError: Failed to fetch" at the mentor: the client was built from
+    // public env vars that are no longer set, so the request never left the
+    // page. A failed unbind still costs NOTHING — the token is charged below,
+    // only after the server has confirmed the release.
+    let unbindError: string | null = null;
+    let clearedAt: string | undefined;
     try {
-      const { supabase } = await import("@/lib/supabase");
-      const { error } = await supabase!
-        .from("users")
-        .update({ device_email: null, device_id: null })
-        .eq("email", cleanEmail);
-      updateError = error ?? null;
+      const result = await reactivateEmail(cleanEmail);
+      if (!result.ok) unbindError = result.error ?? "The device binding could not be cleared.";
+      clearedAt = result.clearedAt;
     } catch (error) {
-      updateError = { message: formatReactivationFailure(error) };
+      unbindError = "The device binding could not be cleared — one record source was unreachable. Please try again.";
+      setDiagnostic(`${check.diagnostic} | device unbind threw: ${formatReactivationFailure(error)}`);
     }
 
     setBusy(false);
-    if (updateError) {
-      setError("The device binding could not be cleared — one record source was unreachable. Please try again.");
-      setDiagnostic(`${check.diagnostic} | device unbind failed: ${updateError.message ?? "unknown"}`);
+    if (unbindError) {
+      setError(unbindError);
+      setDiagnostic(`${check.diagnostic} | device unbind failed (no token charged): ${unbindError}`);
       return;
     }
 
-    // Deduct 1 token
+    // TOKEN CHARGED ONLY NOW — after the server confirmed the unbind.
     if (tokens > 0) {
       const updated = tokens - 1;
       setStoredTokens(account.email, updated);
       setTokens(updated);
     }
+    console.info(
+      `[reactivate] ${cleanEmail} released at ${clearedAt ?? new Date().toISOString()} — 1 token charged`,
+    );
 
     setClientEmail("");
     toast.success(`${cleanEmail} reactivated! 1 token deducted. Remaining tokens: ${Math.max(0, tokens - 1)}`);

@@ -123,6 +123,16 @@ function text(value: unknown): string {
  * A confirmed fill is only an "executed" when it ALSO names a direction and
  * a symbol — that is the shape of a real order. Everything else stays
  * unlabelled so nothing is announced as a success by accident.
+ *
+ * THE LABEL COUNTS. The auto-trade producer dispatches its confirmed fills as
+ * `{ event: "TRADE 2/3 EXECUTED", symbol, side, entry, sl, tp, … }` — no `ok`
+ * and no `status` field. Reading only `ok` therefore left every real fill
+ * unlabelled, `normalizeExecution` answered `status: null`, and the voice
+ * returned before speaking: the toast showed the trade and the bot stayed
+ * silent. The event's own headline is a producer's statement about what just
+ * happened, so it is read as the status — but ONLY when the payload also
+ * carries the shape of a real order (symbol + side), so a stray label can
+ * never announce a fill that did not happen.
  */
 function inferStatus(detail: Record<string, unknown>, ok: boolean, symbol: string, side: ExecutionSide | null): ExecutionStatus | null {
   const explicit = detail["status"];
@@ -130,9 +140,11 @@ function inferStatus(detail: Record<string, unknown>, ok: boolean, symbol: strin
     return explicit;
   }
   const message = text(detail["message"]);
+  const label = `${text(detail["event"])} ${text(detail["reason"])}`.trim();
   if (ok && symbol && side) return "executed";
-  if (/refused|failed|rejected|not enough margin|insufficient/i.test(message)) return "failed";
-  if (/no trade|blocked|stale/i.test(message)) return "blocked";
+  if (/refused|failed|rejected|not enough margin|insufficient/i.test(`${message} ${label}`)) return "failed";
+  if (/no trade|blocked|stale|direction (changed|mismatch)/i.test(`${message} ${label}`)) return "blocked";
+  if (/\bEXECUTED\b/i.test(label) && symbol && side) return "executed";
   if (ok && symbol) return "executed";
   return null;
 }
@@ -148,8 +160,15 @@ export function normalizeExecution(payload: unknown): NormalizedExecution | null
   const symbol = text(detail["symbol"]);
   const rawSide = text(detail["side"]).toUpperCase();
   const side: ExecutionSide | null = rawSide === "BUY" || rawSide === "SELL" ? rawSide : null;
-  const ok = detail["ok"] === true;
-  const message = text(detail["message"]);
+  const message = text(detail["message"]) || text(detail["reason"]) || text(detail["event"]);
+  // `ok` is explicit when the producer sets it. A producer that omits it and
+  // says EXECUTED in its headline (see inferStatus) is treated as confirmed.
+  const ok = detail["ok"] === true || (detail["ok"] === undefined && /\bEXECUTED\b/i.test(message));
+
+  // "TRADE 2/3 EXECUTED" carries the position in the run when the producer
+  // does not send index/total as fields — read it so the voice can say
+  // "Trade 2 of 3 executed" instead of a bare "Trade executed".
+  const labelMatch = /TRADE\s+(\d+)\s*\/\s*(\d+)/i.exec(text(detail["event"]));
 
   return {
     ok,
@@ -162,8 +181,8 @@ export function normalizeExecution(payload: unknown): NormalizedExecution | null
     stopLoss: positiveNumber(detail["stopLoss"] ?? detail["sl"]),
     takeProfit: positiveNumber(detail["takeProfit"] ?? detail["tp"]),
     robotName: text(detail["robotName"] ?? detail["eaName"]),
-    index: count(detail["index"]),
-    total: count(detail["total"]),
+    index: count(detail["index"]) ?? (labelMatch ? Number(labelMatch[1]) : null),
+    total: count(detail["total"]) ?? (labelMatch ? Number(labelMatch[2]) : null),
     digits: count(detail["digits"]),
     orderId: text(detail["orderId"]),
     summary: detail["summary"] === true,

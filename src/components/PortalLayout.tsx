@@ -25,7 +25,6 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/s
 import { signOut, updateProfile, useCurrentAccount, type PortalStatus } from "@/lib/auth-store";
 import { isPortalPaused, portalCloudConfigured, portalEnsureMentorId, setPortalPaused } from "@/lib/portal-cloud";
 import { mirrorAccount } from "@/routes/dashboard.eas";
-import { useAccentColorValue } from "@/lib/theme-tokens";
 
 type NavItem = { to: string; label: string; icon: typeof LayoutGrid; badge?: boolean; mentorOnly?: boolean; adminOnly?: boolean };
 
@@ -219,6 +218,10 @@ function PendingMenu({
 
 export function PortalLayout({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false);
+  // Portal brightness — a local display preference for THIS page. It never
+  // touches the app's saved theme (see shell-scope.ts): the portal paints with
+  // its own hardcoded tokens and this only lightens them for a moment.
+  const [bright, setBright] = useState(false);
   const account = useCurrentAccount();
   const navigate = useNavigate();
   const path = useRouterState({ select: (s) => s.location.pathname });
@@ -387,8 +390,11 @@ export function PortalLayout({ children }: { children: React.ReactNode }) {
             <button
               type="button"
               aria-label={bright ? "Dim the portal" : "Brighten the portal"}
+              aria-pressed={bright}
               onClick={() => setBright((value) => !value)}
-              className="flex size-11 items-center justify-center rounded-full border border-[#00a8ff]/50 bg-[#00a8ff]/10 text-[#00a8ff] transition-colors hover:bg-[#00a8ff]/20"
+              className={`flex size-11 items-center justify-center rounded-full border border-[#00a8ff]/50 text-[#00a8ff] transition-colors hover:bg-[#00a8ff]/20 ${
+                bright ? "bg-[#00a8ff]/30" : "bg-[#00a8ff]/10"
+              }`}
             >
               <Sun className="size-5" />
             </button>
