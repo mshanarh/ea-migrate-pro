@@ -97,26 +97,44 @@ function serviceClient(): ReturnType<typeof buildServiceClient> {
  * The probe runs only when a query has already failed, and its answer is held
  * for five minutes, so the happy path pays nothing for it.
  */
-let hostProbe: { missing: boolean; at: number } | null = null;
+let hostProbe: { missing: boolean; at: number; host: string } | null = null;
 const HOST_PROBE_TTL_MS = 5 * 60 * 1000;
 
-async function databaseHostMissing(): Promise<boolean> {
-  if (hostProbe && Date.now() - hostProbe.at < HOST_PROBE_TTL_MS) return hostProbe.missing;
+/** The configured database host, or a plain note when there is none. */
+function databaseHost(): string {
   const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
-  if (!url) {
-    hostProbe = { missing: true, at: Date.now() };
+  if (!url) return "SUPABASE_URL / VITE_SUPABASE_URL not set";
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * TRUE when the configured database host does not resolve at all.
+ *
+ * The NAME is reported in the diagnostic (a project hostname is configuration,
+ * not a credential), so the log line says exactly which host was probed — the
+ * same way storeConfigInfo() names the KV variables.
+ */
+async function databaseHostMissing(): Promise<boolean> {
+  const host = databaseHost();
+  if (hostProbe && Date.now() - hostProbe.at < HOST_PROBE_TTL_MS) return hostProbe.missing;
+  const configured = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
+  if (!configured) {
+    hostProbe = { missing: true, at: Date.now(), host };
     return true;
   }
   let missing = false;
   try {
-    const host = new URL(url).hostname;
     const { lookup } = await import("node:dns/promises");
     await lookup(host);
   } catch {
     missing = true;
-    console.error(`[check-access] database host does not resolve (${url}) — treating the database as absent`);
+    console.error(`[check-access] database host does not resolve (${host}) — treating the database as absent`);
   }
-  hostProbe = { missing, at: Date.now() };
+  hostProbe = { missing, at: Date.now(), host };
   return missing;
 }
 
@@ -126,15 +144,19 @@ async function databaseStoreFailure(store: string, error: unknown): Promise<Stor
     return {
       paid: false,
       readable: true,
-      detail: `${store} → no database in this deployment (host does not resolve), no row`,
+      detail: `${store} → no database in this deployment (${databaseHost()} does not resolve), no row`,
     };
   }
-  return noAnswer(`${store} → ${errorText(error)}`);
+  return noAnswer(`${store} → ${databaseHost()} → ${errorText(error)}`);
 }
 
 /** "This deployment has no database" — an absent store, never evidence of payment. */
 function absentDatabase(store: string): StoreVerdict {
-  return { paid: false, readable: true, detail: `${store} → no database in this deployment, no row` };
+  return {
+    paid: false,
+    readable: true,
+    detail: `${store} → no database in this deployment (${databaseHost()}), no row`,
+  };
 }
 
 /** The device binding for this email — the same column the app reads today. */
@@ -411,10 +433,15 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
  */
 async function resolveAccess(email: string, deviceId: string | null): Promise<AccessAnswer> {
   // Server-side only now — this file never ships KV client code to the browser.
-  const { isAdminEmail } = await import("./_registry.js");
+  const { isSoleAdminEmail } = await import("./_registry.js");
 
-  // ── 1. ADMIN FIRST ────────────────────────────────────────────────────────
-  if (isAdminEmail(email)) {
+  // ── 1. THE SOLE ADMIN, FIRST ──────────────────────────────────────────────
+  //
+  // Only biyasentobeko222@gmail.com short-circuits the stores. Every other
+  // address — console accounts included — is answered by its paid records, so
+  // an account that holds a paid mark is reported as "paid" rather than being
+  // labelled admin and skipping the stores altogether.
+  if (isSoleAdminEmail(email)) {
     const stores: Record<string, string> = {
       "users table": "admin — not consulted",
       "KV registrations": "admin — not consulted",
@@ -451,22 +478,25 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   let decided: AccessAnswer;
   if (paidBy) {
     const [name, verdict] = paidBy;
+    stores["cloud access gate"] = `paid via ${name}`;
     decided = {
       ok: true,
       isPaid: true,
       status: "paid",
       ...(verdict.paidAt ? { paidAt: verdict.paidAt } : {}),
+      // The breakdown travels with EVERY verdict, so the client can log what
+      // each store said even when the answer is yes.
+      stores,
     };
-    stores["cloud access gate"] = `paid via ${name}`;
     console.info(diagnosticLine(email, stores, `paid (${name})`));
   } else if (kv.revoked) {
     stores["cloud access gate"] = "revoked";
     console.info(diagnosticLine(email, stores, "revoked"));
-    decided = { ok: true, isPaid: false, status: "revoked" };
+    decided = { ok: true, isPaid: false, status: "revoked", stores };
   } else if (kv.rejected) {
     stores["cloud access gate"] = "rejected";
     console.info(diagnosticLine(email, stores, "rejected"));
-    decided = { ok: true, isPaid: false, status: "rejected" };
+    decided = { ok: true, isPaid: false, status: "rejected", stores };
   } else {
     const unreadable = verdicts.filter(([, verdict]) => !verdict.readable).map(([, verdict]) => verdict.detail);
     if (unreadable.length > 0) {

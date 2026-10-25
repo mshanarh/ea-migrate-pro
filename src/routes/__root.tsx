@@ -119,7 +119,7 @@ import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { loadBridgeConfig } from "@/lib/bridge-client";
-import { applyShellScope, isPortalPath } from "@/lib/shell-scope";
+import { applyShellScope, shellScopeFor } from "@/lib/shell-scope";
 import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -270,18 +270,27 @@ function RootComponent() {
    * two shells never share those tokens.
    */
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const portalShell = isPortalPath(pathname);
+  /**
+   * WHICH DESIGN OWNS THIS ROUTE — app, mentor portal, or public marketing.
+   * Only the app publishes the user's saved font, accent and interface tokens;
+   * the portal has its own hardcoded tokens (src/styles.css) and the landing
+   * page keeps the stylesheet's brand fonts and colours.
+   */
+  const shellScope = shellScopeFor(pathname);
+  const portalShell = shellScope === "portal";
+  const appShell = shellScope === "app";
 
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
     applyColourMatrixFromStorage();
   }, []);
 
-  // Put the document into the right shell BEFORE the portal paints, and undo
-  // every app customization token on the way in.
+  // Put the document into the right shell BEFORE it paints, and undo every app
+  // customization token whenever we leave the app — a saved Orbitron face and a
+  // solar-orange accent must never repaint the landing page or the portal.
   useEffect(() => {
-    applyShellScope(portalShell);
-  }, [portalShell]);
+    applyShellScope(shellScope);
+  }, [shellScope]);
 
   // READ THE BRIDGE'S CURRENT ADDRESS once per app start. The tunnel hostname
   // changes whenever cloudflared restarts, so the address is an admin setting
@@ -341,11 +350,18 @@ function RootComponent() {
           <BackgroundEffects />
           {/* Invisible centre-tap surface for the interface colour cycle. */}
           <ColourCycleTap />
-          {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
-          <AccentVarSync />
-          {/* Publishes the selected Main Interface definition to <html> so Home,
-              Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
-          <InterfaceThemeSync />
+          {/* APP ROUTES ONLY — the landing page is a marketing page, not the app.
+              Mounting these at every route is what put the saved font (Orbitron
+              by default) and accent (solar orange) on the public site. */}
+          {appShell ? (
+            <>
+              {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
+              <AccentVarSync />
+              {/* Publishes the selected Main Interface definition to <html> so Home,
+                  Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
+              <InterfaceThemeSync />
+            </>
+          ) : null}
           {/* The app-wide background picture layer — under the content wrapper below. */}
           <AppBackground />
         </>

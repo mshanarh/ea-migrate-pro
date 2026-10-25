@@ -12,8 +12,9 @@ import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interfac
  * Legacy layouts (NOVA CORE, SNIPPER, PHOENIX, …) resolve to null, which puts
  * the tokens back to neutral and leaves their bespoke styling alone.
  *
- * While testing, the small badge below (and the `[interface] ACTIVE = …`
- * console line) shows exactly which definition the real UI is reading.
+ * It renders NOTHING. The temporary debug badge that used to sit at the bottom
+ * left ("NOVA CORE · #…") is gone: it was a testing aid, it floated over the
+ * public landing page as well, and it is not part of the design.
  */
 export function InterfaceThemeSync() {
   const { theme, font } = useCustomization();
@@ -31,21 +32,5 @@ export function InterfaceThemeSync() {
     applyFontStack(font);
   }, [definition, font]);
 
-  if (!definition) return null;
-
-  return (
-    <div
-      data-testid="interface-debug-badge"
-      aria-hidden
-      className="pointer-events-none fixed left-2 z-[60] rounded-md border px-1.5 py-0.5 text-[9px] font-bold tracking-[0.14em] uppercase"
-      style={{
-        bottom: "calc(var(--sa-bottom) + 96px)",
-        borderColor: `${definition.signature}66`,
-        color: definition.signature,
-        background: "rgba(0,0,0,0.62)",
-      }}
-    >
-      {definition.name} · {definition.signature}
-    </div>
-  );
+  return null;
 }

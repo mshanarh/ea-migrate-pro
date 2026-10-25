@@ -54,6 +54,24 @@ export type ApiResponse = {
 
 const HASH_KEY = "eamp:registrations";
 
+/**
+ * THE SOLE ADMIN — the one address the APP's access gate always lets in.
+ *
+ * Deliberately separate from OWNER_ADMIN_EMAILS below, which governs the ADMIN
+ * CONSOLE. Access to the trading app is decided by payment stores for every
+ * other address — including the console accounts — so a paid mark (or its
+ * absence) is answered by the stores, and only this address bypasses them.
+ *
+ * `biyasentobeko222@gmail` is the same mailbox typed without the TLD; it is
+ * kept so the owner's dotless form also passes.
+ */
+export const SOLE_ADMIN_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
+
+/** Case-insensitive exact match against SOLE_ADMIN_EMAILS. */
+export function isSoleAdminEmail(email: string): boolean {
+  return SOLE_ADMIN_EMAILS.includes(normalizeEmail(email));
+}
+
 const OWNER_ADMIN_EMAILS = [
   "biyasentobeko222@gmail.com",
   "biyasentobeko222@gmail",
@@ -143,6 +161,7 @@ export function normalizeEmail(value: unknown): string {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
 
+/** Admin-CONSOLE rights (registrations, approvals, media). Not app access. */
 export function isAdminEmail(email: string): boolean {
   const extra = (process.env["ADMIN_EMAILS"] ?? "")
     .split(",")

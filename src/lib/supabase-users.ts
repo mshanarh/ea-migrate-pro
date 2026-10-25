@@ -180,6 +180,47 @@ export async function checkAccessServer(email: string, deviceId?: string): Promi
 }
 
 /**
+ * THE PAID SIGN-IN MIRROR — written in the BACKGROUND, never in front of the
+ * answer.
+ *
+ * These two rows are for the app to use later (device binding reads `users`,
+ * support reads `user_sessions`). They are a best-effort mirror: a deployment
+ * whose database is missing, slow or unreachable must still let a paid account
+ * straight in, so every call here is caught and logged and NOTHING is awaited
+ * by the caller.
+ */
+async function mirrorPaidSignIn(address: string, licenseKey?: string): Promise<void> {
+  const dbClient = db();
+  if (!dbClient) return;
+  try {
+    const { error } = await dbClient
+      .from("users")
+      .upsert({ email: address }, { onConflict: "email", ignoreDuplicates: true })
+      .select("id")
+      .maybeSingle();
+    if (error) console.warn("[supabase] user upsert failed:", error.code, error.message);
+  } catch (error) {
+    console.warn("[supabase] user upsert failed:", error instanceof Error ? error.message : String(error));
+  }
+  try {
+    const insert = (withKey: boolean) =>
+      dbClient.from("user_sessions").insert({
+        email: address,
+        ...(withKey && licenseKey ? { license_key: licenseKey } : {}),
+      });
+    const { error: sessionError } = await insert(true);
+    if (sessionError?.code === "42703") {
+      const { error: retryError } = await insert(false);
+      if (retryError) console.warn("[supabase] session insert failed:", retryError.message);
+    } else if (sessionError) {
+      console.warn("[supabase] session insert failed:", sessionError.message);
+    }
+  } catch (error) {
+    console.warn("[supabase] session insert failed:", error instanceof Error ? error.message : String(error));
+  }
+}
+
+/**
  * Registration gate. FAIL CLOSED on every runtime error: a failed upsert, a
  * failed read or a missing row all answer "checkout", because none of them is
  * proof that this email paid.
@@ -210,6 +251,17 @@ export async function registerWithEmail(
    * decided from the stores below.
    */
   const adminFirst = isPaymentExemptEmail(address);
+  // ── THE SOLE ADMIN ANSWERS YES BEFORE ANYTHING ELSE ──────────────────────
+  //
+  // No store read, no /api/check-access call, no database round trip and no
+  // session mirror: this address administers the app, so there is nothing to
+  // verify and nothing that can be slow or down. These writes used to run
+  // BEFORE the answer was returned, which is how the admin ended up on
+  // "Checking your subscription…" while a dead database timed out.
+  if (adminFirst) {
+    console.info(`[access] ${address} → admin: passes before any store is read`);
+    return { outcome: "allow", user: null, verified: true };
+  }
   // UNCONFIGURED SUPABASE → CHECKOUT. There is no database to verify against,
   // so there is no way to confirm anybody paid; "we cannot check" must never
   // read as "this account is fine". This only affects a build with no
@@ -255,54 +307,20 @@ export async function registerWithEmail(
     };
   }
   if (access.isPaid) {
-    // Keep a row for the app later — bindDeviceToEmail at sign-in wants it.
-    const { data: inserted, error: upsertError } = await dbClient
-      .from("users")
-      .upsert({ email: address }, { onConflict: "email", ignoreDuplicates: true })
-      .select("id, email, is_paid, is_admin, created_at")
-      .maybeSingle();
-
-    if (upsertError) {
-      console.warn("[supabase] user upsert failed:", upsertError.code, upsertError.message);
-    }
-
-    // Session row — best-effort. Some deployments lack the license_key
-    // column; retry without it so the session still records.
-    const { error: sessionError } = await dbClient.from("user_sessions").insert({
-      email: address,
-      ...(licenseKey ? { license_key: licenseKey } : {}),
-    });
-    if (sessionError?.code === "42703") {
-      const { error: retryError } = await dbClient.from("user_sessions").insert({ email: address });
-      if (retryError) console.warn("[supabase] session insert failed:", retryError.message);
-    } else if (sessionError) {
-      console.warn("[supabase] session insert failed:", sessionError.message);
-    }
-
-    // Re-read the row (covers "insert raced, upsert ignored" — the select
-    // after ignoreDuplicates can be null when the row already existed).
-    let user = inserted as UserRow | null;
-    if (!user) {
-      const { data: fetched, error: fetchError } = await dbClient
-        .from("users")
-        .select("id, email, is_paid, is_admin, created_at")
-        .eq("email", address)
-        .maybeSingle();
-      if (fetchError) console.warn("[supabase] user read failed:", fetchError.code, fetchError.message);
-      user = (fetched as UserRow | null) ?? null;
-    }
-
     // THE SERVER'S ANSWER IS THE DECISION — IT IS THE SAME KV WRITE THE ADMIN
     // MADE. /api/check-access read the Upstash registration record the
     // console's "Mark paid" writes (and the Supabase payment ledger as its
     // fallback) before answering "paid", so nothing more is required here.
-    // The second browser-side ledger check that used to sit here could only
-    // VETO that answer when the best-effort Supabase mirror row was missing
-    // (the mirror needs the service-role key and is allowed to fail) — which
-    // is exactly how an account the admin had just marked paid kept landing
-    // back on the plan page. Nothing else opens the app; the real enforcement
-    // still lives in requireVerifiedAccess, which asks the same server.
-    return { outcome: "allow", user, verified: true };
+    //
+    // THE MIRROR IS WRITTEN IN THE BACKGROUND, NEVER IN FRONT OF THE ANSWER.
+    // `users` / `user_sessions` are a best-effort mirror (they need the
+    // service-role key and are allowed to fail). Awaiting them meant a paid
+    // account waited on a database it does not need — and when that database
+    // was slow or gone, the shared sign-in deadline fired and the customer was
+    // shown "Checking your subscription…" for a payment the gate had already
+    // confirmed. Nothing below this line can change the verdict.
+    void mirrorPaidSignIn(address, licenseKey);
+    return { outcome: "allow", user: null, verified: true };
   }
 
   // 1. Upsert — an existing row is NOT modified (admin/paid flags stay).

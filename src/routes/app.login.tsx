@@ -17,7 +17,12 @@ import {
   markPendingLicense,
   useAppState,
 } from "@/lib/app-store";
-import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import {
+  enforceAuthEpoch,
+  isPaymentExemptEmail,
+  markEmailPaid,
+  paymentStatusForEmail,
+} from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
 import { supabase } from "@/lib/supabase";
 import {
@@ -835,6 +840,13 @@ function AppAccess() {
     if (typeof window !== "undefined" && window.location.search) {
       window.history.replaceState({}, "", "/app/login");
     }
+    // RE-RUN THE CHECK for the address on screen. Clearing the flags alone only
+    // re-arms the poll for a session that already exists; somebody who never got
+    // past the sign-in has no session, so Retry has to run the whole decision
+    // again — same email, fresh reads, no typing.
+    if (email.trim()) {
+      void continueWithEmail({ preventDefault() {} } as FormEvent<HTMLFormElement>);
+    }
   };
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
@@ -851,6 +863,38 @@ function AppAccess() {
     // opens fast instead of hanging.
     const budgetStartedAt = Date.now();
     const left = () => Math.max(1_000, 4_000 - (Date.now() - budgetStartedAt));
+
+    /**
+     * ── 1. THE SOLE ADMIN, FIRST ───────────────────────────────────────────
+     *
+     * biyasentobeko222@gmail.com administers this app, so it is answered YES
+     * here — before any store read, any /api call, any device check and any
+     * deadline. This is the FIRST thing the sign-in does; putting a
+     * verification in front of it is what showed the owner "Checking your
+     * subscription…" while a payment store was unreachable.
+     */
+    if (isPaymentExemptEmail(clean)) {
+      console.info(`[app-login] ${clean} is the sole admin — signing in without a subscription check`);
+      const adminSignIn = appSignIn(clean);
+      if (adminSignIn.error) {
+        toast.error(adminSignIn.error);
+        setBusy(false);
+        setRedirecting(false);
+        return;
+      }
+      markEmailPaid(clean);
+      window.sessionStorage.setItem("eamp_pending_welcome", "1");
+      markPendingLicense(clean);
+      setLicensePending(true);
+      setVerifyNotice("");
+      setPlanReason(null);
+      setChoosePlan(false);
+      setPayPrompt(false);
+      setBusy(false);
+      setRedirecting(false);
+      return;
+    }
+
     try {
       // PAYMENT IS DECIDED FIRST, BEFORE ANYTHING ELSE.
       //

@@ -177,6 +177,33 @@ describe("check-access — the gate's decision rules", () => {
     expect((body["unreadable"] as string[]).join(" ")).toMatch(/KV registrations/);
   });
 
+  it("decides a CONSOLE admin by its paid records instead of labelling it admin", async () => {
+    // The user's rule: only biyasentobeko222@gmail.com short-circuits the
+    // stores. This address is paid in portal accounts KV, so it must be
+    // reported as PAID (not "admin"), and it must pass.
+    store.kv = JSON.stringify({
+      email: "ntobekotraders.official@gmail.com",
+      isPaid: true,
+      paidAt: "2026-10-24T10:53:38.023Z",
+      status: "approved",
+    });
+
+    const { body } = await ask("ntobekotraders.official@gmail.com");
+
+    expect(body["status"]).toBe("paid");
+    expect(body["isPaid"]).toBe(true);
+    expect((body["stores"] as Record<string, string>)["cloud access gate"]).toBe(
+      "paid via KV registrations",
+    );
+  });
+
+  it("sends a console admin WITHOUT a paid record to the plans like anybody else", async () => {
+    const { body } = await ask("admin@eamigrate.pro");
+
+    expect(body["status"]).toBe("unpaid");
+    expect(body["isPaid"]).toBe(false);
+  });
+
   it("reports every store in the answer, for the redirect diagnostic", async () => {
     const { body } = await ask(CLIENT);
     const stores = body["stores"] as Record<string, string>;
