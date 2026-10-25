@@ -9,9 +9,21 @@
    (src/lib/app-customization.ts → applyFontStack). Every element reads it,
    so a font change reaches text on every screen and every interface style.
    `display=swap` on the Google Fonts import above means text paints in the
-   fallback immediately and swaps in — it never flashes invisible. */
+   fallback immediately and swaps in — it never flashes invisible.
+
+   THE DEFAULT IS THE PLATFORM STACK, NOT A BRANDED FACE. This variable is
+   read by the `body, body *` rule below on EVERY shell, so whatever sits here
+   is also the font of the public landing page and of any screen the user has
+   not customized yet. It used to default to Inter, which repainted the whole
+   marketing site in Inter — the landing page is not the app and never had a
+   webfont of its own: it rendered in the platform UI face (Roboto on Android,
+   SF on iOS/desktop, Segoe UI on Windows), exactly like Tailwind's preflight.
+   That is what these values restore. The app still gets the user's pick, because
+   applyFontStack overwrites this property inline on <html> for app routes. */
 :root {
-  --app-font: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --app-font: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji",
+    "Segoe UI Emoji";
 }
 
 @custom-variant dark (&:is(.dark *));
