@@ -23,7 +23,7 @@ REM  How to use:  double-click install-scalper.bat
 REM ============================================================
 
 @echo off
-setlocal
+setlocal EnableDelayedExpansion
 
 set BRIDGE_URL=https://eamigratepro.vercel.app/bridge/bridge.py
 set DAEMON_URL=https://eamigratepro.vercel.app/bridge/scalper_daemon.py
@@ -43,7 +43,7 @@ if errorlevel 1 (
     echo https://www.python.org/downloads/ and re-run this script.
     exit /b 1
 )
-echo [OK] python located: %PYTHON%
+echo [OK] python located: %PYTHON%  (python %python% -c "import sys; print(sys.version)")
 where uvicorn >nul 2>nul
 if errorlevel 1 (
     echo [FAIL] uvicorn was not found. Run:  pip install fastapi uvicorn
@@ -55,17 +55,17 @@ echo [1/4] Downloading bridge + daemon from the Vercel URLs ...
 
 set "DL_OK=1"
 for %%F in (bridge.py scalper_daemon.py) do (
-    set URL=!BRIDGE_URL!
-    if "%%F"=="scalper_daemon.py" set URL=!DAEMON_URL!
-    echo    fetching %%F -> %URL%
+    set "URL=!BRIDGE_URL!"
+    if "%%F"=="scalper_daemon.py" set "URL=!DAEMON_URL!"
+    echo    fetching %%F -> !URL!
     powershell -NoProfile -ExecutionPolicy Bypass ^
         -Command "^$r = New-Object System.Net.WebClient; ^"
         "^$r.Headers['User-Agent'] = 'EA-Migrate-Scalper-Installer/1.0'; ^"
         "^$r.Proxy = [System.Net.WebProxy]::DefaultWebProxy; ^"
-        "^$r.DownloadFile('%URL%', '%DIR%%%F') ^| Out-Null; ^"
+        "^$r.DownloadFile('!URL!', '%DIR%%%F') ^| Out-Null; ^"
         "if ($? -eq $false) { exit 1 }"
     if errorlevel 1 (
-        echo [FAIL] could not download %%F from %URL% — check your network,
+        echo [FAIL] could not download %%F from !URL! — check your network,
         echo         or that the file exists at that URL. See %LOG%.
         set "DL_OK=0"
     ) else (
