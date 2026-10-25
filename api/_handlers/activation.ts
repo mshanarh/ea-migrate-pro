@@ -258,67 +258,74 @@ function safeEqual(a: string, b: string): boolean {
  */
 async function isMarkedPaid(client: SupabaseClient, email: string): Promise<boolean | undefined> {
   /*
-   * KV FIRST — the admin dashboard's "Mark paid" writes `eamp:registrations`
-   * (api/admin-approve.ts → saveRegistration), so the KV `isPaid` flag IS the
-   * exact same status the admin toggles. When the KV store is configured and
-   * has a record for this email, IT decides — that is the cutover the admin
-   * list runs on. Supabase `paid_emails` below remains only as the fallback
-   * for addresses that predate the migration (see /api/admin-backfill) and
-   * for deployments where KV is not configured at all.
-   *
-   * FAST FAIL: KV calls are limited to 3 seconds total, ONE retry only.
-   * If KV times out or errors, fall through to the legacy ledger immediately.
-   * If the ledger also cannot answer, we still return `undefined` so the
-   * caller knows the store was unavailable, not that the email is unpaid.
+   * PAID CHECK — run KV and the legacy ledger in parallel so the faster
+   * one decides, and the slower one runs in the background. Both are given
+   * 3 seconds; if neither answers within that window we fail open (return
+   * undefined) so the caller does not block on a store outage.
    */
-  if (storeConfigured()) {
+  const KV_TIMEOUT_MS = 3_000;
+
+  // KV check in parallel with the legacy ledger
+  const kvPromise = (async () => {
+    if (!storeConfigured()) return undefined;
     try {
       const record = await Promise.race([
         getRegistration(email),
         new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error("KV timeout")), 3000),
+          setTimeout(() => reject(new Error("KV timeout")), KV_TIMEOUT_MS),
         ),
       ]);
       if (record) return record.isPaid === true && record.paidAt != null;
     } catch (firstError) {
-      // ONE RETRY BEFORE THE LEGACY LEDGER — a single blip must not lock out
-      // a paying customer. If the retry also times out, fall through.
+      // ONE RETRY BEFORE GIVING UP — a single blip must not lock out a paying
+      // customer. If the retry also times out, fall through.
       console.warn("[activation] KV paid lookup failed, retrying:", firstError);
       try {
         const record = await Promise.race([
           getRegistration(email),
           new Promise<never>((_, reject) =>
-            setTimeout(() => reject(new Error("KV timeout")), 3000),
+            setTimeout(() => reject(new Error("KV timeout")), KV_TIMEOUT_MS),
           ),
         ]);
         if (record) return record.isPaid === true && record.paidAt != null;
       } catch (error) {
-        console.warn("[activation] KV paid lookup failed after retry, using legacy ledger:", error);
+        console.warn("[activation] KV paid lookup failed after retry, using legacy:", error);
       }
     }
-  }
-  // FALLBACK: the legacy Supabase paid_emails ledger.
-  // If this also fails (e.g. table missing), we return undefined rather than false,
-  // so the caller knows it was a store outage, not a payment decision.
-  let legacyPaid: boolean | undefined;
-  try {
-    const { data, error } = await client
-      .from("paid_emails")
-      .select("paid_at")
-      .eq("email", email)
-      .limit(1);
-    if (error) throw error;
-    // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
-    // unpaid"), not a payment. It must not pass.
-    legacyPaid = ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
-  } catch (error) {
-    console.warn("[activation] legacy paid_emails lookup failed, treating as unknown:", error);
-  }
-  if (legacyPaid === true) return true;
-  // If legacyPaid is not true (false or undefined), the email is not confirmed as paid.
-  // If KV also could not answer (we fell through from above), return undefined
-  // so the caller does not block sign-in on a store outage.
-  // The code is inbox verification, not a payment decision.
+    return undefined;
+  })();
+
+  // Legacy ledger check in parallel with KV
+  const legacyPromise = (async () => {
+    let legacyPaid: boolean | undefined;
+    try {
+      const { data, error } = await client
+        .from("paid_emails")
+        .select("paid_at")
+        .eq("email", email)
+        .limit(1);
+      if (error) throw error;
+      // A row with a NULL timestamp is a REVOCATION marker (the console's "Mark
+      // unpaid"), not a payment. It must not pass.
+      legacyPaid = ((data ?? []) as Array<{ paid_at?: string | null }>).some((row) => row.paid_at != null);
+    } catch (error) {
+      console.warn("[activation] legacy paid_emails lookup failed, treating as unknown:", error);
+    }
+    if (legacyPaid === true) return true;
+    // If legacyPaid is not true (false or undefined), the email is not confirmed as paid.
+    // If KV also could not answer (we fell through from above), return undefined
+    // so the caller does not block sign-in on a store outage.
+    // The code is inbox verification, not a payment decision.
+    return undefined;
+  })();
+
+  // Await both in parallel, use the first answer that arrives
+  const [kvResult, legacyResult] = await Promise.all([kvPromise, legacyPromise]);
+  if (kvResult !== undefined) return kvResult;
+  if (legacyResult !== undefined) return legacyResult;
+  // Both stores were unavailable — fail open so the caller (code step) does
+  // not block on a store outage. The code is inbox verification, not a
+  // payment decision.
   return undefined;
 }
 

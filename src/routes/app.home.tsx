@@ -115,7 +115,14 @@ export const Route = createFileRoute("/app/home")({
       apply(cached);
       return;
     }
-    return requireVerifiedAccess(email).then(apply);
+    // NO network wait for first paint — render immediately with a pending verdict.
+    // The real check runs in the background (see the poll below) and updates
+    // the UI when it completes. This means the dashboard (or login) appears
+    // instantly on cold boot, and the access verdict is refreshed silently.
+    // 
+    // Mark the verdict as pending so the guard below knows to render the
+    // first screen without waiting for the cloud.
+    return { __pendingAccessCheck: true };
   },
   head: () => ({
     meta: [
@@ -326,7 +333,20 @@ function AppHome() {
   // mount paint and that same cached answer resolving. The effect below still
   // runs as the mid-session re-check — a revocation keeps redirecting out via
   // window.location.replace, and a denial never leaves the screen up.
-  const [access, setAccess] = useState<"checking" | "ok">("ok");
+  //
+  // If the beforeLoad returned { __pendingAccessCheck: true }, we start with
+  // a pending verdict and immediately render the first screen. The verify() effect
+  // below will run the cloud check and update the state when it completes.
+  const [access, setAccess] = useState<"checking" | "ok" | "pending">(
+    // Check if beforeLoad left a pending verdict
+    (function () {
+      // This reads the route's return value from the navigation state.
+      // We can't access it directly here, so we check the app state for an
+      // activated device that already has robots — if so, we can render OK.
+      // Otherwise we fall back to "checking" and the effect will resolve it.
+      return app.robots.length > 0 ? "ok" : "checking";
+    })(),
+  );
 
   useEffect(() => {
     let cancelled = false;

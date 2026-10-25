@@ -1,4 +1,5 @@
 import { BrandLogo } from "@/components/BrandLogo";
+import { START } from "@/lib/startup-timing";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
 import { usePlatform } from "@/lib/platform";
@@ -101,6 +102,7 @@ export const Route = createFileRoute("/app/login")({
    * are the deliberate hand-offs and must survive the redirect.
    */
   beforeLoad: ({ location }) => {
+    START("login-beforeLoad");
     const params = new URLSearchParams(location.search);
     for (const flag of RESUME_EXEMPT_FLAGS) {
       if (params.get(flag) === "1" || params.get(flag) === "true") return;
@@ -1376,8 +1378,12 @@ function AppAccess() {
        * sitting in the gate's cache. /app/home re-checks the database, and it
        * must read it afresh: a cached refusal is what turned "the key is in"
        * into "you were signed out and asked for your email and code again".
+       * We no longer invalidate the access cache here because markEmailPaid()
+       * inside activateKey() already set the local paid flag, and the home
+       * screen's peekAccessVerdict will read it instantly on the next navigation.
+       * Invalidating would force a cloud round-trip that may not have propagated
+       * yet, sending the user back to the plan chooser instead of straight in.
        */
-      invalidateAccessCache(getAppState().email ?? activeEmail);
       /**
        * GO STRAIGHT IN — IN THIS PAGE LOAD, NOT VIA A RELOAD.
        *
@@ -1537,14 +1543,13 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
           !
         </span>
         <p className="text-sm font-semibold leading-6 text-red-200">
-          Account already used — please tell your mentor to reactivate.
+          Contact admin for reactivation
         </p>
       </div>
       <p className="mt-3 text-base leading-7 text-[#8a9298]">
         <span className="font-semibold text-[#55c7ff]">{email}</span> is already activated on
-        another device. One email works on one device only. Ask your mentor to re-activate your
-        account — they can release your device from their portal in seconds, and your licence,
-        payment and robots stay exactly as they are.
+        another device. One email works on one device only. The admin can release your device
+        from their portal, and your licence, payment and robots stay exactly as they are.
       </p>
       <div className="mt-10 space-y-4">
         <button

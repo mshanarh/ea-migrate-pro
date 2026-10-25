@@ -205,9 +205,8 @@ const LAYOUT_ALIASES: Record<string, string> = {
   layout_sniper_circle: "crimson_navigator",
   layout_sniper_full: "navigator_plus",
   layout_sniper_vertical: "pablo_elite",
-};
-
-function load() {
+};function load() {
+  START("app-store-load-start");
   if (loaded || typeof window === "undefined") return;
   loaded = true;
   // The epoch kick runs BEFORE the saved state is read: a bumped epoch must
@@ -216,7 +215,13 @@ function load() {
   const epochKick = consumeAccessEpochKick();
   try {
     LEGACY_KEYS.forEach((legacy) => window.localStorage.removeItem(legacy));
+    // Read independent localStorage entries — these are all synchronous browser
+    // API calls, so we read them all in one pass rather than sequentially.
+    // The individual getItem calls are fast, but reading them together makes the
+    // intent clear and avoids any hidden ordering dependency.
     const raw = window.localStorage.getItem(KEY);
+    const savedLayout = window.localStorage.getItem("layout");
+    const savedThemeColor = window.localStorage.getItem("themeColor");
     if (raw) {
       const saved = JSON.parse(raw) as Partial<AppState>;
       state = {
@@ -225,33 +230,31 @@ function load() {
         activeRobotId: saved.activeRobotId ?? initial.activeRobotId,
       robots: Array.isArray(saved.robots)
         ? saved.robots.map((robot) => ({
-            ...robot,
-            symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
-            // Only restore pairs when this robot actually has configured
-            // symbols. robots created with pairs: [] (nothing configured
-            // yet) must NOT re-seed every EA symbol into Allowed Quotes on
-            // load — those symbols stay under Selected Quotes until the
-            // user presses Configure.
-            pairs: Array.isArray(robot.pairs) && robot.pairs.length > 0
-              ? robot.pairs.map((pair) => ({
-                  // Pairs saved by older builds were uppercased — restore the
-                  // portal's spelling so the symbol reads exactly as the EA
-                  // lists it (comparison stays case-insensitive).
-                  symbol:
-                    typeof pair?.symbol === "string"
-                      ? canonicalEaSymbol(pair.symbol, Array.isArray(robot.symbols) ? robot.symbols : [])
-                      : "",
-                  lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
-                  maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
-                })).filter((pair) => pair.symbol)
-              : [],
-          }))
+          ...robot,
+          symbols: Array.isArray(robot.symbols) ? robot.symbols : [],
+          // Only restore pairs when this robot actually has configured
+          // symbols. robots created with pairs: [] (nothing configured
+          // yet) must NOT re-seed every EA symbol into Allowed Quotes on
+          // load — those symbols stay under Selected Quotes until the
+          // user presses Configure.
+          pairs: Array.isArray(robot.pairs) && robot.pairs.length > 0
+            ? robot.pairs.map((pair) => ({
+              // Pairs saved by older builds were uppercased — restore the
+              // portal's spelling so the symbol reads exactly as the EA
+              // lists it (comparison stays case-insensitive).
+              symbol:
+                typeof pair?.symbol === "string"
+                  ? canonicalEaSymbol(pair.symbol, Array.isArray(robot.symbols) ? robot.symbols : [])
+                  : "",
+              lotSize: typeof pair?.lotSize === "string" && pair.lotSize ? pair.lotSize : "0.01",
+              maxTrades: typeof pair?.maxTrades === "string" && pair.maxTrades ? pair.maxTrades : "0",
+            })).filter((pair) => pair.symbol)
+            : [],
+        }))
         : initial.robots,
         settings: { ...initial.settings, ...(saved.settings ?? {}), backgroundEnabled: saved.settings?.backgroundEnabled ?? true },
       };
     }
-    const savedLayout = window.localStorage.getItem("layout");
-    const savedThemeColor = window.localStorage.getItem("themeColor");
     const requestedLayout = savedLayout || state.settings.interfaceStyle;
     const aliasedLayout = LAYOUT_ALIASES[requestedLayout];
     const selectedLayout = INTERFACE_STYLE_IDS.has(requestedLayout)
@@ -259,17 +262,19 @@ function load() {
       : aliasedLayout && INTERFACE_STYLE_IDS.has(aliasedLayout)
         ? aliasedLayout
         : initial.settings.interfaceStyle;
-    state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };
-  } catch {
+    state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };    } catch {
     /* ignore */
   }
+  START("app-store-load-end");
   if (epochKick) {
+
     // Sign everyone out locally — the cloud gate on the next route decides
     // who gets back in (unpaid emails are sent to checkout, not the app).
     state = { ...initial, settings: state.settings };
     persist();
   }
 }
+
 
 function persist() {
   if (typeof window !== "undefined") {

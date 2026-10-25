@@ -26,6 +26,10 @@ const PushPermissionBanner = lazy(() =>
   })),
 );
 
+import { START } from "@/lib/startup-timing";
+
+START("boot-start");
+
 import appCss from "../styles.css?url";
 
 /**
