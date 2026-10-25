@@ -434,14 +434,22 @@ def _manage_open_position(creds, pos: dict, state: dict, symbol: str) -> None:
             pos["closed"] = True
             _write_state(state)
             return
-        # partial close when floating profit >= spread + 0.2*ATR (TP1 fallback)
-        if pos.get("profit", 0) >= pos.get("spread", 0) + 0.2 * pos.get("atr", 0):
-            _log(f"TRADE #{state.get('next_trade_number', 1)} on {symbol} PROFIT target "
-                 f"({pos.get('profit', 0):.2f} >= {pos.get('spread', 0) + 0.2 * pos.get('atr', 0):.2f}) "
-                 f"— closing at TP1")
-            pos["open"] = False
-            pos["closed"] = True
+        # CLOSE THE MOMENT the position is in the blue after costs: profit > 0
+        # AND profit >= spread cost (price points vs account-currency cash)
+        spread_cost = _spread_cost(creds, pos, state)
+        if spread_cost is not None and pos.get("profit", 0) > 0 and pos.get("profit", 0) >= spread_cost:
+            result = _close_ticket(creds, ticket, symbol, pos["volume"])
+            if result is not None and result.get("closed"):
+                pos["open"] = False
+                pos["closed"] = True
+                pos["profit"] = pos.get("profit", 0)
+                _write_state(state)
+                _log(f"TRADE CLOSED — PROFIT ${pos.get('profit', 0):.2f} on {symbol} (ticket {ticket})")
+                return
+            # close did not confirm: keep the ticket open and keep monitoring
             _write_state(state)
+            _log(f"TRADE CLOSED — PROFIT ${pos.get('profit', 0):.2f} on {symbol} (ticket {ticket}, "
+                 f"spread cost ${spread_cost:.4f})")
     finally:
         _disconnect()
 
@@ -464,8 +472,10 @@ def _close_when_profitable(creds, pos: dict, state: dict, symbol: str) -> bool:
         position = found[0]
         profit = float(position.profit)
         if profit > 0:
-            atr = _average_true_range(_last_8_completed_candles(symbol, creds) or [], 8)
-            if profit >= pos.get("spread", 0) + 0.2 * atr:
+            spread_cost = _spread_cost(creds, symbol, pos)
+            if spread_cost is None:
+                _log(f"CLOSE check skipped for {symbol}: could not compute spread cost (ticket {ticket})")
+            elif profit > 0 and profit >= spread_cost:
                 _close_ticket(creds, ticket, symbol, pos["volume"])
                 pos["open"] = False
                 pos["closed"] = True
@@ -483,6 +493,40 @@ def _close_when_profitable(creds, pos: dict, state: dict, symbol: str) -> bool:
     finally:
         _disconnect()
     return False
+
+
+def _spread_cost(creds, pos: dict, state: dict) -> float | None:
+    """Return the real spread cost in ACCOUNT CURRENCY for this ticket, or
+    None when MT5 cannot answer.
+
+    spread_cost = (ask - bid) / trade_tick_size * trade_tick_value * position_volume
+    If trade_tick_size or trade_tick_value is 0, fall back to a floor of 0.10
+    account currency.
+    """
+    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    if account is None:
+        return None
+    try:
+        symbol = pos.get("symbol")
+        volume = float(pos.get("volume") or 0)
+        if symbol is None or volume <= 0:
+            return None
+        if not mt5.symbol_select(symbol, True):
+            return None
+        info = mt5.symbol_info(symbol)
+        if info is None:
+            return None
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return None
+        spread_points = (tick.ask - tick.bid) / mt5.symbol_info(symbol).trade_tick_size
+        spread_value = spread_points * info.trade_tick_value
+        spread_cost = spread_value * volume
+        if spread_cost == 0.0:
+            spread_cost = 0.10
+        return spread_cost
+    finally:
+        _disconnect()
 
 
 def run() -> None:
