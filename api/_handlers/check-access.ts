@@ -30,6 +30,16 @@ type ApiResponse = {
 
 const ALLOWED_METHODS: Array<"GET" | "POST"> = ["GET", "POST"];
 
+const verdictLog = (parts: string[]) => {
+  console.warn("[ACCESS_CHECK]", ...parts);
+};
+
+function cleanEmail(input: unknown): string {
+  if (typeof input !== "string") return "";
+  const value = input.trim();
+  return value.length > 0 ? value.toLowerCase() : "";
+}
+
 function normEmail(input: unknown): string {
   if (typeof input !== "string") return "";
   const value = input.trim();
@@ -174,6 +184,8 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
    */
   const unreadable: string[] = [];
   if (isAdminEmail(email)) {
+    // Per-store log: name=admin, reachable=true, paid=true
+    verdictLog(["admin", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
     answer = { ok: true, isPaid: true, status: "admin" };
   } else {
     /**
@@ -189,29 +201,47 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
     let record: Awaited<ReturnType<typeof getRegistration>> = null;
     try {
       record = await getRegistration(email);
-    } catch (error) {
-      console.warn("[check-access] registration store unavailable:", error);
-      unreadable.push(`KV registrations → ${errorText(error)}`);
+    } catch (error: any) {
+      console.warn("[check-access] KV registrations → unreachable, cause=" + (error.message ?? "unknown"));
+      unreadable.push(`KV registrations → unreachable`);
+      // Per-store log: name=kv, reachable=false, paid=null
+      verdictLog(["kv", "unavailable", "reachable=false", "paid=null", "email=" + cleanEmail(email)]);
     }
     if (record) {
       if (record.isPaid && record.paidAt) {
         answer = { ok: true, isPaid: true, status: "paid", paidAt: record.paidAt };
+        // Per-store log: name=kv, reachable=true, paid=true
+        verdictLog(["kv", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
       } else if (record.isPaid === false && record.paidAt === null) {
         answer = { ok: true, isPaid: false, status: "revoked" };
+        // Per-store log: name=kv, reachable=true, paid=false
+        verdictLog(["kv", "revoked", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
       } else if (record.status === "rejected") {
         answer = { ok: true, isPaid: false, status: "rejected" };
+        // Per-store log: name=kv, reachable=true, paid=false (revoked is not unpaid)
+        verdictLog(["kv", "revoked", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
       }
       // A record that simply has no payment (or an unreadable store) is not a
       // refusal — fall through to the ledger and the claimed-key proof below.
     }
     if (!answer) {
+      // Per-store log: name=kv, reachable=true, paid=null (no record found)
+      verdictLog(["kv", "no record", "reachable=true", "paid=null", "email=" + cleanEmail(email)]);
       // Fallback 1: the same payment ledger the console reads.
       const paid = await paidEmailInSupabase(email);
-      if (!paid.readable) unreadable.push(paid.detail);
-      if (paid.paidAt) {
+      if (!paid.readable) {
+        unreadable.push(paid.detail);
+        // Per-store log: name=paid_emails, reachable=false, paid=null
+        verdictLog(["paid_emails", "unavailable", "reachable=false", "paid=null", "email=" + cleanEmail(email)]);
+      } else if (paid.paidAt) {
         answer = { ok: true, isPaid: true, status: "paid", paidAt: paid.paidAt };
+        // Per-store log: name=paid_emails, reachable=true, paid=true
+        verdictLog(["paid_emails", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
       } else {
         // Fallback 1b: read the Supabase `users` row for `license_key`.
+        // Per-store log: name=paid_emails, reachable=true, paid=false (no paidAt)
+        verdictLog(["paid_emails", "unpaid", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
+      }
         // This is holder-bound proof: the column is only written after the
         // single-use claim and paid check succeeded for THIS account.
         // If KV was absent or unreadable and paid_emails has no row, the license_key
@@ -239,17 +269,23 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
                 }
               }
             }
-          } catch (error) {
+          } catch (error: any) {
             // DB read failure — record it and continue to the next fallback.
             unreadable.push(`users row → ${errorText(error)}`);
+            // Per-store log: name=users, reachable=false, paid=null
+            verdictLog(["users", "unavailable", "reachable=false", "paid=null", "email=" + cleanEmail(email)]);
           }
         }
         if (deviceMismatch) {
           answer = { ok: true, isPaid: false, status: "unpaid" };
+          // Per-store log: name=users, reachable=true, paid=false
+          verdictLog(["users", "unpaid", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
         } else if (licenseKeyProof) {
           // license_key IS the payment proof — even when KV and paid_emails
           // both cannot answer, a set license_key means the account is paid.
           answer = { ok: true, isPaid: true, status: "paid" };
+          // Per-store log: name=users, reachable=true, paid=true
+          verdictLog(["users", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
         } else if (await claimedLicenseKeyProof(email, deviceId, unreadable)) {
           // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
           //
@@ -260,6 +296,8 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
           // answered "unpaid" here (their money lives in the key, not in the
           // ledger) and is sent back to the email + code form.
           answer = { ok: true, isPaid: true, status: "paid" };
+          // Per-store log: name=users, reachable=true, paid=true
+          verdictLog(["users", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
         } else {
           // ── ANY AUTHORITATIVE PAID RECORD IS ENOUGH ──
           //
@@ -275,8 +313,12 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
               status: "paid",
               ...(portal.paidAt ? { paidAt: portal.paidAt } : {}),
             };
-          } else if (unreadable.length > 0) {
+          } else if (unreadable.length > 0 && !answer?.isPaid) {
+            // SOURCES THAT FAILED ARE NOT VERDICTS — they do not deny payment.
+            // Only sources that positively answer "unpaid" can send someone to the plan chooser.
+            // Unreadable sources only mean "we could not check" → retry message.
             console.warn("[check-access] undecided — unreadable sources:", unreadable.join(" | "));
+            // Show retry: some store was unreachable, and no source said paid.
             answer = {
               ok: false,
               isPaid: false,
@@ -284,7 +326,154 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
               error: "Access check could not complete — one record source was unreachable",
               unreadable,
             };
+          } else if (unreadable.length > 0 && answer?.isPaid) {
+            // A paid verdict already exists from an earlier source — keep it.
+            // The unreachable stores don't override a positive paid answer.
           } else {
+            // No sources were unreachable AND no source answered paid → genuine unpaid.
+            answer = { ok: true, isPaid: false, status: "unpaid" };
+          }
+        } else {
+          // No sources were unreachable AND no source answered paid → genuine unpaid.
+            answer = { ok: true, isPaid: false, status: "unpaid" };
+          }
+        }
+      }
+    }
+  }
+
+  // NOTHING DECIDED (only reachable when an unexpected branch falls through) —
+  // never a refusal: the client shows the retry line for this answer.
+  const decided: AccessAnswer = answer ?? {
+    ok: false,
+    isPaid: false,
+    status: "undecided",
+    error: "Access check could not complete — one record source was unreachable",
+    unreadable,
+  };
+
+  // THE BINDING, IN THE SAME ANSWER — see readDeviceBinding above. The keys are
+  // only added when the read succeeded, so an unreadable database can never be
+  // mistaken for "this email is unbound".
+  const binding = await readDeviceBinding(email);
+  if (binding.readable) {
+    decided["deviceBinding"] = binding.value;
+    if (deviceId) {
+      decided["deviceMatches"] = binding.value?.deviceId === deviceId;
+    }
+  }
+  return decided;
+}
+
+/**
+      // Fallback 1: the same payment ledger the console reads.
+      const paid = await paidEmailInSupabase(email);
+      if (!paid.readable) {
+        unreadable.push(paid.detail);
+        // Per-store log: name=paid_emails, reachable=false, paid=null
+        verdictLog(["paid_emails", "unavailable", "reachable=false", "paid=null", "email=" + cleanEmail(email)]);
+      } else if (paid.paidAt) {
+        answer = { ok: true, isPaid: true, status: "paid", paidAt: paid.paidAt };
+        // Per-store log: name=paid_emails, reachable=true, paid=true
+        verdictLog(["paid_emails", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
+      } else {
+        // Fallback 1b: read the Supabase `users` row for `license_key`.
+        // Per-store log: name=paid_emails, reachable=true, paid=false (no paidAt)
+        verdictLog(["paid_emails", "unpaid", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
+      }
+        // This is holder-bound proof: the column is only written after the
+        // single-use claim and paid check succeeded for THIS account.
+        // If KV was absent or unreadable and paid_emails has no row, the license_key
+        // from the users table IS the payment proof for key customers.
+        const db = await serviceClient();
+        let licenseKeyProof = false;
+        let deviceMismatch = false;
+        if (db) {
+          try {
+            const { data, error } = await db
+              .from("users")
+              .select("license_key, device_id")
+              .eq("email", email)
+              .maybeSingle();
+            if (!error && data) {
+              const row = data as { license_key?: string | null; device_id?: string | null };
+              const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
+              if (key) {
+                // If the row has a device_id and the request carries a deviceId,
+                // require them to match; a mismatch answers unpaid.
+                if (row.device_id && deviceId && row.device_id !== deviceId) {
+                  deviceMismatch = true;
+                } else {
+                  licenseKeyProof = true;
+                }
+              }
+            }
+          } catch (error: any) {
+            // DB read failure — record it and continue to the next fallback.
+            unreadable.push(`users row → ${errorText(error)}`);
+            // Per-store log: name=users, reachable=false, paid=null
+            verdictLog(["users", "unavailable", "reachable=false", "paid=null", "email=" + cleanEmail(email)]);
+          }
+        }
+        if (deviceMismatch) {
+          answer = { ok: true, isPaid: false, status: "unpaid" };
+          // Per-store log: name=users, reachable=true, paid=false
+          verdictLog(["users", "unpaid", "reachable=true", "paid=false", "email=" + cleanEmail(email)]);
+        } else if (licenseKeyProof) {
+          // license_key IS the payment proof — even when KV and paid_emails
+          // both cannot answer, a set license_key means the account is paid.
+          answer = { ok: true, isPaid: true, status: "paid" };
+          // Per-store log: name=users, reachable=true, paid=true
+          verdictLog(["users", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
+        } else if (await claimedLicenseKeyProof(email, deviceId, unreadable)) {
+          // Fallback 2: A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
+          //
+          // api/activation.ts writes `users.license_key` only after the paid
+          // check AND the single-use claim succeeded for THIS account, so the
+          // column is holder-bound server-side proof — never something a browser
+          // can set. Without this, a customer who just activated a key is
+          // answered "unpaid" here (their money lives in the key, not in the
+          // ledger) and is sent back to the email + code form.
+          answer = { ok: true, isPaid: true, status: "paid" };
+          // Per-store log: name=users, reachable=true, paid=true
+          verdictLog(["users", "paid", "reachable=true", "paid=true", "email=" + cleanEmail(email)]);
+        } else {
+          // ── ANY AUTHORITATIVE PAID RECORD IS ENOUGH ──
+          //
+          // The portal's own payment table is a paid source in its own right:
+          // being marked paid there opens the app. And a source that could not
+          // be READ is not a "no" — the answer is "we could not check", which
+          // the client shows as a retry message, never as the plan chooser.
+          const portal = await portalPaymentInSupabase(email);
+          if (portal.paid) {
+            answer = {
+              ok: true,
+              isPaid: true,
+              status: "paid",
+              ...(portal.paidAt ? { paidAt: portal.paidAt } : {}),
+            };
+          } else if (unreadable.length > 0 && !answer?.isPaid) {
+            // SOURCES THAT FAILED ARE NOT VERDICTS — they do not deny payment.
+            // Only sources that positively answer "unpaid" can send someone to the plan chooser.
+            // Unreadable sources only mean "we could not check" → retry message.
+            console.warn("[check-access] undecided — unreadable sources:", unreadable.join(" | "));
+            // Show retry: some store was unreachable, and no source said paid.
+            answer = {
+              ok: false,
+              isPaid: false,
+              status: "undecided",
+              error: "Access check could not complete — one record source was unreachable",
+              unreadable,
+            };
+          } else if (unreadable.length > 0 && answer?.isPaid) {
+            // A paid verdict already exists from an earlier source — keep it.
+            // The unreachable stores don't override a positive paid answer.
+          } else {
+            // No sources were unreachable AND no source answered paid → genuine unpaid.
+            answer = { ok: true, isPaid: false, status: "unpaid" };
+          }
+        } else {
+          // No sources were unreachable AND no source answered paid → genuine unpaid.
             answer = { ok: true, isPaid: false, status: "unpaid" };
           }
         }
