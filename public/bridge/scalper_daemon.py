@@ -538,3 +538,7 @@ def run() -> None:
             continue
         _daemon_step(creds, step_state)
         time.sleep(1)
+
+
+if __name__ == "__main__":
+    run()
