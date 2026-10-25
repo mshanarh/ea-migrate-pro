@@ -89,7 +89,7 @@ MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
-DAEMON_VERSION = "2.1"
+DAEMON_VERSION = "2.2"
 
 _log_lines: list[str] = []
 
@@ -471,6 +471,7 @@ def run() -> None:
         # Hard blocks are checked AFTER this, so already-open positions are
         # never held up by margin, candle data or anything else.
         live_positions = _live_magic_positions(creds)
+        open_by_symbol = {}
         if live_positions:
             open_by_symbol = _count_open_per_symbol(live_positions)
             for pos in live_positions:
