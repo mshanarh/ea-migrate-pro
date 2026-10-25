@@ -69,7 +69,7 @@ for %%F in (bridge.py scalper_daemon.py) do (
         echo         or that the file exists at that URL. See %LOG%.
         set "DL_OK=0"
     ) else (
-        echo [OK]   downloaded %%F (%~zI bytes)
+        call echo [OK]   downloaded %%F (%%~zF bytes)
     )
 )
 
