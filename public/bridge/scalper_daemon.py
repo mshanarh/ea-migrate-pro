@@ -434,10 +434,9 @@ def _manage_open_position(creds, pos: dict, state: dict, symbol: str) -> None:
             pos["closed"] = True
             _write_state(state)
             return
-        # CLOSE THE MOMENT the position is in the blue after costs: profit > 0
-        # AND profit >= spread cost (price points vs account-currency cash)
-        spread_cost = _spread_cost(creds, pos, state)
-        if spread_cost is not None and pos.get("profit", 0) > 0 and pos.get("profit", 0) >= spread_cost:
+        # CLOSE THE MOMENT the position is in the blue in account currency:
+        # profit > 0. No spread-cost comparison, no threshold, no waiting.
+        if pos.get("profit", 0) > 0:
             result = _close_ticket(creds, ticket, symbol, pos["volume"])
             if result is not None and result.get("closed"):
                 pos["open"] = False
@@ -446,10 +445,9 @@ def _manage_open_position(creds, pos: dict, state: dict, symbol: str) -> None:
                 _write_state(state)
                 _log(f"TRADE CLOSED — PROFIT ${pos.get('profit', 0):.2f} on {symbol} (ticket {ticket})")
                 return
-            # close did not confirm: keep the ticket open and keep monitoring
+            # close order did not confirm: log and keep managing the ticket
             _write_state(state)
-            _log(f"TRADE CLOSED — PROFIT ${pos.get('profit', 0):.2f} on {symbol} (ticket {ticket}, "
-                 f"spread cost ${spread_cost:.4f})")
+            _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
     finally:
         _disconnect()
 
@@ -472,17 +470,19 @@ def _close_when_profitable(creds, pos: dict, state: dict, symbol: str) -> bool:
         position = found[0]
         profit = float(position.profit)
         if profit > 0:
-            spread_cost = _spread_cost(creds, symbol, pos)
-            if spread_cost is None:
-                _log(f"CLOSE check skipped for {symbol}: could not compute spread cost (ticket {ticket})")
-            elif profit > 0 and profit >= spread_cost:
-                _close_ticket(creds, ticket, symbol, pos["volume"])
+            # close whenever floating profit is greater than zero in account
+            # currency — no spread-cost comparison, no threshold, no waiting
+            result = _close_ticket(creds, ticket, symbol, pos["volume"])
+            if result is not None and result.get("closed"):
                 pos["open"] = False
                 pos["closed"] = True
                 pos["profit"] = profit
                 _write_state(state)
                 _log(f"TRADE CLOSED — PROFIT ${profit:.2f} on {symbol} (ticket {ticket})")
                 return True
+            # close order did not confirm: log and let the main loop keep
+            # managing this ticket
+            _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
         # SL check again after any candles refresh
         if pos.get("sl_hit"):
             _log(f"TRADE CLOSED — STOP LOSS on {symbol} (ticket {ticket})")
