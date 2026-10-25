@@ -26,10 +26,6 @@ const PushPermissionBanner = lazy(() =>
   })),
 );
 
-import { START } from "@/lib/startup-timing";
-
-START.start("boot-start");
-
 import appCss from "../styles.css?url";
 
 /**
@@ -123,7 +119,7 @@ import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { loadBridgeConfig } from "@/lib/bridge-client";
-import { applyShellScope, isPortalPath } from "@/lib/shell-scope";
+import { applyShellScope, shellScopeFor } from "@/lib/shell-scope";
 import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
 import { reportLovableError } from "../lib/lovable-error-reporting";
@@ -274,18 +270,27 @@ function RootComponent() {
    * two shells never share those tokens.
    */
   const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const portalShell = isPortalPath(pathname);
+  /**
+   * WHICH DESIGN OWNS THIS ROUTE — app, mentor portal, or public marketing.
+   * Only the app publishes the user's saved font, accent and interface tokens;
+   * the portal has its own hardcoded tokens (src/styles.css) and the landing
+   * page keeps the stylesheet's brand fonts and colours.
+   */
+  const shellScope = shellScopeFor(pathname);
+  const portalShell = shellScope === "portal";
+  const appShell = shellScope === "app";
 
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
     applyColourMatrixFromStorage();
   }, []);
 
-  // Put the document into the right shell BEFORE the portal paints, and undo
-  // every app customization token on the way in.
+  // Put the document into the right shell BEFORE it paints, and undo every app
+  // customization token whenever we leave the app — a saved Orbitron face and a
+  // solar-orange accent must never repaint the landing page or the portal.
   useEffect(() => {
-    applyShellScope(portalShell);
-  }, [portalShell]);
+    applyShellScope(shellScope);
+  }, [shellScope]);
 
   // READ THE BRIDGE'S CURRENT ADDRESS once per app start. The tunnel hostname
   // changes whenever cloudflared restarts, so the address is an admin setting
@@ -293,6 +298,23 @@ function RootComponent() {
   // A missing endpoint or an offline start keeps the address already cached.
   useEffect(() => {
     void loadBridgeConfig();
+  }, []);
+
+  // FIRST GESTURE ARMS THE VOICE. Browsers refuse speechSynthesis before the
+  // page has been touched, which silently swallowed the first announcement of
+  // a run; the Android wrapper's native engine is primed the same way.
+  useEffect(() => {
+    const arm = () => {
+      unlockBotVoice();
+      window.removeEventListener("pointerdown", arm);
+      window.removeEventListener("keydown", arm);
+    };
+    window.addEventListener("pointerdown", arm, { once: true });
+    window.addEventListener("keydown", arm, { once: true });
+    return () => {
+      window.removeEventListener("pointerdown", arm);
+      window.removeEventListener("keydown", arm);
+    };
   }, []);
 
   // DYNAMIC TRADE VOICE — one listener for the whole app.
@@ -308,23 +330,6 @@ function RootComponent() {
     };
     window.addEventListener(EXECUTION_EVENT, handler);
     return () => window.removeEventListener(EXECUTION_EVENT, handler);
-  }, []);
-
-  // UNLOCK SPEECH ON THE FIRST GESTURE — tapping Start is what makes the bot's
-  // voice audible on mobile. Browsers keep speechSynthesis silent until the
-  // page has been touched, and the unlock must happen INSIDE that gesture: the
-  // execution event arrives long after it, so unlocking from the trade handler
-  // would itself be blocked. Listeners are one-shot and passive.
-  useEffect(() => {
-    const unlock = () => unlockBotVoice();
-    window.addEventListener("pointerdown", unlock, { once: true, passive: true });
-    window.addEventListener("touchstart", unlock, { once: true, passive: true });
-    window.addEventListener("keydown", unlock, { once: true });
-    return () => {
-      window.removeEventListener("pointerdown", unlock);
-      window.removeEventListener("touchstart", unlock);
-      window.removeEventListener("keydown", unlock);
-    };
   }, []);
 
   // DEFERRED UNTIL AFTER FIRST PAINT — see PushPermissionBanner above. The
@@ -345,11 +350,18 @@ function RootComponent() {
           <BackgroundEffects />
           {/* Invisible centre-tap surface for the interface colour cycle. */}
           <ColourCycleTap />
-          {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
-          <AccentVarSync />
-          {/* Publishes the selected Main Interface definition to <html> so Home,
-              Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
-          <InterfaceThemeSync />
+          {/* APP ROUTES ONLY — the landing page is a marketing page, not the app.
+              Mounting these at every route is what put the saved font (Orbitron
+              by default) and accent (solar orange) on the public site. */}
+          {appShell ? (
+            <>
+              {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
+              <AccentVarSync />
+              {/* Publishes the selected Main Interface definition to <html> so Home,
+                  Metatrader, Quotes, Scanner, Settings and the popups all repaint. */}
+              <InterfaceThemeSync />
+            </>
+          ) : null}
           {/* The app-wide background picture layer — under the content wrapper below. */}
           <AppBackground />
         </>

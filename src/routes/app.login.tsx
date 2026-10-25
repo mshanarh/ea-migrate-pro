@@ -18,10 +18,17 @@ import {
   markPendingLicense,
   useAppState,
 } from "@/lib/app-store";
-import { enforceAuthEpoch, markEmailPaid, paymentStatusForEmail } from "@/lib/auth-store";
+import {
+  enforceAuthEpoch,
+  isPaymentExemptEmail,
+  markEmailPaid,
+  paymentStatusForEmail,
+} from "@/lib/auth-store";
 import { callNative } from "@/lib/native-bridge";
 import {
   VERIFY_RETRY_MESSAGE,
+  accessStores,
+  formatAccessDiagnostic,
   verifyPaymentReturn,
   invalidateAccessCache,
   resolveCloudAccess,
@@ -54,6 +61,17 @@ const RESUME_EXEMPT_FLAGS = new Set([
   "license",
   "verify",
 ]);
+
+/**
+ * THE HONEST ANSWER WHEN A STORE COULD NOT BE READ.
+ *
+ * Deliberately NOT "you have no subscription": a payment record that could not
+ * be fetched is not evidence of non-payment, and telling a paying customer to
+ * buy again is the bug this sentence exists to end. The screen it appears on
+ * carries a Retry button, and nothing is changed by seeing it.
+ */
+const CHECKING_RETRY_MESSAGE =
+  "Checking your subscription… having trouble reaching the payment records. Tap Retry to check again.";
 
 /**
  * AN ACTIVATED SESSION LANDING ON ?pay=1 — ask the cloud ONCE, not the person.
@@ -323,6 +341,15 @@ function AppAccess() {
   // The user pressed "Back" on the checkout card. Until the decision changes
   // we stop forcing it back up, or the card would be impossible to leave.
   const [checkoutDismissed, setCheckoutDismissed] = useState(false);
+  /**
+   * WHY THE PLAN PAGE IS ON SCREEN, when it is not a plain "never paid".
+   *
+   * When the gate arrived at the plans while a payment record could not be
+   * read, the page must SAY SO and offer a Retry rather than claiming there is
+   * no subscription. `null` means the ordinary case: every store answered and
+   * none of them marks this email paid.
+   */
+  const [planReason, setPlanReason] = useState<string | null>(null);
 
   // ?pay=1 is re-read after EVERY render on purpose. /app/home sends unpaid
   // users here with a client-side navigation, and TanStack keeps the same
@@ -468,16 +495,7 @@ function AppAccess() {
   // not be reached). Everything below — the license screen, the auto-hop to
   // Whop, the hop into the app — reads this one value, so the first screen
   // can never disagree with the route guard that follows it.
-  // If cloudStatus is null (any store read failed), do NOT fall back to the
-  // local store as a verdict — that would mark a paid user as unpaid and
-  // send them to the plan chooser. Instead, show a retry message.
-  let effectiveStatus: CloudAccess | null = cloudStatus;
-  if (effectiveStatus === null) {
-    // All store reads failed — show retry message, do NOT mark as unpaid
-    effectiveStatus = null as any;
-  } else {
-    effectiveStatus = cloudStatus;
-  }
+  const effectiveStatus = cloudStatus ?? sessionPaymentStatus;
 
   // A signed-in session that ALREADY has a robot goes to the app. The key
   // screen used to appear for every paid/approved session on every launch —
@@ -514,7 +532,7 @@ function AppAccess() {
   // decided "unpaid", and fired three hard redirects at Whop. Nothing here may
   // act on anything but `cloudStatus === "unpaid"`.
   const mustPay =
-    Boolean(app.email) && cloudStatus === "unpaid" && effectiveStatus !== null && !returningWithRobot && !checkoutDismissed;
+    Boolean(app.email) && cloudStatus === "unpaid" && !returningWithRobot && !checkoutDismissed;
 
   /* ── The six-digit activation code ───────────────────────────────────
    *
@@ -693,14 +711,21 @@ function AppAccess() {
         return;
       }
       if (status === "unpaid") {
+        // ONE DIAGNOSTIC LINE, naming what every store said.
+        const address = app.email ?? "";
+        const { stores, unreadable } = accessStores(address);
+        console.info(formatAccessDiagnostic(address, "unpaid — every store answered", stores, unreadable));
+        if (unreadable.length > 0) {
+          // A SOURCE WE COULD NOT READ IS NOT A REFUSAL. Show the checking line
+          // with Retry instead of asking somebody to pay again.
+          setPlanReason(`Some payment records could not be read: ${unreadable.join("; ")}.`);
+          setVerifyNotice(CHECKING_RETRY_MESSAGE);
+          setChoosePlan(false);
+          return;
+        }
+        setPlanReason(null);
         setCheckoutDismissed(false);
         setChoosePlan(true);
-      } else if (status === null) {
-        // Store reads failed — show retry message, do NOT mark as unpaid or show plan chooser
-        toast.error("We could not verify your subscription right now, please try again");
-      } else if (status === null) {
-        // Store reads failed — show retry message, do NOT mark as unpaid or show plan chooser
-        toast.error("We could not verify your subscription right now, please try again");
       }
     })();
     return () => {
@@ -733,9 +758,6 @@ function AppAccess() {
     // /app/home on it is how an unpaid user reached the dashboard. Wait for the
     // DATABASE to answer; the Choose Plan screen above handles "unpaid", so an
     // unpaid session can never fall through to here.
-    // If cloudStatus is null, effectiveStatus will also be null and we skip
-    // the navigation — the retry message will be shown instead.
-    if (effectiveStatus === null) return;
     if (cloudStatus === null) return;
     // A signed-in mentor goes to the app EVEN with no robots yet. This used
     // to require `app.robots.length > 0`, and robots only appear after a
@@ -746,7 +768,6 @@ function AppAccess() {
     // An UNPAID session must not round-trip through /app/home: that guard
     // decides "unpaid" and sends the person back here, so the two would
     // ping-pong with nothing ever happening. The Choose Plan screen owns them.
-    // Only navigate if we have a definitive paid/unpaid status from the cloud.
     if (effectiveStatus === "unpaid") return;
     window.location.replace("/app/home");
   }, [
@@ -786,7 +807,48 @@ function AppAccess() {
   const isMobileOwnerSession =
     Boolean(app.email && OWNER_EMAILS.slice(0, 3).includes(app.email.toLowerCase())) &&
     (platform === "android" || platform === "ios");
-  const showChoosePlan = (choosePlan || payPrompt || mustPay) && cloudStatus !== null && !isMobileOwnerSession;
+  const showChoosePlan = (choosePlan || payPrompt || mustPay) && !isMobileOwnerSession;
+
+  /**
+   * DID THE LAST STORE READ LEAVE A SOURCE UNREADABLE?
+   *
+   * If the plans are somehow on screen in that state (an older deployment's
+   * answer, a guard that decided before a store timed out), the page says so
+   * and offers Retry instead of claiming there is no subscription.
+   */
+  const planUnreachable = (() => {
+    if (!activeEmail) return null;
+    const { unreadable } = accessStores(activeEmail);
+    return unreadable.length > 0 ? `Could not read: ${unreadable.join("; ")}` : null;
+  })();
+
+  /**
+   * RETRY FROM THE PLAN SCREEN — ask every store again.
+   *
+   * Clearing the plan flags is what re-arms the cloud poll above: it re-reads
+   * the stores, opens the app the moment they say paid, and comes back here
+   * with the reason if they still cannot answer. The `?pay=1` flag is dropped
+   * from the URL for the same reason — it would force the plans straight back
+   * up before the new answer could be read.
+   */
+  const retrySubscriptionCheck = () => {
+    setPlanReason(null);
+    setVerifyNotice("");
+    setChoosePlan(false);
+    setPayPrompt(false);
+    setCheckoutDismissed(false);
+    setCloudStatus(null);
+    if (typeof window !== "undefined" && window.location.search) {
+      window.history.replaceState({}, "", "/app/login");
+    }
+    // RE-RUN THE CHECK for the address on screen. Clearing the flags alone only
+    // re-arms the poll for a session that already exists; somebody who never got
+    // past the sign-in has no session, so Retry has to run the whole decision
+    // again — same email, fresh reads, no typing.
+    if (email.trim()) {
+      void continueWithEmail({ preventDefault() {} } as FormEvent<HTMLFormElement>);
+    }
+  };
 
   const continueWithEmail = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -797,11 +859,78 @@ function AppAccess() {
     // exit below that is not "go to checkout" puts it back.
     setBusy(true);
     setCheckoutDismissed(false);
-    // ONE shared budget for the whole decision — capped at ~4 seconds.
-    // Each call below may only spend what is left of it, so the door
-    // opens fast instead of hanging.
+    /**
+     * ONE shared budget for the whole decision.
+     *
+     * IT USED TO BE 4 SECONDS, AND THAT WAS THE BUG. `/api/check-access` reads
+     * several stores; in this deployment the (dead) database queries used to
+     * hold it for ~14s, so the client's own deadline always fired FIRST and
+     * every non-admin email was answered with the fallback — `unavailable` —
+     * and shown "We could not verify your subscription right now". Sign-in
+     * worked for the sole admin only because that address short-circuits the
+     * stores entirely.
+     *
+     * The server no longer waits on a database that cannot resolve (see
+     * serviceClient in api/_handlers/check-access.ts), and this budget is now
+     * a safety net rather than a race: it is long enough for a real store
+     * read, and still bounded so a stalled connection cannot freeze the door.
+     */
     const budgetStartedAt = Date.now();
-    const left = () => Math.max(1_000, 4_000 - (Date.now() - budgetStartedAt));
+    const left = () => Math.max(8_000, 30_000 - (Date.now() - budgetStartedAt));
+
+    /**
+     * ── 1. THE SOLE ADMIN, FIRST ───────────────────────────────────────────
+     *
+     * biyasentobeko222@gmail.com administers this app, so it is answered YES
+     * here — before any store read, any /api call, any device check and any
+     * deadline. This is the FIRST thing the sign-in does; putting a
+     * verification in front of it is what showed the owner "Checking your
+     * subscription…" while a payment store was unreachable.
+     */
+    if (isPaymentExemptEmail(clean)) {
+      console.info(`[app-login] ${clean} is the sole admin — signing in without a subscription check`);
+      /**
+       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — NOT THE DEVICE RULE.
+       *
+       * This branch used to sign in immediately, so the admin address that had
+       * just been bound on the web opened on a phone without a word about
+       * reactivation. "One email, one device" applies to every email, admins
+       * included; only PAYMENT is bypassed here.
+       */
+      try {
+        const adminBinding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), 12_000, {
+          boundToOtherDevice: false,
+        });
+        if (adminBinding.boundToOtherDevice) {
+          console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+      } catch {
+        /* an unreadable binding must never lock the admin out */
+      }
+      const adminSignIn = appSignIn(clean);
+      if (adminSignIn.error) {
+        toast.error(adminSignIn.error);
+        setBusy(false);
+        setRedirecting(false);
+        return;
+      }
+      markEmailPaid(clean);
+      window.sessionStorage.setItem("eamp_pending_welcome", "1");
+      markPendingLicense(clean);
+      setLicensePending(true);
+      setVerifyNotice("");
+      setPlanReason(null);
+      setChoosePlan(false);
+      setPayPrompt(false);
+      setBusy(false);
+      setRedirecting(false);
+      return;
+    }
+
     try {
       // PAYMENT IS DECIDED FIRST, BEFORE ANYTHING ELSE.
       //
@@ -818,10 +947,15 @@ function AppAccess() {
       // read as "this account is fine" — an earlier "allow" fallback here was
       // a payment hole. An undecided account goes to checkout, which is
       // recoverable; walking into the app without paying is not.
+      // A DEADLINE IS NOT A REFUSAL. The fallback says `unavailable`, because
+      // "the stores did not answer in time" is exactly the undecided case that
+      // must show Retry — never the plan chooser. Omitting the flag here is
+      // what sent slow-but-paid accounts to "Choose your plan".
       const registration = await withDeadline(registerWithEmail(clean), left(), {
         outcome: "checkout",
         user: null,
         verified: false,
+        unavailable: true,
       } as Awaited<ReturnType<typeof registerWithEmail>>);
       if (typeof window !== "undefined")
         window.localStorage.setItem("eamp.pending-payment-email", clean);
@@ -881,16 +1015,57 @@ function AppAccess() {
         // store was down, so the answer here is the plain retry line, on the
         // same screen, and nothing else is changed: no sign-in, no device
         // binding, no plan selection.
-        if (registration.unavailable) {
+        //
+        // `cloud === null` is the SAME case one step later: the second read
+        // could not reach the stores either. Neither is a refusal.
+        if (registration.unavailable || cloud === null) {
+          console.warn(
+            formatAccessDiagnostic(
+              clean,
+              "undecided — retry, not the plans",
+              registration.stores ?? accessStores(clean).stores,
+              registration.unreadable ?? accessStores(clean).unreadable,
+            ),
+          );
+          /**
+           * AN UNREACHABLE STORE MUST NOT ABORT THE SIGN-IN.
+           *
+           * This branch used to stop dead: no session, no code, just a retry
+           * message — so a paying customer whose store timed out could never
+           * get in, even after the store came back, without retyping their
+           * email. "We could not read a record" is not "you have not paid".
+           *
+           * The session is opened here (a session on its own never opens the
+           * app — every /app guard re-asks the cloud), the retry line stays on
+           * screen, and the poll below walks them into /app/home by itself the
+           * moment a store answers paid. Nothing is claimed that we did not
+           * read, and an address that is genuinely unpaid still lands on the
+           * plans as soon as every store answers.
+           */
+          const session = appSignIn(clean);
+          if (session.error) console.warn("[app-login] provisional sign-in:", session.error);
+          setPlanReason(null);
           setRedirecting(false);
           setChoosePlan(false);
           setPayPrompt(false);
           setBusy(false);
-          toast.error(VERIFY_RETRY_MESSAGE);
+          setVerifyNotice(CHECKING_RETRY_MESSAGE);
+          toast.error("Checking your subscription…", { description: VERIFY_RETRY_MESSAGE });
           return;
         }
         // STOP HERE. The unpaid account does not go near /app/home; it lands
         // on the Plan Selection screen and picks monthly or lifetime.
+        //
+        // ONE DIAGNOSTIC LINE at redirect time, naming what every store said.
+        console.info(
+          formatAccessDiagnostic(
+            clean,
+            "unpaid — every store answered",
+            registration.stores ?? accessStores(clean).stores,
+            registration.unreadable ?? accessStores(clean).unreadable,
+          ),
+        );
+        setPlanReason(null);
         setRedirecting(false);
         setChoosePlan(true);
         return;
@@ -1058,6 +1233,11 @@ function AppAccess() {
           codeSent.notPaid ||
           /has not been activated|not marked as paid/i.test(codeSent.error ?? "")
         ) {
+          const diagnostic = accessStores(clean);
+          console.info(
+            formatAccessDiagnostic(clean, "unpaid — activation refused the code", diagnostic.stores, diagnostic.unreadable),
+          );
+          setPlanReason(null);
           setChoosePlan(true);
         }
         return;
@@ -1455,10 +1635,12 @@ function AppAccess() {
           />
         ) : showChoosePlan ? (
           <PlanSelection
-            email={activeEmail}
+            email={email.trim().toLowerCase() || activeEmail}
             selectedPlan={selectedPlan}
             onSelectPlan={setSelectedPlan}
             onCancel={dismissCheckout}
+            reason={planReason ?? planUnreachable}
+            onRetry={retrySubscriptionCheck}
           />
         ) : !showLicenseView ? (
           <LoginView
@@ -1469,6 +1651,7 @@ function AppAccess() {
             redirecting={redirecting}
             deactivated={deactivated}
             verifyNotice={verifyNotice}
+            onRetry={retrySubscriptionCheck}
           />
         ) : (
           <LicenseView
@@ -1580,6 +1763,7 @@ function LoginView({
   redirecting,
   deactivated,
   verifyNotice,
+  onRetry,
 }: {
   email: string;
   setEmail: (value: string) => void;
@@ -1588,6 +1772,8 @@ function LoginView({
   redirecting: boolean;
   deactivated?: boolean;
   verifyNotice?: string;
+  /** Re-ask the stores when the notice says they could not be reached. */
+  onRetry?: () => void;
 }) {
   return (
     <>
@@ -1618,12 +1804,21 @@ function LoginView({
         </p>
         {deactivated ? <DeactivatedNotice /> : null}
         {verifyNotice ? (
-          <p
+          <div
             role="status"
-            className="relative mt-4 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-sm font-semibold text-amber-200"
+            className="relative mt-4 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-center"
           >
-            {verifyNotice}
-          </p>
+            <p className="text-sm font-semibold text-amber-200">{verifyNotice}</p>
+            {onRetry ? (
+              <button
+                type="button"
+                onClick={onRetry}
+                className="mt-3 rounded-full bg-amber-400/20 px-4 py-2 text-xs font-black tracking-wide text-amber-100"
+              >
+                RETRY
+              </button>
+            ) : null}
+          </div>
         ) : null}
         <form
           className="relative mt-10 space-y-4 rounded-[28px] border border-white/10 bg-gradient-to-b from-[#121a1f] to-[#0a0f12] p-6 text-left"
@@ -1838,11 +2033,22 @@ function PlanSelection({
   selectedPlan,
   onSelectPlan,
   onCancel,
+  reason,
+  onRetry,
 }: {
   email: string;
   selectedPlan: PlanId;
   onSelectPlan: (plan: PlanId) => void;
   onCancel: () => void;
+  /**
+   * WHY this screen is up, when it is not a plain "never paid": a payment
+   * record could not be read. Showing "no active subscription" in that state
+   * would be a guess presented as a fact — and it is exactly what made paying
+   * customers believe their subscription had been lost.
+   */
+  reason?: string | null;
+  /** Re-ask every store from this screen. */
+  onRetry?: () => void;
 }) {
   const standalone = useIsStandalone();
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
@@ -1883,10 +2089,29 @@ function PlanSelection({
         <img src="/logo.png" alt="EA Migrate" className="size-full object-contain" />
       </div>
       <h1 className="mt-8 text-[2.1rem] font-semibold tracking-tight">Choose your plan</h1>
-      <p className="mt-3 text-base leading-7 text-[#8a9298]">
-        This account has no active subscription yet, so the app stays closed.
-        {email ? ` Pay for ${email} below.` : ""}
-      </p>
+      {reason ? (
+        <div className="mt-3 rounded-2xl border border-amber-400/25 bg-amber-400/10 px-4 py-3 text-left">
+          <p className="text-sm font-semibold text-amber-200">
+            Checking your subscription… having trouble reaching the payment records.
+          </p>
+          <p className="mt-1 text-xs leading-5 text-amber-200/70">
+            {email ? `Signed in as ${email}. ` : ""}
+            {reason}
+          </p>
+          <button
+            type="button"
+            onClick={onRetry}
+            className="mt-3 rounded-full bg-amber-400/20 px-4 py-2 text-xs font-black tracking-wide text-amber-100"
+          >
+            RETRY
+          </button>
+        </div>
+      ) : (
+        <p className="mt-3 text-base leading-7 text-[#8a9298]">
+          This account has no active subscription yet, so the app stays closed.
+          {email ? ` You are signed in as ${email} — pay for that address below.` : ""}
+        </p>
+      )}
 
       {/* SELECTABLE PLAN CARDS — tap to choose, the active one is marked with
         the brand border and a checkmark. Choosing never navigates: it only

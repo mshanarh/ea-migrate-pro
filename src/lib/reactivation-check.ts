@@ -228,10 +228,13 @@ async function askPortalAccounts(email: string): Promise<ReactivationStoreAnswer
       unavailable: true,
     };
   }
+  // "Registered" means the portal has an account HERE. The payment record is
+  // the portal's own account marker: an email it cannot find is not made
+  // "registered" by the fact that the store answered.
   return {
     store,
     answer: portalPayment.detail,
-    registered: true,
+    registered: portalPayment.state === "paid",
     paid: portalPayment.state === "paid",
   };
 }

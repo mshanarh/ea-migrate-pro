@@ -44,6 +44,10 @@ type NativeBridge = {
    * media volume applies.
    */
   speakWithVolume?: (text: string, volume: number) => void;
+  /** Warms the native speech engine from a user tap (v1.5+ wrappers). */
+  primeVoice?: () => void;
+  /** True once Android's TextToSpeech engine reports SUCCESS. */
+  isVoiceReady?: () => boolean;
   /**
    * False when Android 13+ has notifications switched off for this app, in which
    * case showTradeNotification is silently dropped by the OS. Callers use this

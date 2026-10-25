@@ -212,6 +212,42 @@ const UNPAID_CACHE_TTL_MS = 5_000;
 const cache = new Map<string, Resolution>();
 
 /**
+ * THE LAST ANSWER THE STORE GAVE for each email — one line per sign-in.
+ *
+ * KV is the only store now, so this is deliberately short: it names what the
+ * single store answered (or that it could not be reached). The refusal screens
+ * log it so the next report carries the real cause instead of a guess. Memory
+ * only — never persisted, never read by the gate itself.
+ */
+const lastStores = new Map<string, { stores: Record<string, string> | null; unreadable: string[] }>();
+
+function rememberStoreAnswer(clean: string, stores: Record<string, string> | null, unreadable: string[] = []): void {
+  lastStores.set(clean, { stores, unreadable });
+}
+
+export function accessStores(email: string | null | undefined): {
+  stores: Record<string, string> | null;
+  unreadable: string[];
+} {
+  const clean = (email ?? "").trim().toLowerCase();
+  return lastStores.get(clean) ?? { stores: null, unreadable: [] };
+}
+
+/** The one diagnostic line a refusal logs. */
+export function formatAccessDiagnostic(
+  email: string,
+  verdict: string,
+  stores: Record<string, string> | null,
+  unreadable: string[] = [],
+): string {
+  // ONE STORE. A breakdown that still listed five would describe a system that
+  // no longer exists — and would print "not read" for stores nobody asks.
+  const parts = [`KV registrations=${stores?.["KV registrations"] ?? stores?.["kv"] ?? "not read"}`];
+  if (unreadable.length > 0) parts.push(`unreachable=${unreadable.join("; ")}`);
+  return `[access] ${email} → ${verdict}: ${parts.join(" | ")}`;
+}
+
+/**
  * STALE-WHILE-REVALIDATE FOR CONFIRMED PAID ANSWERS.
  *
  * A paid entry past its 5-minute TTL but younger than MAX_STALE_MS still
@@ -636,6 +672,12 @@ export async function resolveCloudAccess(
   // The browser never imports the KV client: this endpoint answers with the
   // real server-side verdict, and the browser only reads one JSON shape.
   const bundle = await resolveBundle(clean, options?.fresh === true);
+  // REMEMBER WHAT THE STORE SAID, for the one diagnostic line a refusal logs.
+  rememberStoreAnswer(
+    clean,
+    { "KV registrations": bundle.status ?? "no answer" },
+    bundle.status === null ? ["KV registrations → store unreachable"] : [],
+  );
   // LOG THE FINAL VERDICT
   if (bundle.status) {
     verdictLog(["final", "status=" + bundle.status, "email=" + clean]);

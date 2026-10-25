@@ -195,304 +195,9 @@ def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
             "digits": info.digits,
             "point": info.point,
             "stops_level": info.trade_stops_level,
-        }        finally:
+        }
+    finally:
         disconnect()
-
-
-# ── SCALPER LOOP ──────────────────────────────────────────────
-# Runs server-side on the VPS, independent of the web app.
-# The app only sends start/stop commands; the loop manages trades
-# 24/7 next to the MT5 terminal.
-
-class ScalperState(BaseModel):
-    is_running: bool = False
-    symbols: list = []
-    mode: str = "long"
-    trade_count: int = 0
-    last_trade_time: float = 0
-
-# Global state for the scalper loop
-import threading
-import time
-scalper_thread: Optional[threading.Thread] = None
-scalper_stop_event = threading.Event()
-
-SCALPER_RULES = {
-    "TP1_PROFIT_RATIO": 1.0,  # TP1 = 1× SL distance
-    "TP1_CONDITION": "profit_at_least_spread_plus_0_2_atr",
-    "REVENGE_SL": True,  # No revenge-trade after SL
-    "REENTRY_AFTER_SL": "wait_next_m15_candle",
-    "FREE_MARGIN_BUFFER_PCT": 20,  # Keep 20% free margin buffer
-    "MAX_TRADES_PER_SYMBOL": 5,
-}
-
-SCALPER_STRATEGY = {
-    "long": {
-        "enter_conditions": [
-            "price_above_open",
-            "volume_above_avg",
-        ],
-        "exit_conditions": [
-            {"type": "tp1", "rule": "close_at_profit_tp1"},
-            {"type": "sl", "rule": "close_at_sl"},
-        ],
-    },
-    "short": {
-        "enter_conditions": [
-            "price_below_open",
-            "volume_above_avg",
-        ],
-        "exit_conditions": [
-            {"type": "tp1", "rule": "close_at_profit_tp1"},
-            {"type": "sl", "rule": "close_at_sl"},
-        ],
-    },
-}
-
-
-def _check_free_margin_buffer(account, volume, symbol) -> bool:
-    """Check if we have enough free margin with the 20% buffer."""
-    try:
-        free = account.margin_free
-        # Rough check: ensure free margin covers volume with buffer
-        # The exact lot-to-margin calculation depends on the broker/symbol
-        # For safety, just check we have some free margin
-        return free > 0
-    except:
-        return False
-
-
-def _get_atr_for_symbol(symbol, timeframe="15m") -> float:
-    """Fetch ATR for a symbol from MT5 historical data."""
-    try:
-        rates = mt5.copy_rates_from_pos(symbol, getattr(mt5, f"TIMEFRAME_{timeframe.upper()}", mt5.TIMEFRAME_M15), 0, 100)
-        if rates and len(rates) > 1:
-            trs = []
-            for i in range(1, len(rates)):
-                tr = max(
-                    rates[i]["high"] - rates[i]["low"],
-                    abs(rates[i]["high"] - rates[i-1]["close"]),
-                    abs(rates[i]["low"] - rates[i-1]["close"]),
-                )
-                trs.append(tr)
-            if trs:
-                return sum(trs) / len(trs)
-        return 0.0
-    except:
-        return 0.0
-
-
-def _scalper_loop(credentials, symbols, mode):
-    """Server-side scalper loop running on the VPS.
-    
-    Key rules:
-    - Close each position when in profit at TP1, or if TP1 is too far
-      when profit reaches at least spread cost + 0.2 ATR
-    - After a confirmed close, immediately re-analyze fresh current candles
-      and open the next trade in the current direction, back-to-back
-    - If a trade hits SL, wait for the next completed M15 candle before re-entry
-      — never revenge-stack
-    - Manage open trades even when the mode is stopped
-    - Hard safety blocks: 20% free-margin buffer, per-symbol cap, lot size
-      and trade-count settings
-    """
-    from datetime import datetime
-    
-    mode_key = mode.lower()
-    symbol_list = symbols or ["EURUSD"]
-    direction = 1 if mode_key == "long" else -1
-    
-    while not scalper_stop_event.is_set():
-        try:
-            # Connect to MT5
-            if not mt5.initialize(login=credentials.login, password=credentials.password, server=credentials.server):
-                time.sleep(5)
-                continue
-            if not mt5.login(login=credentials.login, password=credentials.password, server=credentials.server):
-                mt5.shutdown()
-                time.sleep(5)
-                continue
-            
-            account = mt5.account_info()
-            if account is None:
-                time.sleep(5)
-                continue
-            
-            # Check free margin buffer
-            if not _check_free_margin_buffer(account, 0.1, symbol_list[0] if symbol_list else "EURUSD"):
-                time.sleep(10)
-                continue
-            
-            # Get current candles for all symbols
-            for symbol in symbol_list:
-                if scalper_stop_event.is_set():
-                    break
-                
-                # Resolve symbol to broker's real name
-                trade_symbol = resolve_symbol(symbol)
-                if trade_symbol is None:
-                    continue
-                
-                # Get candles
-                tf = mt5.TIMEFRAME_M15
-                rates = mt5.copy_rates_from_pos(trade_symbol, tf, 0, 20)
-                if rates is None or len(rates) < 2:
-                    continue
-                
-                # Calculate ATR
-                atr = _get_atr_for_symbol(trade_symbol, "15m")
-                
-                # Get current candle
-                curr = rates[-1]  # latest forming candle
-                prev = rates[-2]
-                
-                # Check open conditions
-                curr_open = curr["open"]
-                curr_close = curr["close"]
-                curr_high = curr["high"]
-                curr_low = curr["low"]
-                
-                # Check if we should enter a trade
-                open_allowed = False
-                
-                if direction > 0:  # long
-                    price_above_open = curr_close > curr_open
-                    volume_ok = True  # simplified
-                    open_allowed = price_above_open and volume_ok
-                else:  # short
-                    price_below_open = curr_close < curr_open
-                    volume_ok = True  # simplified
-                    open_allowed = price_below_open and volume_ok
-                
-                if not open_allowed:
-                    continue
-                
-                # Check max trades per symbol
-                # (simplified - in production would count open orders)
-                
-                # Open trade
-                tick = mt5.symbol_info_tick(trade_symbol)
-                if tick is None or tick.bid <= 0 or tick.ask <= 0:
-                    continue
-                
-                volume = 0.01  # default lot size
-                is_buy = direction > 0
-                order_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
-                price = tick.ask if is_buy else tick.bid
-                
-                sl = 0
-                tp1 = 0
-                # Set TP1 based on SL distance × 1 (TP1 ratio)
-                # and TP1 condition: profit at least spread + 0.2 ATR
-                # For now, use a fixed distance from entry
-                entry_price = price
-                if is_buy:
-                    sl = entry_price - (entry_price * 0.01)  # 1% SL
-                    tp1 = entry_price + (entry_price * 0.01)  # TP1 at same distance
-                else:
-                    sl = entry_price + (entry_price * 0.01)  # 1% SL
-                    tp1 = entry_price - (entry_price * 0.01)  # TP1 at same distance
-                
-                # Execute order
-                request = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": trade_symbol,
-                    "volume": volume,
-                    "type": order_type,
-                    "price": price,
-                    "deviation": 20,
-                    "magic": 0,
-                    "comment": f"Scalper {mode} auto-trade",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                }
-                if sl:
-                    request["sl"] = sl
-                if tp1:
-                    request["tp"] = tp1
-                
-                for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
-                    request["type_filling"] = filling
-                    result = mt5.order_send(request)
-                    if result is None:
-                        break
-                    if result.retcode in (10008, 10009, 10010):  # filled
-                        break
-                
-                if last_result is None or last_result.retcode not in (10008, 10009, 10010):
-                    continue
-                
-                # Trade opened successfully
-                trade_count += 1
-                last_trade_time = time.time()
-            
-            # Brief sleep before next iteration
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"[scalper] error: {e}")
-            time.sleep(5)
-    
-    # Cleanup on exit
-    mt5.shutdown()
-
-
-@app.post("/scalper/start")
-def scalper_start(req: dict, x_bridge_key: Optional[str] = Header(None)):
-    """Start the server-side scalper loop.
-    
-    Request body:
-        {
-            "symbols": ["EURUSD"],  # list of symbols to trade
-            "mode": "long" or "short"
-        }\n    """
-    check_key(x_bridge_key)
-    global scalper_thread, scalper_stop_event
-    
-    # Get credentials from request or use stored ones
-    credentials = {
-        "login": req.get("login", 0),
-        "password": req.get("password", ""),
-        "server": req.get("server", ""),
-    }
-    
-    symbols = req.get("symbols", ["EURUSD"])
-    mode = req.get("mode", "long")
-    
-    # Initialize stop event and start thread
-    scalper_stop_event = threading.Event()
-    
-    if scalper_thread is None or not scalper_thread.is_alive():
-        scalper_thread = threading.Thread(
-            target=_scalper_loop, args=(credentials, symbols, mode),
-            daemon=True
-        )
-        scalper_thread.start()
-        return {"ok": True, "message": f"Scalper started: {mode} on {symbols}"}
-    else:
-        return {"ok": False, "message": "Scalper already running"}
-
-
-@app.post("/scalper/stop")
-def scalper_stop(x_bridge_key: Optional[str] = Header(None)):
-    """Stop the server-side scalper loop."""
-    check_key(x_bridge_key)
-    global scalper_stop_event
-    scalper_stop_event.set()
-    return {"ok": True, "message": "Scalper stopped"}
-
-
-@app.get("/scalper/status")
-def scalper_status():
-    """Return the current scalper status."""
-    return {
-        "is_running": scalper_thread is not None and scalper_thread.is_alive(),
-        "mode": scalper_thread.mode if scalper_thread and scalper_thread.is_alive() else "",
-        "symbols": scalper_thread.symbols if scalper_thread and scalper_thread.is_alive() else [],
-        "trade_count": scalper_thread.trade_count if scalper_thread and scalper_thread.is_alive() else 0,
-    }
-
-# ── SCALPER ENDPOINTS ABOVE ──────────────────────────────────────────────
-
 
 
 class CandlesRequest(BaseModel):
@@ -586,6 +291,10 @@ class TradeRequest(BaseModel):
     take_profit: float = 0
     slippage: int = 20
     comment: Optional[str] = None
+    # Every order carries a magic number so the app can later find and close
+    # ONLY the positions it opened itself — never manual trades, never another
+    # EA's positions.
+    magic: int = 0
 
 
 @app.post("/trade/execute")
@@ -614,7 +323,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "type": order_type,
             "price": price,
             "deviation": req.slippage,
-            "magic": 0,
+            "magic": req.magic,
             "comment": (req.comment or "Web Platform Order")[:31],
             "type_time": mt5.ORDER_TIME_GTC,
         }
@@ -657,301 +366,123 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "volume": last_result.volume,
             "comment": last_result.comment,
             "stops_removed": stops_removed,
-        }        finally:
+        }
+    finally:
         disconnect()
 
 
-# ── SCALPER LOOP ──────────────────────────────────────────────
-# Runs server-side on the VPS, independent of the web app.
-# The app only sends start/stop commands; the loop manages trades
-# 24/7 next to the MT5 terminal.
-
-class ScalperState(BaseModel):
-    is_running: bool = False
-    symbols: list = []
-    mode: str = "long"
-    trade_count: int = 0
-    last_trade_time: float = 0
-
-# Global state for the scalper loop
-import threading
-import time
-scalper_thread: Optional[threading.Thread] = None
-scalper_stop_event = threading.Event()
-
-SCALPER_RULES = {
-    "TP1_PROFIT_RATIO": 1.0,  # TP1 = 1× SL distance
-    "TP1_CONDITION": "profit_at_least_spread_plus_0_2_atr",
-    "REVENGE_SL": True,  # No revenge-trade after SL
-    "REENTRY_AFTER_SL": "wait_next_m15_candle",
-    "FREE_MARGIN_BUFFER_PCT": 20,  # Keep 20% free margin buffer
-    "MAX_TRADES_PER_SYMBOL": 5,
-}
-
-SCALPER_STRATEGY = {
-    "long": {
-        "enter_conditions": [
-            "price_above_open",
-            "volume_above_avg",
-        ],
-        "exit_conditions": [
-            {"type": "tp1", "rule": "close_at_profit_tp1"},
-            {"type": "sl", "rule": "close_at_sl"},
-        ],
-    },
-    "short": {
-        "enter_conditions": [
-            "price_below_open",
-            "volume_above_avg",
-        ],
-        "exit_conditions": [
-            {"type": "tp1", "rule": "close_at_profit_tp1"},
-            {"type": "sl", "rule": "close_at_sl"},
-        ],
-    },
-}
+class PositionsRequest(BaseModel):
+    credentials: Credentials
+    magic: Optional[int] = None
 
 
-def _check_free_margin_buffer(account, volume, symbol) -> bool:
-    """Check if we have enough free margin with the 20% buffer."""
-    try:
-        free = account.margin_free
-        # Rough check: ensure free margin covers volume with buffer
-        # The exact lot-to-margin calculation depends on the broker/symbol
-        # For safety, just check we have some free margin
-        return free > 0
-    except:
-        return False
+class CloseRequest(BaseModel):
+    credentials: Credentials
+    ticket: int
+    slippage: int = 30
 
 
-def _get_atr_for_symbol(symbol, timeframe="15m") -> float:
-    """Fetch ATR for a symbol from MT5 historical data."""
-    try:
-        rates = mt5.copy_rates_from_pos(symbol, getattr(mt5, f"TIMEFRAME_{timeframe.upper()}", mt5.TIMEFRAME_M15), 0, 100)
-        if rates and len(rates) > 1:
-            trs = []
-            for i in range(1, len(rates)):
-                tr = max(
-                    rates[i]["high"] - rates[i]["low"],
-                    abs(rates[i]["high"] - rates[i-1]["close"]),
-                    abs(rates[i]["low"] - rates[i-1]["close"]),
-                )
-                trs.append(tr)
-            if trs:
-                return sum(trs) / len(trs)
-        return 0.0
-    except:
-        return 0.0
-
-
-def _scalper_loop(credentials, symbols, mode):
-    """Server-side scalper loop running on the VPS.
-    
-    Key rules:
-    - Close each position when in profit at TP1, or if TP1 is too far
-      when profit reaches at least spread cost + 0.2 ATR
-    - After a confirmed close, immediately re-analyze fresh current candles
-      and open the next trade in the current direction, back-to-back
-    - If a trade hits SL, wait for the next completed M15 candle before re-entry
-      — never revenge-stack
-    - Manage open trades even when the mode is stopped
-    - Hard safety blocks: 20% free-margin buffer, per-symbol cap, lot size
-      and trade-count settings
-    """
-    from datetime import datetime
-    
-    mode_key = mode.lower()
-    symbol_list = symbols or ["EURUSD"]
-    direction = 1 if mode_key == "long" else -1
-    
-    while not scalper_stop_event.is_set():
-        try:
-            # Connect to MT5
-            if not mt5.initialize(login=credentials.login, password=credentials.password, server=credentials.server):
-                time.sleep(5)
-                continue
-            if not mt5.login(login=credentials.login, password=credentials.password, server=credentials.server):
-                mt5.shutdown()
-                time.sleep(5)
-                continue
-            
-            account = mt5.account_info()
-            if account is None:
-                time.sleep(5)
-                continue
-            
-            # Check free margin buffer
-            if not _check_free_margin_buffer(account, 0.1, symbol_list[0] if symbol_list else "EURUSD"):
-                time.sleep(10)
-                continue
-            
-            # Get current candles for all symbols
-            for symbol in symbol_list:
-                if scalper_stop_event.is_set():
-                    break
-                
-                # Resolve symbol to broker's real name
-                trade_symbol = resolve_symbol(symbol)
-                if trade_symbol is None:
-                    continue
-                
-                # Get candles
-                tf = mt5.TIMEFRAME_M15
-                rates = mt5.copy_rates_from_pos(trade_symbol, tf, 0, 20)
-                if rates is None or len(rates) < 2:
-                    continue
-                
-                # Calculate ATR
-                atr = _get_atr_for_symbol(trade_symbol, "15m")
-                
-                # Get current candle
-                curr = rates[-1]  # latest forming candle
-                prev = rates[-2]
-                
-                # Check open conditions
-                curr_open = curr["open"]
-                curr_close = curr["close"]
-                curr_high = curr["high"]
-                curr_low = curr["low"]
-                
-                # Check if we should enter a trade
-                open_allowed = False
-                
-                if direction > 0:  # long
-                    price_above_open = curr_close > curr_open
-                    volume_ok = True  # simplified
-                    open_allowed = price_above_open and volume_ok
-                else:  # short
-                    price_below_open = curr_close < curr_open
-                    volume_ok = True  # simplified
-                    open_allowed = price_below_open and volume_ok
-                
-                if not open_allowed:
-                    continue
-                
-                # Check max trades per symbol
-                # (simplified - in production would count open orders)
-                
-                # Open trade
-                tick = mt5.symbol_info_tick(trade_symbol)
-                if tick is None or tick.bid <= 0 or tick.ask <= 0:
-                    continue
-                
-                volume = 0.01  # default lot size
-                is_buy = direction > 0
-                order_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
-                price = tick.ask if is_buy else tick.bid
-                
-                sl = 0
-                tp1 = 0
-                # Set TP1 based on SL distance × 1 (TP1 ratio)
-                # and TP1 condition: profit at least spread + 0.2 ATR
-                # For now, use a fixed distance from entry
-                entry_price = price
-                if is_buy:
-                    sl = entry_price - (entry_price * 0.01)  # 1% SL
-                    tp1 = entry_price + (entry_price * 0.01)  # TP1 at same distance
-                else:
-                    sl = entry_price + (entry_price * 0.01)  # 1% SL
-                    tp1 = entry_price - (entry_price * 0.01)  # TP1 at same distance
-                
-                # Execute order
-                request = {
-                    "action": mt5.TRADE_ACTION_DEAL,
-                    "symbol": trade_symbol,
-                    "volume": volume,
-                    "type": order_type,
-                    "price": price,
-                    "deviation": 20,
-                    "magic": 0,
-                    "comment": f"Scalper {mode} auto-trade",
-                    "type_time": mt5.ORDER_TIME_GTC,
-                }
-                if sl:
-                    request["sl"] = sl
-                if tp1:
-                    request["tp"] = tp1
-                
-                for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
-                    request["type_filling"] = filling
-                    result = mt5.order_send(request)
-                    if result is None:
-                        break
-                    if result.retcode in (10008, 10009, 10010):  # filled
-                        break
-                
-                if last_result is None or last_result.retcode not in (10008, 10009, 10010):
-                    continue
-                
-                # Trade opened successfully
-                trade_count += 1
-                last_trade_time = time.time()
-            
-            # Brief sleep before next iteration
-            time.sleep(1)
-            
-        except Exception as e:
-            print(f"[scalper] error: {e}")
-            time.sleep(5)
-    
-    # Cleanup on exit
-    mt5.shutdown()
-
-
-@app.post("/scalper/start")
-def scalper_start(req: dict, x_bridge_key: Optional[str] = Header(None)):
-    """Start the server-side scalper loop.
-    
-    Request body:
-        {
-            "symbols": ["EURUSD"],  # list of symbols to trade
-            "mode": "long" or "short"
-        }\n    """
-    check_key(x_bridge_key)
-    global scalper_thread, scalper_stop_event
-    
-    # Get credentials from request or use stored ones
-    credentials = {
-        "login": req.get("login", 0),
-        "password": req.get("password", ""),
-        "server": req.get("server", ""),
-    }
-    
-    symbols = req.get("symbols", ["EURUSD"])
-    mode = req.get("mode", "long")
-    
-    # Initialize stop event and start thread
-    scalper_stop_event = threading.Event()
-    
-    if scalper_thread is None or not scalper_thread.is_alive():
-        scalper_thread = threading.Thread(
-            target=_scalper_loop, args=(credentials, symbols, mode),
-            daemon=True
-        )
-        scalper_thread.start()
-        return {"ok": True, "message": f"Scalper started: {mode} on {symbols}"}
-    else:
-        return {"ok": False, "message": "Scalper already running"}
-
-
-@app.post("/scalper/stop")
-def scalper_stop(x_bridge_key: Optional[str] = Header(None)):
-    """Stop the server-side scalper loop."""
-    check_key(x_bridge_key)
-    global scalper_stop_event
-    scalper_stop_event.set()
-    return {"ok": True, "message": "Scalper stopped"}
-
-
-@app.get("/scalper/status")
-def scalper_status():
-    """Return the current scalper status."""
+def _position_row(position) -> dict:
     return {
-        "is_running": scalper_thread is not None and scalper_thread.is_alive(),
-        "mode": scalper_thread.mode if scalper_thread and scalper_thread.is_alive() else "",
-        "symbols": scalper_thread.symbols if scalper_thread and scalper_thread.is_alive() else [],
-        "trade_count": scalper_thread.trade_count if scalper_thread and scalper_thread.is_alive() else 0,
+        "ticket": int(position.ticket),
+        "symbol": position.symbol,
+        "type": "BUY" if position.type == mt5.POSITION_TYPE_BUY else "SELL",
+        "volume": float(position.volume),
+        "price_open": float(position.price_open),
+        "price_current": float(position.price_current),
+        "sl": float(position.sl),
+        "tp": float(position.tp),
+        "profit": float(position.profit),
+        "swap": float(getattr(position, "swap", 0.0)),
+        "magic": int(getattr(position, "magic", 0)),
+        "comment": getattr(position, "comment", ""),
     }
 
-# ── SCALPER ENDPOINTS ABOVE ──────────────────────────────────────────────
 
+@app.post("/positions/list")
+def positions_list(req: PositionsRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Open positions, optionally limited to one magic number (the app's own)."""
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    try:
+        positions = mt5.positions_get()
+        if positions is None:
+            return {"success": False, "message": f"positions_get failed: {mt5.last_error()}"}
+        rows = [
+            _position_row(position)
+            for position in positions
+            if req.magic is None or int(getattr(position, "magic", 0)) == int(req.magic)
+        ]
+        return {"success": True, "positions": rows, "total": len(rows)}
+    finally:
+        disconnect()
+
+
+@app.post("/positions/close")
+def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Close ONE position by ticket, in its own opposite direction."""
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+    try:
+        found = mt5.positions_get(ticket=req.ticket)
+        if not found:
+            return {"success": False, "message": f"Position {req.ticket} is no longer open"}
+        position = found[0]
+        symbol = position.symbol
+        if not mt5.symbol_select(symbol, True):
+            return {"success": False, "message": f"Could not select {symbol} to close it"}
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            return {"success": False, "message": f"No live price for {symbol} to close it"}
+
+        is_buy = position.type == mt5.POSITION_TYPE_BUY
+        # Closing a BUY means selling it back, and the other way round.
+        order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+        price = tick.bid if is_buy else tick.ask
+
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": int(position.ticket),
+            "symbol": symbol,
+            "volume": float(position.volume),
+            "type": order_type,
+            "price": price,
+            "deviation": req.slippage,
+            "magic": int(getattr(position, "magic", 0)),
+            "comment": "EA Migrate scalp close",
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+
+        last_result = None
+        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            if result is None:
+                return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
+            last_result = result
+            if result.retcode == 10030:  # unsupported filling mode — try the next
+                continue
+            break
+        if last_result is None:
+            return {"success": False, "message": "Close was not sent"}
+
+        closed = last_result.retcode in (10008, 10009, 10010)
+        return {
+            "success": closed,
+            "retcode": last_result.retcode,
+            "ticket": int(position.ticket),
+            "symbol": symbol,
+            "order": last_result.order,
+            "deal": last_result.deal,
+            "price": float(last_result.price),
+            "profit": float(position.profit),
+            "message": "" if closed else f"Close rejected (retcode {last_result.retcode})",
+        }
+    finally:
+        disconnect()

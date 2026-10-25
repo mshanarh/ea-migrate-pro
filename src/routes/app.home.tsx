@@ -20,10 +20,11 @@ import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type A
 import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
-import { speakBot } from "@/lib/bot-voice";
-import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
+import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
+import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
-import { getBridgeUrl, BRIDGE_KEY } from "@/lib/bridge-client";
+import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
+import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -115,14 +116,7 @@ export const Route = createFileRoute("/app/home")({
       apply(cached);
       return;
     }
-    // NO network wait for first paint — render immediately with a pending verdict.
-    // The real check runs in the background (see the poll below) and updates
-    // the UI when it completes. This means the dashboard (or login) appears
-    // instantly on cold boot, and the access verdict is refreshed silently.
-    // 
-    // Mark the verdict as pending so the guard below knows to render the
-    // first screen without waiting for the cloud.
-    return { __pendingAccessCheck: true };
+    return requireVerifiedAccess(email).then(apply);
   },
   head: () => ({
     meta: [
@@ -297,8 +291,22 @@ function WelcomeMaster() {
   );
 }
 
+/** Remembered bot mode — the last choice is the default next time. */
+const BOT_MODE_KEY = "eamp.botMode.v1";
+function readBotMode(): BotMode {
+  try {
+    const saved = window.localStorage.getItem(BOT_MODE_KEY);
+    if (saved === "scalper" || saved === "normal") return saved;
+  } catch {
+    /* storage blocked — default below */
+  }
+  return "scalper";
+}
+
 function AppHome() {
   const app = useAppState();
+  const { color: accentChoice } = useCustomization();
+  const accent = accentColorValue(accentChoice);
   // SPA navigation for the QUOTES / SCANNER / METATRADER buttons — a
   // window.location.* call reloaded the whole document, which rebooted the
   // app and flashed the full-screen "Loading…" splash on EVERY press.
@@ -312,6 +320,10 @@ function AppHome() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
+  // START offers the two modes; the last one chosen is the remembered default.
+  const [modeOpen, setModeOpen] = useState(false);
+  const [botMode, setBotMode] = useState<BotMode>(() => readBotMode());
+  const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -333,20 +345,7 @@ function AppHome() {
   // mount paint and that same cached answer resolving. The effect below still
   // runs as the mid-session re-check — a revocation keeps redirecting out via
   // window.location.replace, and a denial never leaves the screen up.
-  //
-  // If the beforeLoad returned { __pendingAccessCheck: true }, we start with
-  // a pending verdict and immediately render the first screen. The verify() effect
-  // below will run the cloud check and update the state when it completes.
-  const [access, setAccess] = useState<"checking" | "ok" | "pending">(
-    // Check if beforeLoad left a pending verdict
-    (function () {
-      // This reads the route's return value from the navigation state.
-      // We can't access it directly here, so we check the app state for an
-      // activated device that already has robots — if so, we can render OK.
-      // Otherwise we fall back to "checking" and the effect will resolve it.
-      return app.robots.length > 0 ? "ok" : "checking";
-    })(),
-  );
+  const [access, setAccess] = useState<"checking" | "ok">("ok");
 
   useEffect(() => {
     let cancelled = false;
@@ -512,9 +511,9 @@ function AppHome() {
         // candles (oldest→newest), not the fixture tables.
         const analysis = await resolveTradeDirection(symbol, { credentials });
 
-        // THE ENTRY FILTER, ON THE CARD. The direction derivation is unchanged;
-        // this only shows what was measured (trend, extension in ATR) and why
-        // the entry was allowed or skipped.
+        // ENTRY CONTEXT, ON THE CARD. The direction derivation is unchanged;
+        // this only shows what was measured (trend, extension in ATR). It is
+        // never a veto — the trade proceeds on the short-term direction.
         const gate = analysis.gate ?? null;
         if (gate) {
           updateExecutionPlan({
@@ -652,105 +651,127 @@ function AppHome() {
 
   const handleStart = () => {
     if (!robot) return;
+    // The START tap arms audio, so the first announcement of the run is heard.
+    unlockBotVoice();
     // START/STOP SHOWS NOTHING — no toast, no popup, no voice. Only the
     // floating bubble changes state. The execution popup and its voice
-    // belong to runConfiguredPairs below (scanner Execute / auto trading).
+    // belong to the runs below (scanner Execute / auto trading).
     if (robot.running) {
+      console.info("[bot] STOP pressed — halting the loop (open positions keep their broker SL/TP)");
+      scalpRef.current?.stop();
+      scalpRef.current = null;
+      stopExecution();
+      setAnalysisOpen(false);
       toggleRobot(robot.id);
       window.showBotStarted?.(robot.name, "stopped");
+      // "Bot stopped" — no outcome is claimed for the positions that stay open.
+      notifyBotStopped();
       return;
     }
-    toggleRobot(robot.id);
-    window.showBotStarted?.(robot.name, "started");
+    // STOP ANY PREVIOUS LOOP, then ask which mode this run uses.
+    scalpRef.current?.stop();
+    scalpRef.current = null;
+    setModeOpen(true);
+  };
 
-    // Fire-and-forget auto-trade with safety checks
-    console.log("[START DEBUG] robot.pairs:", robot?.pairs?.map(p => ({symbol: p?.symbol, lotSize: p?.lotSize, maxTrades: p?.maxTrades})));
-    void runConfiguredPairs(robot).catch((error: unknown) => {
-      console.warn("[start] auto-trade run failed:", error);
+  /**
+   * BOTH MODES RUN THE SAME LOOP.
+   *   SCALPER — trade, take the profit, re-analyse, open again, non-stop.
+   *   NORMAL  — open on the same short-term direction and let the broker's
+   *             SL/TP manage it; re-analyses on each new M15 candle without
+   *             ever force-closing a winner.
+   */
+  const runBotLoop = (target: Robot, mode: BotMode) => {
+    console.info(`[bot] STEP 1 mode selected: ${mode} for ${target.name}`);
+    const pairs = (target.pairs ?? []).filter((pair) => pair.symbol?.trim());
+    if (pairs.length === 0) {
+      console.warn("[bot] STEP 2 blocked: no allowed quotes");
+      toast.error("No quotes in Allowed Quotes — configure a symbol in Quotes first.");
+      return;
+    }
+    console.info(`[bot] STEP 2 quotes: ${pairs.map((pair) => pair.symbol).join(", ")}`);
+    const credentials = readMtCredentials(app.mt);
+    console.info(`[bot] STEP 3 MT5 credentials: ${credentials ? "saved" : "missing"}`);
+    if (!credentials) {
+      toast.message(`${target.name} is running`, {
+        description:
+          "Add your MT5 login, password and server on the MetaTrader page — the scalper trades live with them saved.",
+      });
+      return;
+    }
+    const totalTrades = pairs.reduce((sum, pair) => sum + safeTradeCount(pair.maxTrades), 0);
+    // THE CARD NAMES THE MODE, so the trader always knows what is running.
+    startExecution({
+      symbol: pairs[0]?.symbol?.trim() ?? "",
+      ...(Number.isFinite(Number(pairs[0]?.lotSize)) ? { lotSize: Number(pairs[0]?.lotSize) } : {}),
+      totalTrades,
+      robotName: target.name,
+      mode,
+    });
+    setExecutionStage(
+      mode === "scalper"
+        ? "Scalper mode — analysing the last 8 completed M15 candles..."
+        : "Normal mode — analysing the last 8 completed M15 candles...",
+    );
+    // THE CARD OPENS IMMEDIATELY — a run that does not show its analysis is
+    // indistinguishable from a bot that never started.
+    setAnalysisOpen(true);
+    setToastSymbol(pairs[0]?.symbol?.trim() ?? "");
+    setToastTrades(totalTrades);
+    setToastOpen(true);
+    console.info("[bot] STEP 4 opening the AI TRADE card and starting the loop");
+    // NUMBERING RESTARTS WITH THE SESSION, before the first pass can fill an
+    // order — so the loop's first confirmed trade is "Trade 1".
+    beginBotSession();
+    scalpRef.current = startScalpLoop({
+      symbols: pairs.map((pair) => ({
+        symbol: pair.symbol.trim(),
+        lotSize: Number(pair.lotSize) || 0.01,
+        maxTrades: safeTradeCount(pair.maxTrades),
+      })),
+      eaName: target.name,
+      credentials,
+      mode,
+    });
+    console.info("[bot] STEP 5 loop started");
+    // "Bot started — Scalper mode, watching BTCUSDm" (Normal lists the symbols too).
+    notifyBotStarted(mode, pairs.map((pair) => pair.symbol.trim()));
+    toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
+      description:
+        mode === "scalper"
+          ? "Trades close at TP1 or spread + 0.2 ATR, then the next trade opens."
+          : "Trades run with the broker's SL/TP; re-analysis happens on each new M15 candle.",
     });
   };
+
+  /** Choose a mode: remembered as the default, then the bot starts. */
+  const chooseMode = (mode: BotMode) => {
+    if (!robot) return;
+    setBotMode(mode);
+    try {
+      window.localStorage.setItem(BOT_MODE_KEY, mode);
+    } catch {
+      /* storage blocked — this session still uses the choice */
+    }
+    setModeOpen(false);
+    toggleRobot(robot.id);
+    window.showBotStarted?.(robot.name, "started");
+    runBotLoop(robot, mode);
+  };
+
+  // A mode chooser left open, or a running loop, must not outlive the screen.
+  useEffect(() => {
+    return () => {
+      scalpRef.current?.stop();
+      scalpRef.current = null;
+    };
+  }, []);
 
   // The QUOTES / Symbols button lives on /app/trading-pairs (route id
   // "/app/trading-pairs"). It goes through the router now — the path is
   // matched against the route tree (no more typo'd hrefs landing on the 404)
   // and the navigation stays in the SPA instead of reloading the document.
   const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
-  const [scalperRunning, setScalperRunning] = useState(false);
-  const [scalperMode, setScalperMode] = useState("long");
-  const [scalperSymbols, setScalperSymbols] = useState(["EURUSD"]);
-
-  const handleScalperStart = async () => {
-    try {
-      const mt = app.robots?.find((r) => r.active) || {};
-      const credentials = readMtCredentials(mt);
-      if (!credentials) {
-        toast.error("No MT5 credentials configured. Add them on the MetaTrader page first.");
-        return;
-      }
-      const url = getBridgeUrl() + "/scalper/start";
-      const result = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
-        body: JSON.stringify({ login: credentials.login, password: credentials.password, server: credentials.server, symbols: scalperSymbols, mode: scalperMode }),
-      });
-      const payload = (await result.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (payload?.ok) {
-        setScalperRunning(true);
-        toast.success("Scalper started on VPS");
-      } else {
-        toast.error("Failed to start scalper: " + (payload?.message || "unknown"));
-      }
-    } catch (error) {
-      console.warn("[scalper] start failed:", error);
-      toast.error("Scalper start error");
-    }
-  };
-
-  const handleScalperStop = async () => {
-    try {
-      const url = getBridgeUrl() + "/scalper/stop";
-      const result = await fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
-      });
-      const payload = (await result.json().catch(() => ({}))) as { ok?: boolean; message?: string };
-      if (payload?.ok) {
-        setScalperRunning(false);
-        toast.success("Scalper stopped");
-      } else {
-        toast.error("Failed to stop scalper: " + (payload?.message || "unknown"));
-      }
-    } catch (error) {
-      console.warn("[scalper] stop failed:", error);
-      toast.error("Scalper stop error");
-    }
-  };
-
-  const handleScalperStatus = async () => {
-    try {
-      const url = getBridgeUrl() + "/scalper/status";
-      const result = await fetch(url, {
-        method: "GET",
-        headers: { "x-bridge-key": BRIDGE_KEY },
-      });
-      const payload = (await result.json().catch(() => ({}))) as { is_running?: boolean; mode?: string; symbols?: string[]; trade_count?: number };
-      if (payload?.is_running !== undefined) {
-        setScalperRunning(payload.is_running);
-        setScalperMode(payload.mode || "long");
-        setScalperSymbols(payload.symbols || ["EURUSD"]);
-      }
-    } catch (error) {
-      console.warn("[scalper] status failed:", error);
-    }
-  };
-
-  // Periodic status check when component mounts
-  useEffect(() => {
-    handleScalperStatus();
-    const interval = setInterval(handleScalperStatus, 15000);
-    return () => clearInterval(interval);
-  }, []);
-
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
@@ -790,12 +811,49 @@ function AppHome() {
             onOpenSymbols={() => { void navigate({ to: "/app/metatrader" }); }}
             onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
-            onScalperStart={handleScalperStart}
-            onScalperStop={handleScalperStop}
-            onScalperStatus={handleScalperStatus}
           />
         </main>
       </div>
+
+      <Dialog open={modeOpen} onOpenChange={setModeOpen}>
+        <DialogContent className="max-w-sm border-white/10 bg-[#0d0d0d] text-white">
+          <DialogHeader>
+            <DialogTitle className="text-[15px] font-black tracking-wide">Choose how {robot?.name ?? "the bot"} trades</DialogTitle>
+            <DialogDescription className="text-[12px] text-white/50">
+              Your last choice is remembered as the default.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="mt-3 space-y-2">
+            {([
+              {
+                mode: "scalper" as BotMode,
+                title: "Scalper mode",
+                body: "Opens immediately on the last 8 M15 candles, closes each position at TP1 or spread + 0.2 ATR, then re-analyses and opens again — non-stop.",
+              },
+              {
+                mode: "normal" as BotMode,
+                title: "Normal mode",
+                body: "Opens on the same short-term direction and lets the broker's SL/TP1/TP2 manage each trade — re-analysed on every new M15 candle, winners never force-closed.",
+              },
+            ]).map((option) => (
+              <button
+                key={option.mode}
+                type="button"
+                onClick={() => chooseMode(option.mode)}
+                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99]"
+                style={{
+                  borderColor: botMode === option.mode ? accent : "rgba(255,255,255,0.12)",
+                  borderWidth: botMode === option.mode ? 2 : 1,
+                  backgroundColor: botMode === option.mode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                }}
+              >
+                <span className="block text-[13px] font-black text-white">{option.title}</span>
+                <span className="mt-0.5 block text-[11px] leading-relaxed text-white/50">{option.body}</span>
+              </button>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
 

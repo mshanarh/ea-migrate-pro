@@ -41,7 +41,7 @@ vi.mock("@/lib/auth-store", () => ({
   isPaymentExemptEmail: (email: string) => email === "biyasentobeko222@gmail.com",
 }));
 
-vi.mock("@/lib/supabase-users", () => ({
+vi.mock("@/lib/portal-store", () => ({
   getUserByEmail: async () => state.user,
   emailPaidInLedger: async () => state.ledgerPaid,
   emailHasLicenseKey: async () => state.legacyKey,
@@ -49,6 +49,25 @@ vi.mock("@/lib/supabase-users", () => ({
     ok: true,
     isPaid: state.cloudStatus === "paid" || state.cloudStatus === "admin",
     status: state.cloudStatus,
+  }),
+}));
+
+/**
+ * THE PORTAL PAYMENT RECORD LIVES IN UPSTASH NOW. It is mocked at the module
+ * boundary so the decision — not the KV configuration of the test machine —
+ * is what these assertions prove.
+ */
+vi.mock("@/lib/portal-paid", () => ({
+  PORTAL_RETRY_DELAY_MS: 0,
+  describeError: (error: unknown) => String(error),
+  readPortalAccount: async () => ({
+    state: state.portalAccount ? "account" : "no-account",
+    paid: state.portalAccount,
+    detail: state.portalAccount ? "account found" : "no account",
+  }),
+  readPortalPayment: async () => ({
+    state: state.portalAccount ? "paid" : "not-paid",
+    detail: state.portalAccount ? "paid" : "no account",
   }),
 }));
 

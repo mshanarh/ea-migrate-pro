@@ -1,37 +1,27 @@
 /**
- * THE PORTAL'S PAID RECORD, READ HONESTLY.
+ * THE PORTAL'S PAID RECORD, READ THROUGH THE SERVER.
  *
- * Every viewer of this file has the same problem: a Supabase read that fails
- * with a bare `TypeError: Failed to fetch` tells nobody WHY. The address of the
- * table, the HTTP status and the underlying cause are the three facts needed to
- * tell a wrong URL from a CORS block from a server error, so they are captured
- * here, together with ONE retry two seconds later (a cold lambda or a dropped
- * socket is not an answer).
+ * The portal's account + payment flag live in Upstash KV. KV credentials must
+ * never reach the browser, so this module does not talk to KV at all: it calls
+ * `/api/kv/portal-accounts`, which reads KV with the deployment's own
+ * `KV_REST_API_URL` / `KV_REST_API_TOKEN` (falling back to the read-only
+ * token) and answers with a plain verdict plus a diagnostic line naming the
+ * variable it used.
  *
  * STATES, AND WHAT THEY MEAN
- *   paid           — `portal_payments.paid = true` (the portal's own payment
- *                    record; being paid here is enough on its own).
- *   not-paid       — the store answered and has no paid record.
- *   unavailable    — the store could not be reached. THIS IS NOT "NOT PAID":
- *                    callers must never turn it into a refusal.
- *   not-configured — this build has no Supabase credentials at all. Also not
- *                    evidence of anything, but it is a deployment fact rather
- *                    than a network failure, so it is kept separate.
+ *   paid           — the portal's own KV payment flag says paid (`isPaid` with
+ *                    a `paidAt`). Being paid here is enough on its own.
+ *   not-paid       — KV answered and has no paid record.
+ *   unavailable    — KV could not be read (missing server variables, network).
+ *                    THIS IS NOT "NOT PAID": callers must never turn it into a
+ *                    refusal.
+ *   not-configured — kept for compatibility; same handling as unavailable.
+ *
+ * A failed read is retried ONCE, two seconds later, before it is reported.
  */
-// THE PORTAL'S OWN PAY RECORD, READ FROM UPSTASH KV.
-//
-// AGENTS.md: registrations, approval state, payment flags and licence limits
-// live in the Vercel KV/Upstash store behind /api/register, /api/admin-users
-// and /api/admin-approve. The portal's payment flag is one of those records,
-// not a Supabase table. This module reads only that KV record over the same
-// REST setup the /api/register and /api/admin-approve checks use, so a
-// browser build with no Supabase credentials is still a healthy one for
-// this purpose.
 
-/** The Upstash REST path the admin console's `Mark paid` writes through, one
- * store above the raw registration hash where the paid flag lives.
- * /api/check-access and /api/mentor-status read the same shape. */
-const KV_PAID_PATH = "/api/portal-payments";
+/** Where the server reads the portal account from. */
+const ENDPOINT = "/api/kv/portal-accounts";
 
 export const PORTAL_RETRY_DELAY_MS = 2000;
 
@@ -60,72 +50,73 @@ export function describeError(error: unknown): string {
     const causeText =
       cause === undefined
         ? ""
-        : ` (cause: ${typeof cause === "string" ? cause : ((cause as Error)?.message ?? String(cause))})`;
+        : ` (cause: ${typeof cause === "string" ? cause : ((error as { cause?: { message?: string } }).cause?.message ?? String(cause))})`;
     return `${error.name}: ${error.message}${causeText}`;
   }
   return String(error);
 }
 
-function restUrl(path: string): string {
-  return `${KV_PAID_PATH}${path}`;
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** Ask the portal's payment flag over the same REST client the other KV checks
- * use. A network-level failure has no status, so the probe reports "no
- * response" plus the cause instead of inventing a number. */
-async function probeStatus(): Promise<string> {
-  const url = KV_PAID_PATH + "?select=email,paid,paid_at&limit=1";
-  const apiKey = import.meta.env["VITE_KV_API_KEY"] as string | undefined;
-  const host = import.meta.env["VITE_KV_REST_HOST"] as string | undefined;
-  if (!host || !apiKey) return `no VITE_KV_REST_HOST or VITE_KV_API_KEY in this build`;
-  try {
-    const reply = await fetch(`${host}${url}`, {
-      headers: {
-        "content-type": "application/json",
-        apikey: apiKey,
-        authorization: `Bearer ${apiKey}`,
-      },
-      signal: AbortSignal.timeout(8_000),
-    });
-    return `HTTP ${reply.status}${reply.ok ? "" : ` ${reply.statusText || "error"}`}`;
-  } catch (error) {
-    return `no HTTP response (${describeError(error)})`;
-  }
-}
+type ServerAnswer = {
+  ok?: boolean;
+  configured?: boolean;
+  reachable?: boolean;
+  registered?: boolean;
+  paid?: boolean;
+  paidAt?: string | null;
+  variables?: { urlVar?: string | null; tokenVar?: string | null };
+  detail?: string;
+};
 
-type QueryReply = { data?: unknown; error?: { message?: string } | null };
+type PortalRead =
+  | { kind: "ok"; answer: ServerAnswer }
+  | { kind: "unavailable"; detail: string };
 
-async function readRows(build: (url: string, apiKey: string) => Promise<QueryReply>): Promise<{ rows: Array<Record<string, unknown>> } | { failure: string }> {
-  const host = import.meta.env["VITE_KV_REST_HOST"] as string | undefined;
-  const apiKey = import.meta.env["VITE_KV_API_KEY"] as string | undefined;
-  if (!host || !apiKey) {
-    return {
-      failure: `KV is not configured in this build (VITE_KV_REST_HOST ${host ? "is set" : "missing"}, VITE_KV_API_KEY ${apiKey ? "is set" : "missing"})`,
-    };
-  }
+/**
+ * ONE server read, retried once. The server already names the variable it used
+ * (or the one missing), so the detail line is actionable instead of
+ * "Failed to fetch".
+ */
+async function readFromServer(email: string): Promise<PortalRead> {
+  const url = `${ENDPOINT}?email=${encodeURIComponent(email)}`;
   let lastFailure = "";
   for (let attempt = 1; attempt <= 2; attempt += 1) {
     try {
-      const reply = await build(host, apiKey);
-      if (reply.error) throw new Error(reply.error.message ?? "unknown KV error");
-      const rows = Array.isArray(reply.data) ? (reply.data as Array<Record<string, unknown>>) : [];
-      return { rows };
-    } catch (error) {
-      lastFailure = describeError(error);
-      if (attempt === 1) {
-        console.warn(`[portal] ${KV_PAID_PATH} attempt 1 failed: ${lastFailure} — retrying once in ${PORTAL_RETRY_DELAY_MS}ms`);
-        await delay(PORTAL_RETRY_DELAY_MS);
+      const reply = await fetch(url, {
+        headers: { accept: "application/json" },
+        cache: "no-store",
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (reply.status === 404) {
+        // The route itself is missing from this deployment — a real answer.
+        return { kind: "unavailable", detail: `${ENDPOINT} → HTTP 404 (route not deployed)` };
       }
+      if (!reply.ok) {
+        lastFailure = `${ENDPOINT} → HTTP ${reply.status} ${reply.statusText || ""}`.trim();
+      } else {
+        const answer = (await reply.json().catch(() => null)) as ServerAnswer | null;
+        if (answer) return { kind: "ok", answer };
+        lastFailure = `${ENDPOINT} → empty response body`;
+      }
+    } catch (error) {
+      lastFailure = `${ENDPOINT} → no HTTP response (${describeError(error)})`;
+    }
+    if (attempt === 1) {
+      console.warn(`[portal] ${lastFailure} — retrying once in ${PORTAL_RETRY_DELAY_MS}ms`);
+      await delay(PORTAL_RETRY_DELAY_MS);
     }
   }
-  const status = await probeStatus();
-  const detail = `${KV_PAID_PATH} → ${lastFailure} · probe: ${status}`;
-  console.warn(`[portal] ${detail}`);
-  return { failure: detail };
+  return { kind: "unavailable", detail: lastFailure || `${ENDPOINT} → unknown failure` };
 }
 
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function serverDetail(answer: ServerAnswer, fallback: string): string {
+  if (answer.detail) return answer.detail;
+  const variables = answer.variables;
+  if (variables?.urlVar) return `KV via ${variables.urlVar}`;
+  return fallback;
 }
 
 /** Is this email PAID according to the portal's own payment record?
@@ -134,21 +125,26 @@ export async function readPortalPayment(email: string): Promise<PortalPaymentRea
   const clean = email.trim().toLowerCase();
   if (!clean) return { state: "not-paid", detail: "no email to check" };
 
-  const result = await readRows((host, apiKey) =>
-    fetch(`${host}${KV_PAID_PATH}?email=${encodeURIComponent(clean)}&select=paid,paid_at&limit=1`, {
-      headers: { apikey: apiKey, authorization: `Bearer ${apiKey}` },
-    }).then((reply) => reply.json() as Promise<QueryReply>),
-  );
-  if ("failure" in result) return { state: "unavailable", detail: result.failure };
+  const read = await readFromServer(clean);
+  if (read.kind === "unavailable") {
+    return { state: "unavailable", detail: read.detail };
+  }
 
-  const row = result.rows[0];
-  if (!row) return { state: "not-paid", detail: "no portal payment record" };
-  const paidAt = typeof row["paid_at"] === "string" ? (row["paid_at"] as string) : undefined;
-  const paid = row["paid"] === true || Boolean(paidAt);
+  const { answer } = read;
+  if (answer.configured === false || answer.reachable === false) {
+    return { state: "unavailable", detail: serverDetail(answer, "portal KV unreachable") };
+  }
+  const paidAt = typeof answer.paidAt === "string" && answer.paidAt ? answer.paidAt : undefined;
+  if (answer.paid === true) {
+    return {
+      state: "paid",
+      ...(paidAt ? { paidAt } : {}),
+      detail: serverDetail(answer, `portal payment paid${paidAt ? ` at ${paidAt}` : ""}`),
+    };
+  }
   return {
-    state: paid ? "paid" : "not-paid",
-    ...(paidAt ? { paidAt } : {}),
-    detail: paid ? `portal payment paid${paidAt ? ` at ${paidAt}` : ""}` : "portal payment not paid",
+    state: "not-paid",
+    detail: serverDetail(answer, answer.registered === false ? "no portal account" : "portal payment not paid"),
   };
 }
 
@@ -158,36 +154,21 @@ export async function readPortalAccount(email: string): Promise<PortalAccountRea
   const clean = email.trim().toLowerCase();
   if (!clean) return { state: "no-account", paid: false, detail: "no email to check" };
 
-  const payment = await readPortalPayment(clean);
-  const result = await readRows((host, apiKey) =>
-    fetch(`${host}${KV_PAID_PATH}?email=${encodeURIComponent(clean)}&select=email&limit=1`, {
-      headers: { apikey: apiKey, authorization: `Bearer ${apiKey}` },
-    }).then((reply) => reply.json() as Promise<QueryReply>),
-  );
-  if ("failure" in result) {
-    return {
-      state: "unavailable",
-      paid: payment.state === "paid",
-      ...(payment.paidAt ? { paidAt: payment.paidAt } : {}),
-      detail: result.failure,
-    };
+  const read = await readFromServer(clean);
+  if (read.kind === "unavailable") {
+    return { state: "unavailable", paid: false, detail: read.detail };
   }
 
-  const found = result.rows.length > 0;
-  const paymentText =
-    payment.state === "paid"
-      ? "paid"
-      : payment.state === "not-paid"
-        ? "not paid"
-        : payment.state === "not-configured"
-          ? "payment store not configured"
-          : `payment read unavailable (${payment.detail})`;
+  const { answer } = read;
+  if (answer.configured === false || answer.reachable === false) {
+    return { state: "unavailable", paid: false, detail: serverDetail(answer, "portal KV unreachable") };
+  }
+  const paid = answer.paid === true;
+  const paidAt = typeof answer.paidAt === "string" && answer.paidAt ? answer.paidAt : undefined;
   return {
-    state: found ? "account" : "no-account",
-    paid: payment.state === "paid",
-    ...(payment.paidAt ? { paidAt: payment.paidAt } : {}),
-    detail: found ? `account found · ${paymentText}` : `no account · ${paymentText}`,
+    state: answer.registered === false ? "no-account" : "account",
+    paid,
+    ...(paidAt ? { paidAt } : {}),
+    detail: serverDetail(answer, answer.registered === false ? "no account" : "account found"),
   };
 }
-
-/** One retry, this long after the first failure. */

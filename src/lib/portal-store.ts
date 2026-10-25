@@ -55,6 +55,13 @@ export type RegistrationResult = {
   error?: string;
   /** The store could NOT decide (unreachable). Not an unpaid verdict. */
   unavailable?: boolean;
+  /**
+   * WHAT THE STORE ANSWERED, for the sign-in diagnostic line. One entry now —
+   * KV — so a refusal can print the real cause instead of "one source was
+   * unreachable".
+   */
+  stores?: Record<string, string>;
+  unreadable?: string[];
 };
 
 export type ServerDeviceBinding = { deviceEmail: string | null; deviceId: string | null } | null;
@@ -249,12 +256,20 @@ export async function registerWithEmail(email: string, _licenseKey?: string): Pr
       user: null,
       verified: false,
       unavailable: true,
+      stores: { "KV registrations": "unreachable" },
+      unreadable: [access.detail ?? "KV registrations → unreachable"],
       ...(access.detail ? { error: access.detail } : {}),
     };
   }
   if (access.isPaid) {
     const profile = await callAccount("profile", { email: address });
-    return { outcome: "allow", user: toUserRow(profile.profile), verified: true };
+    return {
+      outcome: "allow",
+      user: toUserRow(profile.profile),
+      verified: true,
+      stores: { "KV registrations": access.status },
+      unreadable: [],
+    };
   }
   // A reachable store that answered "revoked" is a refusal, not a payment gap.
   if (access.status === "revoked" || access.status === "rejected") {

@@ -7,7 +7,7 @@
  * announces through `speakBot` which no-ops when disabled or unsupported.
  */
 
-import { callNative, hasNativeBridge } from "@/lib/native-bridge";
+import { callNative, hasNativeBridge, queryNative } from "@/lib/native-bridge";
 import {
   EXECUTION_REPEAT_WINDOW_MS,
   executionSignature,
@@ -50,7 +50,19 @@ export function setBotVoiceEnabled(value: boolean): void {
 export function getBotVoiceVolume(): number {
   if (typeof window === "undefined") return 1;
   try {
-    const raw = Number(window.localStorage.getItem(VOLUME_KEY));
+    const stored = window.localStorage.getItem(VOLUME_KEY);
+    /**
+     * NOT-SET IS FULL VOLUME.
+     *
+     * `Number(null)` is 0, and 0 is finite — so this used to return 0 for every
+     * trader who had never touched the volume slider. speechSynthesis (and the
+     * Android TTS bridge) then spoke every announcement at volume 0: the trade
+     * notifications appeared, the voice stayed completely silent, and nothing
+     * anywhere reported an error. An absent key means "the default", and the
+     * default is 1.
+     */
+    if (stored === null || stored.trim() === "") return 1;
+    const raw = Number(stored);
     if (!Number.isFinite(raw)) return 1;
     return Math.min(1, Math.max(0, raw));
   } catch {
@@ -104,11 +116,21 @@ function pickVoice(): SpeechSynthesisVoice | null {
  * the same moment the caller renders it.
  */
 export function speakBot(text: string): void {
-  if (!isBotVoiceEnabled()) return; // voice off → say nothing
   if (typeof window === "undefined") return;
+  if (!diagnosticsLogged) {
+    diagnosticsLogged = true;
+    console.info("[voice] path", voiceDiagnostics());
+  }
+  if (!isBotVoiceEnabled()) {
+    // STEP 4 of the chain, logged: the setting itself is off. (Independent of
+    // notifications — they keep working either way.)
+    console.info("[voice] step 4 speakBot: skipped — botVoiceEnabled is false");
+    return; // voice off → say nothing
+  }
   const phrase = text.trim();
   if (!phrase) return;
   const volume = getBotVoiceVolume();
+  console.info(`[voice] step 5 speakBot: speaking at volume ${volume} → "${phrase}"`);
   // 1. Native Android TTS — AndroidTTS (spec) or the injected EAMigrate bridge.
   const androidTts = (
     window as unknown as { AndroidTTS?: { speak?: (value: string) => void } }
@@ -130,14 +152,7 @@ export function speakBot(text: string): void {
     return;
   }
   // 2. Browser fallback.
-  if (!("speechSynthesis" in window)) {
-    console.warn("[bot-voice] no speechSynthesis in this browser — silent");
-    return;
-  }
-  // A mobile browser that has never seen a gesture refuses speak() silently,
-  // so the very first announcement also unlocks the engine (it is already
-  // inside a user-initiated run by then).
-  unlockBotVoice();
+  if (!("speechSynthesis" in window)) return;
   try {
     const synth = window.speechSynthesis;
     synth.cancel();
@@ -154,45 +169,61 @@ export function speakBot(text: string): void {
   }
 }
 
-let voiceUnlocked = false;
-
 /**
- * UNLOCK SPEECH ON THE FIRST USER GESTURE.
+ * ARM THE VOICE FROM A REAL USER TAP.
  *
- * Mobile browsers refuse `speechSynthesis.speak()` until the page has seen a
- * gesture from the user, and the refusal is silent — which is exactly how a
- * trade executed, the toast appeared, and the bot said nothing. The gesture
- * that starts a run (tapping Start) is the natural place to unlock, but the
- * unlock has to happen IN that gesture, not later from a timer or an event
- * handler: by the time the execution lands the gesture context is gone.
+ * A browser silently drops speechSynthesis before the page has had a gesture,
+ * and the first announcement of a run (the welcome, the first fill) is exactly
+ * the one that used to be swallowed. Inside the Android wrapper the native
+ * engine is warmed instead — no gesture rule applies there, but priming makes
+ * the first line immediate.
  *
- * So the app calls this on the first pointerdown/keydown anywhere (see
- * __root.tsx). It speaks one empty utterance, which is inaudible but marks the
- * engine as user-activated for the rest of the session.
- *
- * This is NOT gated on the Bot Voice setting and does not gate anything else:
- * voice and notifications stay independent — a trader with voice off still gets
- * their toasts, and the unlock never makes a sound.
+ * Safe to call on every tap: it is idempotent and never speaks a word the
+ * trader can hear.
  */
 export function unlockBotVoice(): void {
-  if (voiceUnlocked || typeof window === "undefined") return;
-  if (!("speechSynthesis" in window)) {
-    voiceUnlocked = true;
+  if (typeof window === "undefined") return;
+  if (hasNativeBridge()) {
+    callNative("primeVoice");
     return;
   }
+  if (!("speechSynthesis" in window)) return;
   try {
     const synth = window.speechSynthesis;
-    // resume() clears a paused/blocked engine on iOS Safari.
     synth.resume?.();
+    if (synth.speaking || synth.pending) return;
     const primer = new SpeechSynthesisUtterance(" ");
     primer.volume = 0;
     synth.speak(primer);
-    voiceUnlocked = true;
-    console.log("[bot-voice] speech unlocked by user gesture");
-  } catch (error) {
-    console.warn("[bot-voice] unlock failed:", error);
+    warmBotVoice();
+  } catch {
+    /* engine unavailable — the next real utterance still tries */
   }
 }
+
+/**
+ * WHAT THE VOICE PATH ACTUALLY LOOKS LIKE RIGHT NOW — the answer to "why is it
+ * silent?". Logged once on the first announcement and available to Settings.
+ */
+export type VoiceDiagnostics = {
+  enabled: boolean;
+  volume: number;
+  nativeBridge: boolean;
+  nativeEngineReady: boolean | null;
+  speechSynthesis: boolean;
+};
+
+export function voiceDiagnostics(): VoiceDiagnostics {
+  return {
+    enabled: isBotVoiceEnabled(),
+    volume: getBotVoiceVolume(),
+    nativeBridge: hasNativeBridge(),
+    nativeEngineReady: hasNativeBridge() ? Boolean(queryNative("isVoiceReady")) : null,
+    speechSynthesis: typeof window !== "undefined" && "speechSynthesis" in window,
+  };
+}
+
+let diagnosticsLogged = false;
 
 /** Warm the voice list so the first announcement is instant. */
 export function warmBotVoice(): void {
@@ -304,45 +335,48 @@ export function buildTradeAnnouncement(execution: NormalizedExecution): string {
  *  • A refused order is announced as a failure, never as a success.
  */
 export function speakTradeExecution(payload: unknown): void {
-  // EACH STEP OF THE CHAIN IS LOGGED so a silent trade can be diagnosed from
-  // the console instead of guessed at: event received → normalised → voice
-  // enabled → spoken (or the exact reason it stopped).
-  console.log("[bot-voice] execution-result received", payload);
-  if (typeof window === "undefined") {
-    console.log("[bot-voice] stop: no window (SSR)");
-    return;
-  }
+  // EVERY STEP OF THE CHAIN IS LOGGED, so "the voice never speaks" can be
+  // traced from the event to the engine instead of guessed at:
+  //   step 1 — the event arrived
+  //   step 2 — the setting is on
+  //   step 3 — the payload is a confirmed execution (symbol + status)
+  //   step 4 — it is not a repeat
+  //   step 5 — speakBot chose an engine and spoke (see speakBot above)
+  console.info("[voice] step 1 execution-result received");
   if (!isBotVoiceEnabled()) {
-    console.log("[bot-voice] stop: botVoiceEnabled=false (voice off in Settings)");
-    return;
+    console.info("[voice] step 2 skipped — botVoiceEnabled is false");
+    return; // voice off → say nothing
   }
+  if (typeof window === "undefined") return;
   const execution = normalizeExecution(payload);
   if (!execution) {
-    console.log("[bot-voice] stop: payload did not normalise");
+    console.info("[voice] step 3 skipped — payload is not an execution object");
     return;
   }
   // A plan without a symbol is not a trade yet — nothing to announce.
   if (!execution.symbol) {
-    console.log("[bot-voice] stop: no symbol");
+    console.info("[voice] step 3 skipped — no symbol on the payload");
     return;
   }
   // Progress chatter carries no outcome — it is not an execution.
   if (execution.status === null) {
-    console.log("[bot-voice] stop: no status (not an execution)", execution);
+    console.info("[voice] step 3 skipped — no outcome status on the payload");
     return;
   }
+  console.info(
+    `[voice] step 3 execution: ${execution.status} ${execution.symbol}${execution.side ? ` ${execution.side}` : ""}`,
+  );
 
   const signature = executionSignature(execution);
   if (alreadyAnnounced(signature)) {
-    console.log("[bot-voice] stop: already announced", signature);
+    console.info("[voice] step 4 skipped — already announced within the repeat window");
     return;
   }
 
   const sentence = buildTradeAnnouncement(execution);
   if (!sentence) {
-    console.log("[bot-voice] stop: empty sentence");
+    console.info("[voice] step 4 skipped — nothing to say for this execution");
     return;
   }
-  console.log(`[bot-voice] speaking: ${sentence}`);
   speakBot(sentence);
 }
