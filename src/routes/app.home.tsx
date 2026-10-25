@@ -23,6 +23,7 @@ import { usePlatform } from "@/lib/platform";
 import { speakBot } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
+import { getBridgeUrl, BRIDGE_KEY } from "@/lib/bridge-client";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -654,6 +655,82 @@ function AppHome() {
   // matched against the route tree (no more typo'd hrefs landing on the 404)
   // and the navigation stays in the SPA instead of reloading the document.
   const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
+  const [scalperRunning, setScalperRunning] = useState(false);
+  const [scalperMode, setScalperMode] = useState("long");
+  const [scalperSymbols, setScalperSymbols] = useState(["EURUSD"]);
+
+  const handleScalperStart = async () => {
+    try {
+      const mt = app.robots?.find((r) => r.active) || {};
+      const credentials = readMtCredentials(mt);
+      if (!credentials) {
+        toast.error("No MT5 credentials configured. Add them on the MetaTrader page first.");
+        return;
+      }
+      const url = getBridgeUrl() + "/scalper/start";
+      const result = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+        body: JSON.stringify({ login: credentials.login, password: credentials.password, server: credentials.server, symbols: scalperSymbols, mode: scalperMode }),
+      });
+      const payload = (await result.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (payload?.ok) {
+        setScalperRunning(true);
+        toast.success("Scalper started on VPS");
+      } else {
+        toast.error("Failed to start scalper: " + (payload?.message || "unknown"));
+      }
+    } catch (error) {
+      console.warn("[scalper] start failed:", error);
+      toast.error("Scalper start error");
+    }
+  };
+
+  const handleScalperStop = async () => {
+    try {
+      const url = getBridgeUrl() + "/scalper/stop";
+      const result = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+      });
+      const payload = (await result.json().catch(() => ({}))) as { ok?: boolean; message?: string };
+      if (payload?.ok) {
+        setScalperRunning(false);
+        toast.success("Scalper stopped");
+      } else {
+        toast.error("Failed to stop scalper: " + (payload?.message || "unknown"));
+      }
+    } catch (error) {
+      console.warn("[scalper] stop failed:", error);
+      toast.error("Scalper stop error");
+    }
+  };
+
+  const handleScalperStatus = async () => {
+    try {
+      const url = getBridgeUrl() + "/scalper/status";
+      const result = await fetch(url, {
+        method: "GET",
+        headers: { "x-bridge-key": BRIDGE_KEY },
+      });
+      const payload = (await result.json().catch(() => ({}))) as { is_running?: boolean; mode?: string; symbols?: string[]; trade_count?: number };
+      if (payload?.is_running !== undefined) {
+        setScalperRunning(payload.is_running);
+        setScalperMode(payload.mode || "long");
+        setScalperSymbols(payload.symbols || ["EURUSD"]);
+      }
+    } catch (error) {
+      console.warn("[scalper] status failed:", error);
+    }
+  };
+
+  // Periodic status check when component mounts
+  useEffect(() => {
+    handleScalperStatus();
+    const interval = setInterval(handleScalperStatus, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
@@ -693,6 +770,9 @@ function AppHome() {
             onOpenSymbols={() => { void navigate({ to: "/app/metatrader" }); }}
             onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
+            onScalperStart={handleScalperStart}
+            onScalperStop={handleScalperStop}
+            onScalperStatus={handleScalperStatus}
           />
         </main>
       </div>
