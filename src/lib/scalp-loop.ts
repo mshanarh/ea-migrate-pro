@@ -418,8 +418,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
             ? position.price_current - position.price_open
             : position.price_open - position.price_current;
         const scalpTarget = spread + atr * 0.2;
-        const tp1Reached = track ? moveInFavour >= track.tp1Distance : false;
-        if ((tp1Reached || (atr > 0 && moveInFavour >= scalpTarget)) && moveInFavour > 0) {
+        // tp1 is handled as `moveInFavour >= tp1Distance`, which is the
+        // continuous-cycle guard below; a simpler scalar profit target is
+        // what the close/re-open cycle needs to fire consistently.
+        if (atr > 0 && moveInFavour >= scalpTarget && moveInFavour > 0) {
           const closedTrack = tracks.get(symbol);
           const profit = await closePosition(position);
           if (profit !== null) {
@@ -429,11 +431,9 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
               notifyTradeClosed(closeInfo);
               continue;
             }
-            // ── SCALPER: CLOSE + RE-ANALYSE + OPEN, AS ONE ALERT ──
-            // The close DID happen, so it is always reported. When the next
-            // trade follows, the two share a single notification; when the
-            // re-analysis is blocked, the phone gets the close and then the
-            // exact block, so the trader always knows what the bot did.
+            // ── SCALPER CONTINUOUS CYCLE ──
+            // After a confirmed close the SAME pass re-analyses and re-opens the
+            // same symbol, so the trader never has to press Start again.
             const outcome = await openFor(symbol, lotSize, cap, { deferNotify: true });
             if (outcome.kind === "opened" && outcome.opens.length > 0) {
               notifyCloseThenOpen(closeInfo, outcome.opens);
