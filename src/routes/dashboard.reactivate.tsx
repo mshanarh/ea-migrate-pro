@@ -210,25 +210,29 @@ function ReactivateClientPage() {
       return;
     }
 
-    // DEVICE UNBINDING ONLY — the device columns are cleared and nothing else.
-    // Expiry dates, licence keys, subscriptions and the payment flag are never
-    // written here.
-    let updateError: { message?: string } | null = null;
+    /**
+     * DEVICE UNBINDING ONLY — RUN ON THE SERVER, THROUGH /api/reactivate.
+     *
+     * This was a browser Supabase UPDATE that failed with `TypeError: Failed to
+     * fetch` (the database host does not resolve), so the portal could never
+     * release anybody. The endpoint clears the KV device binding and nothing
+     * else; expiry dates, licence keys, subscriptions and the payment flag are
+     * never written.
+     *
+     * The token is charged BELOW, only after the unbind has actually succeeded.
+     */
+    let unbind: { ok: boolean; error?: string };
     try {
-      const { supabase } = await import("@/lib/supabase");
-      const { error } = await supabase!
-        .from("users")
-        .update({ device_email: null, device_id: null })
-        .eq("email", cleanEmail);
-      updateError = error ?? null;
+      const { reactivateEmail } = await import("@/lib/supabase-users");
+      unbind = await reactivateEmail(cleanEmail, account.email);
     } catch (error) {
-      updateError = { message: formatReactivationFailure(error) };
+      unbind = { ok: false, error: formatReactivationFailure(error) };
     }
 
     setBusy(false);
-    if (updateError) {
-      setError("The device binding could not be cleared — one record source was unreachable. Please try again.");
-      setDiagnostic(`${check.diagnostic} | device unbind failed: ${updateError.message ?? "unknown"}`);
+    if (!unbind.ok) {
+      setError(unbind.error ?? "The device binding could not be cleared — please try again.");
+      setDiagnostic(`${check.diagnostic} | device unbind failed: ${unbind.error ?? "unknown"}`);
       return;
     }
 

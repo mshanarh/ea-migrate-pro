@@ -743,22 +743,79 @@ export async function countAdminsAnon(): Promise<number> {
 
 export type DeviceBindingCheck = { boundToOtherDevice: boolean; error?: string };
 
-/** Read the cloud binding for one email (null = unbound / unreadable). */
-export async function getDeviceBinding(email: string): Promise<{ deviceEmail: string | null; deviceId: string | null } | null> {
-  const dbClient = db();
-  if (!dbClient) return null;
-  const { data, error } = await dbClient
-    .from("users")
-    .select("device_email, device_id")
-    .eq("email", clean(email))
-    .maybeSingle();
-  if (error) {
-    // 42703 = columns not added yet (SQL not run) — treat as unbound.
-    if (error.code !== "42703") console.warn("[device-binding] read failed:", error.message);
+/**
+ * THE SERVER'S ANSWER FOR THE DEVICE BINDING — KV, through /api/device-binding.
+ *
+ * `null` means the endpoint could not be reached (older deployment, offline),
+ * which is the ONLY case that falls back to the database below. An endpoint
+ * that answers is authoritative: it reads the KV registration record, so the
+ * binding survives even when the database does not.
+ */
+type ServerBinding = {
+  ok: boolean;
+  bound?: boolean;
+  deviceId?: string | null;
+  boundToOtherDevice?: boolean;
+  unavailable?: boolean;
+  error?: string;
+};
+
+async function serverBinding(
+  email: string,
+  deviceId: string,
+  action: "read" | "bind",
+): Promise<ServerBinding | null> {
+  try {
+    const reply = await fetch("/api/device-binding", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email, deviceId, action }),
+      signal: AbortSignal.timeout(12_000),
+    });
+    const payload = (await reply.json().catch(() => null)) as ServerBinding | null;
+    if (!payload || typeof payload.ok !== "boolean") return null;
+    return payload;
+  } catch {
     return null;
   }
-  const row = data as { device_email?: string | null; device_id?: string | null } | null;
-  return { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null };
+}
+
+/**
+ * Read the cloud binding for one email (null = unbound / unreadable).
+ *
+ * THE DATABASE IS STILL ASKED FIRST, because that is where every binding was
+ * written before the KV store owned this rule; a binding sitting there must
+ * never be forgotten. When the database cannot answer — it is gone in this
+ * deployment, so it never can — the SERVER's KV answer is used instead, and
+ * THAT is the binding enforced across devices.
+ */
+export async function getDeviceBinding(email: string): Promise<{ deviceEmail: string | null; deviceId: string | null } | null> {
+  const address = clean(email);
+  const dbClient = db();
+  if (dbClient) {
+    try {
+      const { data, error } = await dbClient
+        .from("users")
+        .select("device_email, device_id")
+        .eq("email", address)
+        .maybeSingle();
+      if (!error) {
+        const row = data as { device_email?: string | null; device_id?: string | null } | null;
+        const legacy = { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null };
+        if (legacy.deviceId) return legacy;
+      } else if (error.code !== "42703") {
+        console.warn("[device-binding] database read failed:", error.message);
+      }
+    } catch (error) {
+      console.warn("[device-binding] database read failed:", error);
+    }
+  }
+  const server = await serverBinding(address, "", "read");
+  if (server?.ok) {
+    const deviceId = typeof server.deviceId === "string" ? server.deviceId : null;
+    return { deviceEmail: deviceId ? address : null, deviceId };
+  }
+  return null;
 }
 
 /**
@@ -785,22 +842,39 @@ export async function checkDeviceBinding(email: string, localDeviceId: string): 
  * Subscription, license keys and payment state are untouched.
  */
 export async function bindDeviceToEmail(email: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
-  const dbClient = db();
-  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
   const address = clean(email);
   if (!address || !localDeviceId) return { ok: false, error: "Missing email or device." };
-  const { data, error: readError } = await dbClient
-    .from("users")
-    .select("device_id")
-    .eq("email", address)
-    .maybeSingle();
-  if (readError) {
-    if (readError.code === "42703") return { ok: false, error: "Device binding is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
-    return { ok: false, error: readError.message };
+
+  const dbClient = db();
+  if (!dbClient) return serverBind(address, localDeviceId);
+  let data: unknown;
+  let error: { code?: string; message?: string } | null;
+  try {
+    const reply = await dbClient
+      .from("users")
+      .select("device_id")
+      .eq("email", address)
+      .maybeSingle();
+    data = reply.data;
+    error = reply.error ?? null;
+  } catch (thrown) {
+    // The database cannot be reached at all (this deployment) — the KV bind
+    // below is the one that decides.
+    console.warn("[device-binding] database unavailable:", thrown);
+    return serverBind(address, localDeviceId);
+  }
+  if (error) {
+    if (error.code === "42703") {
+      // The columns were never added, so the database has no binding to offer.
+      return serverBind(address, localDeviceId);
+    }
+    console.warn("[device-binding] database read failed:", error.message);
+    return serverBind(address, localDeviceId);
   }
   if (!data) {
-    // No row = this email never registered. It is NOT the user's email.
-    return { ok: false, error: "Not bound — this is not a registered email. Sign in with the email you registered with." };
+    // No row = this email never registered IN THE DATABASE. The registration
+    // store is the authority for who exists: let the server decide.
+    return serverBind(address, localDeviceId);
   }
   const boundDeviceId = (data as { device_id?: string | null }).device_id ?? null;
   if (boundDeviceId === localDeviceId) return { ok: true }; // already this device
@@ -808,14 +882,27 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
     // Bound elsewhere — never steal the binding from the sign-in screen.
     return { ok: false, error: "Account already used — please tell your mentor to reactivate." };
   }
-  const { error } = await dbClient
-    .from("users")
-    .update({ device_email: address, device_id: localDeviceId })
-    .eq("email", address);
-  if (error?.code === "42703") {
-    return { ok: false, error: "Device binding is not enabled yet — run supabase/fix-license-keys-columns.sql in the Supabase SQL Editor." };
+  try {
+    const { error: writeError } = await dbClient
+      .from("users")
+      .update({ device_email: address, device_id: localDeviceId })
+      .eq("email", address);
+    if (!writeError) return { ok: true };
+    console.warn("[device-binding] database write failed:", writeError.message);
+  } catch (thrown) {
+    console.warn("[device-binding] database write failed:", thrown);
   }
-  return error ? { ok: false, error: error.message } : { ok: true };
+  return serverBind(address, localDeviceId);
+}
+
+/** The server-side KV bind — the write that is enforced across devices. */
+async function serverBind(address: string, localDeviceId: string): Promise<{ ok: boolean; error?: string }> {
+  const server = await serverBinding(address, localDeviceId, "bind");
+  if (server?.ok) return { ok: true };
+  if (server?.boundToOtherDevice) {
+    return { ok: false, error: "Account already used — please tell your mentor to reactivate." };
+  }
+  return { ok: false, error: server?.error ?? "Device binding is unavailable right now." };
 }
 
 
@@ -839,11 +926,48 @@ export async function bindDeviceToEmail(email: string, localDeviceId: string): P
  * NONE of those stores are refused, and an email that is registered but unpaid
  * gets its own message.
  */
-export async function reactivateEmail(email: string): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
-  const dbClient = db();
-  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
+export async function reactivateEmail(
+  email: string,
+  adminEmail?: string,
+): Promise<{ ok: boolean; error?: string; clearedAt?: string }> {
   const address = clean(email);
   if (!address) return { ok: false, error: "Missing email." };
+
+  /**
+   * SERVER-SIDE UNBIND, THROUGH THE KV STORE.
+   *
+   * This used to be a browser UPDATE against Supabase and answered
+   * `TypeError: Failed to fetch` in production, so the portal could not release
+   * anyone. /api/reactivate checks the admin, checks that the email is
+   * registered and paid, and then clears ONLY the device binding.
+   */
+  if (adminEmail) {
+    try {
+      const reply = await fetch("/api/reactivate", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ email: address, adminEmail: adminEmail.trim().toLowerCase() }),
+        signal: AbortSignal.timeout(20_000),
+      });
+      const payload = (await reply.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; clearedAt?: string; unavailable?: boolean }
+        | null;
+      if (payload && typeof payload.ok === "boolean") {
+        console.info(
+          `[reactivation] ${address} → server unbind ${payload.ok ? `ok at ${payload.clearedAt ?? "now"}` : `failed: ${payload.error ?? "unknown"}`}`,
+        );
+        return payload.ok
+          ? { ok: true, ...(payload.clearedAt ? { clearedAt: payload.clearedAt } : {}) }
+          : { ok: false, error: payload.error ?? "Reactivation failed" };
+      }
+      console.warn(`[reactivation] ${address} → /api/reactivate answered HTTP ${reply.status}`);
+    } catch (error) {
+      console.warn(`[reactivation] ${address} → /api/reactivate unreachable:`, error);
+    }
+  }
+
+  const dbClient = db();
+  if (!dbClient) return { ok: false, error: "Supabase is not configured" };
 
   // Dynamic import: reactivation-check imports this module's read helpers.
   const { checkReactivationEmail } = await import("./reactivation-check");

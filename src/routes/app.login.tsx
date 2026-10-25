@@ -858,11 +858,24 @@ function AppAccess() {
     // exit below that is not "go to checkout" puts it back.
     setBusy(true);
     setCheckoutDismissed(false);
-    // ONE shared budget for the whole decision — capped at ~4 seconds.
-    // Each call below may only spend what is left of it, so the door
-    // opens fast instead of hanging.
+    /**
+     * ONE shared budget for the whole decision.
+     *
+     * IT USED TO BE 4 SECONDS, AND THAT WAS THE BUG. `/api/check-access` reads
+     * several stores; in this deployment the (dead) database queries used to
+     * hold it for ~14s, so the client's own deadline always fired FIRST and
+     * every non-admin email was answered with the fallback — `unavailable` —
+     * and shown "We could not verify your subscription right now". Sign-in
+     * worked for the sole admin only because that address short-circuits the
+     * stores entirely.
+     *
+     * The server no longer waits on a database that cannot resolve (see
+     * serviceClient in api/_handlers/check-access.ts), and this budget is now
+     * a safety net rather than a race: it is long enough for a real store
+     * read, and still bounded so a stalled connection cannot freeze the door.
+     */
     const budgetStartedAt = Date.now();
-    const left = () => Math.max(1_000, 4_000 - (Date.now() - budgetStartedAt));
+    const left = () => Math.max(8_000, 30_000 - (Date.now() - budgetStartedAt));
 
     /**
      * ── 1. THE SOLE ADMIN, FIRST ───────────────────────────────────────────
@@ -875,6 +888,28 @@ function AppAccess() {
      */
     if (isPaymentExemptEmail(clean)) {
       console.info(`[app-login] ${clean} is the sole admin — signing in without a subscription check`);
+      /**
+       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — NOT THE DEVICE RULE.
+       *
+       * This branch used to sign in immediately, so the admin address that had
+       * just been bound on the web opened on a phone without a word about
+       * reactivation. "One email, one device" applies to every email, admins
+       * included; only PAYMENT is bypassed here.
+       */
+      try {
+        const adminBinding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), 12_000, {
+          boundToOtherDevice: false,
+        });
+        if (adminBinding.boundToOtherDevice) {
+          console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
+        }
+      } catch {
+        /* an unreadable binding must never lock the admin out */
+      }
       const adminSignIn = appSignIn(clean);
       if (adminSignIn.error) {
         toast.error(adminSignIn.error);
@@ -991,6 +1026,23 @@ function AppAccess() {
               registration.unreadable ?? accessStores(clean).unreadable,
             ),
           );
+          /**
+           * AN UNREACHABLE STORE MUST NOT ABORT THE SIGN-IN.
+           *
+           * This branch used to stop dead: no session, no code, just a retry
+           * message — so a paying customer whose store timed out could never
+           * get in, even after the store came back, without retyping their
+           * email. "We could not read a record" is not "you have not paid".
+           *
+           * The session is opened here (a session on its own never opens the
+           * app — every /app guard re-asks the cloud), the retry line stays on
+           * screen, and the poll below walks them into /app/home by itself the
+           * moment a store answers paid. Nothing is claimed that we did not
+           * read, and an address that is genuinely unpaid still lands on the
+           * plans as soon as every store answers.
+           */
+          const session = appSignIn(clean);
+          if (session.error) console.warn("[app-login] provisional sign-in:", session.error);
           setPlanReason(null);
           setRedirecting(false);
           setChoosePlan(false);
@@ -1668,7 +1720,7 @@ function AccountUsedView({ email, onCancel }: { email: string; onCancel: () => v
           !
         </span>
         <p className="text-sm font-semibold leading-6 text-red-200">
-          Account already used — please tell your mentor to reactivate.
+          Contact admin for reactivation
         </p>
       </div>
       <p className="mt-3 text-base leading-7 text-[#8a9298]">

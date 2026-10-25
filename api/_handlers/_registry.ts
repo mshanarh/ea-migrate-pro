@@ -267,6 +267,23 @@ export async function setDeviceIdForEmail(email: string, deviceId: string): Prom
 }
 
 /**
+ * CLEAR THE DEVICE BINDING — and NOTHING ELSE.
+ *
+ * The portal's Re-activate Client action is a device unbind, so it must not be
+ * able to touch payment, the licence limit or the EA config that live in the
+ * same record. The record is read, ONLY `deviceId` is set to null, and the
+ * record is written back; every other field travels untouched. Returns the
+ * previous binding so the caller can log what was released.
+ */
+export async function clearDeviceIdForEmail(email: string): Promise<string | null> {
+  const registration = await getRegistration(email);
+  if (!registration) return null;
+  const previous = registration.deviceId ?? null;
+  await saveRegistration({ ...registration, deviceId: null });
+  return previous;
+}
+
+/**
  * THE RAW REDIS COMMAND RUNNER, for the OTHER KV-backed stores in /api.
  *
  * Every record that used to live in a Supabase table now lives here instead:

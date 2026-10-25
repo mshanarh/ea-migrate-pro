@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Blocks,
   Cpu,
@@ -320,10 +320,7 @@ function LandingChatbot() {
  * registered so iOS visitors can still “Add to Home screen” the PWA.
  */
 function Home() {
-  const navigate = useNavigate();
-  const [installResult, setInstallResult] = useState<string | null>(
-    null,
-  );
+  const [installResult, setInstallResult] = useState<string | null>(null);
 
   // Register the pass-through service worker (no caching) — best-effort.
   useEffect(() => {
@@ -598,13 +595,24 @@ function Home() {
               <Button size="lg" className="h-14 rounded-full text-base font-semibold" onClick={() => void handleAndroidDownload()}>
                 Download Android
               </Button>
-              <Button
-                size="lg"
-                variant="outline"
-                className="h-14 rounded-full text-base font-semibold"
-                onClick={() => navigate({ to: "/app" })}
-              >
-                Get iOS App
+              {/*
+                A REAL LINK, NOT A ROUTER CALL.
+
+                This button was `onClick={() => navigate({ to: "/app" })}`: a
+                programmatic SPA navigation that does nothing useful on a phone
+                (Safari does not treat it as a link, an installed home-screen
+                app cannot follow it, and a long-press has no URL to open). It
+                now carries a real href, so the browser itself opens the app.
+
+                It runs NO bot logic and mutates NO theme: the landing page is
+                public, so the only thing this button may do is take the
+                visitor to the app's URL. The app applies the signed-in user's
+                own theme once IT loads — never from here.
+              */}
+              <Button asChild size="lg" variant="outline" className="h-14 rounded-full text-base font-semibold">
+                <a href="/app" rel="noopener">
+                  Get iOS App
+                </a>
               </Button>
               {installResult && (
                 <p className="text-sm font-semibold text-emerald-400">{installResult}</p>

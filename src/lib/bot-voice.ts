@@ -50,7 +50,19 @@ export function setBotVoiceEnabled(value: boolean): void {
 export function getBotVoiceVolume(): number {
   if (typeof window === "undefined") return 1;
   try {
-    const raw = Number(window.localStorage.getItem(VOLUME_KEY));
+    const stored = window.localStorage.getItem(VOLUME_KEY);
+    /**
+     * NOT-SET IS FULL VOLUME.
+     *
+     * `Number(null)` is 0, and 0 is finite — so this used to return 0 for every
+     * trader who had never touched the volume slider. speechSynthesis (and the
+     * Android TTS bridge) then spoke every announcement at volume 0: the trade
+     * notifications appeared, the voice stayed completely silent, and nothing
+     * anywhere reported an error. An absent key means "the default", and the
+     * default is 1.
+     */
+    if (stored === null || stored.trim() === "") return 1;
+    const raw = Number(stored);
     if (!Number.isFinite(raw)) return 1;
     return Math.min(1, Math.max(0, raw));
   } catch {
@@ -109,10 +121,16 @@ export function speakBot(text: string): void {
     diagnosticsLogged = true;
     console.info("[voice] path", voiceDiagnostics());
   }
-  if (!isBotVoiceEnabled()) return; // voice off → say nothing
+  if (!isBotVoiceEnabled()) {
+    // STEP 4 of the chain, logged: the setting itself is off. (Independent of
+    // notifications — they keep working either way.)
+    console.info("[voice] step 4 speakBot: skipped — botVoiceEnabled is false");
+    return; // voice off → say nothing
+  }
   const phrase = text.trim();
   if (!phrase) return;
   const volume = getBotVoiceVolume();
+  console.info(`[voice] step 5 speakBot: speaking at volume ${volume} → "${phrase}"`);
   // 1. Native Android TTS — AndroidTTS (spec) or the injected EAMigrate bridge.
   const androidTts = (
     window as unknown as { AndroidTTS?: { speak?: (value: string) => void } }
@@ -317,19 +335,48 @@ export function buildTradeAnnouncement(execution: NormalizedExecution): string {
  *  • A refused order is announced as a failure, never as a success.
  */
 export function speakTradeExecution(payload: unknown): void {
-  if (!isBotVoiceEnabled()) return; // voice off → say nothing
+  // EVERY STEP OF THE CHAIN IS LOGGED, so "the voice never speaks" can be
+  // traced from the event to the engine instead of guessed at:
+  //   step 1 — the event arrived
+  //   step 2 — the setting is on
+  //   step 3 — the payload is a confirmed execution (symbol + status)
+  //   step 4 — it is not a repeat
+  //   step 5 — speakBot chose an engine and spoke (see speakBot above)
+  console.info("[voice] step 1 execution-result received");
+  if (!isBotVoiceEnabled()) {
+    console.info("[voice] step 2 skipped — botVoiceEnabled is false");
+    return; // voice off → say nothing
+  }
   if (typeof window === "undefined") return;
   const execution = normalizeExecution(payload);
-  if (!execution) return;
+  if (!execution) {
+    console.info("[voice] step 3 skipped — payload is not an execution object");
+    return;
+  }
   // A plan without a symbol is not a trade yet — nothing to announce.
-  if (!execution.symbol) return;
+  if (!execution.symbol) {
+    console.info("[voice] step 3 skipped — no symbol on the payload");
+    return;
+  }
   // Progress chatter carries no outcome — it is not an execution.
-  if (execution.status === null) return;
+  if (execution.status === null) {
+    console.info("[voice] step 3 skipped — no outcome status on the payload");
+    return;
+  }
+  console.info(
+    `[voice] step 3 execution: ${execution.status} ${execution.symbol}${execution.side ? ` ${execution.side}` : ""}`,
+  );
 
   const signature = executionSignature(execution);
-  if (alreadyAnnounced(signature)) return;
+  if (alreadyAnnounced(signature)) {
+    console.info("[voice] step 4 skipped — already announced within the repeat window");
+    return;
+  }
 
   const sentence = buildTradeAnnouncement(execution);
-  if (!sentence) return;
+  if (!sentence) {
+    console.info("[voice] step 4 skipped — nothing to say for this execution");
+    return;
+  }
   speakBot(sentence);
 }

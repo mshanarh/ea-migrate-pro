@@ -67,16 +67,66 @@ function bodyEmail(request: ApiRequest): string {
  * guard, so it is created once and kept for the life of the instance.
  * `null` = unconfigured (or the package could not be loaded).
  */
+/**
+ * A FETCH THAT CANNOT HANG THE VERDICT.
+ *
+ * Every Supabase query goes through this. When the configured host does not
+ * resolve — which is the state this deployment is in — each query used to run
+ * its own connection timeout, and the five stores together made this endpoint
+ * take ~14 SECONDS. The sign-in screen's own deadline fired long before the
+ * answer came back, so every email that was not the sole admin was shown "we
+ * could not verify your subscription".
+ *
+ * A host that cannot resolve is given 2.5s (it is not going to answer — the
+ * DNS probe already told us so); a host that resolves keeps 12s. The query
+ * then fails like any other unreachable store, and the store is answered from
+ * the KV record the console actually writes.
+ */
+function boundedFetch(timeoutMs: number): typeof fetch {
+  return (input, init) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new Error(`store read exceeded ${timeoutMs}ms`));
+    }, timeoutMs);
+    const upstream = init?.signal;
+    if (upstream) {
+      if (upstream.aborted) controller.abort();
+      else upstream.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+    return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+}
+
 async function buildServiceClient() {
   const url = (process.env["SUPABASE_URL"] ?? process.env["VITE_SUPABASE_URL"] ?? "").trim();
   const key = (process.env["SUPABASE_SERVICE_ROLE_KEY"] ?? "").trim();
   if (!url || !key) return null;
   const { createClient } = await import("@supabase/supabase-js");
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const missing = await databaseHostMissing();
+  return createClient(url, key, {
+    auth: { persistSession: false, autoRefreshToken: false },
+    global: { fetch: boundedFetch(missing ? 2_500 : 12_000) },
+  });
 }
 
 let clientPromise: ReturnType<typeof buildServiceClient> | null = null;
 
+/**
+ * THE DATABASE CLIENT — OR `null` WHEN THIS DEPLOYMENT HAS NO DATABASE.
+ *
+ * The DNS probe runs FIRST. A deployment whose Supabase host does not resolve
+ * used to create a client and send four queries at a hostname that cannot
+ * answer: every one of them had to run its own connection timeout, which is
+ * exactly why this endpoint measured ~14 SECONDS per call in production, and
+ * why the sign-in screen's own deadline fired before the verdict came back and
+ * told a paying customer "we could not verify your subscription".
+ *
+ * When the host does not resolve there is no database to read, so every store
+ * below is answered immediately — "no database in this deployment, no row" —
+ * and the verdict is reached from the stores that DO exist (the KV
+ * registration record, the payment flag, the licence keys). Nothing is
+ * skipped that could have held a paid mark.
+ */
 function serviceClient(): ReturnType<typeof buildServiceClient> {
   if (!clientPromise) clientPromise = buildServiceClient().catch(() => null);
   return clientPromise;
@@ -99,6 +149,42 @@ function serviceClient(): ReturnType<typeof buildServiceClient> {
  */
 let hostProbe: { missing: boolean; at: number; host: string } | null = null;
 const HOST_PROBE_TTL_MS = 5 * 60 * 1000;
+
+/** How long a store query may take before it is treated as absent. */
+function storeDeadlineMs(): number {
+  return hostProbe?.missing ? 400 : 2_500;
+}
+
+/**
+ * A QUERY THAT CANNOT HOLD THE VERDICT HOSTAGE.
+ *
+ * A hostname that never resolves makes the underlying `fetch` sit in DNS far
+ * longer than any timeout we set on the socket — measured at ~7s per query, and
+ * these run on the sign-in path. Racing the QUERY (not the socket) means the
+ * store is answered within a fixed budget no matter what the network does, and
+ * an unreachable store is then reported as absent rather than stalling the
+ * whole check. When the probe already said the host does not resolve, the
+ * budget is a few hundred milliseconds: there is nothing to wait for.
+ */
+function storeDeadline<T>(work: PromiseLike<T>, fallback: T, label: string): Promise<T> {
+  const ms = storeDeadlineMs();
+  return new Promise<T>((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[check-access] ${label} did not answer in ${ms}ms — treated as absent`);
+      resolve(fallback);
+    }, ms);
+    Promise.resolve(work).then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(fallback);
+      },
+    );
+  });
+}
 
 /** The configured database host, or a plain note when there is none. */
 function databaseHost(): string {
@@ -129,7 +215,20 @@ async function databaseHostMissing(): Promise<boolean> {
   let missing = false;
   try {
     const { lookup } = await import("node:dns/promises");
-    await lookup(host);
+    /**
+     * THE PROBE ITSELF IS ON A LEASH.
+     *
+     * A hostname that never answers made `lookup` sit there until the
+     * resolver's own timeout: measured at ~14 SECONDS in this deployment, which
+     * is what every sign-in was waiting on before it could be told the store
+     * was unreachable. A host that has not resolved in 1.5s is not going to
+     * answer this request, so the database is treated as absent and the check
+     * completes in milliseconds from the stores that do exist.
+     */
+    await Promise.race([
+      lookup(host),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("DNS probe timed out after 1500ms")), 1_500)),
+    ]);
   } catch {
     missing = true;
     console.error(`[check-access] database host does not resolve (${host}) — treating the database as absent`);
@@ -179,23 +278,59 @@ type BindingAnswer = { readable: boolean; value: Binding | null };
  * today, so a database hiccup can never sign anybody out.
  */
 async function readDeviceBinding(email: string): Promise<BindingAnswer> {
-  const db = await serviceClient();
-  if (!db) return { readable: false, value: null };
+  // ── THE KV REGISTRATION RECORD IS THE AUTHORITATIVE BINDING ────────────────
+  //
+  // The device binding used to live only in a Supabase column, so in a
+  // deployment whose database is gone it could never be read OR written: every
+  // email looked unbound, and "one email, one device" silently stopped being
+  // enforced across devices (sign in on the web, then open the same email on a
+  // phone and walk straight in). The binding now travels with the registration
+  // record the console already owns, which is where registrations, approval
+  // state, the payment flag and licence limits live.
+  let kvBinding: Binding | null = null;
   try {
-    const { data, error } = await db
-      .from("users")
-      .select("device_email, device_id")
-      .eq("email", email)
-      .maybeSingle();
-    if (error) return { readable: false, value: null };
-    const row = data as { device_email?: string | null; device_id?: string | null } | null;
-    return {
-      readable: true,
-      value: { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null },
-    };
-  } catch {
-    return { readable: false, value: null };
+    const { getDeviceIdForEmail } = await import("./_registry.js");
+    const deviceId = await getDeviceIdForEmail(email);
+    kvBinding = { deviceEmail: deviceId ? email : null, deviceId };
+  } catch (error) {
+    console.warn(`[check-access] ${email} → KV device binding unreadable (${errorText(error)}); falling back to the database`);
   }
+  // A KV binding is FINAL — it is the store the sign-in writes and the portal
+  // releases, so it must never be overruled by an older database column.
+  if (kvBinding?.deviceId) return { readable: true, value: kvBinding };
+
+  // Otherwise the database may still hold the binding of an account that has
+  // not signed in since the move. It is only a fallback: when it cannot answer,
+  // KV's own "unbound" is the answer (KV answered; the database did not).
+  const db = await serviceClient();
+  let dbAnswer: BindingAnswer & { unboundValid?: boolean } = { readable: false, value: null };
+  if (db) {
+    try {
+      const query = db.from("users").select("device_email, device_id").eq("email", email).maybeSingle();
+      const { data, error } = await storeDeadline(
+        query,
+        { data: null, error: { message: "store did not answer in time" } } as unknown as Awaited<typeof query>,
+        "device binding",
+      );
+      if (!error) {
+        const row = data as { device_email?: string | null; device_id?: string | null } | null;
+        dbAnswer = {
+          readable: true,
+          value: { deviceEmail: row?.device_email ?? null, deviceId: row?.device_id ?? null },
+        };
+      }
+    } catch {
+      /* unreadable database — see below */
+    }
+  }
+  if (dbAnswer.readable) {
+    // A database row that says NOTHING while KV has a record could be a stale
+    // mirror; the KV answer is the one that counts in that case.
+    if (!dbAnswer.value?.deviceId && kvBinding) return { readable: true, value: kvBinding };
+    return dbAnswer;
+  }
+  if (kvBinding) return { readable: true, value: kvBinding };
+  return { readable: false, value: null };
 }
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -262,6 +397,20 @@ function noAnswer(detail: string): StoreVerdict {
 }
 
 
+/**
+ * ONE LINE PER STORE: reachable yes/no, and paid / null / error.
+ *
+ * `null` means the store ANSWERED "no paid mark"; `error` means it could not be
+ * read at all. They are printed differently on purpose — only the first is a
+ * refusal, and only when every store answers can the gate say `unpaid`.
+ */
+function logStore(email: string, name: string, verdict: StoreVerdict): void {
+  const result = verdict.paid ? "paid" : verdict.readable ? "null" : "error";
+  console.info(
+    `[check-access] ${email} → store "${name}": reachable=${verdict.readable ? "yes" : "no"} result=${result} — ${verdict.detail}`,
+  );
+}
+
 /** The six sources the gate reports — see the diagnostic line below. */
 const STORE_NAMES = [
   "users table",
@@ -316,7 +465,12 @@ async function readUsersStore(email: string, deviceId: string | null): Promise<S
   try {
     const base = db.from("users").select("is_paid, is_admin, license_key, device_id");
     const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
-    const { data, error } = await scoped.maybeSingle();
+    const query = scoped.maybeSingle();
+    const { data, error } = await storeDeadline(
+      query,
+      { data: null, error: { message: "store did not answer in time" } } as unknown as Awaited<typeof query>,
+      "users table",
+    );
     if (error) {
       if (absentStore(error)) return { paid: false, readable: true, detail: "table not present in this deployment — no row" };
       // A network-level failure arrives HERE as a resolved error object, not a
@@ -392,7 +546,12 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
     try {
       const base = db.from("license_keys").select("key");
       const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
-      const { data, error } = await scoped.limit(1).maybeSingle();
+      const query = scoped.limit(1).maybeSingle();
+      const { data, error } = await storeDeadline(
+        query,
+        { data: null, error: { message: "store did not answer in time" } } as unknown as Awaited<typeof query>,
+        "license_keys",
+      );
       if (error) {
         if (absentStore(error)) details.push("license_keys → not present in this deployment");
         else {
@@ -462,6 +621,19 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
     readPortalAccounts(email),
     readLicenceKeys(email),
   ]);
+
+  // ── EVERY STORE, LOGGED — reachable yes/no, and paid / null / error ────────
+  //
+  // One line per store, printed on EVERY check (not only a refusal), so the
+  // Vercel log shows exactly which read threw and why the gate answered what it
+  // did for a given address. A store that could not be READ is printed as
+  // `error` and never as `null` — that distinction is the whole rule: an
+  // unreachable store is not evidence of non-payment.
+  logStore(email, "users table", users);
+  logStore(email, "KV registrations", kv);
+  logStore(email, "paid ledger", ledger);
+  logStore(email, "portal accounts", portal);
+  logStore(email, "licence keys", keys);
 
   const verdicts: Array<[string, StoreVerdict]> = [
     ["users table", users],
@@ -542,10 +714,12 @@ async function paidEmailInSupabase(email: string): Promise<LedgerRead> {
   try {
     const base = db.from("paid_emails").select("paid_at");
     const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
-    const { data, error } = await scoped
-      .neq("paid_at", null)
-      .order("paid_at", { ascending: false })
-      .limit(1);
+    const query = scoped.neq("paid_at", null).order("paid_at", { ascending: false }).limit(1);
+    const { data, error } = await storeDeadline(
+      query,
+      { data: null, error: { message: "store did not answer in time" } } as unknown as Awaited<typeof query>,
+      "paid ledger",
+    );
 
     if (error) {
       if (absentStore(error)) {
@@ -582,7 +756,12 @@ async function portalPaymentInSupabase(email: string): Promise<PortalPayment> {
   try {
     const base = db.from("portal_payments").select("paid, paid_at");
     const scoped = /[%_]/.test(email) ? base.eq("email", email) : base.ilike("email", email);
-    const { data, error } = await scoped.limit(1);
+    const query = scoped.limit(1);
+    const { data, error } = await storeDeadline(
+      query,
+      { data: null, error: { message: "store did not answer in time" } } as unknown as Awaited<typeof query>,
+      "portal payments",
+    );
     if (error) {
       if (absentStore(error)) {
         return { paid: false, readable: true, detail: "portal payments → table not present in this deployment, no row" };

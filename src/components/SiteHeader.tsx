@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import { Menu, ChevronDown, Smartphone, Apple, Sun, Moon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
@@ -10,7 +10,6 @@ export function SiteHeader() {
   const [open, setOpen] = useState(false);
   const [apkOpen, setApkOpen] = useState(false);
   const [light, setLight] = useState(false);
-  const navigate = useNavigate();
 
   // Restore the visitor's choice (the toggle is opt-in — dark stays default).
   useEffect(() => {
@@ -37,10 +36,6 @@ export function SiteHeader() {
   };
 
   const close = () => setOpen(false);
-  const openIosApp = () => {
-    close();
-    navigate({ to: "/app" });
-  };
 
   return (
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
@@ -113,13 +108,20 @@ export function SiteHeader() {
                   >
                     <Smartphone className="size-4 text-primary" /> Android APK
                   </a>
-                  <button
-                    type="button"
-                    onClick={openIosApp}
+                  {/*
+                    A REAL ANCHOR — the iOS entry used to be a button that ran
+                    `navigate({ to: "/app" })`, which on a phone does not open
+                    anything (no URL for iOS to follow, and nothing to open in a
+                    new tab). An href works everywhere: Safari, an installed
+                    home-screen app, and a plain browser.
+                  */}
+                  <a
+                    href="/app"
+                    onClick={close}
                     className="flex h-12 items-center gap-2 rounded-xl border border-border/70 px-4 text-left text-sm"
                   >
                     <Apple className="size-4 text-primary" /> iOS App
-                  </button>
+                  </a>
                 </div>
               )}
 
