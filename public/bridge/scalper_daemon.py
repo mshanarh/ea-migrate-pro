@@ -89,8 +89,85 @@ MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
+DAEMON_VERSION = "2.1"
 
 _log_lines: list[str] = []
+
+
+def _live_magic_positions(creds) -> list[dict]:
+    """Return every open MT5 position the daemon owns (filter by MAGIC).
+
+    source of truth for what is currently open — the state file is only
+    metadata. The main loop calls this every iteration and decides close
+    management from LIVE positions; state["positions"] is used for
+    logging/metadata only.
+    """
+    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    if account is None:
+        return []
+    try:
+        positions = mt5.positions_get()
+        if positions is None:
+            return []
+        live = []
+        for pos in positions:
+            if int(getattr(pos, "magic", 0)) != MAGIC:
+                continue
+            live.append({
+                "ticket": int(pos.ticket),
+                "symbol": pos.symbol,
+                "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+                "volume": float(pos.volume),
+                "price_current": float(pos.price_current),
+                "sl": float(pos.sl), "tp": float(pos.tp),
+                "profit": float(pos.profit), "open": True,
+            })
+        return live
+    finally:
+        _disconnect()
+
+
+def _count_open_per_symbol(positions: list[dict]) -> dict[str, int]:
+    """Per-symbol count of open magic positions for the open-cap check."""
+    counts: dict[str, int] = {}
+    for p in positions:
+        counts[p["symbol"]] = counts.get(p["symbol"], 0) + 1
+    return counts
+
+
+def _close_live_position(creds, pos: dict, state: dict, symbol: str) -> bool:
+    """Close ONE live position the moment its profit is > 0, confirmed by
+    MT5 retcode 10008/10009/10010 before logging TRADE CLOSED.
+
+    Returns True when the ticket was closed, False when the close order
+    failed (already logged).
+    """
+    ticket = pos.get("ticket")
+    if ticket is None:
+        return False
+    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    if account is None:
+        return False
+    try:
+        found = mt5.positions_get(ticket=ticket)
+        if not found:
+            _log(f"CLOSE ticket {ticket}: not found in MT5 (may have been "
+                 f"closed elsewhere)")
+            return True
+        position = found[0]
+        profit = float(position.profit)
+        if profit <= 0:
+            return False
+        # close the position now
+        result = _close_ticket(creds, ticket, symbol, pos["volume"])
+        if result is not None and result.get("closed"):
+            _log(f"TRADE CLOSED — PROFIT ${profit:.2f} on {symbol} (ticket {ticket})")
+            return True
+        # close order did not confirm: log and keep the ticket alive
+        _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
+        return False
+    finally:
+        _disconnect()
 
 
 def _log(line: str) -> None:
@@ -334,199 +411,6 @@ def _hard_block(creds, symbol: str) -> tuple[bool, str]:
 
 
 # ── the loop ─────────────────────────────────────────────────────────────────────
-def _daemon_step(creds, state: dict) -> None:
-    symbol = state.get("symbol", state.get("symbols", ["BTCUSDm"]))
-    for s in (symbol if isinstance(symbol, list) else [symbol]):
-        blocked, block = _hard_block(creds, s)
-        if blocked:
-            _log(f"TRADE SKIPPED — {s}: {block}")
-            continue
-        bars = _last_8_completed_candles(s, creds)
-        if bars is None:
-            _log(f"WAITING for candle data on {s}")
-            continue
-        atr = _average_true_range(bars)
-        side = _direction(bars)
-        _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
-             f"ATR {atr:.2f}")
-        positions = state.get("positions", {})
-        if s in positions and positions[s].get("open"):
-            _log(f"{s}: already has an open position ({positions[s].get('ticket')}), "
-                 f"managing it")
-            _manage_open_position(creds, positions[s], state, s)
-            continue
-        # no open ticket on this symbol → open the new trade
-        sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
-        ticket = _open_trade(creds, s, side, float(state.get("lot", 0.01)), s)
-        if ticket is None or not ticket.get("filled"):
-            _log(f"SKIP {s}: could not open {side} {s} {state.get('lot')}")
-            continue
-        state["positions"][ticket["order"]] = {
-            "symbol": s, "type": side.upper(), "volume": float(state.get("lot", 0.01)),
-            "sl": sl, "tp1": tp1, "tp2": tp2, "spread": spread, "atr": atr,
-            "opened_at": _time_now(), "ticket": ticket["order"],
-        }
-        _write_state(state)
-        _log(f"TRADED {s}: OPENED {side} {state.get('lot')} lots @ "
-             f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
-             f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
-        _run_trade_countdown(state, s, ticket, creds)
-
-
-def _run_trade_countdown(state: dict, symbol: str, ticket: dict, creds) -> None:
-    """Finish this trade's slot, then immediately re-analyse on the same symbol
-    (scalper loop)."""
-    trade_number = state.get("next_trade_number", 1)
-    state["next_trade_number"] = trade_number + 1
-    positions = state.get("positions", {})
-    # wait for close (TP1 or stop loss) or for the trade to age out
-    deadline = time.time() + 300
-    while time.time() < deadline:
-        time.sleep(2)
-        pos = positions.get(ticket["order"])
-        if not pos or not pos.get("open"):
-            break
-        _manage_open_position(creds, pos, state, symbol)
-        if pos.get("closed") or pos.get("sl_hit"):
-            break
-    # re-check the slot after the loop
-    if not positions.get(ticket["order"], {}).get("open"):
-        _log(f"TRADE #{trade_number} on {symbol} finished")
-        return
-    # close at TP1 / spread+0.2ATR first, then fall back to TP2 / expiry
-    pos = positions[ticket["order"]]
-    closed = _close_when_profitable(creds, pos, state, symbol)
-    if closed:
-        _log(f"TRADE #{trade_number} on {symbol} CLOSED at TP1/profit target")
-        state["positions"][ticket["order"]]["closed_at"] = _time_now()
-        _write_state(state)
-        return
-    # TP2 or age-out handled by the MT5 expert as fallback; keep the ticket open
-    _log(f"TRADE #{trade_number} on {symbol} still running, TP2 active")
-
-
-def _manage_open_position(creds, pos: dict, state: dict, symbol: str) -> None:
-    """Check a live position: TP1/favour-partial close, SL hit detection."""
-    ticket = pos.get("ticket")
-    if ticket is None:
-        return
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
-    if account is None:
-        return
-    try:
-        found = mt5.positions_get(ticket=ticket)
-        if not found:
-            pos["open"] = False
-            pos["closed"] = True
-            _write_state(state)
-            return
-        position = found[0]
-        pos["volume"] = float(position.volume)
-        pos["price_current"] = float(position.price_current)
-        pos["profit"] = float(position.profit)
-        pos["sl_hit"] = float(position.sl) > 0 and position.price_current <= float(position.sl) if pos.get("type") == "BUY" else \
-            float(position.sl) > 0 and position.price_current >= float(position.sl)
-        _write_state(state)
-        if pos.get("sl_hit"):
-            _log(f"TRADE CLOSED — STOP LOSS hit on {symbol} (ticket {ticket}), "
-                 f"no revenge trade")
-            pos["open"] = False
-            pos["closed"] = True
-            _write_state(state)
-            return
-        # CLOSE THE MOMENT the position is in the blue in account currency:
-        # profit > 0. No spread-cost comparison, no threshold, no waiting.
-        if pos.get("profit", 0) > 0:
-            result = _close_ticket(creds, ticket, symbol, pos["volume"])
-            if result is not None and result.get("closed"):
-                pos["open"] = False
-                pos["closed"] = True
-                pos["profit"] = pos.get("profit", 0)
-                _write_state(state)
-                _log(f"TRADE CLOSED — PROFIT ${pos.get('profit', 0):.2f} on {symbol} (ticket {ticket})")
-                return
-            # close order did not confirm: log and keep managing the ticket
-            _write_state(state)
-            _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
-    finally:
-        _disconnect()
-
-
-def _close_when_profitable(creds, pos: dict, state: dict, symbol: str) -> bool:
-    """Return True if this ticket was closed by the loop."""
-    ticket = pos.get("ticket")
-    if ticket is None:
-        return False
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
-    if account is None:
-        return False
-    try:
-        found = mt5.positions_get(ticket=ticket)
-        if not found:
-            pos["open"] = False
-            pos["closed"] = True
-            _write_state(state)
-            return True
-        position = found[0]
-        profit = float(position.profit)
-        if profit > 0:
-            # close whenever floating profit is greater than zero in account
-            # currency — no spread-cost comparison, no threshold, no waiting
-            result = _close_ticket(creds, ticket, symbol, pos["volume"])
-            if result is not None and result.get("closed"):
-                pos["open"] = False
-                pos["closed"] = True
-                pos["profit"] = profit
-                _write_state(state)
-                _log(f"TRADE CLOSED — PROFIT ${profit:.2f} on {symbol} (ticket {ticket})")
-                return True
-            # close order did not confirm: log and let the main loop keep
-            # managing this ticket
-            _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
-        # SL check again after any candles refresh
-        if pos.get("sl_hit"):
-            _log(f"TRADE CLOSED — STOP LOSS on {symbol} (ticket {ticket})")
-            pos["open"] = False
-            pos["closed"] = True
-            _write_state(state)
-            return True
-    finally:
-        _disconnect()
-    return False
-
-
-def _spread_cost(creds, pos: dict, state: dict) -> float | None:
-    """Return the real spread cost in ACCOUNT CURRENCY for this ticket, or
-    None when MT5 cannot answer.
-
-    spread_cost = (ask - bid) / trade_tick_size * trade_tick_value * position_volume
-    If trade_tick_size or trade_tick_value is 0, fall back to a floor of 0.10
-    account currency.
-    """
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
-    if account is None:
-        return None
-    try:
-        symbol = pos.get("symbol")
-        volume = float(pos.get("volume") or 0)
-        if symbol is None or volume <= 0:
-            return None
-        if not mt5.symbol_select(symbol, True):
-            return None
-        info = mt5.symbol_info(symbol)
-        if info is None:
-            return None
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            return None
-        spread_points = (tick.ask - tick.bid) / mt5.symbol_info(symbol).trade_tick_size
-        spread_value = spread_points * info.trade_tick_value
-        spread_cost = spread_value * volume
-        if spread_cost == 0.0:
-            spread_cost = 0.10
-        return spread_cost
-    finally:
-        _disconnect()
 
 
 def run() -> None:
@@ -537,7 +421,7 @@ def run() -> None:
         "password": os.getenv("MT5_PASSWORD"),
         "server": os.getenv("MT5_SERVER", "icmarkets-live"),
     }
-    _log(f"DAEMON STARTED (login {creds['login']}, server {creds['server']}, "
+    _log(f"DAEMON STARTED v{DAEMON_VERSION} (login {creds['login']}, server {creds['server']}, "
          f"symbols {state.get('symbol', state.get('symbols'))}, "
          f"lot {state.get('lot')}, trade_count {state.get('trade_count')})")
     state["started_at"] = _time_now()
@@ -580,7 +464,77 @@ def run() -> None:
             _log("DAEMON STOPPED — waiting for /scalper/start")
             time.sleep(5)
             continue
-        _daemon_step(creds, step_state)
+
+        # ── 1) CLOSE MANAGING ──────────────────────────────────────────────
+        # Every loop iteration: list LIVE MT5 positions, keep only the daemon's
+        # magic positions, and close each that is in-the-money right now.
+        # Hard blocks are checked AFTER this, so already-open positions are
+        # never held up by margin, candle data or anything else.
+        live_positions = _live_magic_positions(creds)
+        if live_positions:
+            open_by_symbol = _count_open_per_symbol(live_positions)
+            for pos in live_positions:
+                symbol = pos["symbol"]
+                # close the instant floating profit > 0 in account currency,
+                # confirmed by MT5 before we log
+                if pos.get("profit", 0) > 0:
+                    _close_live_position(creds, pos, step_state, symbol)
+                    live_positions = _live_magic_positions(creds)
+                    open_by_symbol = _count_open_per_symbol(live_positions)
+                    continue
+                # SL hit detection (no revenge trade)
+                sl_hit = False
+                if pos.get("sl", 0) > 0:
+                    if pos["type"] == "BUY" and pos["price_current"] <= pos["sl"]:
+                        sl_hit = True
+                    if pos["type"] == "SELL" and pos["price_current"] >= pos["sl"]:
+                        sl_hit = True
+                if sl_hit:
+                    _log(f"TRADE CLOSED — STOP LOSS hit on {symbol} (ticket {pos['ticket']}), "
+                         f"no revenge trade")
+                    # mark closed so we do not try to reopen this symbol yet
+                    pos["open"] = False
+                    live_positions = _live_magic_positions(creds)
+                    open_by_symbol = _count_open_per_symbol(live_positions)
+                    continue
+
+        # ── 2) OPEN / MANAGE (hard blocks only block NEW trades) ────────────
+        symbol_list = step_state.get("symbol", step_state.get("symbols", ["BTCUSDm"]))
+        for s in (symbol_list if isinstance(symbol_list, list) else [symbol_list]):
+            # per-symbol open cap: do not open while a magic position is alive
+            # on this symbol (count live positions)
+            if open_by_symbol.get(s, 0) > 0:
+                _log(f"{s}: already has an open position, not opening another")
+                continue
+            blocked, block = _hard_block(creds, s)
+            if blocked:
+                _log(f"TRADE SKIPPED — {s}: {block}")
+                continue
+            bars = _last_8_completed_candles(s, creds)
+            if bars is None:
+                _log(f"WAITING for candle data on {s}")
+                continue
+            atr = _average_true_range(bars)
+            side = _direction(bars)
+            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
+                 f"ATR {atr:.2f}")
+            # no open ticket on this symbol → open the new trade
+            sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
+            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), s)
+            if ticket is None or not ticket.get("filled"):
+                _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
+                continue
+            step_state["positions"][ticket["order"]] = {
+                "symbol": s, "type": side.upper(), "volume": float(step_state.get("lot", 0.01)),
+                "sl": sl, "tp1": tp1, "tp2": tp2, "spread": spread, "atr": atr,
+                "opened_at": _time_now(), "ticket": ticket["order"],
+            }
+            _write_state(step_state)
+            _log(f"TRADED {s}: OPENED {side} {step_state.get('lot')} lots @ "
+                 f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
+                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
+            # no blocking countdown — the main 1–2 second loop manages closes
+
         time.sleep(1)
 
 
