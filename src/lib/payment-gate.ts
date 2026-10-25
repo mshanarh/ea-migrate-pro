@@ -369,6 +369,7 @@ function consumeStaleSession(): boolean {
  * first paint while the revalidation continues behind it.
  */
 export function peekAccessVerdict(email: string | null | undefined): AppAccessCheck | null {
+  const start = Date.now();
   // A stale session is not trusted at all: sign out, drop the entry, and let
   // the caller ask the cloud (the same one-time kick requireVerifiedAccess
   // performs, just performed synchronously here).
@@ -431,6 +432,8 @@ export function peekAccessVerdict(email: string | null | undefined): AppAccessCh
     appSignOut();
     return { action: "deactivate" };
   }
+  const ms = Date.now() - start;
+  console.log(`[payment-gate] peekAccessVerdict: ${ms}ms`);
   return { action: "pay" };
 }
 
@@ -984,6 +987,7 @@ export async function requireVerifiedAccess(
   email: string | null,
   options?: { fresh?: boolean },
 ): Promise<AppAccessCheck> {
+  const start = Date.now();
   // STALE SESSION KICK — runs BEFORE anything else. A session cached under the
   // previous access rules is not trusted at all: it is signed out here and the
   // cloud decides again on this very pass. Nobody is exempt, owners included.
@@ -999,11 +1003,15 @@ export async function requireVerifiedAccess(
   let bundle: Bundle = { status: null, binding: null, bindingKnown: false };
   try {
     bundle = await resolveBundle(clean, options?.fresh === true);
+    const ms = Date.now() - start;
+    console.log(`[payment-gate] requireVerifiedAccess: ${ms}ms`);
   } catch {
     // NEVER let a gate error crash a route (that was the "Dashboard didn't
     // load" screen on Android) — an undecided cloud falls through to the
     // FAIL-CLOSED branch below, never to the local store.
     bundle = { status: null, binding: null, bindingKnown: false };
+    const ms = Date.now() - start;
+    console.log(`[payment-gate] requireVerifiedAccess (error): ${ms}ms`);
   }
 
   // GLOBAL ACCESS RESET — everyone: if the cloud no longer binds this

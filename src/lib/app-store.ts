@@ -193,6 +193,12 @@ const initial: AppState = {
 let state: AppState = initial;
 let loaded = false;
 const listeners = new Set<() => void>();
+const bootLog = (step: string) => {
+  const ms = Date.now() - bootTiming.last;
+  console.log(`[boot] ${step}: ${ms}ms`);
+  bootTiming.last = Date.now();
+};
+const bootTiming = { start: Date.now(), last: Date.now() };
 
 const LAYOUT_ALIASES: Record<string, string> = {
   Prime: "navigator_plus",
@@ -206,12 +212,14 @@ const LAYOUT_ALIASES: Record<string, string> = {
   layout_sniper_full: "navigator_plus",
   layout_sniper_vertical: "pablo_elite",
 };function load() {
+  bootLog("load-start");
   START("app-store-load-start");
   if (loaded || typeof window === "undefined") return;
   loaded = true;
   // The epoch kick runs BEFORE the saved state is read: a bumped epoch must
   // not just clear the email but also drop the stale robot/binding records
   // that belonged to the kicked session.
+  bootLog("epoch-kick");
   const epochKick = consumeAccessEpochKick();
   try {
     LEGACY_KEYS.forEach((legacy) => window.localStorage.removeItem(legacy));
@@ -263,8 +271,10 @@ const LAYOUT_ALIASES: Record<string, string> = {
         ? aliasedLayout
         : initial.settings.interfaceStyle;
     state = { ...state, settings: { ...state.settings, interfaceStyle: selectedLayout, accentColor: savedThemeColor || state.settings.accentColor || initial.settings.accentColor } };    } catch {
+    bootLog("state-restore-error");
     /* ignore */
   }
+  bootLog("state-restore-done");
   START("app-store-load-end");
   if (epochKick) {
 
