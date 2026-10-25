@@ -102,7 +102,7 @@ def _live_magic_positions(creds) -> list[dict]:
     management from LIVE positions; state["positions"] is used for
     logging/metadata only.
     """
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         return []
     try:
@@ -145,7 +145,7 @@ def _close_live_position(creds, pos: dict, state: dict, symbol: str) -> bool:
     ticket = pos.get("ticket")
     if ticket is None:
         return False
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         return False
     try:
@@ -200,9 +200,36 @@ def _time_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _connect(login: int, password: str, server: str):
-    if not mt5.initialize(login=login, password=password, server=server):
-        return None, mt5.last_error()
+def _connect(creds):
+    """MT5 connect that works for both an explicit creds tuple and a broker-
+    agnostic creds dict built by _build_creds.
+
+    - If MT5_LOGIN/MT5_PASSWORD/MT5_SERVER were all set, creds is a tuple
+      (login, password, server) and mt5.initialize/login are called with them.
+    - If they were NOT set, _build_creds() attached to the running MT5 terminal
+      via mt5.initialize() and creds has login/password/server = None. We call
+      mt5.initialize() with NO login/password/server arguments once, then
+      mt5.login with the real values returned by account_info().
+    """
+    login = creds.get("login")
+    password = creds.get("password")
+    server = creds.get("server")
+    if login is None:
+        # broker-agnostic path: bare initialize() to attach to the running
+        # terminal, then login() with whatever account is already there
+        if not mt5.initialize():
+            return None, mt5.last_error()
+        account = mt5.account_info()
+        if account is None:
+            return None, "account_info() returned None after bare initialize"
+        creds = {
+            "login": account.login,
+            "password": "",
+            "server": account.server,
+        }
+        login = creds["login"]
+        password = creds["password"]
+        server = creds["server"]
     if not mt5.login(login=login, password=password, server=server):
         error = mt5.last_error()
         mt5.shutdown()
@@ -231,7 +258,7 @@ def _average_true_range(symbol: str, bars: list[dict], period: int = 8) -> float
 def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
     """Return the last 8 COMPLETED M15 bars (the forming bar excluded). Returns
     None when the data is missing or stale (> 2 minutes old — a hard block)."""
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         _log(f"candle fetch failed for {symbol}: {error}")
         return None
@@ -298,7 +325,7 @@ def _sl_tp_for(symbol: str, bars: list[dict], side: str) -> tuple[float, float, 
 
 def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
     """Execute an order through the MT5 terminal directly."""
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         _log(f"open {side} {symbol} {lot}: MT5 init failed: {error}")
         return None
@@ -336,7 +363,7 @@ def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
 
 def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int = 30):
     """Close ONE position the daemon opened itself."""
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         _log(f"close ticket {ticket}: MT5 init failed")
         return None
@@ -386,7 +413,7 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
 def _hard_block(creds, symbol: str) -> tuple[bool, str]:
     """Return (blocked, block_name). A block means 'do not open this trade,
     but keep the existing positions and keep looking.'"""
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         return True, f"MT5 init failed: {error}"
     try:
@@ -413,23 +440,63 @@ def _hard_block(creds, symbol: str) -> tuple[bool, str]:
 # ── the loop ─────────────────────────────────────────────────────────────────────
 
 
+def _build_creds() -> dict:
+    """Build the MT5 connection credentials, broker-agnostic.
+
+    If MT5_LOGIN / MT5_PASSWORD / MT5_SERVER are all set, connect to that
+    account exactly as before. If they are NOT set, call mt5.initialize()
+    with NO login/password/server arguments so it attaches to the MT5
+    terminal already running on the VPS and uses whatever account and
+    broker are logged in there. Never crashes or exits with int(None).
+
+    Returns a dict with login, password, server and account (the real
+    account read back from mt5.account_info() after connecting).
+    """
+    login = os.getenv("MT5_LOGIN")
+    password = os.getenv("MT5_PASSWORD")
+    server = os.getenv("MT5_SERVER")
+    has_all = login is not None and password is not None and server is not None
+    if has_all:
+        return {
+            "login": int(login),
+            "password": password,
+            "server": server,
+            "account": None,
+        }
+    # No env vars: attach to the running MT5 terminal with no login
+    if not mt5.initialize():
+        error = mt5.last_error()
+        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 initialize failed: {error}")
+        return {"login": None, "password": None, "server": None, "account": None}
+    account = mt5.account_info()
+    if account is None:
+        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 account info is None after initialize")
+        return {"login": None, "password": None, "server": None, "account": None}
+    return {
+        "login": account.login,
+        "password": "",
+        "server": account.server,
+        "account": account,
+    }
+
+
 def run() -> None:
     """Entry point: load the state file, resume open positions, then loop."""
     state = _read_state()
-    creds = {
-        "login": int(os.getenv("MT5_LOGIN")),
-        "password": os.getenv("MT5_PASSWORD"),
-        "server": os.getenv("MT5_SERVER", "icmarkets-live"),
-    }
-    _log(f"DAEMON STARTED v{DAEMON_VERSION} (login {creds['login']}, server {creds['server']}, "
-         f"symbols {state.get('symbol', state.get('symbols'))}, "
-         f"lot {state.get('lot')}, trade_count {state.get('trade_count')})")
+    creds = _build_creds()
+    if creds["login"] is not None:
+        _log(f"DAEMON STARTED v{DAEMON_VERSION} (login {creds['login']}, server {creds['server']}, "
+             f"symbols {state.get('symbol', state.get('symbols'))}, "
+             f"lot {state.get('lot')}, trade_count {state.get('trade_count')})")
+    else:
+        _log(f"DAEMON STARTED v{DAEMON_VERSION} (no MT5_LOGIN/MT5_PASSWORD/MT5_SERVER set — "
+             f"attached to the running MT5 terminal, broker from that terminal)")
     state["started_at"] = _time_now()
     _write_state(state)
 
     # 1) RESUME: manage open positions first (crash/reboot safety)
     open_pos = []
-    account, error = _connect(creds["login"], creds["password"], creds["server"])
+    account, error = _connect(creds)
     if account is None:
         _log(f"daemon start: MT5 init failed: {error}")
     else:
