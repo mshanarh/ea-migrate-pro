@@ -314,3 +314,41 @@ export async function clearDeviceBinding(
 export function kvCommand(command: (string | number)[]): Promise<unknown> {
   return kv(command);
 }
+
+/** A READ through the same client — for diagnostics that must not write. */
+export function kvRead(command: (string | number)[]): Promise<unknown> {
+  return kv(command);
+}
+
+/**
+ * WHICH VARIABLE NAMES THIS DEPLOYMENT ACTUALLY HAS.
+ *
+ * Names only — never the values, never the token. A diagnostic page uses this
+ * to say "KV_REST_API_URL is missing on the server" instead of guessing, which
+ * is the difference between a five-second answer and another round of hearsay.
+ */
+export function storeConfigInfo(): { urlVar: string | null; tokenVar: string | null } {
+  const url = (process.env["KV_REST_API_URL"] ?? process.env["UPSTASH_REDIS_REST_URL"] ?? "").trim();
+  const token = (process.env["KV_REST_API_TOKEN"] ?? process.env["UPSTASH_REDIS_REST_TOKEN"] ?? "").trim();
+  return {
+    urlVar: url ? "KV_REST_API_URL" : null,
+    tokenVar: token ? "KV_REST_API_TOKEN" : null,
+  };
+}
+
+/**
+ * CLEAR ONE DEVICE BINDING AND RETURN THE PREVIOUS VALUE.
+ *
+ * The previous id is returned (not just true/false) so the caller can log what
+ * it released and prove a re-run was a no-op. Nothing else in the record is
+ * touched — see `clearDeviceBinding`, which does the same write for /api/account.
+ */
+export async function clearDeviceIdForEmail(email: string): Promise<string | null> {
+  const address = normalizeEmail(email);
+  if (!address) return null;
+  const record = await getRegistration(address);
+  if (!record) return null;
+  const previous = record.deviceId ?? null;
+  if (previous) await saveRegistration({ ...record, deviceId: null });
+  return previous;
+}
