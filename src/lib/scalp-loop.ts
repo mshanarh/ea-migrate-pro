@@ -399,20 +399,15 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
 
       // ── NORMAL MODE — nothing to do while a position is open. SL/TP1/TP2
       // are the broker's job, and a winner is never pulled early.
-      if (mode === "normal" && knowsOpen) continue;
-
-      // ── SCALPER MODE, position open: take the profit or leave it be.
+      if (mode === "normal" && knowsOpen) continue;        // ── SCALPER MODE, position open: take the profit or leave it be.
       if (mode === "scalper" && knowsOpen) {
         if (!monitoring) {
           // Nothing can be closed without the endpoint, and nothing must be
           // stacked either — the position stays and the loop waits.
           continue;
-        }        const scalperPosition = bridgePositions[0]!;
-        const scalperQuote = await bridgePost<{ success?: boolean; bid?: number; ask?: number }>("/symbol/price", {
-          credentials, symbol,
-        });
-        const bid = Number(scalperQuote.data?.bid);
-        const ask = Number(scalperQuote.data?.ask);
+        }
+        const scalperPosition = bridgePositions[0]!;
+
         // ── PENDING / DUPLICATE GUARD ────────────────────────────────────────────
         // Track a merge of "this trade is waiting for a broker confirmation" and
         // "an open or close request is already in flight". A pending trade blocks
@@ -433,55 +428,45 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
           continue;
         }
 
-
-        // A position exits ONLY on a configured target: TP1 or the strategy
-        // profit take. `track.tp1Distance` is the only reliable scalar target
-        // here; a bare `moveInFavour > 0` is removed (unconditional exit).
-        const spread = Number.isFinite(bid) && Number.isFinite(ask) && ask > bid ? ask - bid : 0;
-        const atr = track?.atr ?? 0;
-        const moveInFavour =
+        // Scalper rule (this session): close the instant the broker's own
+        // floating profit is positive in the account currency. Anything above
+        // zero is "in the blue" and is taken now; no spread cost, no ATR guard,
+        // no TP1 distance threshold, no waiting for a candle close or the
+        // 300-second countdown — the live M15 loop re-opens the next trade in
+        // the same pass once the close is broker-confirmed.
+        const liveProfit =
           scalperPosition.type === "BUY"
-            ? scalperPosition.price_current - scalperPosition.price_open
-            : scalperPosition.price_open - scalperPosition.price_current;
-        const scalpTarget = spread + atr * 0.2;
-        // A position exits ONLY on a configured target: TP1 or the strategy
-        // profit take. `track.tp1Distance` is the only reliable scalar target
-        // here; a bare `moveInFavour > 0` is removed (unconditional exit).
-        const hasConfiguredTarget = track !== undefined && moveInFavour >= track.tp1Distance;
-        if (hasConfiguredTarget) {
-          // A close or open request is now in flight for this symbol. Until the
-          // broker comes back with the actual position state, no further order
-          // is submitted — this is what stops duplicate orders.
-          const alreadyPending = track?.pending === true;
-          if (alreadyPending) {
-            // The broker has not answered yet. Keep the loop alive and let the
-            // next cycle re-check the live position when it answers.
+            ? scalperPosition.profit
+            : -scalperPosition.profit;
+        if (scalperPosition.profit <= 0) {
+          continue;
+        }
+
+        if (track) {
+          tracks.set(symbol, { ...track, pending: true });
+        }
+        const closedTrack = tracks.get(symbol);
+        const profit = await closePosition(scalperPosition);
+        if (profit !== null) {
+          const closeInfo: ClosedTrade = { number: closedTrack?.tradeNo ?? 0, profit };
+          tracks.delete(symbol);
+          if (stopped) {
+            notifyTradeClosed(closeInfo);
             continue;
           }
-          tracks.set(symbol, { ...track, pending: true });
-          const closedTrack = tracks.get(symbol);
-          const profit = await closePosition(scalperPosition);
-          if (profit !== null) {
-            const closeInfo: ClosedTrade = { number: closedTrack?.tradeNo ?? 0, profit };
-            tracks.delete(symbol);
-            if (stopped) {
-              notifyTradeClosed(closeInfo);
-              continue;
-            }
-            // ── SCALPER CONTINUOUS CYCLE ──
-            // After a confirmed close the SAME pass re-analyses and re-opens the
-            // same symbol, so the trader never has to press Start again.
-            // `pending` is cleared below: if the replacement is skipped or failed,
-            // the session stays active and the next scheduled cycle re-tries
-            // evaluation safely — it never submits a duplicate.
-            const outcome = await openFor(symbol, lotSize, cap, { deferNotify: true });
-            if (track) tracks.set(symbol, { ...track, pending: false });
-            if (outcome.kind === "opened" && outcome.opens.length > 0) {
-              notifyCloseThenOpen(closeInfo, outcome.opens);
-            } else {
-              notifyTradeClosed(closeInfo);
-              if (outcome.kind === "skipped") notifyTradeSkipped(symbol, outcome.reason);
-            }
+          // ── SCALPER CONTINUOUS CYCLE ──
+          // After a confirmed close the SAME pass re-analyses and re-opens the
+          // same symbol, so the trader never has to press Start again.
+          // `pending` is cleared below: if the replacement is skipped or failed,
+          // the session stays active and the next scheduled cycle re-tries
+          // evaluation safely — it never submits a duplicate.
+          const outcome = await openFor(symbol, lotSize, cap, { deferNotify: true });
+          if (track) tracks.set(symbol, { ...track, pending: false });
+          if (outcome.kind === "opened" && outcome.opens.length > 0) {
+            notifyCloseThenOpen(closeInfo, outcome.opens);
+          } else {
+            notifyTradeClosed(closeInfo);
+            if (outcome.kind === "skipped") notifyTradeSkipped(symbol, outcome.reason);
           }
         }
         continue;

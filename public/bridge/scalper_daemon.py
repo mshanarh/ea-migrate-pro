@@ -89,7 +89,7 @@ MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
-DAEMON_VERSION = "2.2"
+DAEMON_VERSION = "2.3"
 
 _log_lines: list[str] = []
 
@@ -533,38 +533,47 @@ def run() -> None:
             continue
 
         # ── 1) CLOSE MANAGING ──────────────────────────────────────────────
-        # Every loop iteration: list LIVE MT5 positions, keep only the daemon's
-        # magic positions, and close each that is in-the-money right now.
-        # Hard blocks are checked AFTER this, so already-open positions are
-        # never held up by margin, candle data or anything else.
+        # Source of truth for what is open is LIVE MT5, not the state file.
+        # state["positions"] only carries metadata/logging; the state-key bug
+        # that keyed positions by ticket while the loop looked them up by symbol
+        # never entered here because this rewrite already uses _live_magic_positions.
+        #
+        # Every iteration: list LIVE MT5 positions filtered to our MAGIC, and
+        # close each one the instant its floating profit is positive in the
+        # account currency. The close is only treated as done after MT5 confirms
+        # it returned retcode 10008/10009/10010 — a failed close is logged and
+        # the ticket stays open for the next pass to retry.
+        #
+        # Hard blocks (margin buffer, missing candle data) are checked AFTER
+        # this section, so already-open positions are NEVER held up by a block.
         live_positions = _live_magic_positions(creds)
-        open_by_symbol = {}
-        if live_positions:
-            open_by_symbol = _count_open_per_symbol(live_positions)
-            for pos in live_positions:
-                symbol = pos["symbol"]
-                # close the instant floating profit > 0 in account currency,
-                # confirmed by MT5 before we log
-                if pos.get("profit", 0) > 0:
-                    _close_live_position(creds, pos, step_state, symbol)
-                    live_positions = _live_magic_positions(creds)
-                    open_by_symbol = _count_open_per_symbol(live_positions)
-                    continue
-                # SL hit detection (no revenge trade)
+        open_by_symbol: dict[str, int] = {}
+        for pos in live_positions:
+            sym = pos["symbol"]
+            open_by_symbol[sym] = open_by_symbol.get(sym, 0) + 1
+            # close the instant floating profit > 0, confirmed by MT5 before we log
+            if pos.get("profit", 0) > 0:
+                _close_live_position(creds, pos, step_state, sym)
+            else:
+                # SL-hit detection (no revenge trade): wait for the next completed
+                # M15 candle before reopening this symbol.
                 sl_hit = False
                 if pos.get("sl", 0) > 0:
                     if pos["type"] == "BUY" and pos["price_current"] <= pos["sl"]:
                         sl_hit = True
-                    if pos["type"] == "SELL" and pos["price_current"] >= pos["sl"]:
+                    elif pos["type"] == "SELL" and pos["price_current"] >= pos["sl"]:
                         sl_hit = True
                 if sl_hit:
-                    _log(f"TRADE CLOSED — STOP LOSS hit on {symbol} (ticket {pos['ticket']}), "
+                    _log(f"TRADE CLOSED — STOP LOSS hit on {sym} (ticket {pos['ticket']}), "
                          f"no revenge trade")
-                    # mark closed so we do not try to reopen this symbol yet
+                    # mark closed so we do not reopen this symbol this cycle
                     pos["open"] = False
-                    live_positions = _live_magic_positions(creds)
-                    open_by_symbol = _count_open_per_symbol(live_positions)
-                    continue
+            # refresh the open-by-symbol counts only after any close so the
+            # open section below sees the live position count
+            live_positions = _live_magic_positions(creds)
+            open_by_symbol = {}
+            for p in live_positions:
+                open_by_symbol[p["symbol"]] = open_by_symbol.get(p["symbol"], 0) + 1
 
         # ── 2) OPEN / MANAGE (hard blocks only block NEW trades) ────────────
         symbol_list = step_state.get("symbol", step_state.get("symbols", ["BTCUSDm"]))
