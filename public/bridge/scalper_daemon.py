@@ -204,32 +204,29 @@ def _connect(creds):
     """MT5 connect that works for both an explicit creds tuple and a broker-
     agnostic creds dict built by _build_creds.
 
-    - If MT5_LOGIN/MT5_PASSWORD/MT5_SERVER were all set, creds is a tuple
-      (login, password, server) and mt5.initialize/login are called with them.
-    - If they were NOT set, _build_creds() attached to the running MT5 terminal
-      via mt5.initialize() and creds has login/password/server = None. We call
-      mt5.initialize() with NO login/password/server arguments once, then
-      mt5.login with the real values returned by account_info().
+    - If MT5_LOGIN/MT5_PASSWORD/MT5_SERVER were all set, creds has login/
+      password/server and we connect to that account exactly as before.
+    - If they were NOT set, _build_creds() already called mt5.initialize()
+      (no login/password/server) to attach to the running MT5 terminal, and
+      creds has login=None. We do NOT call mt5.login() — the terminal is
+      already logged in to whatever account the user has open there, and
+      mt5.account_info() gives us that account.
     """
     login = creds.get("login")
-    password = creds.get("password")
-    server = creds.get("server")
     if login is None:
-        # broker-agnostic path: bare initialize() to attach to the running
-        # terminal, then login() with whatever account is already there
-        if not mt5.initialize():
-            return None, mt5.last_error()
+        # broker-agnostic path: the terminal is already attached and logged in
+        # (by _build_creds at startup). Just read back the account.
         account = mt5.account_info()
         if account is None:
-            return None, "account_info() returned None after bare initialize"
-        creds = {
-            "login": account.login,
-            "password": "",
-            "server": account.server,
-        }
-        login = creds["login"]
-        password = creds["password"]
-        server = creds["server"]
+            # connection may have dropped — try to re-attach once
+            if not mt5.initialize():
+                return None, mt5.last_error()
+            account = mt5.account_info()
+            if account is None:
+                return None, "account_info() returned None after re-initialize"
+        return account, None
+    password = creds.get("password")
+    server = creds.get("server")
     if not mt5.login(login=login, password=password, server=server):
         error = mt5.last_error()
         mt5.shutdown()
@@ -463,7 +460,8 @@ def _build_creds() -> dict:
             "server": server,
             "account": None,
         }
-    # No env vars: attach to the running MT5 terminal with no login
+    # No env vars: attach to the running MT5 terminal with no login/password/
+    # server so it uses whatever account and broker are already logged in there.
     if not mt5.initialize():
         error = mt5.last_error()
         _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 initialize failed: {error}")
@@ -472,10 +470,13 @@ def _build_creds() -> dict:
     if account is None:
         _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 account info is None after initialize")
         return {"login": None, "password": None, "server": None, "account": None}
+    # Do NOT stash login/password/server — in broker-agnostic mode _connect()
+    # must not call mt5.login() (the terminal is already logged in). Keep only
+    # the account object for startup logging.
     return {
-        "login": account.login,
-        "password": "",
-        "server": account.server,
+        "login": None,
+        "password": None,
+        "server": None,
         "account": account,
     }
 
