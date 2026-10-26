@@ -85,13 +85,11 @@ export const getRouter = () => {
     defaultPendingMs: 150,
     defaultPendingMinMs: 0,
     defaultPendingComponent: RoutePending,
-    // AFTER THE FIRST NAVIGATION RESOLVES, the splash is raised to Infinity so
-    // the CURRENT screen stays on view until the next lane loads.  But we MUST
-    // guarantee the splash never hangs forever — if the first navigation never
-    // completes, a hard 8-second timeout forces the app into /app/login so the
-    // person is never stuck on a Loading screen past the first paint.
-    defaultSplashMs: 150,
-    defaultSplashTimeoutMs: 8_000,
+    // NOTE ON THE 8-SECOND GUARANTEE: `defaultSplashMs` /
+    // `defaultSplashTimeoutMs` are NOT options in @tanstack/react-router
+    // 1.170 — passing them is rejected by the type checker and ignored at
+    // runtime, so the hard stop lives in the timeout below, which forces the
+    // app into /app/login if the first navigation has not resolved.
   });
 
   /**

@@ -150,7 +150,7 @@ export default async function handler(request: ApiRequest & { url?: string }, re
       response.status(400).json({ ok: false, error: "email is required" });
       return;
     }
-    if (!variables.configured) {
+    if (!variables.urlVar || !variables.tokenVar) {
       response.status(503).json({ ok: false, error: "KV_REST_API_URL / KV_REST_API_TOKEN are not set on the server" });
       return;
     }

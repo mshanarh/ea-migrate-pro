@@ -64,16 +64,18 @@ if (typeof window !== "undefined") {
   // When TanStack Router fires the final navigation settle, report timing.
   // We listen on the global router state change; the root route's beforeLoad
   // + component mount is a reliable signal the boot is done.
-  const origPush = history.push.bind(history);
-  const origReplace = history.replace.bind(history);
-  history.push = (...args) => {
-    const result = origPush(...args);
+  // THE DOM HISTORY OBJECT HAS pushState/replaceState — NOT push/replace.
+  // Patching `history.push` used to throw `Cannot read properties of undefined
+  // (reading 'bind')` at module load, which took down every importer (this
+  // module is pulled in by app-store, i.e. the whole boot graph).
+  const origPushState = window.history.pushState.bind(window.history);
+  const origReplaceState = window.history.replaceState.bind(window.history);
+  window.history.pushState = (...args: Parameters<History["pushState"]>) => {
+    origPushState(...args);
     once();
-    return result;
   };
-  history.replace = (...args) => {
-    const result = origReplace(...args);
+  window.history.replaceState = (...args: Parameters<History["replaceState"]>) => {
+    origReplaceState(...args);
     once();
-    return result;
   };
 }

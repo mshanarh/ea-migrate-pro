@@ -76,12 +76,28 @@ function scriptEndpoints(): void {
         status,
         json: async () => payload,
       });
+      if (target.includes("/api/account") && String(body["action"]) === "binding") {
+        return reply({ ok: true, binding: accountBinding });
+      }
       return reply(access.payload, access.status);
     }),
   );
 }
 
 const checkAccessCalls = () => calls.filter((entry) => entry.includes("/api/check-access")).length;
+/** The gate reading this device's own binding — server-side, through /api/account. */
+const bindingReads = () => calls.filter((entry) => entry.includes("/api/account binding")).length;
+/** The gate writing the binding — also server-side (KV), never a local row. */
+const bindCalls = () => calls.filter((entry) => entry.includes("/api/account bind-device")).length;
+
+/**
+ * WHAT /api/account ANSWERS FOR THE BINDING READ.
+ *
+ * The binding lives in KV and is read through that endpoint, so it needs its
+ * own answer here — the canned `access.payload` below is the LEDGER's reply and
+ * carries no `binding` key of its own.
+ */
+let accountBinding: { deviceEmail: string | null; deviceId: string | null } | null = null;
 
 /** A paid cloud answer, bound to THIS device (the state after a sign-in). */
 function paidAnswer(binding: BindingPayload): void {
@@ -129,6 +145,7 @@ beforeEach(() => {
   supabase.rows = {};
   supabase.reads = 0;
   supabase.writes = 0;
+  accountBinding = null;
   paidAnswer({ deviceEmail: EMAIL, deviceId: DEVICE });
   scriptEndpoints();
 });
@@ -208,26 +225,26 @@ describe("the device-binding write", () => {
     seedSession(appStore);
     vi.useFakeTimers({ toFake: ["Date"] });
 
-    // The cloud has a registration row for this email but no device bound yet
-    // — which is exactly the state `bindDeviceToEmail` needs to bind.
-    supabase.rows["users"] = { data: { device_email: null, device_id: null }, error: null };
+    // The cloud reports this email as paid but with NO device bound yet —
+    // exactly the state `bindDeviceToEmail` needs to bind. The binding is
+    // written SERVER-SIDE (KV, through /api/account), so the write is counted
+    // on that call instead of in a browser-held row, and the read of the
+    // current binding rides along with the payment answer.
     paidAnswer(null);
     const first = await gate.requireVerifiedAccess(EMAIL);
     expect(first.action).toBe("pass");
-    expect(supabase.reads, "the bind does its own read before writing").toBeGreaterThan(0);
-    expect(supabase.writes, "an unbound email is bound — exactly once").toBe(1);
+    expect(checkAccessCalls(), "the binding arrives with the payment answer — one round trip").toBe(1);
+    expect(bindCalls(), "an unbound email is bound — exactly once").toBe(1);
 
     // From now on the cloud reports THIS device, as a real deployment does
     // after that write landed.
     paidAnswer({ deviceEmail: EMAIL, deviceId: DEVICE });
-    supabase.reads = 0;
-    supabase.writes = 0;
+    calls = [];
     vi.setSystemTime(Date.now() + 60_000);
     const second = await gate.requireVerifiedAccess(EMAIL);
 
     expect(second.action).toBe("pass");
-    expect(supabase.writes, "a bound device is never re-bound on navigation").toBe(0);
-    expect(supabase.reads, "the binding arrives with the payment answer").toBe(0);
+    expect(bindCalls(), "a bound device is never re-bound on navigation").toBe(0);
   });
 });
 
@@ -299,7 +316,9 @@ describe("the security rules, unchanged by any of this", () => {
     // signs the session out.
     const { appStore, gate } = await loadGate();
     seedSession(appStore);
-    supabase.rows["users"] = { data: { device_email: EMAIL, device_id: "old-phone" }, error: null };
+    // The binding this device reads for itself still lives in KV and is read
+    // server-side — THAT read is the fallback, and it still finds the old phone.
+    accountBinding = { deviceEmail: EMAIL, deviceId: "old-phone" };
     // The server answers the ledger WITHOUT the binding key at all.
     access = {
       status: 200,
@@ -309,7 +328,7 @@ describe("the security rules, unchanged by any of this", () => {
     const verdict = await gate.requireVerifiedAccess(EMAIL);
     expect(verdict.action).toBe("signin");
     expect(appStore.getAppState().email).toBeNull();
-    expect(supabase.reads, "the fallback read is the old behaviour, not a new one").toBeGreaterThan(0);
+    expect(bindingReads(), "the fallback read is the old behaviour, not a new one").toBeGreaterThan(0);
   });
 });
 

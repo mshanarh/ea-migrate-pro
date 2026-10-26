@@ -286,6 +286,7 @@ function revalidateInBackground(clean: string): void {
     try {
       const server = await checkAccessServer(clean, getDeviceId());
       if (!server.ok) return; // cloud could not decide — keep the current entry
+      if (server.status === "undecided") return; // no verdict to cache — keep what we have
       const status: CloudAccess = server.status === "rejected" ? "revoked" : server.status;
       let binding: DeviceBinding | null;
       let bindingKnown: boolean;
@@ -547,7 +548,7 @@ export function extractFetchErrorDetails(error: any): { url?: string; status?: n
  * RETRY A FAILED FETCH ONCE AFTER A DELAY.
  * Returns the result if successful, or null if the retry also fails.
  */
-export async function retryFetchOnce< T>(fetchFn: () => Promise<T>, delayMs: number = 2_000): { success: boolean; value: T | null } {
+export async function retryFetchOnce< T>(fetchFn: () => Promise<T>, delayMs: number = 2_000): Promise<{ success: boolean; value: T | null }> {
   try {
     await new Promise((resolve) => setTimeout(resolve, delayMs));
     try {
@@ -567,7 +568,7 @@ export async function retryFetchOnce< T>(fetchFn: () => Promise<T>, delayMs: num
  * Wraps the original fetch attempt, retries once after a delay, and returns
  * the error details from the first failure so we can log URL, status, and cause.
  */
-export async function retryStoreFetchOnce< T>(fetchFn: () => Promise<T>): { success: boolean; value: T | null; errorDetails: { url?: string; status?: number; cause?: string } } {
+export async function retryStoreFetchOnce< T>(fetchFn: () => Promise<T>): Promise<{ success: boolean; value: T | null; errorDetails: { url?: string; status?: number; cause?: string } }> {
   try {
     const result = await fetchFn();
     return { success: true, value: result, errorDetails: {} };
@@ -757,6 +758,13 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
     // Endpoint could not decide — caller must fail closed. Nothing is cached.
     if (!server.ok) {
       console.warn(`[payment-gate] access check undecided: ${server.detail ?? "no verdict"}`);
+      return { status: null, binding: null, bindingKnown: false };
+    }
+    // A verdict of "undecided" is NOT a verdict: answering unpaid here would
+    // send a paying customer to the plans page, so the caller is told the cloud
+    // could not decide and nothing is cached.
+    if (server.status === "undecided") {
+      console.warn("[payment-gate] access check undecided: endpoint answered without a verdict");
       return { status: null, binding: null, bindingKnown: false };
     }
 
@@ -1021,10 +1029,16 @@ export async function requireVerifiedAccess(
   // checkout — recoverable if the person really has paid, and a hole closed if
   // they have not. The in-app UI reconciles from the cloud, never from here.
   //
-  // `undecided` marks this as "no verdict", not "the ledger said no". The only
-  // caller that treats the two differently is /app/home, and only for a device
-  // that already holds an activated robot (see the guard there).
-  return { action: "pay", undecided: true };
+  // `undecided` marks this as "no verdict", not "the ledger said no".
+  //
+  // NO VERDICT — NEVER THE PLAN CHOOSER.
+  //
+  // `pay` here sent a paid customer whose record store was unreachable to
+  // "Choose your plan": a source we could not read is not a refusal. The caller
+  // shows the plain retry line instead (and an activated device stays put and
+  // asks again quietly), while `undecided` is kept so the guards can still tell
+  // "we could not ask" from the ledger's positive "this email never paid".
+  return { action: "retry", message: VERIFY_RETRY_MESSAGE, undecided: true };
 }
 
 /**

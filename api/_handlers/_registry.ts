@@ -73,6 +73,23 @@ const OWNER_ADMIN_EMAILS = [
   "ntobekotraders.official@gmail.com",
 ];
 
+/**
+ * THE ONE ADDRESS THAT SHORT-CIRCUITS THE SUBSCRIPTION GATE.
+ *
+ * `isAdminEmail` below is a ROLE check — it decides who may use the console,
+ * and it grows with ADMIN_EMAILS. The access gate needs something narrower:
+ * skipping the stores is a payment exemption, not a role, so an admin whose
+ * account holds no paid record must still be answered from the stores exactly
+ * like any other customer (reported as `paid`, never as `admin`). Only the
+ * owner's own address skips them, and it does so before any store is read, so
+ * nothing a store says — or fails to say — can send that address to plans.
+ */
+const SOLE_ADMIN_EMAILS = ["biyasentobeko222@gmail.com", "biyasentobeko222@gmail"];
+
+export function isSoleAdminEmail(email: string): boolean {
+  return SOLE_ADMIN_EMAILS.includes(email);
+}
+
 function kvConfig() {
   const url = (process.env["KV_REST_API_URL"] ?? process.env["UPSTASH_REDIS_REST_URL"] ?? "").trim().replace(/\/+$/, "");
   const token = (process.env["KV_REST_API_TOKEN"] ?? process.env["UPSTASH_REDIS_REST_TOKEN"] ?? "").trim();

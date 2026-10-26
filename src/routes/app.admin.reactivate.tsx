@@ -87,7 +87,7 @@ function ReactivationPage() {
     setReactivating(true);
     try {
       // Server-side unbind (KV). The admin's own address authorises it.
-      const result = await reactivateEmail(email, app.email ?? undefined);
+      const result = await reactivateEmail(email);
       if (!result.ok) {
         toast.error(result.error ?? "Reactivation failed");
         return;
