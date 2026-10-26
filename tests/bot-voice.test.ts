@@ -71,6 +71,16 @@ describe("bot voice", () => {
     expect(spoken[0]?.text).toContain("Trade 1 of 1 executed");
   });
 
+  it("never speaks the loop's progress chatter — that is what talked non-stop", () => {
+    // These fire on EVERY scalper pass and carry `ok: true` + a symbol, so the
+    // normaliser reads them as executions. Toasts still show them; the voice
+    // must not say them out loud over and over.
+    speakTradeExecution({ ok: true, status: "reanalysed", symbol: "BTCUSDm", side: "BUY", message: "re-analysed: direction now BUY, opening BUY 0.01 × 1" });
+    speakTradeExecution({ ok: false, status: "blocked", symbol: "BTCUSDm", message: "NO TRADE (weak setup) — RSI flat" });
+    speakTradeExecution({ ok: true, status: "info", message: "Position monitoring restored — the bridge now reports open positions" });
+    expect(spoken).toHaveLength(0);
+  });
+
   it("stays silent when the trader turned the voice off — independently of notifications", () => {
     window.localStorage.setItem("botVoiceEnabled", "false");
     speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "SELL", message: "TRADE 1/1 EXECUTED" });

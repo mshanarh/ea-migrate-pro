@@ -20,7 +20,7 @@ import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type A
 import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
-import { speakBot, unlockBotVoice } from "@/lib/bot-voice";
+import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
@@ -660,6 +660,9 @@ function AppHome() {
       console.info("[bot] STOP pressed — halting the loop (open positions keep their broker SL/TP)");
       scalpRef.current?.stop();
       scalpRef.current = null;
+      // The session is over: cut the voice off wherever it is, including any
+      // lines the native engine still had queued from the last batch.
+      stopBotVoice();
       stopExecution();
       setAnalysisOpen(false);
       toggleRobot(robot.id);

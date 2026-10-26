@@ -543,6 +543,31 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * STOP SPEAKING — the web side calls this when a run has finished
+         * executing. The engine speaks with QUEUE_ADD, so without this a batch
+         * that is already done keeps reading its backlog aloud. tts.stop() ends
+         * the current line AND clears the queue; the held pre-ready line is
+         * dropped for the same reason.
+         */
+        @JavascriptInterface
+        public void stopSpeech() {
+            pendingSpeech = null;
+            pendingVolume = 1.0f;
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (tts != null) {
+                        try {
+                            tts.stop();
+                        } catch (Throwable t) {
+                            android.util.Log.e("EAMIGRATE", "stopSpeech failed: " + t);
+                        }
+                    }
+                }
+            });
+        }
+
+        /**
          * May this app post notifications right now? The web app asks before it
          * promises the user an alert, so a blocked permission shows an honest
          * "turn on notifications" path instead of silently doing nothing.

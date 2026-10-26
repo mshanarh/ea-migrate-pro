@@ -21,6 +21,64 @@ const KEY = "botVoiceEnabled";
 /** The voice level, 0…1 — applied to the browser engine and to native TTS. */
 const VOLUME_KEY = "botVoiceVolume";
 
+/**
+ * THE RUN-OVER STOP.
+ *
+ * The last line of a run (its summary, or its final fill) schedules a stop
+ * after enough time for that line to finish reading. The stop flushes BOTH
+ * engines — the browser queue and Android's QUEUE_ADD backlog — so the voice
+ * speaks the executions and then goes quiet instead of carrying on talking
+ * after the orders are done. A fresh line cancels the pending stop, so a new
+ * run always has a working voice.
+ */
+let pendingStop: ReturnType<typeof setTimeout> | null = null;
+
+function cancelPendingStop(): void {
+  if (pendingStop === null) return;
+  clearTimeout(pendingStop);
+  pendingStop = null;
+}
+
+/** Roughly how long a line takes to read: 400ms per word plus breathing room. */
+function spokenDurationMs(sentence: string): number {
+  const words = sentence.split(/\s+/).filter(Boolean).length;
+  return Math.min(20_000, 1_500 + words * 400);
+}
+
+function scheduleStopAfter(sentence: string): void {
+  cancelPendingStop();
+  pendingStop = setTimeout(() => {
+    pendingStop = null;
+    stopBotVoice();
+  }, spokenDurationMs(sentence));
+}
+
+/**
+ * Silences the voice — used when the run is over and when the trader presses
+ * STOP. Cancels the browser engine and flushes the native one; on an APK that
+ * predates stopSpeech() the native call is simply absent and nothing breaks.
+ */
+export function stopBotVoice(): void {
+  if (typeof window === "undefined") return;
+  cancelPendingStop();
+  try {
+    window.speechSynthesis?.cancel();
+  } catch {
+    /* engine unavailable — nothing to stop */
+  }
+  callNative("stopSpeech");
+}
+
+/**
+ * REFUSED ORDERS ARE HEARD — BUT NEVER ON A LOOP.
+ *
+ * A broker refusal is worth saying out loud. A bridge that is down, or a
+ * scalper pass that keeps finding no trade, must not repeat it every few
+ * seconds: one refusal per this gap, then silence.
+ */
+const REFUSAL_GAP_MS = 20_000;
+let lastRefusalSpokenAt = 0;
+
 export function isBotVoiceEnabled(): boolean {
   if (typeof window === "undefined") return false;
   try {
@@ -129,6 +187,9 @@ export function speakBot(text: string): void {
   }
   const phrase = text.trim();
   if (!phrase) return;
+  // A fresh line cancels any scheduled run-over stop: the voice is still
+  // needed, so the flush must not fire underneath it.
+  cancelPendingStop();
   const volume = getBotVoiceVolume();
   console.info(`[voice] step 5 speakBot: speaking at volume ${volume} → "${phrase}"`);
   // 1. Native Android TTS — AndroidTTS (spec) or the injected EAMigrate bridge.
@@ -367,6 +428,44 @@ export function speakTradeExecution(payload: unknown): void {
     `[voice] step 3 execution: ${execution.status} ${execution.symbol}${execution.side ? ` ${execution.side}` : ""}`,
   );
 
+  // ── WHAT THE VOICE IS ALLOWED TO SAY ─────────────────────────────────────
+  // The bus also carries the bot's PROGRESS chatter — "re-analysed: direction
+  // now BUY…", "waiting for the next M15 candle", "Position monitoring
+  // restored". Much of it arrives with `ok: true` and a symbol, so the
+  // normaliser reads it as an execution, and in scalper mode those lines fire
+  // on EVERY pass: the voice talked non-stop, long after the orders had
+  // finished. Toasts and popups still render every line; the voice speaks only
+  // real outcomes:
+  //   • a fill the broker confirmed (executed),
+  //   • a close the broker confirmed (closed),
+  //   • the closing summary line of a run,
+  //   • a REFUSED order (failed) — at most one per REFUSAL_GAP_MS.
+  // FIRST the producer's own label. A producer that says "reanalysed",
+  // "waiting", "stopped-out" or "info" has described its progress, not an
+  // outcome — and the inference below would happily promote `ok: true` + a
+  // symbol to "executed". The explicit label wins: it is never spoken.
+  const rawLabel = (payload as Record<string, unknown>)["status"];
+  const label = typeof rawLabel === "string" ? rawLabel.trim().toLowerCase() : "";
+  if (label && label !== "executed" && label !== "closed" && label !== "failed") {
+    console.info(`[voice] step 3 skipped — producer labelled the event "${label}", which is progress chatter`);
+    return;
+  }
+
+  const isOutcome =
+    execution.summary || execution.status === "executed" || execution.status === "closed";
+  if (!isOutcome) {
+    if (execution.status !== "failed") {
+      console.info(
+        `[voice] step 3 skipped — "${execution.status ?? "unlabelled"}" is not an execution outcome`,
+      );
+      return;
+    }
+    if (Date.now() - lastRefusalSpokenAt < REFUSAL_GAP_MS) {
+      console.info("[voice] step 3 skipped — a refusal was already announced within the last 20s");
+      return;
+    }
+  }
+
   const signature = executionSignature(execution);
   if (alreadyAnnounced(signature)) {
     console.info("[voice] step 4 skipped — already announced within the repeat window");
@@ -379,4 +478,20 @@ export function speakTradeExecution(payload: unknown): void {
     return;
   }
   speakBot(sentence);
+  if (execution.status === "failed") lastRefusalSpokenAt = Date.now();
+
+  // ── STOP ONCE THE RUN IS DONE EXECUTING ──────────────────────────────────
+  // The closing summary, or the final trade of the batch, is the last thing
+  // the trader needs to hear: schedule the flush so the engines go quiet the
+  // moment that line has been read instead of talking on afterwards.
+  const lastLineOfRun =
+    execution.summary ||
+    (execution.status === "executed" &&
+      execution.index !== null &&
+      execution.total !== null &&
+      execution.index >= execution.total);
+  if (lastLineOfRun) {
+    console.info(`[voice] step 6 run finished executing — stopping the voice in ${spokenDurationMs(sentence)}ms`);
+    scheduleStopAfter(sentence);
+  }
 }

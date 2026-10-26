@@ -44,6 +44,13 @@ type NativeBridge = {
    * media volume applies.
    */
   speakWithVolume?: (text: string, volume: number) => void;
+  /**
+   * Drop whatever the native TextToSpeech engine is still saying and flush its
+   * queue. Android queues announcements (QUEUE_ADD), so a run that finished
+   * used to keep talking long after the last order. Older APKs without this
+   * method are a no-op — callNative simply reports the method is absent.
+   */
+  stopSpeech?: () => void;
   /** Warms the native speech engine from a user tap (v1.5+ wrappers). */
   primeVoice?: () => void;
   /** True once Android's TextToSpeech engine reports SUCCESS. */
