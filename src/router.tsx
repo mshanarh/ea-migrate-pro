@@ -85,6 +85,13 @@ export const getRouter = () => {
     defaultPendingMs: 150,
     defaultPendingMinMs: 0,
     defaultPendingComponent: RoutePending,
+    // AFTER THE FIRST NAVIGATION RESOLVES, the splash is raised to Infinity so
+    // the CURRENT screen stays on view until the next lane loads.  But we MUST
+    // guarantee the splash never hangs forever — if the first navigation never
+    // completes, a hard 8-second timeout forces the app into /app/login so the
+    // person is never stuck on a Loading screen past the first paint.
+    defaultSplashMs: 150,
+    defaultSplashTimeoutMs: 8_000,
   });
 
   /**
@@ -98,9 +105,20 @@ export const getRouter = () => {
    * a genuinely empty first paint.
    */
   let paintedOnce = false;
+  // HARD 8-SECOND GUARANTEE — even if the cloud never answers, the splash
+  // must never hang forever. A timeout after first paint forces the app into
+  // /app/login so the person is never stuck on Loading past the first frame.
+  const splashTimeout = setTimeout(() => {
+    try {
+      window.location.replace("/app/login");
+    } catch {
+      /* a container that refuses to navigate — the route guards still hold */
+    }
+  }, 8_000);
   const stopWatching = router.subscribe("onResolved", () => {
     if (paintedOnce) return;
     paintedOnce = true;
+    clearTimeout(splashTimeout);
     stopWatching();
     try {
       router.update({ ...router.options, defaultPendingMs: Infinity });
