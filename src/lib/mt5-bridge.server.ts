@@ -1,5 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/lib/account-sync.server";
+import { resolveTradeDirection, type BridgeCredentials } from "@/lib/auto-trade";
+
 
 // Server-side calls use the private env var; the fallback is the bridge's
 // current quick-tunnel address (the browser resolves the same address at
@@ -384,9 +386,7 @@ export const executeVpsTrade = createServerFn({ method: "POST" })
     return result.success ? { success: true } : { success: false, error: result.error };
   });
 
-// ----------------------------------------------------------------------------
-// FUNDAMENTALS — news-event execution
-// ----------------------------------------------------------------------------
+
 
 /**
  * One news-signal execution through the VPS bridge.
@@ -566,5 +566,146 @@ export const executeFundamentalsTrades = createServerFn({ method: "POST" })
       freeMargin: Number.isFinite(freeMargin) ? freeMargin : undefined,
       equity: Number.isFinite(equity) ? equity : undefined,
       orders,
+    };
+  });
+
+// ----------------------------------------------------------------------------
+// FUNDAMENTALS — news-event analysis + execution
+// ----------------------------------------------------------------------------
+
+/**
+ * Analyze a news-event symbol using the SAME live start-time engine the
+ * auto-trader uses (last completed M15 candles, real broker quote, real SL/TP
+ * levels). Returns the full plan so the Fundamentals page can show the signal
+ * before anything is sent to MT5.
+ *
+ * This is server-side on purpose: it reads the user's stored MT5 password from
+ * the cloud record (never served to the browser) and signs the candle/quote
+ * calls with the user's OWN account, so the direction follows the broker's
+ * real candles instead of the public fixture table.
+ *
+ * When the user has no MT5 credentials saved, or the bridge cannot answer, the
+ * function returns a clear `ok: false` with the reason — the page shows that
+ * instead of a fabricated plan.
+ */
+export type FundamentalsAnalyzeInput = {
+  userId: string;
+  symbol: string;
+};
+
+export type FundamentalsAnalyzeResult =
+  | {
+      ok: true;
+      symbol: string;
+      direction: "BUY" | "SELL";
+      entry: number;
+      stopLoss: number;
+      takeProfit1: number;
+      takeProfit2: number;
+      /** SL distance at the signal that opened the position (for TP1 math). */
+      slDistance: number;
+      /** Whether the plan's levels sit on the correct side of entry (always true
+       *  for a returned analysis, but surfaced so the page can trust the numbers). */
+      levelsValid: boolean;
+      /** The live price the plan was read from. */
+      livePrice: number;
+      /** When the analysis was produced (ms). The page uses this to reject stale
+       *  analysis at execute time. */
+      analysedAt: number;
+      /** Human-readable reason the plan was shaped this way. */
+      reason: string;
+    }
+  | {
+      ok: false;
+      /** One of: "no_credentials", "bridge_unreachable", "bridge_refused",
+       *  "no_data", "proxy_blocked", "invalid_levels", "direction_blocked". */
+      kind: string;
+      message: string;
+    };
+
+export const analyzeFundamentalsSignal = createServerFn({ method: "POST" })
+  .validator((data: FundamentalsAnalyzeInput) => data)
+  .handler(async ({ data }): Promise<FundamentalsAnalyzeResult> => {
+    const userId = data.userId.trim().toLowerCase();
+    const rawSymbol = data.symbol.trim();
+    if (!userId || !rawSymbol) {
+      return { ok: false, kind: "no_credentials", message: "Missing user or symbol." };
+    }
+
+    const record = await getMt5RecordWithSecret(userId);
+    if (!record || !record.mtPassword) {
+      return {
+        ok: false,
+        kind: "no_credentials",
+        message: "No MT5 account is connected for this user yet. Save your login, password and server on the MetaTrader page first.",
+      };
+    }
+
+    const credentials: BridgeCredentials = {
+      login: Number(record.loginId),
+      password: record.mtPassword,
+      server: record.server,
+    };
+
+    let analysis;
+    try {
+      analysis = await resolveTradeDirection(rawSymbol, {
+        credentials,
+        requireExecutionReady: true,
+        rejectProxyData: true,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (
+        message.includes("could not reach your trading bridge") ||
+        message.includes("bridge unreachable") ||
+        (message.includes("bridge") && message.toLowerCase().includes("unreachable"))
+      ) {
+        return { ok: false, kind: "bridge_unreachable", message };
+      }
+      if (message.toLowerCase().includes("proxy")) {
+        return { ok: false, kind: "proxy_blocked", message };
+      }
+      return { ok: false, kind: "bridge_refused", message };
+    }
+
+    if (analysis.direction.type === "NO_TRADE") {
+      const reason = analysis.reason.toLowerCase();
+      const kind =
+        reason.includes("proxy")
+          ? "proxy_blocked"
+          : reason.includes("missing or unavailable")
+            ? "no_data"
+            : reason.includes("invalid sl/tp") || reason.includes("invalid or zero price")
+              ? "invalid_levels"
+              : "direction_blocked";
+      return { ok: false, kind, message: analysis.reason };
+    }
+
+    const dir = analysis.direction as {
+      type: "BUY" | "SELL";
+      entry: number;
+      sl: number;
+      tp: number;
+      tp1?: number;
+      tp2?: number;
+    };
+    const tp1 = dir.tp1 ?? dir.tp;
+    const tp2 = dir.tp2 ?? dir.tp;
+    const slDistance = Math.abs(dir.entry - dir.sl);
+
+    return {
+      ok: true,
+      symbol: rawSymbol,
+      direction: dir.type,
+      entry: dir.entry,
+      stopLoss: dir.sl,
+      takeProfit1: tp1,
+      takeProfit2: tp2,
+      slDistance,
+      levelsValid: true,
+      livePrice: dir.entry,
+      analysedAt: analysis.timestamp,
+      reason: analysis.reason,
     };
   });

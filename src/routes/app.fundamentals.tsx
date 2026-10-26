@@ -6,7 +6,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
-import { executeFundamentalsTrades, type FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
+import { analyzeFundamentalsSignal, executeFundamentalsTrades, type FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
 import { useTradingPairsStore } from "@/lib/trading-pairs-store";
 
 // ------------------------------------------------------------------ tokens
@@ -177,7 +177,7 @@ function FundamentalsPage() {
   const app = useAppState();
   const { tradingPairs } = useTradingPairsStore();
 
-  /** ALLOWED QUOTES: the mentor's active list, plus the quotes the user's own
+  /** ALLOWED QUOTES: the mentor's active list, plus the symbols the user's own
    *  robots trade — so an event always resolves to real, tradeable symbols. */
   const allowedSymbols = useMemo(() => {
     const fromMentor = tradingPairs.filter((pair) => pair.active).map((pair) => pair.symbol);
@@ -198,7 +198,30 @@ function FundamentalsPage() {
   const [feedState, setFeedState] = useState<FeedState>("loading");
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  const [lot, setLot] = useState("0.01");
+  // ── Analyse-and-execute state ──────────────────────────────────────────────
+  const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
+  const [analysis, setAnalysis] = useState<
+    | {
+        symbol: string;
+        direction: "BUY" | "SELL";
+        entry: number;
+        stopLoss: number;
+        takeProfit1: number;
+        takeProfit2: number;
+        slDistance: number;
+        levelsValid: boolean;
+        livePrice: number;
+        analysedAt: number;
+        reason: string;
+      }
+    | null
+  >(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+
+  // Pre-fill from the bot's current configured defaults (lot from app settings,
+  // trades defaults to 1 — matching the existing behavior).
+  const [lot, setLot] = useState(app.settings.lotSize ?? "0.01");
   const [trades, setTrades] = useState("1");
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
@@ -226,10 +249,16 @@ function FundamentalsPage() {
     void loadCalendar(false);
   }, [loadCalendar]);
 
+  // Reset the analyse/execute state whenever the selected event changes.
   useEffect(() => {
+    setSelectedSymbol(null);
+    setAnalysis(null);
+    setAnalyzeError(null);
     setResult(null);
     setFormError(null);
-  }, [selectedId]);
+    setLot(app.settings.lotSize ?? "0.01");
+    setTrades("1");
+  }, [selectedId, app.settings.lotSize]);
 
   const selected = selectedId ? EVENTS.find((event) => event.id === selectedId) ?? null : null;
   const release = useMemo(
@@ -248,14 +277,69 @@ function FundamentalsPage() {
       ? Number((lotValue * tradesValue).toFixed(4))
       : 0;
 
+  // ── ANALYZE ─────────────────────────────────────────────────────────────────
+  const analyze = async () => {
+    setAnalyzeError(null);
+    setAnalysis(null);
+    if (!selected) return;
+    if (!release || !release.direction) {
+      setAnalyzeError("The event has not given a direction yet — nothing to analyze");
+      return;
+    }
+    const symbol = selectedSymbol ?? symbols[0];
+    if (!symbol) {
+      setAnalyzeError(`No Allowed Quote is affected by ${selected.currency}`);
+      return;
+    }
+    if (!symbols.includes(symbol)) {
+      setAnalyzeError(`${symbol} is no longer in your Allowed Quotes — pick another`);
+      return;
+    }
+    const userId = getAppState().email;
+    if (!userId) {
+      setAnalyzeError("Sign in again to analyze");
+      return;
+    }
+
+    setAnalyzing(true);
+    try {
+      const reply = await analyzeFundamentalsSignal({
+        data: { userId, symbol },
+      });
+      if (!reply.ok) {
+        setAnalyzeError(reply.message);
+        return;
+      }
+      setAnalysis(reply);
+      setAnalyzeError(null);
+    } catch (error) {
+      setAnalyzeError(error instanceof Error ? error.message : "Analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  };
+
+  // ── EXECUTE ─────────────────────────────────────────────────────────────────
   const execute = async () => {
     setFormError(null);
     setResult(null);
     if (!selected) return;
-    if (!release || !release.direction) {
-      setFormError("The event has not given a direction yet — nothing to execute");
+
+    // Direction must come from the analysis and the executed side must match it.
+    if (!analysis || !analysis.direction) {
+      setFormError("No analyzed signal yet — press Analyze first");
       return;
     }
+
+    // Block execution when the analysis is stale (older than 5 minutes).
+    const ageMs = Date.now() - analysis.analysedAt;
+    if (ageMs > 5 * 60 * 1000) {
+      setFormError(
+        `The analysis is ${Math.round(ageMs / 1000)}s old — press Analyze again for fresh levels before executing`,
+      );
+      return;
+    }
+
     if (!Number.isFinite(lotValue) || lotValue <= 0) {
       setFormError("Lot size must be greater than 0");
       return;
@@ -264,11 +348,17 @@ function FundamentalsPage() {
       setFormError("Number of trades must be a whole number above 0");
       return;
     }
-    const symbol = symbols[0];
+
+    const symbol = selectedSymbol ?? symbols[0];
     if (!symbol) {
       setFormError(`No Allowed Quote is affected by ${selected.currency}`);
       return;
     }
+    if (!symbols.includes(symbol)) {
+      setFormError(`${symbol} is no longer in your Allowed Quotes — analyze again`);
+      return;
+    }
+
     const userId = getAppState().email;
     if (!userId) {
       setFormError("Sign in again to execute");
@@ -282,9 +372,11 @@ function FundamentalsPage() {
           userId,
           symbol,
           // The analysed side is the only side this button can send.
-          direction: release.direction,
+          direction: analysis.direction,
           lotSize: lotValue,
           trades: tradesValue,
+          stopLoss: analysis.stopLoss,
+          takeProfit: analysis.takeProfit1,
         },
       });
       setResult(reply);
@@ -297,6 +389,18 @@ function FundamentalsPage() {
   };
 
   const eventName = selected?.label ?? "event";
+
+  const directionColor = (direction: "BUY" | "SELL") =>
+    direction === "BUY" ? "#4ade80" : "#f87171";
+
+  const levelsNumeric = (analysis && analysis.levelsValid)
+    ? {
+        entry: analysis.entry,
+        sl: analysis.stopLoss,
+        tp1: analysis.takeProfit1,
+        tp2: analysis.takeProfit2,
+      }
+    : null;
 
   return (
     <div
@@ -429,6 +533,7 @@ function FundamentalsPage() {
 
             {feedState === "ready" && release && (
               <>
+                {/* Release detail */}
                 <div className={CARD}>
                   <div className="flex items-start justify-between gap-2">
                     <p className={HEADING}>
@@ -456,8 +561,9 @@ function FundamentalsPage() {
                   <p className="mt-3 text-[12px] text-white/55">{release.detail}</p>
                 </div>
 
+                {/* Calendar-side signal summary */}
                 <div className={CARD}>
-                  <p className={HEADING}>Signal</p>
+                  <p className={HEADING}>Calendar signal</p>
                   {release.direction ? (
                     <>
                       <p className="mt-1 text-[13px] font-extrabold text-white/90">
@@ -475,7 +581,7 @@ function FundamentalsPage() {
                               <span className="text-[12px] font-bold text-white/85">{symbol}</span>
                               <span
                                 className="text-[12px] font-black"
-                                style={{ color: release.direction === "BUY" ? "#4ade80" : "#f87171" }}
+                                style={{ color: directionColor(release.direction!) }}
                               >
                                 {release.direction}
                               </span>
@@ -497,88 +603,221 @@ function FundamentalsPage() {
                   )}
                 </div>
 
+                {/* Analyze + Execute flow */}
                 {release.direction && symbols.length > 0 && (
-                  <div className={CARD}>
-                    <p className={HEADING}>Execute</p>
-                    <div className="mt-3 grid grid-cols-2 gap-2">
-                      <label className="block">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Lot size</span>
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          step="0.01"
-                          min="0.01"
-                          value={lot}
-                          onChange={(event) => setLot(event.target.value)}
-                          className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
-                        />
-                      </label>
-                      <label className="block">
-                        <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Trades</span>
-                        <input
-                          type="number"
-                          inputMode="numeric"
-                          step="1"
-                          min="1"
-                          value={trades}
-                          onChange={(event) => setTrades(event.target.value)}
-                          className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
-                        />
-                      </label>
-                    </div>
+                  <>
+                    {/* Symbol chooser when more than one Allowed Quote matches */}
+                    {symbols.length > 1 && (
+                      <div className={CARD}>
+                        <p className={HEADING}>Choose symbol</p>
+                        <p className="mt-1 text-[11px] text-white/45">
+                          More than one Allowed Quote moves {release.event.currency} — pick the one to analyze.
+                        </p>
+                        <div className="mt-3 flex flex-wrap gap-2">
+                          {symbols.map((symbol) => (
+                            <button
+                              key={symbol}
+                              type="button"
+                              onClick={() => setSelectedSymbol(symbol)}
+                              className={`rounded-xl border px-3 py-2 text-[12px] font-bold transition-none active:scale-[0.99] ${
+                                selectedSymbol === symbol
+                                  ? "border-white/40 bg-white/10 text-white"
+                                  : "border-white/10 bg-[#1a1a1a] text-white/70"
+                              }`}
+                            >
+                              {symbol}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    )}
 
-                    <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Total volume</span>
-                      <span className="text-[14px] font-black tabular-nums text-white/90">{totalVolume.toFixed(2)}</span>
-                    </div>
+                    {/* Analyze card */}
+                    <div className={CARD}>
+                      <p className={HEADING}>Analyze</p>
+                      <p className="mt-1 text-[11px] text-white/45">
+                        {selectedSymbol != null ? (
+                          <span className="font-semibold text-white/70">{selectedSymbol}</span>
+                        ) : (
+                          <span className="font-semibold text-white/70">{symbols[0]}</span>
+                        )}{" "}
+                        — fetch fresh broker candles for this currency and read the last completed M15 move.
+                      </p>
 
-                    <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                      <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                        Signal / Order side
-                      </span>
-                      <span className="text-[12px] font-black text-white/90">
-                        {release.direction} · {release.direction}
-                      </span>
-                    </div>
+                      {analyzeError && (
+                        <p className="mt-2 text-[12px] text-red-300">{analyzeError}</p>
+                      )}
 
-                    <button
-                      type="button"
-                      onClick={() => void execute()}
-                      disabled={executing}
-                      className="mt-3 flex h-12 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-50"
-                    >
-                      {executing ? <Loader2 className="size-5 animate-spin" /> : `EXECUTE ${release.direction} ${symbols[0]}`}
-                    </button>
+                      {analysis && (
+                        <div className="mt-3 rounded-xl border border-white/10 bg-[#1a1a1a] p-3">
+                          <div className="flex items-center justify-between">
+                            <p className="text-[13px] font-extrabold text-white/90">
+                              {analysis.direction}
+                            </p>
+                            <span
+                              className="shrink-0 text-[11px] font-black"
+                              style={{ color: directionColor(analysis.direction) }}
+                            >
+                              {analysis.direction}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                            Analyzed {analysis.symbol} · direction from broker candles
+                          </p>
 
-                    {formError && <p className="mt-2 text-[12px] text-red-300">{formError}</p>}
-                  </div>
-                )}
+                          <div className="mt-3 grid grid-cols-2 gap-2">
+                            {[
+                              { label: "Entry", value: levelsNumeric?.entry },
+                              { label: "Stop loss", value: levelsNumeric?.sl },
+                              { label: "TP1 (1× SL)", value: levelsNumeric?.tp1 },
+                              { label: "TP2 (2× SL)", value: levelsNumeric?.tp2 },
+                            ].map((item) => (
+                              <div key={item.label} className="rounded-xl bg-white/[0.04] px-3 py-2">
+                                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-white/35">
+                                  {item.label}
+                                </p>
+                                <p className="mt-0.5 text-[13px] font-black tabular-nums text-white/90">
+                                  {item.value != null ? formatPrice(item.value) : "—"}
+                                </p>
+                              </div>
+                            ))}
+                          </div>
 
-                {result && result.orders.length > 0 && (
-                  <div className={CARD}>
-                    <p className={HEADING}>MT5 confirmation</p>
-                    <p className="mt-1 text-[11px] text-white/40">
-                      {result.brokerSymbol ? `Broker symbol ${result.brokerSymbol}` : ""}
-                      {result.livePrice ? ` · live ${result.livePrice}` : ""}
-                    </p>
-                    <div className="mt-2 space-y-1.5">
-                      {result.orders.map((order) => (
-                        <div
-                          key={order.index}
-                          className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2"
+                          <div className="mt-2 text-[10px] text-white/40">
+                            {analysis.reason}
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="mt-3 flex flex-col gap-2">
+                        <button
+                          type="button"
+                          onClick={() => void analyze()}
+                          disabled={analyzing || !release.direction || symbols.length === 0}
+                          className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-40"
                         >
-                          <span className="text-[12px] font-bold text-white/85">
-                            #{order.index} {release.direction}
+                          {analyzing ? (
+                            <Loader2 className="size-4 animate-spin" />
+                          ) : (
+                            `Analyze ${selectedSymbol ?? symbols[0]}`
+                          )}
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Execute card — only after a fresh analysis exists */}
+                    {analysis && analysis.direction && (
+                      <div className={CARD}>
+                        <p className={HEADING}>Execute</p>
+
+                        <div className="mt-3 grid grid-cols-2 gap-2">
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                              Lot size
+                            </span>
+                            <input
+                              type="number"
+                              inputMode="decimal"
+                              step="0.01"
+                              min="0.01"
+                              value={lot}
+                              onChange={(event) => setLot(event.target.value)}
+                              className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
+                            />
+                          </label>
+                          <label className="block">
+                            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                              Number of trades
+                            </span>
+                            <input
+                              type="number"
+                              inputMode="numeric"
+                              step="1"
+                              min="1"
+                              value={trades}
+                              onChange={(event) => setTrades(event.target.value)}
+                              className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
+                            />
+                          </label>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
+                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                            Total volume
                           </span>
-                          <span className="text-[11px] font-semibold tabular-nums text-white/55">
-                            {order.status === "executed"
-                              ? `ticket ${order.ticket} @ ${order.entry}`
-                              : order.error ?? "not executed"}
+                          <span className="text-[14px] font-black tabular-nums text-white/90">
+                            {totalVolume.toFixed(2)}
                           </span>
                         </div>
-                      ))}
-                    </div>
-                  </div>
+
+                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
+                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                            Analyzed direction
+                          </span>
+                          <span className="text-[12px] font-black text-white/90">
+                            {analysis.direction} · {analysis.symbol}
+                          </span>
+                        </div>
+
+                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
+                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                            Order side
+                          </span>
+                          <span
+                            className="text-[12px] font-black"
+                            style={{ color: directionColor(analysis.direction) }}
+                          >
+                            {analysis.direction} (must match analysis)
+                          </span>
+                        </div>
+
+                        <button
+                          type="button"
+                          onClick={() => void execute()}
+                          disabled={executing}
+                          className="mt-3 flex h-12 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-50"
+                        >
+                          {executing ? (
+                            <Loader2 className="size-5 animate-spin" />
+                          ) : (
+                            `EXECUTE ${analysis.direction} ${analysis.symbol}`
+                          )}
+                        </button>
+
+                        {formError && <p className="mt-2 text-[12px] text-red-300">{formError}</p>}
+                      </div>
+                    )}
+
+                    {/* MT5 confirmation */}
+                    {result && result.orders.length > 0 && (
+                      <div className={CARD}>
+                        <p className={HEADING}>MT5 confirmation</p>
+                        <p className="mt-1 text-[11px] text-white/40">
+                          {result.brokerSymbol ? `Broker symbol ${result.brokerSymbol}` : ""}
+                          {result.livePrice != null ? ` · live ${formatPrice(result.livePrice)}` : ""}
+                          {result.freeMargin != null ? ` · free margin ${result.freeMargin.toFixed(2)}` : ""}
+                        </p>
+                        <div className="mt-2 space-y-1.5">
+                          {result.orders.map((order) => (
+                            <div
+                              key={order.index}
+                              className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2"
+                            >
+                              <span className="text-[12px] font-bold text-white/85">
+                                #{order.index} {analysis?.direction ?? "—"}
+                              </span>
+                              <span className="text-[11px] font-semibold tabular-nums text-white/55">
+                                {order.status === "executed"
+                                  ? `ticket ${order.ticket} @ ${formatPrice(order.entry)}`
+                                  : order.error ?? "not executed"}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-[11px] text-white/40">{result.message}</p>
+                      </div>
+                    )}
+                  </>
                 )}
               </>
             )}
@@ -590,6 +829,14 @@ function FundamentalsPage() {
       <FixedBottomNav />
     </div>
   );
+}
+
+function formatPrice(value: number | undefined): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return "—";
+  if (Math.abs(value) >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (Math.abs(value) >= 1) return value.toFixed(2);
+  if (Math.abs(value) >= 0.01) return value.toFixed(4);
+  return value.toFixed(6);
 }
 
 function FundamentalsErrorFallback() {
