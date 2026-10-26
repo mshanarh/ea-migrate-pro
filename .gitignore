@@ -38,3 +38,4 @@ tsconfig.tsbuildinfo
 isolate/
 supabase/.temp/
 scripts/migrate-upstash-to-supabase.mjs
+public/bridge/__pycache__/
