@@ -5,12 +5,16 @@ import { isVideoActive, subscribeVideoActive } from "@/lib/video-playback";
 type RobotMediaProps = {
   image: string;
   video?: string | undefined;
-  /** "hero" = big media screen — plays the video IN the card when active;
+  /** "hero" = big media screen — plays the video INSIDE the card when active;
    *  "avatar" = small round slot — ALWAYS the picture. */
   variant?: "hero" | "avatar";
   className: string;
   /** Kept for call-site compatibility — small slots always show the picture. */
   preferImage?: boolean;
+  /** When true, the big-screen slot autoplays the video as soon as it is
+   *  playable, without waiting for the user's HOME double-press toggle. Use
+   *  this for the full-screen interfaces the owner wants to play on open. */
+  autoplayOnLoad?: boolean;
 };
 
 /** Subscribe to the HOME double-press video toggle. */
@@ -92,13 +96,24 @@ function useEnsurePlaying(active: boolean, playableSrc: string | undefined) {
  *   • Big screens (hero) — the picture by default; when the HOME double-press
  *     turns the video ON, the video plays INSIDE the card (not the background),
  *     exactly as the owner asked for the big-screen interfaces.
+ *   • When autoplayOnLoad is true, the big-screen slot autoplays the video as
+ *     soon as it is playable, without waiting for the HOME double-press toggle.
  */
-export function RobotMedia({ image, video, variant = "hero", className, preferImage = false }: RobotMediaProps) {
+export function RobotMedia({
+  image,
+  video,
+  variant = "hero",
+  className,
+  preferImage = false,
+  autoplayOnLoad = false,
+}: RobotMediaProps) {
   const active = useVideoActive();
   const playableSrc = usePlayableVideo(video);
   const videoRef = useEnsurePlaying(active, playableSrc);
 
-  const playInSlot = variant === "hero" && !preferImage && active && Boolean(video && playableSrc);
+  const playInSlot =
+    variant === "hero" && !preferImage && Boolean(video && playableSrc) &&
+    (active || autoplayOnLoad);
   if (playInSlot) {
     return (
       <video

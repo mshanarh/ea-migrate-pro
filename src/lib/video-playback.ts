@@ -1,5 +1,6 @@
-/**
- * Double-tap-HOME video playback — now a TOGGLE.
+/** 
+ * Double-tap-HOME video playback — now a TOGGLE that does NOT govern on-load
+ * autoplay.
  *
  * The robot's picture always shows in the interface slots; the uploaded video
  * plays only as the full-screen background layer. Pressing HOME twice starts
@@ -11,6 +12,12 @@
  * the video is already playing when the user returns home. The "Robot Video"
  * toggle in Settings → Back Animation persists via the auto flag — with it
  * on, playback starts by itself on later visits.
+ *
+ * IMPORTANT: the toggle is now ONLY the HOME double-press / Settings switch
+ * for the BACKGROUND layer and the big-screen "play in the card when active"
+ * behavior. Big-screen interfaces that should autoplay the video when the
+ * app opens do NOT depend on this toggle. They pass autoplayOnLoad on the
+ * slot itself.
  */
 
 const activeListeners = new Set<() => void>();
