@@ -42,6 +42,8 @@ export function PoweredBadge({
 
 type ActionDef = { label: string; icon: typeof Play; onClick: () => void };
 
+type VideoActionDef = { label: string; icon: typeof Play; onClick: () => void; primary?: boolean; accent?: string };
+
 function useActions({ robot, onStart, onQuotes, onRemove }: Pick<ThemeContentProps, "robot" | "onStart" | "onQuotes" | "onRemove">): ActionDef[] {
   const running = robot?.running ?? false;
   return [
@@ -49,6 +51,17 @@ function useActions({ robot, onStart, onQuotes, onRemove }: Pick<ThemeContentPro
     { label: "QUOTES", icon: Waves, onClick: onQuotes },
     { label: "REMOVE", icon: Trash2, onClick: onRemove },
   ];
+}
+
+function useVideoAction(robot: Robot | undefined, onPlayVideo: () => void, accent: string): VideoActionDef | null {
+  if (!robot?.video) return null;
+  return {
+    label: "PLAY VIDEO",
+    icon: Play,
+    onClick: onPlayVideo,
+    primary: true,
+    accent,
+  };
 }
 
 function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => void }) {
@@ -320,7 +333,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 
 /* ---------------- SWITCH ---------------- */
 
-export function ThemeContent(props: ThemeContentProps) {
+export function ThemeContent(props: ThemeContentProps & { onPlayVideo?: () => void | undefined }) {
   const { theme, color } = useCustomization();
   const accent = accentColorValue(color);
   // Home's themed backdrop follows the SAME persisted Background Picture
@@ -347,10 +360,12 @@ export function ThemeContent(props: ThemeContentProps) {
   );
 }
 
-function ThemeContentInner(props: ThemeContentProps) {
+function ThemeContentInner(props: ThemeContentProps & { onPlayVideo?: () => void | undefined }) {
   const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
+  const videoAction = useVideoAction(props.robot, props.onPlayVideo ?? (() => {}), accent);
+  const handlePlayVideo: (() => void) | undefined = videoAction?.onClick;
 
   // The eight real Main Interfaces (Crimson Navigator … Ultron Mega) render
   // the definition-driven console: same live robot/broker data, the
@@ -365,6 +380,7 @@ function ThemeContentInner(props: ThemeContentProps) {
         accent={accent}
         actions={actions}
         onOpenAdd={props.onOpenAdd}
+        {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})}
       />
     );
   }
@@ -392,22 +408,22 @@ function ThemeContentInner(props: ThemeContentProps) {
   }
 
   if (theme === "PHANTOM PULSE") {
-    return <PhantomPulse {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+    return <PhantomPulse {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "TITAN EDGE") {
-    return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} />;
+    return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "PRIME FORGE") {
-    return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+    return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "SNIFFER") {
-    return <Sniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+    return <Sniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "VORTEX 1") {
-    return <Vortex robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+    return <Vortex robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "PHOENIX") {
-    return <Phoenix robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+    return <Phoenix robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} {...(handlePlayVideo !== undefined ? { onPlayVideo: handlePlayVideo } : {})} />;
   }
   if (theme === "BLUEPRINT EDGE") {
     return (

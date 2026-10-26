@@ -6,6 +6,7 @@ import { heroDecoration } from "@/lib/interface-themes";
 import { RobotMedia } from "@/components/app/RobotMedia";
 
 type ActionDef = { label: string; icon: typeof Play; onClick: () => void };
+type VideoActionDef = { label: string; icon: typeof Play; onClick: () => void; primary?: boolean; accent?: string };
 
 /**
  * THE STYLED INTERFACE CONSOLE — the Home screen for the eight real Main
@@ -25,12 +26,14 @@ export function InterfaceConsole({
   accent,
   actions,
   onOpenAdd,
+  onPlayVideo,
 }: {
   definition: InterfaceDefinition;
   robot: Robot | undefined;
   accent: string;
   actions: ActionDef[];
   onOpenAdd: () => void;
+  onPlayVideo?: () => void | undefined;
 }) {
   const decoration = heroDecoration(definition);
   const running = robot?.running ?? false;
@@ -152,7 +155,18 @@ export function InterfaceConsole({
           </div>
         </div>
 
-        <div className="relative mt-5 grid grid-cols-3 gap-2">
+        {robot?.video && onPlayVideo && (
+        <button
+          type="button"
+          onClick={onPlayVideo}
+          className="if-control if-card-alt if-text plat-pressable flex flex-col items-center gap-1.5 border py-3"
+          style={{ borderColor: `${definition.signature}44` }}
+        >
+          <Play className="size-5" style={{ color: definition.signature }} strokeWidth={2.3} />
+          <span className="if-header text-[10px] tracking-[0.14em]">Play Video</span>
+        </button>
+      )}
+      <div className="relative mt-5 grid grid-cols-3 gap-2">
           {actions.map(({ label, icon: Icon, onClick }) => (
             <button
               key={label}

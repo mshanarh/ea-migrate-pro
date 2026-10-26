@@ -21,6 +21,7 @@ import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotCo
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
+import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
@@ -775,6 +776,14 @@ function AppHome() {
   // matched against the route tree (no more typo'd hrefs landing on the 404)
   // and the navigation stays in the SPA instead of reloading the document.
   const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
+  const handlePlayVideo = () => {
+    if (!robot?.video) {
+      toast.info("No robot video yet — your mentor can upload one");
+      return;
+    }
+    toggleVideoPlayback();
+    toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+  };
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
@@ -814,6 +823,7 @@ function AppHome() {
             onOpenSymbols={() => { void navigate({ to: "/app/metatrader" }); }}
             onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
+            onPlayVideo={handlePlayVideo}
           />
         </main>
       </div>
