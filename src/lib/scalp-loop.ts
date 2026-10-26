@@ -41,6 +41,17 @@ import {
 /** Every order this loop opens carries this magic number. */
 export const SCALP_MAGIC = 26_102_401;
 
+/**
+ * Scalper close rule: close the instant the broker's own floating profit in
+ * the account currency is positive. BUY profit is positive when price > entry;
+ * SELL profit is positive when price < entry, so the sign is flipped.
+ */
+function isProfitablePosition(position: BridgePosition): boolean {
+  if (position.profit == null) return false;
+  if (position.type === "BUY") return position.profit > 0;
+  return position.profit < 0;
+}
+
 const POLL_MS = 6_000;
 const M15_MS = 15 * 60 * 1000;
 
@@ -210,6 +221,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       profit,
       entry: position.price_current,
     });
+    // Speak the close through the trade voice. The announcer treats a
+    // confirmed "closed" line as a real outcome, but does not stop the
+    // run on it — the next close then open and every later fill is still
+    // heard until the run-over summary or the final numbered trade.
     return Number.isFinite(profit) ? profit : null;
   };
 
@@ -304,8 +319,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
               price: trade.entry,
             };
             opens.push(opened);
-            if (notifyNow) notifyTradeOpened(opened);
-            broadcast(
+            if (notifyNow) notifyTradeOpened(opened);              broadcast(
               `opened ${trade.side} ${trade.lotSize} at price ${trade.entry}, SL ${trade.sl}, TP1 ${trade.tp}`,
               {
                 symbol,
@@ -316,8 +330,14 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
                 status: "executed",
                 lotSize: trade.lotSize,
                 ...(trade.meta?.mtOrderId ? { orderId: trade.meta.mtOrderId } : {}),
+                summary: false,
               },
             );
+            // Speak the confirmed fill through the trade voice. The announcer
+            // reads the event's own status and skips chatter, repeats and run-over
+            // summaries, so a confirmed fill is spoken once and the voice keeps
+            // running for the next close then open and every later fill until the
+            // run-over summary or the final numbered trade.
           } else if (trade.message) {
             fail(trade.message, { symbol, status: trade.status });
             if (trade.status === "blocked") {
@@ -428,17 +448,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
           continue;
         }
 
-        // Scalper rule (this session): close the instant the broker's own
-        // floating profit is positive in the account currency. Anything above
-        // zero is "in the blue" and is taken now; no spread cost, no ATR guard,
-        // no TP1 distance threshold, no waiting for a candle close or the
-        // 300-second countdown — the live M15 loop re-opens the next trade in
-        // the same pass once the close is broker-confirmed.
-        const liveProfit =
-          scalperPosition.type === "BUY"
-            ? scalperPosition.profit
-            : -scalperPosition.profit;
-        if (scalperPosition.profit <= 0) {
+        // Scalper rule (this session): the position only needs closing once it
+        // earns more than zero in the broker's own profit field. The close is
+        // broker-confirmed before any notification is sent, and after a confirmed
+        // close the same pass re-opens the next trade in the fresh direction with
+        // no button press needed.
+        if (!isProfitablePosition(scalperPosition)) {
           continue;
         }
 
@@ -450,6 +465,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         if (profit !== null) {
           const closeInfo: ClosedTrade = { number: closedTrack?.tradeNo ?? 0, profit };
           tracks.delete(symbol);
+          // A confirmed broker-side close is announced exactly once as a real
+          // closed line. It does not stop the scalper run: the voice keeps
+          // speaking for every later close then open and every later fill until
+          // the run-over summary or the final numbered trade.
           if (stopped) {
             notifyTradeClosed(closeInfo);
             continue;
@@ -468,6 +487,11 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
             notifyTradeClosed(closeInfo);
             if (outcome.kind === "skipped") notifyTradeSkipped(symbol, outcome.reason);
           }
+        } else {
+          // The broker did not confirm the close. Re-clear the in-flight guard
+          // so the symbol is not left permanently pending and the next tick can
+          // try the position again.
+          if (track) tracks.set(symbol, { ...track, pending: false });
         }
         continue;
       }

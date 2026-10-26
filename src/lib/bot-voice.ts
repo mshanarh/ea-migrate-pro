@@ -1,10 +1,10 @@
-/**
- * Bot Voice — the smooth male voice that welcomes the trader and reads live
- * trade announcements. In a browser it runs on SpeechSynthesis (on-device, no
- * network); inside the Android wrapper it routes to the NATIVE TextToSpeech
- * bridge, because the WebView's speechSynthesis is silent there. The toggle
- * in Settings → Back Animation → Bot Voice persists in localStorage; the app
- * announces through `speakBot` which no-ops when disabled or unsupported.
+/** 
+ * Bot Voice — the smooth male voice that welcomes the trader and reads live 
+ * trade announcements. In a browser it runs on SpeechSynthesis (on-device, no 
+ * network); inside the Android wrapper it routes to the NATIVE TextToSpeech 
+ * bridge, because the WebView's speechSynthesis is silent there. The toggle 
+ * in Settings → Back Animation → Bot Voice persists in localStorage; the app 
+ * announces through `speakBot` which no-ops when disabled or unsupported. 
  */
 
 import { callNative, hasNativeBridge, queryNative } from "@/lib/native-bridge";
@@ -16,20 +16,21 @@ import {
   normalizeExecution,
   type NormalizedExecution,
 } from "@/lib/execution-events";
+import { describeClose, describeOpen, ClosedTrade, OpenedTrade } from "./bot-notify";
 
 const KEY = "botVoiceEnabled";
 /** The voice level, 0…1 — applied to the browser engine and to native TTS. */
 const VOLUME_KEY = "botVoiceVolume";
 
-/**
- * THE RUN-OVER STOP.
+/** 
+ * THE RUN-OVER STOP. 
  *
- * The last line of a run (its summary, or its final fill) schedules a stop
- * after enough time for that line to finish reading. The stop flushes BOTH
- * engines — the browser queue and Android's QUEUE_ADD backlog — so the voice
- * speaks the executions and then goes quiet instead of carrying on talking
- * after the orders are done. A fresh line cancels the pending stop, so a new
- * run always has a working voice.
+ * The last line of a run (its summary, or its final fill) schedules a stop 
+ * after enough time for that line to finish reading. The stop flushes BOTH 
+ * engines — the browser queue and Android's QUEUE_ADD backlog — so the voice 
+ * speaks the executions and then goes quiet instead of carrying on talking 
+ * after the orders are done. A fresh line cancels the pending stop, so a new 
+ * run always has a working voice. 
  */
 let pendingStop: ReturnType<typeof setTimeout> | null = null;
 
@@ -53,10 +54,10 @@ function scheduleStopAfter(sentence: string): void {
   }, spokenDurationMs(sentence));
 }
 
-/**
- * Silences the voice — used when the run is over and when the trader presses
- * STOP. Cancels the browser engine and flushes the native one; on an APK that
- * predates stopSpeech() the native call is simply absent and nothing breaks.
+/** 
+ * Silences the voice — used when the run is over and when the trader presses 
+ * STOP. Cancels the browser engine and flushes the native one; on an APK that 
+ * predates stopSpeech() the native call is simply absent and nothing breaks. 
  */
 export function stopBotVoice(): void {
   if (typeof window === "undefined") return;
@@ -69,12 +70,12 @@ export function stopBotVoice(): void {
   callNative("stopSpeech");
 }
 
-/**
- * REFUSED ORDERS ARE HEARD — BUT NEVER ON A LOOP.
+/** 
+ * REFUSED ORDERS ARE HEARD — BUT NEVER ON A LOOP. 
  *
- * A broker refusal is worth saying out loud. A bridge that is down, or a
- * scalper pass that keeps finding no trade, must not repeat it every few
- * seconds: one refusal per this gap, then silence.
+ * A broker refusal is worth saying out loud. A bridge that is down, or a 
+ * scalper pass that keeps finding no trade, must not repeat it every few 
+ * seconds: one refusal per this gap, then silence. 
  */
 const REFUSAL_GAP_MS = 20_000;
 let lastRefusalSpokenAt = 0;
@@ -97,27 +98,27 @@ export function setBotVoiceEnabled(value: boolean): void {
   }
 }
 
-/**
- * The voice level the trader picked, 0…1.
+/** 
+ * The voice level the trader picked, 0…1. 
  *
- * On Android the native engine plays through the device's media stream, so
- * the phone's own volume keys remain the master control; this value is the
- * app-level trim on top of it. The browser engine has no such control, so
- * there it IS the level.
+ * On Android the native engine plays through the device's media stream, so 
+ * the phone's own volume keys remain the master control; this value is the 
+ * app-level trim on top of it. The browser engine has no such control, so 
+ * there it IS the level. 
  */
 export function getBotVoiceVolume(): number {
   if (typeof window === "undefined") return 1;
   try {
     const stored = window.localStorage.getItem(VOLUME_KEY);
-    /**
-     * NOT-SET IS FULL VOLUME.
+    /** 
+     * NOT-SET IS FULL VOLUME. 
      *
-     * `Number(null)` is 0, and 0 is finite — so this used to return 0 for every
-     * trader who had never touched the volume slider. speechSynthesis (and the
-     * Android TTS bridge) then spoke every announcement at volume 0: the trade
-     * notifications appeared, the voice stayed completely silent, and nothing
-     * anywhere reported an error. An absent key means "the default", and the
-     * default is 1.
+     * `Number(null)` is 0, and 0 is finite — so this used to return 0 for every 
+     * trader who had never touched the volume slider. speechSynthesis (and the 
+     * Android TTS bridge) then spoke every announcement at volume 0: the trade 
+     * notifications appeared, the voice stayed completely silent, and nothing 
+     * anywhere reported an error. An absent key means "the default", and the 
+     * default is 1. 
      */
     if (stored === null || stored.trim() === "") return 1;
     const raw = Number(stored);
@@ -156,22 +157,22 @@ function pickVoice(): SpeechSynthesisVoice | null {
   return cachedMaleVoice;
 }
 
-/**
- * Announce a phrase in the bot's smooth male voice — THE single speak
- * helper every announcement routes through (welcome, execution start, each
- * executed trade):
+/** 
+ * Announce a phrase in the bot's smooth male voice — THE single speak 
+ * helper every announcement routes through (welcome, execution start, each 
+ * executed trade): 
  *
- *   1. NATIVE ANDROID TTS FIRST: window.AndroidTTS when the wrapper injects
- *      it, otherwise the window.EAMigrate bridge the app actually ships.
- *      When either is present it owns speech completely — return without
- *      touching speechSynthesis, so nothing is ever spoken twice (the
- *      WebView's own speechSynthesis is silent on Android anyway). An older
- *      APK without speak() degrades to silence — never to the web path —
- *      and the updated APK carries the method.
- *   2. Otherwise: browser speechSynthesis (on-device, no network).
+ *   1. NATIVE ANDROID TTS FIRST: window.AndroidTTS when the wrapper injects 
+ *      it, otherwise the window.EAMigrate bridge the app actually ships. 
+ *      When either is present it owns speech completely — return without 
+ *      touching speechSynthesis, so nothing is ever spoken twice (the 
+ *      WebView's own speechSynthesis is silent on Android anyway). An older 
+ *      APK without speak() degrades to silence — never to the web path — 
+ *      and the updated APK carries the method. 
+ *   2. Otherwise: browser speechSynthesis (on-device, no network). 
  *
- * No-op when the Bot Voice setting is off. No delays: the line is spoken at
- * the same moment the caller renders it.
+ * No-op when the Bot Voice setting is off. No delays: the line is spoken at 
+ * the same moment the caller renders it. 
  */
 export function speakBot(text: string): void {
   if (typeof window === "undefined") return;
@@ -180,14 +181,14 @@ export function speakBot(text: string): void {
     console.info("[voice] path", voiceDiagnostics());
   }
   if (!isBotVoiceEnabled()) {
-    // STEP 4 of the chain, logged: the setting itself is off. (Independent of
+    // STEP 4 of the chain, logged: the setting itself is off. (Independent of 
     // notifications — they keep working either way.)
     console.info("[voice] step 4 speakBot: skipped — botVoiceEnabled is false");
     return; // voice off → say nothing
   }
   const phrase = text.trim();
   if (!phrase) return;
-  // A fresh line cancels any scheduled run-over stop: the voice is still
+  // A fresh line cancels any scheduled run-over stop: the voice is still 
   // needed, so the flush must not fire underneath it.
   cancelPendingStop();
   const volume = getBotVoiceVolume();
@@ -205,7 +206,7 @@ export function speakBot(text: string): void {
     return;
   }
   if (hasNativeBridge()) {
-    // The level-aware method exists on the current wrapper; an older APK
+    // The level-aware method exists on the current wrapper; an older APK 
     // falls back to plain speak() and the device's own media volume applies.
     if (!callNative("speakWithVolume", phrase, volume)) {
       callNative("speak", phrase);
@@ -230,17 +231,17 @@ export function speakBot(text: string): void {
   }
 }
 
-/**
- * ARM THE VOICE FROM A REAL USER TAP.
+/** 
+ * ARM THE VOICE FROM A REAL USER TAP. 
  *
- * A browser silently drops speechSynthesis before the page has had a gesture,
- * and the first announcement of a run (the welcome, the first fill) is exactly
- * the one that used to be swallowed. Inside the Android wrapper the native
- * engine is warmed instead — no gesture rule applies there, but priming makes
- * the first line immediate.
+ * A browser silently drops speechSynthesis before the page has had a gesture, 
+ * and the first announcement of a run (the welcome, the first fill) is exactly 
+ * the one that used to be swallowed. Inside the Android wrapper the native 
+ * engine is warmed instead — no gesture rule applies there, but priming makes 
+ * the first line immediate. 
  *
- * Safe to call on every tap: it is idempotent and never speaks a word the
- * trader can hear.
+ * Safe to call on every tap: it is idempotent and never speaks a word the 
+ * trader can hear. 
  */
 export function unlockBotVoice(): void {
   if (typeof window === "undefined") return;
@@ -252,7 +253,13 @@ export function unlockBotVoice(): void {
   try {
     const synth = window.speechSynthesis;
     synth.resume?.();
-    if (synth.speaking || synth.pending) return;
+    if (synth.speaking || synth.pending) {
+      // The engine is already live — the first real line already speaks. We 
+      // still warm the voice list so a later announcement is instant rather 
+      // than blocked on onvoiceschanged.
+      warmBotVoice();
+      return;
+    }
     const primer = new SpeechSynthesisUtterance(" ");
     primer.volume = 0;
     synth.speak(primer);
@@ -262,9 +269,9 @@ export function unlockBotVoice(): void {
   }
 }
 
-/**
- * WHAT THE VOICE PATH ACTUALLY LOOKS LIKE RIGHT NOW — the answer to "why is it
- * silent?". Logged once on the first announcement and available to Settings.
+/** 
+ * WHAT THE VOICE PATH ACTUALLY LOOKS LIKE RIGHT NOW — the answer to "why is it 
+ * silent?". Logged once on the first announcement and available to Settings. 
  */
 export type VoiceDiagnostics = {
   enabled: boolean;
@@ -301,14 +308,14 @@ export function warmBotVoice(): void {
   }
 }
 
-/**
- * The fingerprints of the executions that were already announced.
+/** 
+ * The fingerprints of the executions that were already announced. 
  *
- * The bus reaches more than one listener (the voice, the analysis popup, the
- * top toast, the floating bot popup) and a producer can also dispatch the
- * same fill twice. Without this the trader would hear the same trade spoken
- * two or three times. The entry expires, so the SAME trade in a LATER run
- * is announced again.
+ * The bus reaches more than one listener (the voice, the analysis popup, the 
+ * top toast, the floating bot popup) and a producer can also dispatch the 
+ * same fill twice. Without this the trader would hear the same trade spoken 
+ * two or three times. The entry expires, so the SAME trade in a LATER run 
+ * is announced again. 
  */
 const announced = new Map<string, number>();
 
@@ -328,19 +335,47 @@ export function resetAnnouncedExecutions(): void {
   announced.clear();
 }
 
-/**
- * Build the spoken sentence for one execution — from the values the event
- * really carried.
+/** Shape helpers the scalper voice path uses. They live here so the import of
+ * bot-notify stays inside the voice module (the loop already imports a separate
+ * path).
+ */
+
+function normalizeToClosed(p: Record<string, unknown>): ClosedTrade | null {
+  const number = (p["number"] as number | null | undefined) ?? null;
+  if (number === null || number < 1) return null;
+  return {
+    number,
+    outcome: "broker" as const,
+    profit: (p["profit"] as number | null | undefined) ?? null,
+  };
+}
+
+function normalizeToOpened(p: Record<string, unknown>): OpenedTrade | null {
+  const side = (p["side"] as string | null | undefined) ?? "";
+  const symbol = (p["symbol"] as string | null | undefined) ?? "";
+  if (!side || !symbol) return null;
+  return {
+    number: (p["number"] as number | null | undefined) ?? 0,
+    side,
+    symbol,
+    lotSize: p["lotSize"] as number | string | null | undefined,
+    price: p["price"] as number | string | null | undefined,
+  };
+}
+
+/** 
+ * Build the spoken sentence for one execution — from the values the event 
+ * really carried. 
  *
- * A level that is not there is simply not said. Nothing is defaulted, no
- * example price is substituted and no missing field is announced as zero.
+ * A level that is not there is simply not said. Nothing is defaulted, no 
+ * example price is substituted and no missing field is announced as zero. 
  */
 export function buildTradeAnnouncement(execution: NormalizedExecution): string {
   const parts: string[] = [];
   if (execution.robotName) parts.push(`${execution.robotName}.`);
   if (execution.symbol) parts.push(`${execution.symbol}.`);
 
-  // The closing line of a run is a SUMMARY, not another trade — it is read
+  // The closing line of a run is a SUMMARY, not another trade — it is read 
   // as a short count so the trader is not told about the same fill twice.
   if (execution.summary) {
     if (execution.filled !== null && execution.total !== null && execution.total > 0) {
@@ -374,7 +409,7 @@ export function buildTradeAnnouncement(execution: NormalizedExecution): string {
     if (entry) parts.push(`Closed at ${entry}.`);
     else parts.push("Position closed.");
   } else {
-    // A refused / blocked order is announced AS A FAILURE — never as a
+    // A refused / blocked order is announced AS A FAILURE — never as a 
     // successful trade.
     parts.push("Trade not opened.");
     if (execution.message) parts.push(execution.message);
@@ -382,21 +417,21 @@ export function buildTradeAnnouncement(execution: NormalizedExecution): string {
   return parts.join(" ").replace(/\s+/g, " ").trim();
 }
 
-/**
- * Speak a DYNAMIC trade announcement for a confirmed execution.
+/** 
+ * Speak a DYNAMIC trade announcement for a confirmed execution. 
  *
  * Rules baked in here:
- *  • Only a CONFIRMED execution is announced. A signal, a request, a
- *    progress line ("connecting to broker…") or a plan is never spoken —
- *    the trader would hear a trade that never happened.
- *  • The sentence is built from the event's own values. A missing level is
- *    skipped, never invented.
- *  • The same execution is announced ONCE, even when the bus delivers it to
- *    several listeners or the producer dispatches it twice.
- *  • A refused order is announced as a failure, never as a success.
+ *  • Only a CONFIRMED execution is announced. A signal, a request, a 
+ *    progress line ("connecting to broker…") or a plan is never spoken — 
+ *    the trader would hear a trade that never happened. 
+ *  • The sentence is built from the event's own values. A missing level is 
+ *    skipped, never invented. 
+ *  • The same execution is announced ONCE, even when the bus delivers it to 
+ *    several listeners or the producer dispatches it twice. 
+ *  • A refused order is announced as a failure, never as a success. 
  */
 export function speakTradeExecution(payload: unknown): void {
-  // EVERY STEP OF THE CHAIN IS LOGGED, so "the voice never speaks" can be
+  // EVERY STEP OF THE CHAIN IS LOGGED, so "the voice never speaks" can be 
   // traced from the event to the engine instead of guessed at:
   //   step 1 — the event arrived
   //   step 2 — the setting is on
@@ -437,26 +472,29 @@ export function speakTradeExecution(payload: unknown): void {
   // finished. Toasts and popups still render every line; the voice speaks only
   // real outcomes:
   //   • a fill the broker confirmed (executed),
-  //   • a close the broker confirmed (closed),
+  //   • a close the bot confirmed broker-side (closed),
   //   • the closing summary line of a run,
   //   • a REFUSED order (failed) — at most one per REFUSAL_GAP_MS.
   // FIRST the producer's own label. A producer that says "reanalysed",
-  // "waiting", "stopped-out" or "info" has described its progress, not an
-  // outcome — and the inference below would happily promote `ok: true` + a
-  // symbol to "executed". The explicit label wins: it is never spoken.
+  // "waiting", "stopped-out", "scalper-cycle", "info" or any other non-outcome
+  // have described its progress, not an outcome — and the inference below would
+  // happily promote `ok: true` + a symbol to "executed". The explicit label wins:
+  // it is never spoken.
   const rawLabel = (payload as Record<string, unknown>)["status"];
   const label = typeof rawLabel === "string" ? rawLabel.trim().toLowerCase() : "";
-  if (label && label !== "executed" && label !== "closed" && label !== "failed") {
+  if (label && label !== "executed" && label !== "closed" && label !== "failed" && label !== "scalper-cycle") {
     console.info(`[voice] step 3 skipped — producer labelled the event "${label}", which is progress chatter`);
     return;
   }
 
   const isOutcome =
-    execution.summary || execution.status === "executed" || execution.status === "closed";
+    execution.summary ||
+    execution.status === "executed" ||
+    execution.status === "closed";
   if (!isOutcome) {
     if (execution.status !== "failed") {
       console.info(
-        `[voice] step 3 skipped — "${execution.status ?? "unlabelled"}" is not an execution outcome`,
+        `[voice] step 3 skipped — "${execution.status ?? "unlabelled"}" is not an execution outcome (isOutcome=${isOutcome})`,
       );
       return;
     }
@@ -464,6 +502,41 @@ export function speakTradeExecution(payload: unknown): void {
       console.info("[voice] step 3 skipped — a refusal was already announced within the last 20s");
       return;
     }
+  }
+
+  // A confirmed close the scalper loop re-opens immediately is a closethen-open
+  // notification, not the end of the run. The voice must keep speaking for every
+  // subsequent fill in the same pass; it stops only on the run-over summary or the
+  // final numbered trade of a batch (handled below).
+  const isScalperCycle = label === "scalper-cycle";
+
+  if (isScalperCycle) {
+    // A scalper-cycle event carries BOTH the close and the queued reopen, so the
+    // voice speaks ONE combined line and does NOT stop the run. The line is built
+    // from the same describe helpers the UI uses, so what the trader hears is what
+    // the trader sees. If we only have the close, say that and keep the engine
+    // alive for the reopen the loop will announce next.
+    if (payload && typeof payload === "object") {
+      const p = payload as Record<string, unknown>;
+      const close = normalizeToClosed(p);
+      if (!close) {
+        // Not something we can turn into speech — fall through to the normal
+        // outcome path instead of silently dropping it.
+      } else if (p["side"] !== undefined && p["symbol"] !== undefined) {
+        const reopen = normalizeToOpened(p);
+        if (reopen) {
+          const sentence = `${describeClose(close)} — then ${describeOpen(reopen)}`;
+          if (sentence) speakBot(sentence);
+        } else {
+          const sentence = describeClose(close);
+          if (sentence) speakBot(sentence);
+        }
+      } else {
+        const sentence = describeClose(close);
+        if (sentence) speakBot(sentence);
+      }
+    }
+    return;
   }
 
   const signature = executionSignature(execution);
@@ -493,5 +566,25 @@ export function speakTradeExecution(payload: unknown): void {
   if (lastLineOfRun) {
     console.info(`[voice] step 6 run finished executing — stopping the voice in ${spokenDurationMs(sentence)}ms`);
     scheduleStopAfter(sentence);
+  }
+
+  // A confirmed close does not stop the rest of the run. If the close happened
+  // and no summary / final trade has already scheduled the stop, make sure the
+  // engine is left running so the next fill or next cycle is still heard.
+  if (
+    execution.status === "closed" &&
+    !lastLineOfRun &&
+    typeof window !== "undefined"
+  ) {
+    cancelPendingStop();
+    try {
+      window.speechSynthesis?.resume?.();
+    } catch {
+      /* engine unavailable — nothing to resume */
+    }
+    // Best-effort resume for Android wrappers that expose a resume method. Newer
+    // wrappers expose speakWithVolume; older ones do not, and the bridge helper
+    // handles the missing method as "no native feature" rather than a crash.
+    (callNative as any)("resumeSpeech");
   }
 }

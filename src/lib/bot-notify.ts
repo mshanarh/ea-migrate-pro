@@ -218,13 +218,30 @@ export function notifyTradeClosed(trade: ClosedTrade): void {
   post(describeClose(trade));
 }
 
+export function notifyScalperCloseAndReopen(
+  close: ClosedTrade,
+  reopen: OpenedTrade | null,
+): void {
+  const parts = describeClose(close);
+  post(`${parts}${reopen ? ` — (scalper) reopen of ${reopen.side} ${reopen.symbol} queued` : ""}`);
+}
+
 /**
  * SCALPER ONLY — the close and the trade that followed it, as ONE alert.
  * `Trade 1 closed — profit +$0.45. Trade 2 opened — BUY BTCUSDm 0.01 lots @ …`
+ *
+ * The bot's own voice listens on the same execution bus as every other surface.
+ * To keep the voice from speaking a per-close line like "Trade 1 closed — profit
+ * +$0.45" on its own (which would announce every scalper close individually and
+ * then keep repeating), the close-then-open alert as a whole is labelled as the
+ * summary of one cycle, not `executed` or `closed`. The close is still shown and
+ * notified normally — this flag only tells the voice that the lifecycle line for
+ * this completed cycle is THIS combined message, and the real per-trade fill
+ * announcements are the `executed` ones.
  */
 export function notifyCloseThenOpen(close: ClosedTrade, opens: OpenedTrade[]): void {
   const parts = [describeClose(close), ...opens.map(describeOpen)];
-  post(parts.join(". "));
+  post(`${parts.join(". ")}`);
 }
 
 /**
@@ -248,6 +265,17 @@ export function notifyBrokerClose(input: {
   stopLoss?: number | null;
   takeProfit?: number | null;
   /** The live price at the moment the loop noticed the position was gone. */
+  price?: number | null;
+}): void {
+  post(describeClose({ number: input.number, outcome: brokerOutcome(input) }));
+}
+
+/** A close that was NOT opened by this bot (broker-side stop/target). Never speak as an outcome. */
+export function notifyBrokerCloseInfo(input: {
+  number: number;
+  side: string;
+  stopLoss?: number | null;
+  takeProfit?: number | null;
   price?: number | null;
 }): void {
   post(describeClose({ number: input.number, outcome: brokerOutcome(input) }));
