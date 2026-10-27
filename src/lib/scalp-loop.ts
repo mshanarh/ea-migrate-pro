@@ -73,12 +73,17 @@ export type ScalpLoopOptions = {
   /** Which behaviour this run uses. Defaults to the scalper. */
   mode?: BotMode;
   /**
-   * START MUST NOT RUSH.
+   * ANALYSE FIRST, THEN SEND — the default.
    *
-   * When true (the app's own bot loop) a valid signal is HELD, not sent: it
-   * is published to the analysis card and the loop waits for the trader to tap
-   * Execute. Resolve/analyse runs as usual; the only difference is that
-   * `executeAutoTrade` is not reached without a deliberate tap.
+   * The loop resolves the direction from fresh broker candles before it opens
+   * anything, so START never fires blindly; once the signal is valid the batch
+   * goes out and the run continues on its own until STOP. That is what the
+   * Home START button uses (it passes false explicitly).
+   *
+   * When true, the loop instead HOLDS a valid signal: it is published to the
+   * analyse card (in-app and floating over MetaTrader) and `executeAutoTrade`
+   * is not reached until the trader taps Execute. Opt-in, for a caller that
+   * wants a human decision in the middle — no screen in the app does today.
    */
   requireConfirmation?: boolean;
 };

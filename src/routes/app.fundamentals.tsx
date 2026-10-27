@@ -6,6 +6,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { AnalyzeExecuteCard } from "@/components/app/AnalyzeExecuteCard";
+import { sideForCurrency, symbolsForEvent } from "@/lib/event-symbols";
 import type { CalendarEvent, CalendarReply } from "@/lib/news.server";
 import { useTradingPairsStore } from "@/lib/trading-pairs-store";
 
@@ -163,11 +164,6 @@ function resolveRelease(event: EventDef, calendar: CalendarEvent[]): ResolvedRel
   };
 }
 
-/** Allowed Quotes whose symbol contains the event's currency. */
-function affectedSymbols(currency: string, allowed: string[]): string[] {
-  const upper = currency.toUpperCase();
-  return allowed.filter((symbol) => symbol.toUpperCase().includes(upper));
-}
 
 type FeedState = "loading" | "ready" | "error";
 
@@ -288,9 +284,27 @@ function FundamentalsPage() {
     () => (selected && calendar.length > 0 ? resolveRelease(selected, calendar) : null),
     [selected, calendar],
   );
+  // EVERY Allowed Quote this event's currency acts on — read from the symbol's
+  // real legs (see event-symbols), so a USD event offers EURUSD, GBPUSD,
+  // USDJPY, XAUUSD and US30 instead of gold alone.
   const symbols = useMemo(
-    () => (selected ? affectedSymbols(selected.currency, allowedSymbols) : []),
+    () => (selected ? symbolsForEvent(selected.currency, allowedSymbols) : []),
     [selected, allowedSymbols],
+  );
+  /** event currency → the side it fixes for each affected pair (or null). */
+  const sideFor = useCallback(
+    (symbol: string) =>
+      release?.direction ? sideForCurrency(symbol, release.event.currency, release.direction) : null,
+    [release],
+  );
+  /** The read the card analyses against — stable, so a re-render never wipes
+   *  an analysis that is still valid. */
+  const eventRead = useMemo(
+    () =>
+      release?.direction
+        ? { currency: release.event.currency, direction: release.direction }
+        : null,
+    [release],
   );
 
   const eventName = selected?.label ?? "event";
@@ -465,21 +479,25 @@ function FundamentalsPage() {
                   <p className="mt-3 text-[12px] text-white/55">{release.detail}</p>
                 </div>
 
-                {/* Affected quotes — which of YOUR Allowed Quotes moves on this
-                    currency. The TRADE direction is never taken from the release
-                    headline: it comes from the live broker candles below. */}
+                {/* PAIRS THAT SUPPORT THIS EVENT — every Allowed Quote the
+                    event's currency acts on, and the side that currency fixes
+                    for each. Tap the one to trade: that choice is what Analyze
+                    below runs on, and it stays yours to change. */}
                 <div className={CARD}>
-                  <p className={HEADING}>Affected quotes</p>
+                  <p className={HEADING}>Pairs for this event</p>
                   <p className="mt-1 text-[12px] text-white/55">
                     {release.released
-                      ? `${release.actual} vs forecast ${release.forecast} — the trade direction comes from the live broker candles below.`
+                      ? `${release.actual} vs forecast ${release.forecast}${
+                          release.releaseDate ? ` · ${release.releaseDate} SAST` : ""
+                        }`
                       : `Upcoming release${release.releaseDate ? ` ${release.releaseDate} SAST` : ""} · forecast ${release.forecast}${
                           release.previous !== "—" ? ` · previous ${release.previous}` : ""
                         }`}
                   </p>
                   {release.direction && (
                     <p className="mt-2 text-[12px] font-bold" style={{ color: directionColor(release.direction) }}>
-                      Calendar read: {release.direction} {release.event.currency}
+                      Event day read: {release.direction} {release.event.currency} — every pair below is
+                      its side for this event
                     </p>
                   )}
                   {symbols.length === 0 ? (
@@ -487,63 +505,65 @@ function FundamentalsPage() {
                       No Allowed Quote is affected by {release.event.currency} — add one on the Quotes page.
                     </p>
                   ) : (
-                    <div className="mt-2 space-y-1.5">
-                      {symbols.map((symbol) => (
-                        <button
-                          key={symbol}
-                          type="button"
-                          onClick={() => setSelectedSymbol(symbol)}
-                          className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left ${
-                            selectedSymbol === symbol ? "bg-white/10" : "bg-white/[0.04]"
-                          }`}
-                        >
-                          <span className="text-[12px] font-bold text-white/85">{symbol}</span>
-                          <ChevronRight className="size-4 text-white/30" />
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                {/* Analyze + Execute flow */}
-                {symbols.length > 0 && (
-                  <>
-                    {/* Symbol chooser when more than one Allowed Quote matches */}
-                    {symbols.length > 1 && (
-                      <div className={CARD}>
-                        <p className={HEADING}>Choose symbol</p>
-                        <p className="mt-1 text-[11px] text-white/45">
-                          More than one Allowed Quote moves {release.event.currency} — pick the one to analyze.
-                        </p>
-                        <div className="mt-3 flex flex-wrap gap-2">
-                          {symbols.map((symbol) => (
+                    <>
+                      <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-white/35">
+                        Choose the pair to analyze
+                      </p>
+                      <div className="mt-1.5 space-y-1.5">
+                        {symbols.map((symbol) => {
+                          const side = sideFor(symbol);
+                          const chosen = (selectedSymbol ?? symbols[0]) === symbol;
+                          return (
                             <button
                               key={symbol}
                               type="button"
                               onClick={() => setSelectedSymbol(symbol)}
-                              className={`rounded-xl border px-3 py-2 text-[12px] font-bold transition-none active:scale-[0.99] ${
-                                selectedSymbol === symbol
-                                  ? "border-white/40 bg-white/10 text-white"
-                                  : "border-white/10 bg-[#1a1a1a] text-white/70"
+                              className={`flex w-full items-center justify-between gap-2 rounded-xl border px-3 py-2 text-left ${
+                                chosen
+                                  ? "border-white/40 bg-white/10"
+                                  : "border-transparent bg-white/[0.04]"
                               }`}
                             >
-                              {symbol}
+                              <span className="text-[12px] font-bold text-white/85">{symbol}</span>
+                              {side ? (
+                                <span
+                                  className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-black"
+                                  style={{
+                                    color: directionColor(side),
+                                    backgroundColor: `${directionColor(side)}22`,
+                                  }}
+                                >
+                                  {side}
+                                </span>
+                              ) : (
+                                <span className="shrink-0 text-[10px] font-bold text-white/35">
+                                  side from candles
+                                </span>
+                              )}
+                              <ChevronRight className="size-4 shrink-0 text-white/30" />
                             </button>
-                          ))}
-                        </div>
+                          );
+                        })}
                       </div>
-                    )}
+                    </>
+                  )}
+                </div>
 
-                    {/* Analyze → execute, from live broker candles. The direction
-                        is read off those candles and is never editable here. */}
-                    <AnalyzeExecuteCard
-                      userId={userId}
-                      symbol={analysisSymbol}
-                      defaultLot={app.settings.lotSize ?? "0.01"}
-                      defaultTrades="1"
-                      contextLabel={`Analyze · ${release.event.label}`}
-                    />
-                  </>
+                {/* Analyze → execute. The side comes from THIS event's day
+                    (its currency read, mapped to the chosen pair) and the
+                    levels from fresh broker candles — never editable here. */}
+                {symbols.length > 0 && (
+                  <AnalyzeExecuteCard
+                    userId={userId}
+                    symbol={analysisSymbol}
+                    defaultLot={app.settings.lotSize ?? "0.01"}
+                    defaultTrades="1"
+                    contextLabel={`Analyze · ${release.event.label}`}
+                    eventRead={eventRead}
+                    eventLabel={`${release.event.label} · ${release.event.currency}${
+                      release.releaseDate ? ` · ${release.releaseDate} SAST` : ""
+                    }`}
+                  />
                 )}
               </>
             )}

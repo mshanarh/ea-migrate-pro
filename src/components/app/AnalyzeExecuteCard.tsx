@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { hasNativeBridge, callNative } from "@/lib/native-bridge";
 import { executeAnalysedSignal, readMtCredentials, resolveTradeDirection } from "@/lib/auto-trade";
 import { getAppState } from "@/lib/app-store";
+import { sideForCurrency } from "@/lib/event-symbols";
 import { peekPendingSignal } from "@/lib/pending-signal";
 import type { FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
 
@@ -38,6 +39,10 @@ export type AnalyzedSignal = {
   livePrice: number;
   analysedAt: number;
   reason: string;
+  /** Where the SIDE came from — the event's day, or the live candles. */
+  sideSource?: "event" | "candles";
+  /** One line naming that source, in the trader's words. */
+  sideNote?: string;
 };
 
 /** The analysis is only executable for this long after it was produced. */
@@ -86,6 +91,17 @@ export type AnalyzeExecuteCardProps = {
   defaultTrades: string;
   /** Optional heading override (e.g. the event's own label). */
   contextLabel?: string | undefined;
+  /**
+   * THE EVENT'S READ, when this card was opened from an economic release.
+   *
+   * `direction` is what the release says about `currency` for its own day; the
+   * card turns it into THIS symbol's side (see sideForCurrency) so the analysis
+   * is the event's direction and not a candle guess. Left undefined on the
+   * symbols list, where the live candles are the only source. Passed as null
+   * for an event that has not released yet — there is no read to honour. */
+  eventRead?: { currency: string; direction: "BUY" | "SELL" } | null | undefined;
+  /** Which event day the read belongs to, shown on the card. */
+  eventLabel?: string | undefined;
   /** Called once per finished batch, with MT5's confirmed fills. */
   onResult?: ((result: FundamentalsOrderResult, signal: AnalyzedSignal) => void) | undefined;
 };
@@ -96,6 +112,8 @@ export function AnalyzeExecuteCard({
   defaultLot,
   defaultTrades,
   contextLabel,
+  eventRead,
+  eventLabel,
   onResult,
 }: AnalyzeExecuteCardProps) {
   const [signal, setSignal] = useState<AnalyzedSignal | null>(null);
@@ -111,7 +129,9 @@ export function AnalyzeExecuteCard({
   const NO_ACCOUNT_MESSAGE =
     "No MT5 account is saved on this device — add your login, password and server on the MetaTrader page first.";
 
-  // A new symbol is a new analysis — never carry the previous one over.
+  // A new symbol — or a different event day — is a new analysis. Never carry
+  // the previous one over: its side belongs to the read it was made from.
+  const eventKey = eventRead ? `${eventRead.currency}:${eventRead.direction}` : "";
   useEffect(() => {
     setSignal(null);
     setAnalyzeError(null);
@@ -119,7 +139,7 @@ export function AnalyzeExecuteCard({
     setFormError(null);
     setLot(defaultLot);
     setTrades(defaultTrades);
-  }, [symbol, defaultLot, defaultTrades]);
+  }, [symbol, defaultLot, defaultTrades, eventKey]);
 
   /**
    * Publish the analysed signal to the NATIVE floating card when the app runs
@@ -175,16 +195,70 @@ export function AnalyzeExecuteCard({
         return;
       }
       const direction = analysis.direction;
+      const analysedSymbol = analysis.symbol || symbol;
+
+      // ── THE EVENT'S DAY FIXES THE SIDE ────────────────────────────────────
+      //
+      // Opened from a release, this card trades the side that release implies
+      // FOR THIS PAIR (a currency is the pair's base or its quote, see
+      // sideForCurrency). The broker's candles still supply the levels: the
+      // same measured risk and reward, mirrored onto that side.
+      //
+      // Two honest exceptions, both named on the card:
+      //   • the event's currency prices the instrument but does not fix a side
+      //     (an index CFD) — the live candles keep the side;
+      //   • the event has not released yet, so there is no read to honour.
+      const eventSide = eventRead
+        ? sideForCurrency(analysedSymbol, eventRead.currency, eventRead.direction)
+        : null;
+      const candleSide = direction.type;
+      const entry = direction.entry;
+      const candleSl = direction.sl;
+      const candleTp1 = direction.tp1 ?? direction.tp;
+      const candleTp2 = direction.tp2 ?? direction.tp;
+
+      let side: "BUY" | "SELL" = candleSide;
+      let stopLoss = candleSl;
+      let takeProfit1 = candleTp1;
+      let takeProfit2 = candleTp2;
+      let sideSource: "event" | "candles" = "candles";
+      let sideNote = `Side from the live ${analysedSymbol} candles.`;
+
+      if (eventRead && eventSide) {
+        sideSource = "event";
+        if (eventSide === candleSide) {
+          sideNote = `Event day read ${eventRead.direction} ${eventRead.currency} → ${eventSide} ${analysedSymbol}, confirmed by the live candles.`;
+        } else {
+          const risk = Math.abs(entry - candleSl);
+          const reward1 = Math.abs(candleTp1 - entry);
+          const reward2 = Math.abs(candleTp2 - entry);
+          side = eventSide;
+          stopLoss = eventSide === "BUY" ? entry - risk : entry + risk;
+          takeProfit1 = eventSide === "BUY" ? entry + reward1 : entry - reward1;
+          takeProfit2 = eventSide === "BUY" ? entry + reward2 : entry - reward2;
+          sideNote =
+            `Event day read ${eventRead.direction} ${eventRead.currency} → ${eventSide} ${analysedSymbol}. ` +
+            `The candles read ${candleSide}, so their measured risk (${formatPrice(risk)}) and reward ` +
+            `(${formatPrice(reward1)} / ${formatPrice(reward2)}) were mirrored onto the event's side.`;
+        }
+      } else if (eventRead) {
+        sideNote =
+          `${eventRead.currency} prices ${analysedSymbol} but does not fix its side — ` +
+          `the side comes from the live candles.`;
+      }
+
       setSignal({
-        symbol: analysis.symbol || symbol,
-        direction: direction.type,
-        entry: direction.entry,
-        stopLoss: direction.sl,
-        takeProfit1: direction.tp1 ?? direction.tp,
-        takeProfit2: direction.tp2 ?? direction.tp,
-        livePrice: direction.entry,
+        symbol: analysedSymbol,
+        direction: side,
+        entry,
+        stopLoss,
+        takeProfit1,
+        takeProfit2,
+        livePrice: entry,
         analysedAt: analysis.timestamp,
-        reason: analysis.reason,
+        reason: `${sideNote} ${analysis.reason}`,
+        sideSource,
+        sideNote,
       });
     } catch (error) {
       setSignal(null);
@@ -192,7 +266,7 @@ export function AnalyzeExecuteCard({
     } finally {
       setAnalyzing(false);
     }
-  }, [symbol, userId]);
+  }, [symbol, userId, eventRead]);
 
   /**
    * EXECUTE FROM THE FLOATING NATIVE CARD.
@@ -301,8 +375,9 @@ export function AnalyzeExecuteCard({
           />
           {signal ? `${signal.direction} · ${signal.symbol}` : "NO SIGNAL"}
         </span>
-        <span className="flex-1" />
-        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">live candles</span>
+        <span className="flex-1" />            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">
+              {eventRead ? "event day · live candles" : "live candles"}
+            </span>
       </div>
 
       {/* ── AI TRADE ANALYSIS card ─────────────────────────────────────── */}
@@ -334,6 +409,16 @@ export function AnalyzeExecuteCard({
             )}
           </div>
         </div>
+      )}
+
+      {/* WHICH EVENT DAY THIS CARD BELONGS TO — the read the side came from. */}
+      {eventLabel && (
+        <p className="mt-2 text-[10px] font-bold uppercase tracking-[0.16em] text-white/35">
+          Event day · {eventLabel}
+          {eventRead
+            ? ` · read ${eventRead.direction} ${eventRead.currency}`
+            : " · not released yet, so the candles decide"}
+        </p>
       )}
 
       {analyzeError && (
@@ -397,12 +482,19 @@ export function AnalyzeExecuteCard({
             <span className="text-[14px] font-black tabular-nums text-white/90">{totalVolume.toFixed(2)}</span>
           </div>
 
-          <div className="mt-2 flex items-center justify-between rounded-xl bg-white/[0.05] px-3 py-2">
+          <div className="mt-2 flex items-center justify-between gap-2 rounded-xl bg-white/[0.05] px-3 py-2">
             <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Direction</span>
-            <span className="text-[12px] font-black" style={{ color: directionColor }}>
-              {signal.direction} — from the analysis, not editable
+            <span className="text-right text-[12px] font-black" style={{ color: directionColor }}>
+              {signal.direction} —
+              {signal.sideSource === "event"
+                ? ` from the ${eventRead?.currency ?? "event"} event's day, not editable`
+                : " from the live candles, not editable"}
             </span>
           </div>
+
+          {signal.sideNote && (
+            <p className="mt-2 text-[11px] leading-snug text-white/45">{signal.sideNote}</p>
+          )}
 
           <button
             type="button"

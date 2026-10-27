@@ -712,10 +712,11 @@ function AppHome() {
       robotName: target.name,
       mode,
     });
-    // START ANALYSES, IT DOES NOT TRADE. The card opens on the waiting line
-    // and stays there until the bot's own analysis produces a valid signal;
-    // from then on the signal is held on the card, re-validated against fresh
-    // candles, and only the Execute tap on it can place an order.
+    // START ANALYSES FIRST — it never fires an order blindly. The card opens
+    // on the waiting line and the loop keeps analysing; the moment the
+    // analysis produces a valid signal the batch is sent through the bridge
+    // and the run continues (Scalper re-analyses and opens again, Normal lets
+    // the broker's SL/TP manage each trade) until STOP.
     setExecutionStage(`Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}`);
     // THE CARD OPENS IMMEDIATELY — a run that does not show its analysis is
     // indistinguishable from a bot that never started.
@@ -736,15 +737,22 @@ function AppHome() {
       eaName: target.name,
       credentials,
       mode,
-      // Nothing reaches the broker before the trader taps Execute on the
-      // signal the analysis produced.
-      requireConfirmation: true,
+      // START TRADES THIS RUN BY ITSELF, exactly as it did before: the loop
+      // analyses the Allowed Quotes first and opens a batch the moment a valid
+      // signal forms. It does NOT hand the decision back to the trader and it
+      // does NOT send anybody to the Quotes page to pick a symbol — the run
+      // continues on its own, pass after pass, until STOP.
+      //
+      // The manual analyze → Execute card is a separate, deliberate path: it
+      // lives on the symbols list and on Fundamentals, where a tap is the only
+      // thing that sends an order.
+      requireConfirmation: false,
     });
     console.info("[bot] STEP 5 loop started");
     // "Bot started — Scalper mode, watching BTCUSDm" (Normal lists the symbols too).
     notifyBotStarted(mode, pairs.map((pair) => pair.symbol.trim()));
     toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
-      description: `Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}. Nothing is sent until you tap Execute on the signal.`,
+      description: `Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}. It opens the batch here as soon as a valid signal forms.`,
     });
   };
 
