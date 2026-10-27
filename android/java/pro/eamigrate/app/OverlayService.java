@@ -36,6 +36,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.List;
+import org.json.JSONObject;
 
 /**
  * Chat-head style floating bot bubble — a round bot avatar that FLOATS
@@ -290,6 +291,16 @@ public class OverlayService extends Service {
         if (intent != null && intent.hasExtra("log")) {
             setLine(intent.getStringExtra("log"));
             return START_STICKY;
+        }
+        // THE ANALYSIS CARD ON ITS OWN.
+        // The web app can float the traded signal over MetaTrader without a
+        // bot bubble, so this intent shows the card and returns BEFORE show()
+        // — starting a bubble the trader never asked for would put a stray
+        // chat-head on their screen. The service still promotes to foreground
+        // above, which is what keeps the card alive over other apps.
+        if (intent != null && intent.hasExtra("analysis")) {
+            expandAnalysisCard(intent.getStringExtra("analysis"));
+            return START_NOT_STICKY;
         }
         if (intent != null && intent.hasExtra("image")) {
             imageUrl = intent.getStringExtra("image");
@@ -740,6 +751,307 @@ public class OverlayService extends Service {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // AI TRADE ANALYSIS CARD — the rounded card that floats over MetaTrader
+    // ────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Tap handler for the card's Execute button.
+     *
+     * Implemented by MainActivity, which hands the tap BACK to the WebView.
+     * The native card must never place an order itself: the web app owns the
+     * saved MT5 account, the risk checks and the bridge call. The card only
+     * displays what the live-candle analysis already produced and reports the
+     * trader's tap.
+     */
+    public interface AnalysisActionListener {
+        void onExecute(String signalJson);
+    }
+
+    private static volatile AnalysisActionListener analysisActionListener;
+
+    public static void setAnalysisActionListener(AnalysisActionListener listener) {
+        analysisActionListener = listener;
+    }
+
+    /** The currently floating analysis card, if any. */
+    private View analysisCard;
+
+    /**
+     * Show the analysis card on an ALREADY RUNNING service.
+     *
+     * Returns false when the service is not up, so the caller can start it
+     * with the "analysis" extra rather than the card silently never appearing
+     * (which the trader would report as "the popup is broken").
+     */
+    public static boolean showAnalysisCard(final String json) {
+        final OverlayService service = instance;
+        if (service == null || json == null || json.trim().isEmpty()) return false;
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                service.expandAnalysisCard(json);
+            }
+        });
+        return true;
+    }
+
+    /** Take the card down. A no-op when the service is not running. */
+    public static void hideAnalysisCard() {
+        final OverlayService service = instance;
+        if (service == null) return;
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                service.removeAnalysisCard();
+            }
+        });
+    }
+
+    /** Remove the floating card (leaving the bubble and the service alone). */
+    private void removeAnalysisCard() {
+        try {
+            if (analysisCard != null && wm != null) {
+                wm.removeView(analysisCard);
+            }
+        } catch (Exception ignored) {
+        }
+        analysisCard = null;
+    }
+
+    /**
+     * Build and float the AI TRADE ANALYSIS card.
+     *
+     * The shape mirrors the in-app card exactly: dark near-black surface, 20dp
+     * radius, full width with margins, a status dot + "BUY · BTCUSDm" pill, a
+     * small-caps "AI TRADE ANALYSIS" title, the big coloured headline, the
+     * white Entry/SL/TP1/TP2 line, the gray "live data · connected terminal"
+     * line, a rounded Execute button and a dismiss ✕.
+     */
+    private void expandAnalysisCard(final String json) {
+        if (wm == null) {
+            // The bubble may never have been shown, so the WindowManager is
+            // resolved here rather than assuming show() ran first.
+            wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        }
+        removeAnalysisCard();
+
+        String symbol = "";
+        String direction = "";
+        double entry = 0.0d;
+        double sl = 0.0d;
+        double tp1 = 0.0d;
+        double tp2 = 0.0d;
+        boolean buy = true;
+        try {
+            JSONObject signal = new JSONObject(json);
+            symbol = signal.optString("symbol", "");
+            direction = signal.optString("direction", "").toUpperCase();
+            entry = signal.optDouble("entry", 0.0d);
+            sl = signal.optDouble("stopLoss", 0.0d);
+            tp1 = signal.optDouble("takeProfit1", 0.0d);
+            tp2 = signal.optDouble("takeProfit2", 0.0d);
+            buy = !"SELL".equals(direction);
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "analysis payload unreadable: " + t);
+            return;
+        }
+        if (symbol.isEmpty() || direction.isEmpty()) return;
+
+        final int accent = buy ? Color.parseColor("#4ADE80") : Color.parseColor("#F87171");
+
+        try {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            GradientDrawable cardBg = new GradientDrawable();
+            cardBg.setCornerRadius(dp(20));
+            cardBg.setColor(Color.parseColor("#F20A0A0C"));
+            cardBg.setStroke(dp(1), Color.parseColor("#33FFFFFF"));
+            card.setBackground(cardBg);
+            card.setClipToOutline(true);
+            card.setPadding(dp(16), dp(14), dp(16), dp(16));
+
+            // ── Status dot + "BUY · BTCUSDm" + ✕ ──
+            LinearLayout statusRow = new LinearLayout(this);
+            statusRow.setOrientation(LinearLayout.HORIZONTAL);
+            statusRow.setGravity(Gravity.CENTER_VERTICAL);
+
+            View dot = new View(this);
+            LinearLayout.LayoutParams dotLp = new LinearLayout.LayoutParams(dp(9), dp(9));
+            dotLp.setMargins(0, 0, dp(7), 0);
+            dot.setLayoutParams(dotLp);
+            GradientDrawable dotBg = new GradientDrawable();
+            dotBg.setShape(GradientDrawable.OVAL);
+            dotBg.setColor(accent);
+            dot.setBackground(dotBg);
+            statusRow.addView(dot);
+
+            TextView pill = new TextView(this);
+            pill.setText(direction + " · " + symbol);
+            pill.setTextSize(12f);
+            pill.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            pill.setTextColor(accent);
+            pill.setLetterSpacing(0.04f);
+            statusRow.addView(pill);
+
+            View spacer = new View(this);
+            spacer.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
+            statusRow.addView(spacer);
+
+            final TextView close = new TextView(this);
+            close.setText("✕");
+            close.setTextSize(13f);
+            close.setTextColor(Color.parseColor("#B3FFFFFF"));
+            close.setGravity(Gravity.CENTER);
+            GradientDrawable closeBg = new GradientDrawable();
+            closeBg.setShape(GradientDrawable.OVAL);
+            closeBg.setColor(Color.parseColor("#1AFFFFFF"));
+            close.setBackground(closeBg);
+            close.setLayoutParams(new LinearLayout.LayoutParams(dp(26), dp(26)));
+            close.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    removeAnalysisCard();
+                }
+            });
+            statusRow.addView(close);
+            card.addView(statusRow);
+
+            // ── Small-caps title ──
+            TextView title = new TextView(this);
+            title.setText("AI TRADE ANALYSIS");
+            title.setTextSize(10f);
+            title.setLetterSpacing(0.18f);
+            title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            title.setTextColor(Color.parseColor("#73FFFFFF"));
+            title.setPadding(0, dp(12), 0, 0);
+            card.addView(title);
+
+            // ── Big coloured headline ──
+            TextView headline = new TextView(this);
+            headline.setText(symbol + " " + direction);
+            headline.setTextSize(21f);
+            headline.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            headline.setTextColor(accent);
+            headline.setPadding(0, dp(4), 0, 0);
+            card.addView(headline);
+
+            // ── Levels ──
+            TextView levels = new TextView(this);
+            levels.setText("Entry " + priceText(entry)
+                    + " · SL " + priceText(sl)
+                    + " · TP1 " + priceText(tp1)
+                    + " · TP2 " + priceText(tp2));
+            levels.setTextSize(13f);
+            levels.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            levels.setTextColor(Color.parseColor("#F2FFFFFF"));
+            levels.setPadding(0, dp(6), 0, 0);
+            card.addView(levels);
+
+            // ── Live-data line ──
+            TextView live = new TextView(this);
+            live.setText("live data · connected terminal");
+            live.setTextSize(11f);
+            live.setTextColor(Color.parseColor("#66FFFFFF"));
+            live.setPadding(0, dp(3), 0, 0);
+            card.addView(live);
+
+            // ── Execute ──
+            final String payload = json;
+            TextView execute = new TextView(this);
+            execute.setText("EXECUTE " + direction + " " + symbol);
+            execute.setTextSize(13f);
+            execute.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            execute.setTextColor(Color.parseColor("#FF0A0A0C"));
+            execute.setGravity(Gravity.CENTER);
+            GradientDrawable buttonBg = new GradientDrawable();
+            buttonBg.setCornerRadius(dp(22));
+            buttonBg.setColor(Color.parseColor("#F2FFFFFF"));
+            execute.setBackground(buttonBg);
+            LinearLayout.LayoutParams executeLp = new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.MATCH_PARENT, dp(44));
+            executeLp.setMargins(0, dp(14), 0, 0);
+            execute.setLayoutParams(executeLp);
+            execute.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    AnalysisActionListener listener = analysisActionListener;
+                    // The card comes down first: the web app takes over the
+                    // status from here, and a stale card over MetaTrader would
+                    // read as "nothing happened".
+                    removeAnalysisCard();
+                    if (listener != null) {
+                        listener.onExecute(payload);
+                    }
+                }
+            });
+            card.addView(execute);
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    Math.max(dp(200), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.x = dp(16);
+            params.y = dp(140);
+
+            // Drag anywhere; the ✕ and Execute handle their own taps.
+            final float[] origin = new float[2];
+            final float[] last = new float[2];
+            final boolean[] dragged = new boolean[1];
+            card.setOnTouchListener(new View.OnTouchListener() {
+                @Override
+                public boolean onTouch(View v, MotionEvent event) {
+                    switch (event.getActionMasked()) {
+                        case MotionEvent.ACTION_DOWN:
+                            origin[0] = event.getRawX();
+                            origin[1] = event.getRawY();
+                            last[0] = origin[0];
+                            last[1] = origin[1];
+                            dragged[0] = false;
+                            return false; // let the child buttons see their taps
+                        case MotionEvent.ACTION_MOVE: {
+                            float dx = event.getRawX() - last[0];
+                            float dy = event.getRawY() - last[1];
+                            last[0] = event.getRawX();
+                            last[1] = event.getRawY();
+                            if (Math.hypot(event.getRawX() - origin[0], event.getRawY() - origin[1]) > dp(8)) {
+                                dragged[0] = true;
+                                params.x += (int) dx;
+                                params.y += (int) dy;
+                                try {
+                                    wm.updateViewLayout(card, params);
+                                } catch (Exception ignored) {
+                                }
+                            }
+                            return dragged[0];
+                        }
+                        default:
+                            return dragged[0];
+                    }
+                }
+            });
+
+            wm.addView(card, params);
+            analysisCard = card;
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "analysis card failed: " + t);
+            analysisCard = null;
+        }
+    }
+
+    /** Sensible decimal text for a broker price (mirrors the web formatter). */
+    private static String priceText(double value) {
+        if (value == 0.0d || Double.isNaN(value) || Double.isInfinite(value)) return "—";
+        double abs = Math.abs(value);
+        if (abs >= 1000.0d) return new java.text.DecimalFormat("#,##0.##").format(value);
+        if (abs >= 1.0d) return String.format(java.util.Locale.US, "%.2f", value);
+        if (abs >= 0.01d) return String.format(java.util.Locale.US, "%.4f", value);
+        return String.format(java.util.Locale.US, "%.6f", value);
+    }
+
     /** Fold the card away and bring the round bubble back. */
     private void collapseExpanded() {
         try {
@@ -902,6 +1214,9 @@ public class OverlayService extends Service {
     @Override
     public void onDestroy() {
         try {
+            if (analysisCard != null && wm != null) {
+                wm.removeView(analysisCard);
+            }
             if (expanded != null && wm != null) {
                 wm.removeView(expanded);
             }
@@ -911,6 +1226,7 @@ public class OverlayService extends Service {
         } catch (Exception ignored) {
             // window already gone — nothing to clean up
         }
+        analysisCard = null;
         expanded = null;
         expandedLogList = null;
         bubble = null;

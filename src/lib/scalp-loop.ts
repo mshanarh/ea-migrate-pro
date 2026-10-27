@@ -4,6 +4,13 @@ import {
   resolveTradeDirection,
   type BridgeCredentials,
 } from "./auto-trade";
+import {
+  awaitPendingDecision,
+  clearPendingSignal,
+  invalidatePendingSignal,
+  publishPendingSignal,
+  type SignalDecision,
+} from "./pending-signal";
 import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
 import { setExecutionStage, updateExecutionPlan } from "./execution-state";
 import {
@@ -65,6 +72,15 @@ export type ScalpLoopOptions = {
   credentials: BridgeCredentials;
   /** Which behaviour this run uses. Defaults to the scalper. */
   mode?: BotMode;
+  /**
+   * START MUST NOT RUSH.
+   *
+   * When true (the app's own bot loop) a valid signal is HELD, not sent: it
+   * is published to the analysis card and the loop waits for the trader to tap
+   * Execute. Resolve/analyse runs as usual; the only difference is that
+   * `executeAutoTrade` is not reached without a deliberate tap.
+   */
+  requireConfirmation?: boolean;
 };
 
 export type ScalpLoopHandle = {
@@ -160,6 +176,7 @@ async function bridgePost<T>(
 export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const { symbols, eaName, credentials } = options;
   const mode: BotMode = options.mode ?? "scalper";
+  const requireConfirmation = options.requireConfirmation === true;
   const tracks = new Map<string, Track>();
   const waitUntil = new Map<string, number>();
   /** The M15 bucket each symbol was last analysed in (normal mode gating). */
@@ -278,6 +295,18 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     const direction = analysis.direction;
     const tradeCount = Math.max(1, Math.floor(maxTrades));
 
+    // ── PAGE 4: HOLD THE SIGNAL UNTIL THE TRADER TAPS EXECUTE ───────────────
+    // The analysis is done; NOTHING has been sent. The card takes over from
+    // here and the loop waits. A market that moved off the signal, a Stop, or
+    // the wait window closing all resolve to "not confirmed", and the broker
+    // is never contacted.
+    if (requireConfirmation) {
+      const confirmed = await holdForConfirmation(symbol, direction, lotSize, tradeCount, analysis.reason);
+      if (!confirmed) {
+        return { kind: "skipped", reason: "signal not confirmed — the broker was never contacted" };
+      }
+    }
+
     // The card shows the analysed plan before the broker confirms anything.
     updateExecutionPlan({
       symbol,
@@ -384,6 +413,130 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     if (opens.length > 0) return { kind: "opened", opens };
     if (skipReason) return { kind: "skipped", reason: skipReason };
     return { kind: "failed", reason: failureReason ?? "MT5 did not confirm any order" };
+  };
+
+  /** How long a held signal stays open before the loop re-analyses from scratch. */
+  const CONFIRM_WINDOW_MS = 90_000;
+  /** How often a held signal is re-validated against fresh broker candles. */
+  const REVALIDATE_MS = 5_000;
+
+  /**
+   * Publish the analysed signal and WAIT for a human decision.
+   *
+   * While it waits, the signal is re-validated against fresh broker candles:
+   *  • the same side with the same levels → the card is refreshed in place;
+   *  • the candles now read NO_TRADE → the signal is marked INVALID with the
+   *    broker's own reason and Execute is withdrawn;
+   *  • the direction or the levels moved → the trader is shown the MOVED
+   *    signal, still without a single order being sent;
+   *  • the bridge cannot answer → the wait continues, because a network
+   *    hiccup must never turn into an order.
+   *
+   * Returns true ONLY when the trader tapped Execute.
+   */
+  const holdForConfirmation = async (
+    symbol: string,
+    direction: { type: "BUY" | "SELL"; entry: number; sl: number; tp: number; tp1?: number; tp2?: number },
+    lotSize: number,
+    tradeCount: number,
+    reason: string,
+  ): Promise<boolean> => {
+    let live = direction;
+    publishPendingSignal({
+      symbol,
+      direction: live.type,
+      entry: live.entry,
+      stopLoss: live.sl,
+      takeProfit: live.tp1 ?? live.tp,
+      lotSize,
+      trades: tradeCount,
+      mode,
+      robotName: eaName,
+      reason,
+      state: "ready",
+      updatedAt: Date.now(),
+    });
+    setExecutionStage(`${live.type} ${symbol} analysed — waiting for your Execute`);
+    broadcast(`${symbol}: ${live.type} signal held — nothing is sent until you tap Execute`, {
+      symbol,
+      side: live.type,
+      status: "waiting",
+      entry: live.entry,
+      stopLoss: live.sl,
+      takeProfit: live.tp1 ?? live.tp,
+      lotSize,
+    });
+
+    const outcome: { decision: SignalDecision | null } = { decision: null };
+    void awaitPendingDecision().then((decision) => {
+      outcome.decision = decision;
+    });
+
+    const deadline = Date.now() + CONFIRM_WINDOW_MS;
+    while (outcome.decision === null && !stopped && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, REVALIDATE_MS));
+      if (outcome.decision !== null || stopped) break;
+      try {
+        const fresh = await resolveTradeDirection(symbol, { credentials });
+        if (fresh.direction.type === "NO_TRADE") {
+          invalidatePendingSignal(`the live candles no longer support this signal — ${fresh.direction.reason}`);
+          break;
+        }
+        const next = fresh.direction as typeof live;
+        const moved =
+          next.type !== live.type ||
+          next.entry !== live.entry ||
+          next.sl !== live.sl;
+        if (moved) {
+          live = next;
+          publishPendingSignal({
+            symbol,
+            direction: live.type,
+            entry: live.entry,
+            stopLoss: live.sl,
+            takeProfit: live.tp1 ?? live.tp,
+            lotSize,
+            trades: tradeCount,
+            mode,
+            robotName: eaName,
+            reason: fresh.reason,
+            state: "ready",
+            updatedAt: Date.now(),
+          });
+          setExecutionStage(`${live.type} ${symbol} re-validated on fresh candles — waiting for your Execute`);
+        } else {
+          publishPendingSignal({
+            symbol,
+            direction: live.type,
+            entry: live.entry,
+            stopLoss: live.sl,
+            takeProfit: live.tp1 ?? live.tp,
+            lotSize,
+            trades: tradeCount,
+            mode,
+            robotName: eaName,
+            reason: fresh.reason,
+            state: "ready",
+            updatedAt: Date.now(),
+          });
+        }
+      } catch {
+        // The bridge did not answer. Keep waiting — never trade on a hiccup.
+      }
+    }
+
+    const decision = outcome.decision;
+    clearPendingSignal();
+    if (decision !== "execute") {
+      setExecutionStage(
+        stopped
+          ? `${symbol}: session stopped — no order sent`
+          : `${symbol}: signal not confirmed — watching for the next one`,
+      );
+      return false;
+    }
+    setExecutionStage(`${live.type} ${symbol} confirmed by you — sending ${tradeCount} order(s)…`);
+    return true;
   };
 
   const tick = async () => {
@@ -571,6 +724,9 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       stopped = true;
       if (timer) clearTimeout(timer);
       timer = null;
+      // A held signal dies with the session: Stop must never leave a card up
+      // that could still place an order.
+      clearPendingSignal();
       log("stopped");
     },
     isRunning: () => !stopped,

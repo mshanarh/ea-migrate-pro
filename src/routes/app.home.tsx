@@ -712,11 +712,11 @@ function AppHome() {
       robotName: target.name,
       mode,
     });
-    setExecutionStage(
-      mode === "scalper"
-        ? "Scalper mode — analysing the last 8 completed M15 candles..."
-        : "Normal mode — analysing the last 8 completed M15 candles...",
-    );
+    // START ANALYSES, IT DOES NOT TRADE. The card opens on the waiting line
+    // and stays there until the bot's own analysis produces a valid signal;
+    // from then on the signal is held on the card, re-validated against fresh
+    // candles, and only the Execute tap on it can place an order.
+    setExecutionStage(`Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}`);
     // THE CARD OPENS IMMEDIATELY — a run that does not show its analysis is
     // indistinguishable from a bot that never started.
     setAnalysisOpen(true);
@@ -736,15 +736,15 @@ function AppHome() {
       eaName: target.name,
       credentials,
       mode,
+      // Nothing reaches the broker before the trader taps Execute on the
+      // signal the analysis produced.
+      requireConfirmation: true,
     });
     console.info("[bot] STEP 5 loop started");
     // "Bot started — Scalper mode, watching BTCUSDm" (Normal lists the symbols too).
     notifyBotStarted(mode, pairs.map((pair) => pair.symbol.trim()));
     toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
-      description:
-        mode === "scalper"
-          ? "Trades close at TP1 or spread + 0.2 ATR, then the next trade opens."
-          : "Trades run with the broker's SL/TP; re-analysis happens on each new M15 candle.",
+      description: `Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}. Nothing is sent until you tap Execute on the signal.`,
     });
   };
 

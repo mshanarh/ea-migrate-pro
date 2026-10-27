@@ -140,6 +140,8 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileChooserCallback;
     /** Bot image remembered while the overlay permission was missing — launched on return. */
     private String pendingBubbleImage;
+    /** Analysed signal remembered while the overlay permission was missing. */
+    private String pendingAnalysis;
 
     private boolean pipSupported() {
         return Build.VERSION.SDK_INT >= Build.VERSION_CODES.O;
@@ -243,6 +245,35 @@ public class MainActivity extends Activity {
         }
         web.setBackgroundColor(Color.parseColor("#0A0F1E"));
         web.addJavascriptInterface(new Bridge(), "EAMigrate");
+        // EXECUTE ON THE NATIVE CARD COMES BACK HERE.
+        //
+        // The floating AI TRADE ANALYSIS card is a native window, so its
+        // Execute button cannot run the app's trading code by itself. Tapping
+        // it dispatches an event into the page instead; the web app — which
+        // owns the saved MT5 account, the risk checks and the bridge call —
+        // then places the order exactly as if the card were in-app. The native
+        // side therefore NEVER fabricates a fill.
+        OverlayService.setAnalysisActionListener(new OverlayService.AnalysisActionListener() {
+            @Override
+            public void onExecute(final String signalJson) {
+                runOnUiThread(new Runnable() {
+                    @Override
+                    public void run() {
+                        String payload = signalJson == null || signalJson.trim().isEmpty()
+                                ? "{}"
+                                : signalJson;
+                        try {
+                            web.evaluateJavascript(
+                                    "window.dispatchEvent(new CustomEvent('eamp:native-execute',{detail:"
+                                            + payload + "}));",
+                                    null);
+                        } catch (Throwable t) {
+                            android.util.Log.e("EAMIGRATE", "native execute hand-off failed: " + t);
+                        }
+                    }
+                });
+            }
+        });
         // EXTERNAL LINKS LEAVE THE APP. The payment redirect is a plain
         // location.replace() to whop.com, and a WebView that tries to render
         // a payment page of its own accord is how "it redirects and then
@@ -483,6 +514,67 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * Float the AI TRADE ANALYSIS card over every app (MetaTrader
+         * included).
+         *
+         * The payload is the analysed signal as JSON, produced by the web app
+         * from LIVE broker candles — this method only DISPLAYS it. A missing
+         * "Display over other apps" permission opens the system grant screen
+         * instead of failing silently, because a popup that never appears is
+         * exactly what the trader would report as "broken".
+         */
+        @JavascriptInterface
+        public void showTradeAnalysis(final String signalJson) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (signalJson == null || signalJson.trim().isEmpty()) return;
+                    if (!overlayAllowed()) {
+                        pendingAnalysis = signalJson;
+                        try {
+                            Intent intent = new Intent(
+                                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                    Uri.parse("package:" + getPackageName()));
+                            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                            startActivity(intent);
+                            android.widget.Toast.makeText(
+                                    MainActivity.this,
+                                    "Allow \"Display over other apps\" — the trade card appears when you come back",
+                                    android.widget.Toast.LENGTH_LONG).show();
+                        } catch (Exception ignored) {
+                        }
+                        return;
+                    }
+                    // A running service already has a WindowManager and its
+                    // foreground notification; only start one when there is
+                    // nothing up to show the card.
+                    if (OverlayService.showAnalysisCard(signalJson)) return;
+                    Intent intent = new Intent(MainActivity.this, OverlayService.class);
+                    intent.putExtra("analysis", signalJson);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent);
+                    } else {
+                        startService(intent);
+                    }
+                }
+            });
+        }
+
+        /** Take the analysis card down. */
+        @JavascriptInterface
+        public void hideTradeAnalysis() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    pendingAnalysis = null;
+                    // Static and instance-gated: hiding must never START the
+                    // service (that would spawn a bubble nobody asked for).
+                    OverlayService.hideAnalysisCard();
+                }
+            });
+        }
+
+        /**
          * Push a foreground trade-execution notification to the phone when
          * the robot has just filled a trade. Red = loss, amber = pending,
          * green = win — the same Algohost palette the web theme uses.
@@ -643,6 +735,19 @@ public class MainActivity extends Activity {
             android.widget.Toast.makeText(this,
                     "Bot bubble floating over other apps ✓",
                     android.widget.Toast.LENGTH_SHORT).show();
+        }
+        // Same for the analysis card: the grant arrived, so float what the
+        // trader asked for without them pressing Analyze again.
+        if (pendingAnalysis != null && overlayAllowed()) {
+            String json = pendingAnalysis;
+            pendingAnalysis = null;
+            Intent intent = new Intent(MainActivity.this, OverlayService.class);
+            intent.putExtra("analysis", json);
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(intent);
+            } else {
+                startService(intent);
+            }
         }
     }
 

@@ -8,6 +8,7 @@ import { canonicalEaSymbol, getAppState, leaveForCheckout, refreshRobotConfigs, 
 import { EaConfigNote } from "@/components/app/EaConfigNote";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
+import { AnalyzeExecuteCard } from "@/components/app/AnalyzeExecuteCard";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
@@ -429,6 +430,21 @@ function TradingPairsScreen() {
               <Check className="size-5" />
               Configure
             </button>
+
+            {/* ANALYZE AND EXECUTE FOR THIS SYMBOL.
+                Reading the symbol's own live broker candles is the only thing
+                that decides the direction — the analysis is done server-side
+                with this account's MT5 credentials, and the lot/trade inputs
+                below start from what this symbol is configured with. */}
+            <div className="border-t border-white/10 pt-4">
+              <AnalyzeExecuteCard
+                userId={app.email}
+                symbol={configSymbol}
+                defaultLot={draftLot || app.settings.lotSize || "0.01"}
+                defaultTrades={draftTrades || "1"}
+                contextLabel={`Analyze & execute · ${configSymbol ?? ""}`}
+              />
+            </div>
 
             {configSymbol && mineSymbols.has(symbolKey(configSymbol)) && (
               <button

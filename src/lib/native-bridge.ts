@@ -24,6 +24,16 @@ type NativeBridge = {
   requestOverlayPermission?: () => void;
   showBubble?: (image: string, name?: string) => void;
   hideBubble?: () => void;
+  /**
+   * Float the AI TRADE ANALYSIS card over every app (MetaTrader included).
+   * The payload is the analysed signal as JSON:
+   * `{ symbol, direction, entry, stopLoss, takeProfit1, takeProfit2 }`.
+   * The native side renders the rounded dark card; the web app stays the only
+   * thing that can place an order.
+   */
+  showTradeAnalysis?: (signalJson: string) => void;
+  /** Take the analysis card down (called when the analysis is cleared). */
+  hideTradeAnalysis?: () => void;
   pushLog?: (line: string) => void;
   reportError?: (message: string) => void;
   openUrl?: (url: string) => void;

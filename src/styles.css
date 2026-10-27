@@ -557,6 +557,16 @@ body.eamp-bg-on .app-fullscreen.bg-black {
   background-color: transparent;
 }
 
+/* SCREENS THAT MUST NOT HAVE THE ANIMATION OVER THEM.
+   The Fundamentals (economic calendar) page sets body.eamp-no-bg-effect while
+   it is mounted: the falling-dollar canvas is fixed and full-screen (and in
+   "play over screen" mode sits ABOVE the content), so it read as decoration
+   drifting across the release numbers. Hiding it here — rather than on the
+   canvas itself — leaves every other screen and the user's setting untouched. */
+body.eamp-no-bg-effect #bg-effects-canvas {
+  display: none !important;
+}
+
 /* Interface colour cycle (tap the centre — see color-cycle.ts): while the
    effect runs, colour tokens ease into the next scheme with a short 0.4s
    shift — quick enough to feel like a 2s rotation, not a slow fade. Only

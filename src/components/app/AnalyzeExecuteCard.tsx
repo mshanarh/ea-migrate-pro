@@ -1,0 +1,434 @@
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2 } from "lucide-react";
+import { hasNativeBridge, callNative } from "@/lib/native-bridge";
+import { analyzeFundamentalsSignal, executeFundamentalsTrades, type FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
+
+/**
+ * ANALYZE → EXECUTE, one card, used by BOTH entry points:
+ *   • the Quotes (symbols list) detail view — tap a symbol, press Analyze;
+ *   • the Fundamentals event detail — tap an event, press Analyze.
+ *
+ * The rules this card enforces:
+ *  1. The direction is TAKEN FROM THE ANALYSIS ONLY. It is displayed, never
+ *     edited — there is no side toggle to flip.
+ *  2. The analysis comes from live broker candles through the bridge
+ *     (last completed M15 bars, the same engine the auto-trader uses). Nothing
+ *     on this card is hardcoded: no sample symbol, no example price.
+ *  3. Execution is BLOCKED, with the exact reason shown, when the analysis is
+ *     stale, missing, or produced no tradeable direction.
+ *  4. A fill is only reported as CONFIRMED when MT5 answered with a ticket and
+ *     a price. A refusal is shown in red with the broker's own error text.
+ */
+
+export type AnalyzedSignal = {
+  symbol: string;
+  direction: "BUY" | "SELL";
+  entry: number;
+  stopLoss: number;
+  takeProfit1: number;
+  takeProfit2: number;
+  livePrice: number;
+  analysedAt: number;
+  reason: string;
+};
+
+/** The analysis is only executable for this long after it was produced. */
+export const ANALYSIS_MAX_AGE_MS = 5 * 60 * 1000;
+
+export function formatPrice(value: number | null | undefined, digits?: number | null): string {
+  if (value == null || !Number.isFinite(value) || value === 0) return "—";
+  if (typeof digits === "number" && digits >= 0 && digits <= 8) return value.toFixed(digits);
+  const abs = Math.abs(value);
+  if (abs >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
+  if (abs >= 1) return value.toFixed(2);
+  if (abs >= 0.01) return value.toFixed(4);
+  return value.toFixed(6);
+}
+
+export function formatLot(value: number | string | null | undefined): string {
+  const num = typeof value === "number" ? value : Number.parseFloat(String(value ?? ""));
+  if (!Number.isFinite(num) || num <= 0) return "0.01";
+  // Brokers quote 0.01 style lots; trim a trailing zero-heavy float.
+  return String(Number(num.toFixed(4)));
+}
+
+/** True when this analysis is still fresh enough to execute. */
+export function isSignalFresh(signal: AnalyzedSignal | null, now = Date.now()): boolean {
+  if (!signal) return false;
+  return now - signal.analysedAt <= ANALYSIS_MAX_AGE_MS;
+}
+
+/**
+ * How stale an analysis is, in words, for the block message.
+ */
+export function stalenessText(signal: AnalyzedSignal, now = Date.now()): string {
+  const ageMs = Math.max(0, now - signal.analysedAt);
+  const minutes = Math.floor(ageMs / 60_000);
+  if (minutes < 1) return `${Math.round(ageMs / 1000)}s old`;
+  return `${minutes}m old`;
+}
+
+export type AnalyzeExecuteCardProps = {
+  /** Signed-in email — the server reads the MT5 record for this user. */
+  userId: string | null;
+  /** The symbol to analyse. Empty renders a "pick a symbol" state. */
+  symbol: string | null;
+  /** Pre-filled from the bot's configured defaults. */
+  defaultLot: string;
+  defaultTrades: string;
+  /** Optional heading override (e.g. the event's own label). */
+  contextLabel?: string | undefined;
+  /** Called once per finished batch, with MT5's confirmed fills. */
+  onResult?: ((result: FundamentalsOrderResult, signal: AnalyzedSignal) => void) | undefined;
+};
+
+export function AnalyzeExecuteCard({
+  userId,
+  symbol,
+  defaultLot,
+  defaultTrades,
+  contextLabel,
+  onResult,
+}: AnalyzeExecuteCardProps) {
+  const [signal, setSignal] = useState<AnalyzedSignal | null>(null);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
+  const [lot, setLot] = useState(defaultLot);
+  const [trades, setTrades] = useState(defaultTrades);
+  const [executing, setExecuting] = useState(false);
+  const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  // A new symbol is a new analysis — never carry the previous one over.
+  useEffect(() => {
+    setSignal(null);
+    setAnalyzeError(null);
+    setResult(null);
+    setFormError(null);
+    setLot(defaultLot);
+    setTrades(defaultTrades);
+  }, [symbol, defaultLot, defaultTrades]);
+
+  /**
+   * Publish the analysed signal to the NATIVE floating card when the app runs
+   * inside the Android wrapper, so the trader can read it (and tap Execute)
+   * while MetaTrader is in front. A wrapper without the feature simply returns
+   * false and the in-app card stays the single source of truth.
+   */
+  useEffect(() => {
+    if (!hasNativeBridge()) return;
+    if (signal) {
+      callNative("showTradeAnalysis", JSON.stringify(signal));
+    } else {
+      callNative("hideTradeAnalysis");
+    }
+  }, [signal]);
+
+  const runAnalysis = useCallback(async () => {
+    setAnalyzeError(null);
+    setResult(null);
+    setFormError(null);
+    if (!userId) {
+      setAnalyzeError("Sign in again to analyze");
+      return;
+    }
+    if (!symbol) {
+      setAnalyzeError("Pick a symbol to analyze first");
+      return;
+    }
+    setAnalyzing(true);
+    try {
+      const reply = await analyzeFundamentalsSignal({ data: { userId, symbol } });
+      if (!reply.ok) {
+        setSignal(null);
+        setAnalyzeError(reply.message);
+        return;
+      }
+      setSignal({
+        symbol: reply.symbol,
+        direction: reply.direction,
+        entry: reply.entry,
+        stopLoss: reply.stopLoss,
+        takeProfit1: reply.takeProfit1,
+        takeProfit2: reply.takeProfit2,
+        livePrice: reply.livePrice,
+        analysedAt: reply.analysedAt,
+        reason: reply.reason,
+      });
+    } catch (error) {
+      setSignal(null);
+      setAnalyzeError(error instanceof Error ? error.message : "Analysis failed");
+    } finally {
+      setAnalyzing(false);
+    }
+  }, [symbol, userId]);
+
+  /**
+   * EXECUTE FROM THE FLOATING NATIVE CARD.
+   *
+   * The Android card floats over MetaTrader and cannot run this app's trading
+   * code, so its Execute button dispatches `eamp:native-execute` into the page
+   * (see MainActivity). The tap lands here and runs the SAME function the
+   * in-app button runs — same direction, same levels, same risk checks, same
+   * MT5 confirmation. Nothing about the order changes because of where the
+   * button was drawn.
+   */
+  const executeRef = useRef<() => Promise<void> | void>(() => {});
+
+  const lotValue = Number.parseFloat(lot);
+  const tradesValue = Number.parseInt(trades, 10);
+  const totalVolume =
+    Number.isFinite(lotValue) && lotValue > 0 && Number.isFinite(tradesValue) && tradesValue > 0
+      ? Number((lotValue * tradesValue).toFixed(4))
+      : 0;
+
+  /** Why execution is blocked right now, or null when it may proceed. */
+  const blockedReason = useCallback((): string | null => {
+    if (!signal) return "No analyzed signal yet — press Analyze first";
+    if (!isSignalFresh(signal)) {
+      return `The analysis is ${stalenessText(signal)} — press Analyze again for fresh levels before executing`;
+    }
+    if (!Number.isFinite(lotValue) || lotValue <= 0) return "Lot size must be greater than 0";
+    if (!Number.isInteger(tradesValue) || tradesValue <= 0) {
+      return "Number of trades must be a whole number above 0";
+    }
+    if (!userId) return "Sign in again to execute";
+    return null;
+  }, [signal, lotValue, tradesValue, userId]);
+
+  const execute = async () => {
+    setFormError(null);
+    setResult(null);
+    const blocked = blockedReason();
+    if (blocked) {
+      setFormError(blocked);
+      return;
+    }
+    if (!signal || !userId) return;
+    setExecuting(true);
+    try {
+      const reply = await executeFundamentalsTrades({
+        data: {
+          userId,
+          symbol: signal.symbol,
+          // The analysed side is the only side that can be sent.
+          direction: signal.direction,
+          lotSize: lotValue,
+          trades: tradesValue,
+          stopLoss: signal.stopLoss,
+          takeProfit: signal.takeProfit1,
+        },
+      });
+      setResult(reply);
+      if (!reply.ok) setFormError(reply.message);
+      onResult?.(reply, signal);
+    } catch (error) {
+      setFormError(error instanceof Error ? error.message : "Order failed");
+    } finally {
+      setExecuting(false);
+    }
+  };
+
+  useEffect(() => {
+    executeRef.current = execute;
+  });
+
+  useEffect(() => {
+    const handler = () => {
+      void executeRef.current();
+    };
+    window.addEventListener("eamp:native-execute", handler);
+    return () => window.removeEventListener("eamp:native-execute", handler);
+  }, []);
+
+  const isBuy = signal?.direction === "BUY";
+  const directionColor = isBuy ? "#4ade80" : "#f87171";
+  const executeBlocked = blockedReason();
+
+  const body = (
+    <>
+      {/* ── Status dot · direction · symbol ─────────────────────────────── */}
+      <div className="flex items-center gap-2">
+        <span
+          className="inline-flex items-center gap-2 rounded-full border px-2.5 py-1 text-[11px] font-black tracking-wide"
+          style={{
+            borderColor: signal ? `${directionColor}66` : "rgba(255,255,255,0.14)",
+            backgroundColor: signal ? `${directionColor}22` : "rgba(255,255,255,0.05)",
+            color: signal ? directionColor : "rgba(255,255,255,0.5)",
+          }}
+        >
+          <span
+            className="size-1.5 rounded-full"
+            style={{ backgroundColor: signal ? directionColor : "rgba(255,255,255,0.35)" }}
+            aria-hidden
+          />
+          {signal ? `${signal.direction} · ${signal.symbol}` : "NO SIGNAL"}
+        </span>
+        <span className="flex-1" />
+        <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">live candles</span>
+      </div>
+
+      {/* ── AI TRADE ANALYSIS card ─────────────────────────────────────── */}
+      {analyzing && (
+        <div className="mt-3 flex items-center gap-2 rounded-[16px] border border-white/10 bg-black/40 px-3 py-3 text-[12px] text-white/60">
+          <Loader2 className="size-4 animate-spin" /> Reading live broker candles…
+        </div>
+      )}
+
+      {!analyzing && signal && (
+        <div className="mt-3 overflow-hidden rounded-[18px] border border-white/10 bg-black/45">
+          <p className="border-b border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-white/45">
+            AI trade analysis
+          </p>
+          <div className="px-3 py-3">
+            <p className="text-[20px] font-black leading-tight" style={{ color: directionColor }}>
+              {signal.symbol} {signal.direction}
+            </p>
+            <p className="mt-1 text-[13px] font-bold tabular-nums text-white/90">
+              Entry {formatPrice(signal.entry)} · SL {formatPrice(signal.stopLoss)} · TP1{" "}
+              {formatPrice(signal.takeProfit1)} · TP2 {formatPrice(signal.takeProfit2)}
+            </p>
+            <p className="mt-1 text-[11px] text-white/40">live data · connected terminal</p>
+            <p className="mt-2 text-[11px] leading-snug text-white/45">{signal.reason}</p>
+            {!isSignalFresh(signal) && (
+              <p className="mt-2 text-[11px] font-bold text-amber-300">
+                INVALID — the analysis is {stalenessText(signal)}. Analyze again before executing.
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {analyzeError && (
+        <p className="mt-3 rounded-[14px] border border-rose-400/25 bg-rose-500/10 px-3 py-2 text-[12px] text-rose-200">
+          {analyzeError}
+        </p>
+      )}
+
+      {!signal && !analyzing && !analyzeError && (
+        <p className="mt-3 text-[12px] text-white/45">
+          {symbol
+            ? `Analyze ${symbol} to read the last completed M15 candles from your broker.`
+            : "Pick a symbol to analyze."}
+        </p>
+      )}
+
+      {/* ── Analyze ────────────────────────────────────────────────────── */}
+      <button
+        type="button"
+        onClick={() => void runAnalysis()}
+        disabled={analyzing || !symbol}
+        className="mt-3 flex h-11 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-[13px] font-black tracking-wide text-white disabled:opacity-40"
+      >
+        {analyzing ? <Loader2 className="size-4 animate-spin" /> : signal ? "Re-analyze" : `Analyze ${symbol ?? ""}`}
+      </button>
+
+      {/* ── Lot / trades / side — only once there is something to send ──── */}
+      {signal && (
+        <>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Lot size</span>
+              <input
+                type="number"
+                inputMode="decimal"
+                step="0.01"
+                min="0.01"
+                value={lot}
+                onChange={(event) => setLot(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
+                Number of trades
+              </span>
+              <input
+                type="number"
+                inputMode="numeric"
+                step="1"
+                min="1"
+                value={trades}
+                onChange={(event) => setTrades(event.target.value)}
+                className="mt-1 w-full rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
+              />
+            </label>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between rounded-xl bg-white/[0.05] px-3 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Total volume</span>
+            <span className="text-[14px] font-black tabular-nums text-white/90">{totalVolume.toFixed(2)}</span>
+          </div>
+
+          <div className="mt-2 flex items-center justify-between rounded-xl bg-white/[0.05] px-3 py-2">
+            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">Direction</span>
+            <span className="text-[12px] font-black" style={{ color: directionColor }}>
+              {signal.direction} — from the analysis, not editable
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void execute()}
+            disabled={executing || executeBlocked !== null}
+            className="mt-3 flex h-12 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-40"
+          >
+            {executing ? <Loader2 className="size-5 animate-spin" /> : `EXECUTE ${signal.direction} ${signal.symbol}`}
+          </button>
+
+          {executeBlocked && (
+            <p className="mt-2 text-[11px] text-amber-300">Blocked: {executeBlocked}</p>
+          )}
+        </>
+      )}
+
+      {formError && <p className="mt-2 text-[12px] text-rose-300">{formError}</p>}
+
+      {/* ── MT5 confirmation, per trade ────────────────────────────────── */}
+      {result && result.orders.length > 0 && (
+        <div className="mt-3 space-y-1.5">
+          <p className="text-[10px] font-black uppercase tracking-[0.18em] text-white/45">
+            {result.brokerSymbol ? `MT5 · ${result.brokerSymbol}` : "MT5"}
+            {result.livePrice != null ? ` · live ${formatPrice(result.livePrice)}` : ""}
+            {result.freeMargin != null ? ` · free margin ${result.freeMargin.toFixed(2)}` : ""}
+          </p>
+          {result.orders.map((order) => {
+            const confirmed = order.status === "executed";
+            const side = signal?.direction ?? "—";
+            return (
+              <div
+                key={order.index}
+                className="rounded-[14px] border px-3 py-2"
+                style={{
+                  borderColor: confirmed ? "rgba(74,222,128,0.35)" : "rgba(248,113,113,0.35)",
+                  backgroundColor: confirmed ? "rgba(74,222,128,0.10)" : "rgba(248,113,113,0.10)",
+                }}
+              >
+                <p
+                  className="text-[12px] font-black"
+                  style={{ color: confirmed ? "#4ade80" : "#f87171" }}
+                >
+                  {confirmed
+                    ? `Trade ${order.index} CONFIRMED · ${side} ${formatLot(lot)} ${result.brokerSymbol ?? signal?.symbol ?? ""} @ ${formatPrice(order.entry)}`
+                    : `Trade ${order.index} REJECTED · ${order.error ?? "MT5 did not confirm the fill"}`}
+                </p>
+              </div>
+            );
+          })}
+          <p className="text-[11px] text-white/45">{result.message}</p>
+        </div>
+      )}
+    </>
+  );
+
+  return (
+    <div className="rounded-[20px] border border-white/12 bg-[#111] p-4 shadow-xl">
+      <p className="text-[13px] font-extrabold uppercase tracking-[0.2em] text-white/70">
+        {contextLabel ?? "Analyze"}
+      </p>
+      {body}
+    </div>
+  );
+}
+
+export default AnalyzeExecuteCard;

@@ -5,8 +5,8 @@ import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
+import { AnalyzeExecuteCard } from "@/components/app/AnalyzeExecuteCard";
 import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
-import { analyzeFundamentalsSignal, executeFundamentalsTrades, type FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
 import { useTradingPairsStore } from "@/lib/trading-pairs-store";
 
 // ------------------------------------------------------------------ tokens
@@ -176,6 +176,8 @@ type FeedState = "loading" | "ready" | "error";
 function FundamentalsPage() {
   const app = useAppState();
   const { tradingPairs } = useTradingPairsStore();
+  /** The signed-in email — the server reads the MT5 record for this user. */
+  const userId = app.email;
 
   /** ALLOWED QUOTES: the mentor's active list, plus the symbols the user's own
    *  robots trade — so an event always resolves to real, tradeable symbols. */
@@ -196,51 +198,42 @@ function FundamentalsPage() {
 
   const [calendar, setCalendar] = useState<CalendarEvent[]>([]);
   const [feedState, setFeedState] = useState<FeedState>("loading");
+  /** When the events on screen were fetched from the feed (ms), or null. */
+  const [fetchedAt, setFetchedAt] = useState<number | null>(null);
+  /** True when the feed failed and the page is showing the last good cache. */
+  const [feedStale, setFeedStale] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // ── Analyse-and-execute state ──────────────────────────────────────────────
+  // ── Analyse-and-execute ────────────────────────────────────────────────────
+  // The card owns the whole analyze → lot/trades → execute → per-trade MT5
+  // confirmation flow (shared with the symbols list). This page only decides
+  // WHICH symbol the event maps to.
   const [selectedSymbol, setSelectedSymbol] = useState<string | null>(null);
-  const [analysis, setAnalysis] = useState<
-    | {
-        symbol: string;
-        direction: "BUY" | "SELL";
-        entry: number;
-        stopLoss: number;
-        takeProfit1: number;
-        takeProfit2: number;
-        slDistance: number;
-        levelsValid: boolean;
-        livePrice: number;
-        analysedAt: number;
-        reason: string;
-      }
-    | null
-  >(null);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [analyzeError, setAnalyzeError] = useState<string | null>(null);
-
-  // Pre-fill from the bot's current configured defaults (lot from app settings,
-  // trades defaults to 1 — matching the existing behavior).
-  const [lot, setLot] = useState(app.settings.lotSize ?? "0.01");
-  const [trades, setTrades] = useState("1");
-  const [executing, setExecuting] = useState(false);
-  const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
+  const [showPopup, setShowPopup] = useState(false);
 
   const loadCalendar = useCallback(async (force: boolean) => {
-    setFeedState("loading");
+    // Keep whatever is already on screen while a refresh runs — the list only
+    // goes to "loading" when there is nothing to show yet.
+    setFeedState((current) => (current === "ready" ? current : "loading"));
     try {
       const reply = await fetchWeekCalendar({ data: { force } });
       if (!reply.ok || reply.events.length === 0) {
+        // No data AND no cache: the honest retry state.
         setCalendar([]);
+        setFetchedAt(null);
+        setFeedStale(false);
         setFeedState("error");
         return;
       }
       setCalendar(reply.events);
+      setFetchedAt(reply.fetchedAt);
+      setFeedStale(reply.stale);
       setFeedState("ready");
     } catch (error) {
       console.warn("[fundamentals] calendar fetch failed", error);
       setCalendar([]);
+      setFetchedAt(null);
+      setFeedStale(false);
       setFeedState("error");
     }
   }, []);
@@ -249,16 +242,34 @@ function FundamentalsPage() {
     void loadCalendar(false);
   }, [loadCalendar]);
 
-  // Reset the analyse/execute state whenever the selected event changes.
+  // KEEP THE DECORATIVE FALLING-DOLLAR CANVAS OFF THIS SCREEN.
+  //
+  // The animated background is a fixed, full-screen canvas that the app paints
+  // behind (and, in "play over screen" mode, ABOVE) every route. On this page
+  // it reads as decoration over the calendar text, competing with the numbers
+  // the trader is trying to read. The class below is removed on unmount, so
+  // the effect returns to every other screen untouched.
+  useEffect(() => {
+    document.body.classList.add("eamp-no-bg-effect");
+    return () => document.body.classList.remove("eamp-no-bg-effect");
+  }, []);
+
+  const feedTimestamp = useMemo(() => {
+    if (!fetchedAt) return null;
+    return new Date(fetchedAt).toLocaleString("en-GB", {
+      timeZone: "Africa/Johannesburg",
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }, [fetchedAt]);
+
+  // Reset the symbol choice whenever the selected event changes.
   useEffect(() => {
     setSelectedSymbol(null);
-    setAnalysis(null);
-    setAnalyzeError(null);
-    setResult(null);
-    setFormError(null);
-    setLot(app.settings.lotSize ?? "0.01");
-    setTrades("1");
-  }, [selectedId, app.settings.lotSize]);
+    setShowPopup(false);
+  }, [selectedId]);
 
   const selected = selectedId ? EVENTS.find((event) => event.id === selectedId) ?? null : null;
   const release = useMemo(
@@ -270,137 +281,11 @@ function FundamentalsPage() {
     [selected, allowedSymbols],
   );
 
-  const lotValue = Number.parseFloat(lot);
-  const tradesValue = Number.parseInt(trades, 10);
-  const totalVolume =
-    Number.isFinite(lotValue) && lotValue > 0 && Number.isFinite(tradesValue) && tradesValue > 0
-      ? Number((lotValue * tradesValue).toFixed(4))
-      : 0;
-
-  // ── ANALYZE ─────────────────────────────────────────────────────────────────
-  const analyze = async () => {
-    setAnalyzeError(null);
-    setAnalysis(null);
-    if (!selected) return;
-    if (!release || !release.direction) {
-      setAnalyzeError("The event has not given a direction yet — nothing to analyze");
-      return;
-    }
-    const symbol = selectedSymbol ?? symbols[0];
-    if (!symbol) {
-      setAnalyzeError(`No Allowed Quote is affected by ${selected.currency}`);
-      return;
-    }
-    if (!symbols.includes(symbol)) {
-      setAnalyzeError(`${symbol} is no longer in your Allowed Quotes — pick another`);
-      return;
-    }
-    const userId = getAppState().email;
-    if (!userId) {
-      setAnalyzeError("Sign in again to analyze");
-      return;
-    }
-
-    setAnalyzing(true);
-    try {
-      const reply = await analyzeFundamentalsSignal({
-        data: { userId, symbol },
-      });
-      if (!reply.ok) {
-        setAnalyzeError(reply.message);
-        return;
-      }
-      setAnalysis(reply);
-      setAnalyzeError(null);
-    } catch (error) {
-      setAnalyzeError(error instanceof Error ? error.message : "Analysis failed");
-    } finally {
-      setAnalyzing(false);
-    }
-  };
-
-  // ── EXECUTE ─────────────────────────────────────────────────────────────────
-  const execute = async () => {
-    setFormError(null);
-    setResult(null);
-    if (!selected) return;
-
-    // Direction must come from the analysis and the executed side must match it.
-    if (!analysis || !analysis.direction) {
-      setFormError("No analyzed signal yet — press Analyze first");
-      return;
-    }
-
-    // Block execution when the analysis is stale (older than 5 minutes).
-    const ageMs = Date.now() - analysis.analysedAt;
-    if (ageMs > 5 * 60 * 1000) {
-      setFormError(
-        `The analysis is ${Math.round(ageMs / 1000)}s old — press Analyze again for fresh levels before executing`,
-      );
-      return;
-    }
-
-    if (!Number.isFinite(lotValue) || lotValue <= 0) {
-      setFormError("Lot size must be greater than 0");
-      return;
-    }
-    if (!Number.isInteger(tradesValue) || tradesValue <= 0) {
-      setFormError("Number of trades must be a whole number above 0");
-      return;
-    }
-
-    const symbol = selectedSymbol ?? symbols[0];
-    if (!symbol) {
-      setFormError(`No Allowed Quote is affected by ${selected.currency}`);
-      return;
-    }
-    if (!symbols.includes(symbol)) {
-      setFormError(`${symbol} is no longer in your Allowed Quotes — analyze again`);
-      return;
-    }
-
-    const userId = getAppState().email;
-    if (!userId) {
-      setFormError("Sign in again to execute");
-      return;
-    }
-
-    setExecuting(true);
-    try {
-      const reply = await executeFundamentalsTrades({
-        data: {
-          userId,
-          symbol,
-          // The analysed side is the only side this button can send.
-          direction: analysis.direction,
-          lotSize: lotValue,
-          trades: tradesValue,
-          stopLoss: analysis.stopLoss,
-          takeProfit: analysis.takeProfit1,
-        },
-      });
-      setResult(reply);
-      if (!reply.ok) setFormError(reply.message);
-    } catch (error) {
-      setFormError(error instanceof Error ? error.message : "Order failed");
-    } finally {
-      setExecuting(false);
-    }
-  };
-
   const eventName = selected?.label ?? "event";
+  const analysisSymbol = selectedSymbol ?? symbols[0] ?? null;
 
   const directionColor = (direction: "BUY" | "SELL") =>
     direction === "BUY" ? "#4ade80" : "#f87171";
-
-  const levelsNumeric = (analysis && analysis.levelsValid)
-    ? {
-        entry: analysis.entry,
-        sl: analysis.stopLoss,
-        tp1: analysis.takeProfit1,
-        tp2: analysis.takeProfit2,
-      }
-    : null;
 
   return (
     <div
@@ -439,7 +324,7 @@ function FundamentalsPage() {
           <div className="space-y-2 pb-6">
             <div className="mb-1 flex items-center justify-between px-1">
               <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-white/35">
-                Tap an event for its latest release
+                {feedTimestamp ? `ForexFactory feed · as of ${feedTimestamp}` : "Tap an event for its release"}
               </p>
               {feedState === "error" && (
                 <button
@@ -451,6 +336,13 @@ function FundamentalsPage() {
                 </button>
               )}
             </div>
+
+            {feedStale && (
+              <p className="rounded-xl border border-amber-400/25 bg-amber-400/5 px-3 py-2 text-[11px] text-amber-200">
+                The live feed could not be reached — showing the last calendar saved
+                {feedTimestamp ? ` at ${feedTimestamp}` : ""}. Tap refresh to try again.
+              </p>
+            )}
 
             {feedState === "loading" && calendar.length === 0 && (
               <div className={`${CARD} flex items-center gap-2 text-[12px] text-white/50`}>
@@ -485,13 +377,13 @@ function FundamentalsPage() {
                       </span>
                     </span>
                     <span className="mt-0.5 block truncate text-[11px] text-white/40">
-                      {feedState === "error"
-                        ? "Could not load event data"
-                        : !resolved
-                          ? "No release in this week's calendar"
-                          : resolved.released
-                            ? `${resolved.direction ?? "NO EDGE"} · ${resolved.actual} vs ${resolved.forecast}`
-                            : `Not yet released · forecast ${resolved.forecast}`}
+                      {!resolved
+                        ? "No release in this week's calendar"
+                        : resolved.released
+                          ? `${resolved.direction ?? "NO EDGE"} · ${resolved.actual} vs ${resolved.forecast}`
+                          : `Upcoming · forecast ${resolved.forecast}${
+                              resolved.previous !== "—" ? ` · previous ${resolved.previous}` : ""
+                            }`}
                     </span>
                   </span>
                   <ChevronRight className="size-4 shrink-0 text-white/30" />
@@ -561,50 +453,48 @@ function FundamentalsPage() {
                   <p className="mt-3 text-[12px] text-white/55">{release.detail}</p>
                 </div>
 
-                {/* Calendar-side signal summary */}
+                {/* Affected quotes — which of YOUR Allowed Quotes moves on this
+                    currency. The TRADE direction is never taken from the release
+                    headline: it comes from the live broker candles below. */}
                 <div className={CARD}>
-                  <p className={HEADING}>Calendar signal</p>
-                  {release.direction ? (
-                    <>
-                      <p className="mt-1 text-[13px] font-extrabold text-white/90">
-                        {release.direction} · {release.event.currency}{" "}
-                        {release.direction === "BUY" ? "stronger" : "weaker"} than forecast
-                      </p>
-                      {symbols.length === 0 ? (
-                        <p className="mt-2 text-[12px] text-amber-200">
-                          No Allowed Quote is affected by {release.event.currency}
-                        </p>
-                      ) : (
-                        <div className="mt-2 space-y-1.5">
-                          {symbols.map((symbol) => (
-                            <div key={symbol} className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                              <span className="text-[12px] font-bold text-white/85">{symbol}</span>
-                              <span
-                                className="text-[12px] font-black"
-                                style={{ color: directionColor(release.direction!) }}
-                              >
-                                {release.direction}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </>
+                  <p className={HEADING}>Affected quotes</p>
+                  <p className="mt-1 text-[12px] text-white/55">
+                    {release.released
+                      ? `${release.actual} vs forecast ${release.forecast} — the trade direction comes from the live broker candles below.`
+                      : `Upcoming release${release.releaseDate ? ` ${release.releaseDate} SAST` : ""} · forecast ${release.forecast}${
+                          release.previous !== "—" ? ` · previous ${release.previous}` : ""
+                        }`}
+                  </p>
+                  {release.direction && (
+                    <p className="mt-2 text-[12px] font-bold" style={{ color: directionColor(release.direction) }}>
+                      Calendar read: {release.direction} {release.event.currency}
+                    </p>
+                  )}
+                  {symbols.length === 0 ? (
+                    <p className="mt-2 text-[12px] text-amber-200">
+                      No Allowed Quote is affected by {release.event.currency} — add one on the Quotes page.
+                    </p>
                   ) : (
-                    <>
-                      <p className="mt-1 text-[13px] font-extrabold text-white/90">
-                        Not yet released, next release: {release.releaseDate}
-                      </p>
-                      <p className="mt-1 text-[12px] text-white/55">
-                        Forecast to watch: <span className="font-black text-white/85">{release.forecast}</span>
-                        {release.previous !== "—" ? ` · previous ${release.previous}` : ""}
-                      </p>
-                    </>
+                    <div className="mt-2 space-y-1.5">
+                      {symbols.map((symbol) => (
+                        <button
+                          key={symbol}
+                          type="button"
+                          onClick={() => setSelectedSymbol(symbol)}
+                          className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left ${
+                            selectedSymbol === symbol ? "bg-white/10" : "bg-white/[0.04]"
+                          }`}
+                        >
+                          <span className="text-[12px] font-bold text-white/85">{symbol}</span>
+                          <ChevronRight className="size-4 text-white/30" />
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
 
                 {/* Analyze + Execute flow */}
-                {release.direction && symbols.length > 0 && (
+                {symbols.length > 0 && (
                   <>
                     {/* Symbol chooser when more than one Allowed Quote matches */}
                     {symbols.length > 1 && (
@@ -632,191 +522,15 @@ function FundamentalsPage() {
                       </div>
                     )}
 
-                    {/* Analyze card */}
-                    <div className={CARD}>
-                      <p className={HEADING}>Analyze</p>
-                      <p className="mt-1 text-[11px] text-white/45">
-                        {selectedSymbol != null ? (
-                          <span className="font-semibold text-white/70">{selectedSymbol}</span>
-                        ) : (
-                          <span className="font-semibold text-white/70">{symbols[0]}</span>
-                        )}{" "}
-                        — fetch fresh broker candles for this currency and read the last completed M15 move.
-                      </p>
-
-                      {analyzeError && (
-                        <p className="mt-2 text-[12px] text-red-300">{analyzeError}</p>
-                      )}
-
-                      {analysis && (
-                        <div className="mt-3 rounded-xl border border-white/10 bg-[#1a1a1a] p-3">
-                          <div className="flex items-center justify-between">
-                            <p className="text-[13px] font-extrabold text-white/90">
-                              {analysis.direction}
-                            </p>
-                            <span
-                              className="shrink-0 text-[11px] font-black"
-                              style={{ color: directionColor(analysis.direction) }}
-                            >
-                              {analysis.direction}
-                            </span>
-                          </div>
-                          <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
-                            Analyzed {analysis.symbol} · direction from broker candles
-                          </p>
-
-                          <div className="mt-3 grid grid-cols-2 gap-2">
-                            {[
-                              { label: "Entry", value: levelsNumeric?.entry },
-                              { label: "Stop loss", value: levelsNumeric?.sl },
-                              { label: "TP1 (1× SL)", value: levelsNumeric?.tp1 },
-                              { label: "TP2 (2× SL)", value: levelsNumeric?.tp2 },
-                            ].map((item) => (
-                              <div key={item.label} className="rounded-xl bg-white/[0.04] px-3 py-2">
-                                <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-white/35">
-                                  {item.label}
-                                </p>
-                                <p className="mt-0.5 text-[13px] font-black tabular-nums text-white/90">
-                                  {item.value != null ? formatPrice(item.value) : "—"}
-                                </p>
-                              </div>
-                            ))}
-                          </div>
-
-                          <div className="mt-2 text-[10px] text-white/40">
-                            {analysis.reason}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="mt-3 flex flex-col gap-2">
-                        <button
-                          type="button"
-                          onClick={() => void analyze()}
-                          disabled={analyzing || !release.direction || symbols.length === 0}
-                          className="flex h-11 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-40"
-                        >
-                          {analyzing ? (
-                            <Loader2 className="size-4 animate-spin" />
-                          ) : (
-                            `Analyze ${selectedSymbol ?? symbols[0]}`
-                          )}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Execute card — only after a fresh analysis exists */}
-                    {analysis && analysis.direction && (
-                      <div className={CARD}>
-                        <p className={HEADING}>Execute</p>
-
-                        <div className="mt-3 grid grid-cols-2 gap-2">
-                          <label className="block">
-                            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                              Lot size
-                            </span>
-                            <input
-                              type="number"
-                              inputMode="decimal"
-                              step="0.01"
-                              min="0.01"
-                              value={lot}
-                              onChange={(event) => setLot(event.target.value)}
-                              className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
-                            />
-                          </label>
-                          <label className="block">
-                            <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                              Number of trades
-                            </span>
-                            <input
-                              type="number"
-                              inputMode="numeric"
-                              step="1"
-                              min="1"
-                              value={trades}
-                              onChange={(event) => setTrades(event.target.value)}
-                              className="mt-1 w-full rounded-xl border border-white/10 bg-[#1a1a1a] px-3 py-2 text-[14px] font-bold tabular-nums text-white outline-none focus:border-white/30"
-                            />
-                          </label>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                            Total volume
-                          </span>
-                          <span className="text-[14px] font-black tabular-nums text-white/90">
-                            {totalVolume.toFixed(2)}
-                          </span>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                            Analyzed direction
-                          </span>
-                          <span className="text-[12px] font-black text-white/90">
-                            {analysis.direction} · {analysis.symbol}
-                          </span>
-                        </div>
-
-                        <div className="mt-3 flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2">
-                          <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/40">
-                            Order side
-                          </span>
-                          <span
-                            className="text-[12px] font-black"
-                            style={{ color: directionColor(analysis.direction) }}
-                          >
-                            {analysis.direction} (must match analysis)
-                          </span>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => void execute()}
-                          disabled={executing}
-                          className="mt-3 flex h-12 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black disabled:opacity-50"
-                        >
-                          {executing ? (
-                            <Loader2 className="size-5 animate-spin" />
-                          ) : (
-                            `EXECUTE ${analysis.direction} ${analysis.symbol}`
-                          )}
-                        </button>
-
-                        {formError && <p className="mt-2 text-[12px] text-red-300">{formError}</p>}
-                      </div>
-                    )}
-
-                    {/* MT5 confirmation */}
-                    {result && result.orders.length > 0 && (
-                      <div className={CARD}>
-                        <p className={HEADING}>MT5 confirmation</p>
-                        <p className="mt-1 text-[11px] text-white/40">
-                          {result.brokerSymbol ? `Broker symbol ${result.brokerSymbol}` : ""}
-                          {result.livePrice != null ? ` · live ${formatPrice(result.livePrice)}` : ""}
-                          {result.freeMargin != null ? ` · free margin ${result.freeMargin.toFixed(2)}` : ""}
-                        </p>
-                        <div className="mt-2 space-y-1.5">
-                          {result.orders.map((order) => (
-                            <div
-                              key={order.index}
-                              className="flex items-center justify-between rounded-xl bg-white/[0.04] px-3 py-2"
-                            >
-                              <span className="text-[12px] font-bold text-white/85">
-                                #{order.index} {analysis?.direction ?? "—"}
-                              </span>
-                              <span className="text-[11px] font-semibold tabular-nums text-white/55">
-                                {order.status === "executed"
-                                  ? `ticket ${order.ticket} @ ${formatPrice(order.entry)}`
-                                  : order.error ?? "not executed"}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="mt-2 text-[11px] text-white/40">{result.message}</p>
-                      </div>
-                    )}
+                    {/* Analyze → execute, from live broker candles. The direction
+                        is read off those candles and is never editable here. */}
+                    <AnalyzeExecuteCard
+                      userId={userId}
+                      symbol={analysisSymbol}
+                      defaultLot={app.settings.lotSize ?? "0.01"}
+                      defaultTrades="1"
+                      contextLabel={`Analyze · ${release.event.label}`}
+                    />
                   </>
                 )}
               </>
@@ -825,18 +539,11 @@ function FundamentalsPage() {
         )}
 
         <DraggableBotPopup />
+
       </main>
       <FixedBottomNav />
     </div>
   );
-}
-
-function formatPrice(value: number | undefined): string {
-  if (value == null || !Number.isFinite(value) || value === 0) return "—";
-  if (Math.abs(value) >= 1000) return value.toLocaleString("en-US", { maximumFractionDigits: 2 });
-  if (Math.abs(value) >= 1) return value.toFixed(2);
-  if (Math.abs(value) >= 0.01) return value.toFixed(4);
-  return value.toFixed(6);
 }
 
 function FundamentalsErrorFallback() {

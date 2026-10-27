@@ -3,6 +3,7 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { getBridgeUrl } from "@/lib/bridge-client";
 import { formatLot, formatPrice, type ExecutionSide } from "@/lib/execution-events";
 import { recordExecutionResult, useExecutionState } from "@/lib/execution-state";
+import { confirmPendingSignal, usePendingSignal } from "@/lib/pending-signal";
 import { useAppState } from "@/lib/app-store";
 import type { Robot } from "@/lib/app-store";
 
@@ -77,6 +78,7 @@ export function TradeAnalysisPopup({
   const accent = accentColorValue(color);
   const execution = useExecutionState();
   const appState = useAppState();
+  const pending = usePendingSignal();
   const [bridgeOnline, setBridgeOnline] = useState(false);
 
   // The confirmed fills arrive on the shared execution bus — the same bus
@@ -160,6 +162,63 @@ export function TradeAnalysisPopup({
   const targetText = formatPrice(takeProfit, digits);
   const lotText = formatLot(lotSize);
 
+  // ── THE HELD SIGNAL ────────────────────────────────────────────────────────
+  // Start no longer sends anything: the analysed signal waits here, and the
+  // ONLY order path in this whole app is the Execute tap on this card.
+  const heldSignal =
+    pending && pending.state === "ready" ? (
+      <div className="mt-3 overflow-hidden rounded-[18px] border border-white/12 bg-black/45">
+        <p className="border-b border-white/10 px-3 py-1.5 text-[10px] font-black uppercase tracking-[0.18em] text-white/45">
+          AI trade analysis
+        </p>
+        <div className="px-3 py-3">
+          <div className="flex items-center gap-2">
+            <span
+              className="size-1.5 rounded-full"
+              style={{ backgroundColor: pending.direction === "BUY" ? "#4ade80" : "#f87171" }}
+              aria-hidden
+            />
+            <span className="if-text text-[12px] font-black">
+              {pending.direction} · {pending.symbol}
+            </span>
+          </div>
+          <p
+            className="if-text mt-1.5 text-[19px] font-black leading-tight"
+            style={{ color: pending.direction === "BUY" ? "#4ade80" : "#f87171" }}
+          >
+            {pending.symbol} {pending.direction}
+          </p>
+          <p className="if-num if-text mt-1 text-[13px] font-bold">
+            Entry {formatPrice(pending.entry, null)} · SL {formatPrice(pending.stopLoss, null)} · TP{" "}
+            {formatPrice(pending.takeProfit, null)}
+          </p>
+          <p className="if-muted mt-1 text-[11px]">live data · connected terminal</p>
+          <p className="if-muted mt-1.5 text-[11px] leading-snug">{pending.reason}</p>
+          <button
+            type="button"
+            onClick={confirmPendingSignal}
+            className="if-pressable mt-3 flex h-11 w-full items-center justify-center rounded-full bg-white text-[13px] font-black tracking-wide text-black"
+          >
+            EXECUTE {pending.direction} {pending.symbol}
+          </button>
+          <p className="if-muted mt-1.5 text-center text-[10px]">
+            {pending.lotSize} lots × {pending.trades} — nothing has been sent yet
+          </p>
+        </div>
+      </div>
+    ) : null;
+
+  const invalidSignal =
+    pending && pending.state === "invalid" ? (
+      <div className="mt-3 rounded-[18px] border border-amber-400/30 bg-amber-500/10 px-3 py-3">
+        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-amber-300">Signal invalid</p>
+        <p className="if-text mt-1 text-[12px] font-bold">
+          {pending.direction} · {pending.symbol} is no longer valid
+        </p>
+        <p className="if-muted mt-1 text-[11px] leading-snug">{pending.invalidReason}</p>
+      </div>
+    ) : null;
+
   return (
     <div
       className="pointer-events-none fixed inset-x-0 z-[9998] mx-auto w-[95%] max-w-md"
@@ -216,6 +275,9 @@ export function TradeAnalysisPopup({
         ) : (
           <p className="if-muted mt-1.5 text-[12px] font-semibold">Waiting for the broker…</p>
         )}
+
+        {heldSignal}
+        {invalidSignal}
 
         {/* The analysis box */}
         <div className="if-well mt-3 overflow-hidden rounded-[14px] border">

@@ -358,8 +358,8 @@ function normalizeToOpened(p: Record<string, unknown>): OpenedTrade | null {
     number: (p["number"] as number | null | undefined) ?? 0,
     side,
     symbol,
-    lotSize: p["lotSize"] as number | string | null | undefined,
-    price: p["price"] as number | string | null | undefined,
+    lotSize: (p["lotSize"] as number | string | null | undefined) ?? null,
+    price: (p["price"] as number | string | null | undefined) ?? null,
   };
 }
 

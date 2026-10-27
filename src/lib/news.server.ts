@@ -3,16 +3,27 @@ import { createServerFn } from "@tanstack/react-start";
 /**
  * The real economic calendar behind the FUNDAMENTALS page.
  *
- * Source: TradingView's public economic-calendar feed — free, no key, and the
- * only free feed here that actually carries the RELEASED number (`actual`)
- * next to `forecast` and `previous`. The older ForexFactory mirrors were
- * forecast-only, so every event read as "not yet released" even after it had
- * printed; they are no longer used.
+ * Source: ForexFactory's public weekly feed
+ * (`https://nfs.faireconomy.media/ff_calendar_thisweek.json`) — free, no key,
+ * CORS-free for a server fetch, and it carries `title`, `country`, `date`,
+ * `impact`, `forecast` and `previous` for every release this week.
  *
- * The feed sends no CORS header, so it is fetched HERE, on the server, and
- * cached for five minutes. The page's refresh button passes `force: true` to
- * bypass that cache. Nothing is ever invented: a row without an `actual` is
- * reported as unreleased, and a failed refresh keeps the previous REAL cache.
+ * It REPLACED TradingView's economic-calendar endpoint, which answers a server
+ * request with HTTP 403 — that is why every row on the page used to read
+ * "Could not load event data": there was no feed behind it at all.
+ *
+ * Notes on the shape of the data:
+ *  • ForexFactory has no `actual` column, so `actual` is always "". A release
+ *    the feed no longer carries therefore reads as "not yet released" rather
+ *    than as an invented number — nothing here is ever fabricated.
+ *  • `country` IS the currency the release moves ("USD", "EUR", "GBP", "NZD"),
+ *    which is exactly what the page's per-currency symbol mapping needs.
+ *
+ * Caching: the whole week's payload is held in memory with the timestamp it was
+ * fetched at. A later failure (network, 5xx, rate limit) returns that cache
+ * with `stale: true` and the original `fetchedAt`, so the page keeps rendering
+ * real events with a "as of …" line instead of a blank retry state. Only a
+ * failure with no cache at all reports `ok: false`.
  */
 
 export type CalendarEvent = {
@@ -23,122 +34,119 @@ export type CalendarEvent = {
   currency: string;
   /** ISO datetime of the release. */
   date: string;
-  /** "High" | "Medium" | "Low". */
+  /** "High" | "Medium" | "Low" | "Holiday". */
   impact: string;
   /** The consensus forecast, as printed by the source. */
   forecast: string;
   /** The last printed number. */
   previous: string;
-  /** The released number — empty until the event prints. */
+  /** The released number — the ForexFactory weekly feed does not carry one. */
   actual: string;
 };
 
-type TvEvent = {
-  title?: string;
-  currency?: string;
-  date?: string;
-  importance?: number;
-  actual?: number | string | null;
-  forecast?: number | string | null;
-  previous?: number | string | null;
-  unit?: string | null;
-  period?: string | null;
-  indicator?: string | null;
+export type CalendarReply = {
+  ok: boolean;
+  events: CalendarEvent[];
+  /** When the events in this reply were fetched from the feed (ms). */
+  fetchedAt: number | null;
+  /** True when this reply is a cache kept because the live fetch failed. */
+  stale: boolean;
 };
 
-const TV_ENDPOINT = "https://economic-calendar.tradingview.com/events";
-/** The currencies this app's Allowed Quotes are quoted in. */
-const COUNTRIES = ["US", "EU", "GB"];
-const DAY_MS = 24 * 60 * 60 * 1000;
+type FfEvent = {
+  title?: string;
+  country?: string;
+  date?: string;
+  impact?: string;
+  forecast?: string;
+  previous?: string;
+};
+
+const FF_ENDPOINT = "https://nfs.faireconomy.media/ff_calendar_thisweek.json";
 
 let cache: { at: number; events: CalendarEvent[] } | null = null;
 const CACHE_MS = 5 * 60 * 1000;
-const STALE_OK_MS = 12 * 60 * 60 * 1000;
+/** A cache older than this is no longer worth showing as "current week". */
+const STALE_OK_MS = 36 * 60 * 60 * 1000;
 
-function formatNumber(value: number | string | null | undefined, unit?: string | null): string {
-  if (value === null || value === undefined) return "";
-  const raw = typeof value === "number" ? value : String(value).trim();
-  if (raw === "") return "";
-  const text = typeof raw === "number" ? String(raw) : raw;
-  const suffix = unit ? String(unit).trim() : "";
-  if (!suffix) return text;
-  if (suffix === "%") return `${text}%`;
-  if (suffix === "K" || suffix === "M" || suffix === "B") return `${text}${suffix}`;
-  return `${text} ${suffix}`;
+function clean(value: string | undefined): string {
+  const raw = (value ?? "").trim();
+  // The feed escapes forward slashes ("SPPI y\\/y"); unescape for display.
+  return raw.replace(/\\\//g, "/");
 }
 
-function impactOf(importance: number | undefined): string {
-  if (importance === 1) return "High";
-  if (importance === 0) return "Medium";
-  return "Low";
+function impactOf(value: string | undefined): string {
+  const raw = clean(value);
+  if (!raw) return "Low";
+  return raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase();
 }
 
 async function fetchEvents(): Promise<CalendarEvent[]> {
-  const from = new Date(Date.now() - 21 * DAY_MS).toISOString();
-  const to = new Date(Date.now() + 21 * DAY_MS).toISOString();
-  const url = `${TV_ENDPOINT}?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&countries=${COUNTRIES.join(",")}`;
-
-  const response = await fetch(url, {
+  const response = await fetch(FF_ENDPOINT, {
     headers: {
-      // The endpoint answers a bare server request with an empty body unless an
-      // Origin is present, so it is sent explicitly.
-      Origin: "https://www.tradingview.com",
-      Referer: "https://www.tradingview.com/",
-      "User-Agent": "Mozilla/5.0 (compatible; EA-Migrate/1.0)",
-      accept: "application/json",
+      // The media host serves an empty body to some bare clients; a normal
+      // browser-style UA + JSON accept always gets the payload.
+      "User-Agent":
+        "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36",
+      accept: "application/json, text/plain, */*",
     },
     signal: AbortSignal.timeout(12_000),
   });
   if (!response.ok) throw new Error(`calendar HTTP ${response.status}`);
 
-  const payload = (await response.json()) as { result?: TvEvent[] } | TvEvent[];
+  const payload = (await response.json()) as FfEvent[] | { result?: FfEvent[] };
   const rows = Array.isArray(payload) ? payload : (payload.result ?? []);
 
   return rows
-    .filter((event) => event.title && event.date && event.currency)
-    .map((event) => ({
-      id: `tv|${String(event.date)}|${String(event.title)}|${String(event.currency)}`,
-      title: String(event.title),
-      currency: String(event.currency).toUpperCase(),
-      date: String(event.date),
-      impact: impactOf(event.importance),
-      forecast: formatNumber(event.forecast, event.unit),
-      previous: formatNumber(event.previous, event.unit),
-      actual: formatNumber(event.actual, event.unit),
-    }));
+    .filter((event) => event.title && event.date && event.country)
+    .map((event) => {
+      const title = clean(event.title);
+      const currency = clean(event.country).toUpperCase();
+      const date = clean(event.date);
+      return {
+        id: `ff|${date}|${title}|${currency}`,
+        title,
+        currency,
+        date,
+        impact: impactOf(event.impact),
+        forecast: clean(event.forecast),
+        previous: clean(event.previous),
+        actual: "",
+      };
+    });
 }
 
 /**
- * The window's real calendar.
+ * This week's real calendar.
  *
  * `force: true` (the page's refresh button) skips the five-minute cache so a
  * tap really re-asks the feed instead of echoing what is already cached.
  */
 export const fetchWeekCalendar = createServerFn({ method: "POST" })
   .validator((data: { force?: boolean } | undefined) => data ?? {})
-  .handler(
-    async ({ data }): Promise<{ ok: boolean; events: CalendarEvent[] }> => {
-      if (!data.force && cache && Date.now() - cache.at < CACHE_MS) {
-        return { ok: true, events: cache.events };
-      }
+  .handler(async ({ data }): Promise<CalendarReply> => {
+    if (!data.force && cache && Date.now() - cache.at < CACHE_MS) {
+      return { ok: true, events: cache.events, fetchedAt: cache.at, stale: false };
+    }
 
-      try {
-        const events = await fetchEvents();
-        if (events.length === 0) {
-          if (cache && Date.now() - cache.at < STALE_OK_MS) return { ok: true, events: cache.events };
-          return { ok: false, events: [] };
-        }
-        const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-        cache = { at: Date.now(), events: sorted };
-        return { ok: true, events: sorted };
-      } catch (error) {
-        console.warn("[fundamentals] calendar fetch failed", error);
-        // A still-real cache beats a blank screen; otherwise the page shows an
-        // honest retry state — never fabricated numbers.
+    try {
+      const events = await fetchEvents();
+      if (events.length === 0) {
         if (cache && Date.now() - cache.at < STALE_OK_MS) {
-          return { ok: true, events: cache.events };
+          return { ok: true, events: cache.events, fetchedAt: cache.at, stale: true };
         }
-        return { ok: false, events: [] };
+        return { ok: false, events: [], fetchedAt: null, stale: false };
       }
-    },
-  );
+      const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+      cache = { at: Date.now(), events: sorted };
+      return { ok: true, events: sorted, fetchedAt: cache.at, stale: false };
+    } catch (error) {
+      console.warn("[fundamentals] calendar fetch failed", error);
+      // A still-real cache beats a blank screen; otherwise the page shows an
+      // honest retry state — never fabricated numbers.
+      if (cache && Date.now() - cache.at < STALE_OK_MS) {
+        return { ok: true, events: cache.events, fetchedAt: cache.at, stale: true };
+      }
+      return { ok: false, events: [], fetchedAt: null, stale: false };
+    }
+  });
