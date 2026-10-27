@@ -1,5 +1,3 @@
-import { createServerFn } from "@tanstack/react-start";
-
 /**
  * The real economic calendar behind the FUNDAMENTALS page.
  *
@@ -11,6 +9,17 @@ import { createServerFn } from "@tanstack/react-start";
  * It REPLACED TradingView's economic-calendar endpoint, which answers a server
  * request with HTTP 403 — that is why every row on the page used to read
  * "Could not load event data": there was no feed behind it at all.
+ *
+ * WHY THIS IS NOT A `createServerFn` ANY MORE
+ * ───────────────────────────────────────────
+ * The deployed app is a STATIC client site plus the single `/api` gateway
+ * function (see api/gateway.ts). TanStack server functions are not served
+ * there: the browser's `POST /_serverFn/<id>` is answered by the SPA shell, so
+ * every calendar load failed in production no matter what this file did — the
+ * page kept showing "Could not load the economic calendar". The feed therefore
+ * lives behind `POST /api/calendar` (api/_handlers/calendar.ts), which is a
+ * route this deployment really serves, and this module is the shared,
+ * dependency-free body both call.
  *
  * Notes on the shape of the data:
  *  • ForexFactory has no `actual` column, so `actual` is always "". A release
@@ -122,31 +131,29 @@ async function fetchEvents(): Promise<CalendarEvent[]> {
  * `force: true` (the page's refresh button) skips the five-minute cache so a
  * tap really re-asks the feed instead of echoing what is already cached.
  */
-export const fetchWeekCalendar = createServerFn({ method: "POST" })
-  .validator((data: { force?: boolean } | undefined) => data ?? {})
-  .handler(async ({ data }): Promise<CalendarReply> => {
-    if (!data.force && cache && Date.now() - cache.at < CACHE_MS) {
-      return { ok: true, events: cache.events, fetchedAt: cache.at, stale: false };
-    }
+export async function fetchWeekCalendarData(force = false): Promise<CalendarReply> {
+  if (!force && cache && Date.now() - cache.at < CACHE_MS) {
+    return { ok: true, events: cache.events, fetchedAt: cache.at, stale: false };
+  }
 
-    try {
-      const events = await fetchEvents();
-      if (events.length === 0) {
-        if (cache && Date.now() - cache.at < STALE_OK_MS) {
-          return { ok: true, events: cache.events, fetchedAt: cache.at, stale: true };
-        }
-        return { ok: false, events: [], fetchedAt: null, stale: false };
-      }
-      const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-      cache = { at: Date.now(), events: sorted };
-      return { ok: true, events: sorted, fetchedAt: cache.at, stale: false };
-    } catch (error) {
-      console.warn("[fundamentals] calendar fetch failed", error);
-      // A still-real cache beats a blank screen; otherwise the page shows an
-      // honest retry state — never fabricated numbers.
+  try {
+    const events = await fetchEvents();
+    if (events.length === 0) {
       if (cache && Date.now() - cache.at < STALE_OK_MS) {
         return { ok: true, events: cache.events, fetchedAt: cache.at, stale: true };
       }
       return { ok: false, events: [], fetchedAt: null, stale: false };
     }
-  });
+    const sorted = events.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    cache = { at: Date.now(), events: sorted };
+    return { ok: true, events: sorted, fetchedAt: cache.at, stale: false };
+  } catch (error) {
+    console.warn("[fundamentals] calendar fetch failed", error);
+    // A still-real cache beats a blank screen; otherwise the page shows an
+    // honest retry state — never fabricated numbers.
+    if (cache && Date.now() - cache.at < STALE_OK_MS) {
+      return { ok: true, events: cache.events, fetchedAt: cache.at, stale: true };
+    }
+    return { ok: false, events: [], fetchedAt: null, stale: false };
+  }
+}

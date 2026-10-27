@@ -6,7 +6,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { AnalyzeExecuteCard } from "@/components/app/AnalyzeExecuteCard";
-import { fetchWeekCalendar, type CalendarEvent } from "@/lib/news.server";
+import type { CalendarEvent, CalendarReply } from "@/lib/news.server";
 import { useTradingPairsStore } from "@/lib/trading-pairs-store";
 
 // ------------------------------------------------------------------ tokens
@@ -216,8 +216,20 @@ function FundamentalsPage() {
     // goes to "loading" when there is nothing to show yet.
     setFeedState((current) => (current === "ready" ? current : "loading"));
     try {
-      const reply = await fetchWeekCalendar({ data: { force } });
-      if (!reply.ok || reply.events.length === 0) {
+      // FROM /api/calendar — NOT A SERVER FUNCTION.
+      //
+      // The deployed app is a static client site plus the single /api
+      // gateway function; TanStack server functions are not served there, so
+      // `POST /_serverFn/<id>` came back as the SPA shell and this page stayed
+      // on "Could not load the economic calendar" whatever the feed code did.
+      // /api/calendar is a route this deployment really serves.
+      const response = await fetch("/api/calendar", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ force }),
+      });
+      const reply = (await response.json()) as CalendarReply;
+      if (!response.ok || !reply.ok || reply.events.length === 0) {
         // No data AND no cache: the honest retry state.
         setCalendar([]);
         setFetchedAt(null);

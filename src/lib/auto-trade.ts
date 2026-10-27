@@ -2538,6 +2538,213 @@ export async function executeAutoTrade(
   return results;
 }
 
+/**
+ * EXECUTE THE SIGNAL THE TRADER WAS SHOWN — at THAT direction and THOSE
+ * levels, straight from the browser.
+ *
+ * WHY THIS IS CLIENT-SIDE. The deployed app is a static client site: the MT5
+ * password never leaves the device (see readMtCredentials), so the order goes
+ * from the browser to the VPS bridge — the same path the bot's own executions
+ * take. It used to be a TanStack server function, which this deployment does
+ * not serve at all (`POST /_serverFn/<id>` returned the SPA shell), so Execute
+ * could never place an order in production.
+ *
+ * There is deliberately NO re-analysis here. The signal on the card is what
+ * gets sent:
+ *   • the side is the analysed side, passed through unchanged;
+ *   • the broker's own symbol name (never a guessed contract) and a live price
+ *     must both exist before the first order;
+ *   • the standing 20% free-margin buffer is checked first;
+ *   • a fill is only reported once MT5 answered 10008/10009/10010 — the SDK's
+ *     sendBridgeOrder throws on any other retcode (see sendBridgeOrder).
+ */
+export type SignalOrderFill = {
+  index: number;
+  status: "executed" | "failed";
+  ticket?: string;
+  entry?: number;
+  error?: string;
+};
+
+export type SignalOrderResult = {
+  ok: boolean;
+  message: string;
+  brokerSymbol?: string | undefined;
+  livePrice?: number | undefined;
+  freeMargin?: number | undefined;
+  equity?: number | undefined;
+  orders: SignalOrderFill[];
+};
+
+/** The order comment on a news-signal trade (brokers are free to rewrite it). */
+const SIGNAL_ORDER_COMMENT = "EA Migrate news signal";
+
+const normalizeSignalSymbol = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+/** The account's free margin/equity from the bridge, or null when unreadable. */
+async function fetchSignalAccount(
+  credentials: BridgeCredentials,
+): Promise<{ freeMargin: number; equity: number } | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${getBridgeUrl()}/account/verify`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+      body: JSON.stringify(credentials),
+      signal: controller.signal,
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      account?: { margin_free?: number; equity?: number };
+    };
+    const freeMargin = Number(payload.account?.margin_free);
+    const equity = Number(payload.account?.equity);
+    if (!Number.isFinite(freeMargin) || !Number.isFinite(equity)) return null;
+    return { freeMargin, equity };
+  } catch {
+    // An unreadable account is not a refusal — the order path still reports the
+    // broker's own answer. It just means the margin guard cannot speak.
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+export async function executeAnalysedSignal(options: {
+  credentials: BridgeCredentials;
+  /** The symbol as the analysis named it. */
+  symbol: string;
+  /** The analysed side — the only side that can be sent. */
+  direction: "BUY" | "SELL";
+  lotSize: number;
+  trades: number;
+  stopLoss: number;
+  takeProfit: number;
+}): Promise<SignalOrderResult> {
+  const orders: SignalOrderFill[] = [];
+  const trades = Math.max(1, Math.min(Math.floor(options.trades), 20));
+  const lotSize = Number(options.lotSize);
+  if (!Number.isFinite(lotSize) || lotSize <= 0) {
+    return { ok: false, message: "Lot size must be greater than 0", orders };
+  }
+  if (options.direction !== "BUY" && options.direction !== "SELL") {
+    return { ok: false, message: "No analysed direction to execute", orders };
+  }
+
+  // 1. The broker's own symbol name, and the live quote the order is priced on.
+  const quoteResult = await fetchBridgeQuote(options.credentials, options.symbol);
+  if ("failure" in quoteResult) {
+    return {
+      ok: false,
+      message: quoteResult.detail
+        ? `Could not read a live price for ${options.symbol} — ${quoteResult.detail}`
+        : `No live price for ${options.symbol} right now. Check that the VPS bridge is running.`,
+      orders,
+    };
+  }
+  const quote = quoteResult.quote;
+  const wanted = normalizeSignalSymbol(options.symbol);
+  const resolved = normalizeSignalSymbol(quote.symbol);
+  if (!resolved.includes(wanted) && !wanted.includes(resolved)) {
+    console.error(
+      `[execute-signal] symbol mismatch: analysed ${options.symbol}, broker resolved ${quote.symbol}`,
+    );
+    return {
+      ok: false,
+      message: `Order aborted — broker symbol ${quote.symbol} does not match the analysed symbol ${options.symbol}`,
+      brokerSymbol: quote.symbol,
+      orders,
+    };
+  }
+  const livePrice = options.direction === "BUY" ? quote.ask : quote.bid;
+  if (!Number.isFinite(livePrice) || livePrice <= 0) {
+    return {
+      ok: false,
+      message: `No live price for ${options.symbol} right now`,
+      brokerSymbol: quote.symbol,
+      orders,
+    };
+  }
+
+  // 2. THE STANDING 20% FREE-MARGIN BUFFER — checked before the first order.
+  const account = await fetchSignalAccount(options.credentials);
+  const freeMargin = account?.freeMargin;
+  const equity = account?.equity;
+  if (
+    freeMargin != null &&
+    equity != null &&
+    equity > 0 &&
+    freeMargin < equity * 0.2
+  ) {
+    return {
+      ok: false,
+      message: `Order aborted — free margin ${freeMargin.toFixed(2)} is below the 20% buffer (${(
+        equity * 0.2
+      ).toFixed(2)} of equity ${equity.toFixed(2)})`,
+      brokerSymbol: quote.symbol,
+      livePrice,
+      freeMargin,
+      equity,
+      orders,
+    };
+  }
+
+  // 3. One order per requested trade, at the analysed side and levels. Each
+  //    fill is recorded only with MT5's own ticket and price.
+  let firstError: string | null = null;
+  for (let i = 0; i < trades; i++) {
+    try {
+      const payload = await sendBridgeOrder(options.credentials, quote.symbol, {
+        action: options.direction,
+        volume: lotSize,
+        stopLoss: options.stopLoss,
+        takeProfit: options.takeProfit,
+        comment: SIGNAL_ORDER_COMMENT,
+      });
+      // A fill that came back sided the other way is reported as a mismatch,
+      // never as a confirmed trade in the analysed direction.
+      const echoed = typeof payload["action"] === "string" ? payload["action"].toUpperCase() : null;
+      if (echoed && echoed !== options.direction) {
+        const mismatch = `Direction mismatch — analysed ${options.direction}, MT5 answered ${echoed}`;
+        console.error(`[execute-signal] ${mismatch}`);
+        orders.push({ index: i + 1, status: "failed", error: mismatch });
+        firstError = firstError ?? mismatch;
+        break;
+      }
+      const ticket = payload["order"] ?? payload["deal"] ?? null;
+      const entry = Number(payload["price"]);
+      if (ticket == null || !Number.isFinite(entry) || entry <= 0) {
+        const missing = `MT5 did not confirm the fill (no ticket/price for trade ${i + 1})`;
+        orders.push({ index: i + 1, status: "failed", error: missing });
+        firstError = firstError ?? missing;
+        break;
+      }
+      orders.push({ index: i + 1, status: "executed", ticket: String(ticket), entry });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Order failed";
+      console.error(`[execute-signal] trade ${i + 1} failed: ${message}`);
+      orders.push({ index: i + 1, status: "failed", error: message });
+      firstError = firstError ?? message;
+      // A refused order stops the batch — never a blind retry of the rest.
+      break;
+    }
+  }
+
+  const filled = orders.filter((order) => order.status === "executed").length;
+  return {
+    ok: filled > 0,
+    message:
+      filled > 0
+        ? `${filled} of ${trades} order${trades === 1 ? "" : "s"} confirmed by MetaTrader`
+        : (firstError ?? `No order was placed for ${options.symbol}`),
+    brokerSymbol: quote.symbol,
+    livePrice,
+    freeMargin,
+    equity,
+    orders,
+  };
+}
+
 // ============================================================================
 // Helpers
 // ============================================================================

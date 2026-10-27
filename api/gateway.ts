@@ -64,6 +64,11 @@ const ROUTES: Record<string, () => Promise<HandlerModule>> = {
   "admin-backfill": () => import("./_handlers/admin-backfill.js"),
   "admin-users": () => import("./_handlers/admin-users.js"),
   "bridge-config": () => import("./_handlers/bridge-config.js"),
+  // The Fundamentals calendar. It lives here rather than in a TanStack server
+  // function because this deployment serves /api and NOT /_serverFn — the
+  // calendar could never load in production until it moved (see
+  // api/_handlers/calendar.ts).
+  calendar: () => import("./_handlers/calendar.js"),
   "check-access": () => import("./_handlers/check-access.js"),
   "device-binding": () => import("./_handlers/device-binding.js"),
   "device/register": () => import("./_handlers/device/register.js"),

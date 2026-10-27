@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { hasNativeBridge, callNative } from "@/lib/native-bridge";
-import { analyzeFundamentalsSignal, executeFundamentalsTrades, type FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
+import { executeAnalysedSignal, readMtCredentials, resolveTradeDirection } from "@/lib/auto-trade";
+import { getAppState } from "@/lib/app-store";
+import type { FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
 
 /**
  * ANALYZE → EXECUTE, one card, used by BOTH entry points:
@@ -14,6 +16,11 @@ import { analyzeFundamentalsSignal, executeFundamentalsTrades, type Fundamentals
  *  2. The analysis comes from live broker candles through the bridge
  *     (last completed M15 bars, the same engine the auto-trader uses). Nothing
  *     on this card is hardcoded: no sample symbol, no example price.
+ *     It runs IN THE BROWSER, like the bot's own analysis: the deployed app is
+ *     a static client site, so the MT5 password saved on this device (see
+ *     readMtCredentials) is what signs the candle call. It used to run in a
+ *     TanStack server function, which this deployment does not serve — the
+ *     request came back as the SPA shell and Analyze could never answer.
  *  3. Execution is BLOCKED, with the exact reason shown, when the analysis is
  *     stale, missing, or produced no tradeable direction.
  *  4. A fill is only reported as CONFIRMED when MT5 answered with a ticket and
@@ -99,6 +106,10 @@ export function AnalyzeExecuteCard({
   const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
+  /** No MT5 account on this device — the one thing that stops both steps. */
+  const NO_ACCOUNT_MESSAGE =
+    "No MT5 account is saved on this device — add your login, password and server on the MetaTrader page first.";
+
   // A new symbol is a new analysis — never carry the previous one over.
   useEffect(() => {
     setSignal(null);
@@ -136,24 +147,37 @@ export function AnalyzeExecuteCard({
       setAnalyzeError("Pick a symbol to analyze first");
       return;
     }
+    // THE DEVICE'S OWN SAVED ACCOUNT. The password never leaves the phone —
+    // the same credentials the bot's live executions use.
+    const credentials = readMtCredentials(getAppState().mt);
+    if (!credentials) {
+      setSignal(null);
+      setAnalyzeError(NO_ACCOUNT_MESSAGE);
+      return;
+    }
     setAnalyzing(true);
     try {
-      const reply = await analyzeFundamentalsSignal({ data: { userId, symbol } });
-      if (!reply.ok) {
+      const analysis = await resolveTradeDirection(symbol, {
+        credentials,
+        requireExecutionReady: true,
+        rejectProxyData: true,
+      });
+      if (analysis.direction.type === "NO_TRADE") {
         setSignal(null);
-        setAnalyzeError(reply.message);
+        setAnalyzeError(analysis.direction.reason);
         return;
       }
+      const direction = analysis.direction;
       setSignal({
-        symbol: reply.symbol,
-        direction: reply.direction,
-        entry: reply.entry,
-        stopLoss: reply.stopLoss,
-        takeProfit1: reply.takeProfit1,
-        takeProfit2: reply.takeProfit2,
-        livePrice: reply.livePrice,
-        analysedAt: reply.analysedAt,
-        reason: reply.reason,
+        symbol: analysis.symbol || symbol,
+        direction: direction.type,
+        entry: direction.entry,
+        stopLoss: direction.sl,
+        takeProfit1: direction.tp1 ?? direction.tp,
+        takeProfit2: direction.tp2 ?? direction.tp,
+        livePrice: direction.entry,
+        analysedAt: analysis.timestamp,
+        reason: analysis.reason,
       });
     } catch (error) {
       setSignal(null);
@@ -205,19 +229,22 @@ export function AnalyzeExecuteCard({
       return;
     }
     if (!signal || !userId) return;
+    const credentials = readMtCredentials(getAppState().mt);
+    if (!credentials) {
+      setFormError(NO_ACCOUNT_MESSAGE);
+      return;
+    }
     setExecuting(true);
     try {
-      const reply = await executeFundamentalsTrades({
-        data: {
-          userId,
-          symbol: signal.symbol,
-          // The analysed side is the only side that can be sent.
-          direction: signal.direction,
-          lotSize: lotValue,
-          trades: tradesValue,
-          stopLoss: signal.stopLoss,
-          takeProfit: signal.takeProfit1,
-        },
+      const reply = await executeAnalysedSignal({
+        credentials,
+        symbol: signal.symbol,
+        // The analysed side is the only side that can be sent.
+        direction: signal.direction,
+        lotSize: lotValue,
+        trades: tradesValue,
+        stopLoss: signal.stopLoss,
+        takeProfit: signal.takeProfit1,
       });
       setResult(reply);
       if (!reply.ok) setFormError(reply.message);
