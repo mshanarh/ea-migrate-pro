@@ -89,7 +89,7 @@ MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
-DAEMON_VERSION = "2.2"
+DAEMON_VERSION = "2.3"
 
 _log_lines: list[str] = []
 
@@ -532,41 +532,109 @@ def run() -> None:
             time.sleep(5)
             continue
 
-        # ── 1) CLOSE MANAGING ──────────────────────────────────────────────
+        # ── 1) CLOSE MANAGING — FULL BATCH SWEEP ────────────────────────────
         # Every loop iteration: list LIVE MT5 positions, keep only the daemon's
-        # magic positions, and close each that is in-the-money right now.
-        # Hard blocks are checked AFTER this, so already-open positions are
-        # never held up by margin, candle data or anything else.
+        # magic positions. For each symbol whose combined floating profit > 0,
+        # close EVERY open position of that symbol belonging to the current cycle.
+        # We count by live MT5 query, not by a remembered ticket list — that is
+        # what let old positions escape. After the sweep, ZERO cycle positions
+        # must remain before we open anything new.
         live_positions = _live_magic_positions(creds)
-        open_by_symbol = {}
+
+        # Process each symbol: close ALL open positions when combined profit > 0
+        symbols_to_close = set()
         if live_positions:
-            open_by_symbol = _count_open_per_symbol(live_positions)
+            # Determine which symbols have any open positions with profit > 0
             for pos in live_positions:
                 symbol = pos["symbol"]
-                # close the instant floating profit > 0 in account currency,
-                # confirmed by MT5 before we log
-                if pos.get("profit", 0) > 0:
-                    _close_live_position(creds, pos, step_state, symbol)
+                profit = pos.get("profit", 0)
+                if profit > 0:
+                    symbols_to_close.add(symbol)
+
+        # Full sweep close: for each symbol with positive combined profit,
+        # close EVERY open position of that symbol
+        for s in symbols_to_close:
+            # Get fresh live positions for this symbol
+            live_positions = _live_magic_positions(creds)
+            positions_of_symbol = [p for p in live_positions if p["symbol"] == s]
+            
+            # Close every open position of this symbol
+            for pos in positions_of_symbol:
+                closed = False
+                max_retries = 3
+                for attempt in range(max_retries):
+                    result = _close_live_position(creds, pos, step_state, s)
+                    if result:
+                        closed = True
+                        break
+                    _log(f"CLOSE attempt {attempt+1}/{max_retries} for ticket {pos['ticket']} on {s} failed, retrying")
+                    # Refresh live positions after failed close
                     live_positions = _live_magic_positions(creds)
-                    open_by_symbol = _count_open_per_symbol(live_positions)
-                    continue
-                # SL hit detection (no revenge trade)
-                sl_hit = False
-                if pos.get("sl", 0) > 0:
-                    if pos["type"] == "BUY" and pos["price_current"] <= pos["sl"]:
-                        sl_hit = True
-                    if pos["type"] == "SELL" and pos["price_current"] >= pos["sl"]:
-                        sl_hit = True
-                if sl_hit:
-                    _log(f"TRADE CLOSED — STOP LOSS hit on {symbol} (ticket {pos['ticket']}), "
-                         f"no revenge trade")
-                    # mark closed so we do not try to reopen this symbol yet
-                    pos["open"] = False
-                    live_positions = _live_magic_positions(creds)
-                    open_by_symbol = _count_open_per_symbol(live_positions)
-                    continue
+                    positions_of_symbol = [p for p in live_positions if p["symbol"] == s]
+                    if not any(p["ticket"] == pos["ticket"] for p in positions_of_symbol):
+                        # Already closed, exit retry loop
+                        closed = True
+                        break
+                
+                if not closed:
+                    _log(f"FAILED to close ticket {pos['ticket']} on {s} after {max_retries} retries")
+                
+                # Re-check live positions after each close
+                live_positions = _live_magic_positions(creds)
+
+            # RE-VERIFY: after sweeping this symbol, confirm ZERO cycle positions remain
+            live_positions_after = _live_magic_positions(creds)
+            remaining = [p for p in live_positions_after if p["symbol"] == s]
+            if remaining:
+                _log(f"WARNING: after sweep on {s}, {len(remaining)} position(s) still open -- keeping closed, NOT opening new trades")
+                # Do NOT open anything new for this symbol until clean
+                # Skip opening for this symbol by continuing
+                continue  # skip opening for this symbol iteration
 
         # ── 2) OPEN / MANAGE (hard blocks only block NEW trades) ────────────
+        # Only open if all symbols are clean (zero remaining positions)
+        # Re-fetch live positions to get accurate open counts
+        live_positions = _live_magic_positions(creds)
+        open_by_symbol = _count_open_per_symbol(live_positions)
+        
+        symbol_list = step_state.get("symbol", step_state.get("symbols", ["BTCUSDm"]))
+        for s in (symbol_list if isinstance(symbol_list, list) else [symbol_list]):
+            # per-symbol open cap: do not open while a magic position is alive
+            # on this symbol (count live positions)
+            if open_by_symbol.get(s, 0) > 0:
+                _log(f"{s}: already has an open position, not opening another")
+                continue
+            blocked, block = _hard_block(creds, s)
+            if blocked:
+                _log(f"TRADE SKIPPED -- {s}: {block}")
+                continue
+            bars = _last_8_completed_candles(s, creds)
+            if bars is None:
+                _log(f"WAITING for candle data on {s}")
+                continue
+            atr = _average_true_range(bars)
+            side = _direction(bars)
+            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
+                 f"ATR {atr:.2f}")
+            # no open ticket on this symbol → open the new trade
+            sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
+            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), s)
+            if ticket is None or not ticket.get("filled"):
+                _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
+                continue
+            step_state["positions"][ticket["order"]] = {
+                "symbol": s, "type": side.upper(), "volume": float(step_state.get("lot", 0.01)),
+                "sl": sl, "tp1": tp1, "tp2": tp2, "spread": spread, "atr": atr,
+                "opened_at": _time_now(), "ticket": ticket["order"],
+            }
+            _write_state(step_state)
+            _log(f"TRADED {s}: OPENED {side} {step_state.get('lot')} lots @ "
+                 f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
+                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
+            # no blocking countdown — the main 1–2 second loop manages closes
+
+        time.sleep(1)
+
         symbol_list = step_state.get("symbol", step_state.get("symbols", ["BTCUSDm"]))
         for s in (symbol_list if isinstance(symbol_list, list) else [symbol_list]):
             # per-symbol open cap: do not open while a magic position is alive
