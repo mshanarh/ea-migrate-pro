@@ -36,6 +36,18 @@ function getNavClass(style: BottomNavStyle): string {
       return "plat-nav-tiles";
     case "underline-tabs":
       return "plat-nav-underline";
+    case "neon-glow":
+      return "plat-nav-neon";
+    case "segmented-control":
+      return "plat-nav-segmented";
+    case "labels-above":
+      return "plat-nav-labels";
+    case "rounded-tiles":
+      return "plat-nav-rounded";
+    case "gradient-bar":
+      return "plat-nav-gradient";
+    case "capsule-active":
+      return "plat-nav-capsule";
     default:
       return "plat-nav-ios";
   }
@@ -60,6 +72,7 @@ function NavLink({
   iconClassName = "size-[22px]",
   labelClassName = "",
   showLabel = true,
+  labelFirst = false,
   children,
 }: {
   tab: Tab;
@@ -71,6 +84,8 @@ function NavLink({
   iconClassName?: string;
   labelClassName?: string;
   showLabel?: boolean;
+  /** "Labels On Top" — the label is drawn above the icon instead of below. */
+  labelFirst?: boolean;
   children?: ReactNode;
 }) {
   const Icon = tab.icon;
@@ -82,13 +97,14 @@ function NavLink({
       className={className}
       style={{ color: active ? accent : INACTIVE, ...style }}
     >
+      {labelFirst && showLabel && <span className={labelClassName}>{tabLabel(tab.label)}</span>}
       <Icon
         className={iconClassName}
         strokeWidth={active ? 2.5 : 2}
         fill={active ? "currentColor" : "none"}
         fillOpacity={active ? 0.18 : 0}
       />
-      {showLabel && <span className={labelClassName}>{tabLabel(tab.label)}</span>}
+      {!labelFirst && showLabel && <span className={labelClassName}>{tabLabel(tab.label)}</span>}
       {children}
     </Link>
   );
@@ -113,8 +129,8 @@ function robotHasVideo(): boolean {
  * Its LOOK comes from the shared, persisted bottom-nav store, so picking a
  * style in Settings → Bottom Nav (or the drawer) re-renders the real nav on
  * Home, Metatrader, Quotes, Scanner and Settings instantly — no reload. All
- * nine styles keep the same three destinations and colour the active tab with
- * the live theme accent, so the colour cycle keeps working everywhere.
+ * fifteen styles keep the same three destinations and colour the active tab
+ * with the live theme accent, so the colour cycle keeps working everywhere.
  *
  * HOME keeps its special gesture: pressing it twice starts the robot's uploaded
  * video playing (the tap itself unlocks mobile autoplay).
@@ -404,6 +420,193 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
                 }
                 iconClassName="size-[18px]"
                 labelClassName="text-[9px] font-black uppercase tracking-[0.14em]"
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── NEON GLOW BAR — the accent lights the edge and the active tab. */}
+      {navStyle === "neon-glow" && (
+        <div
+          className="flex w-full items-stretch justify-around rounded-[26px] px-2 pt-1.5"
+          style={{
+            background: "var(--if-nav-bg, rgba(14,14,16,0.92))",
+            backdropFilter: "blur(var(--if-nav-blur, 18px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 18px))",
+            border: `1px solid ${accent}66`,
+            borderRadius: "var(--if-nav-radius, 26px)",
+            boxShadow: `0 0 0 1px ${accent}22, 0 0 26px ${accent}55, 0 12px 34px rgba(0,0,0,0.55)`,
+          }}
+        >
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className="plat-pressable flex min-w-[64px] flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl py-2"
+                style={active ? { backgroundColor: `${accent}1F` } : undefined}
+                labelClassName="text-[10px] font-bold tracking-[0.06em]"
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── SEGMENTED CONTROL — one track, the active tab is the filled segment. */}
+      {navStyle === "segmented-control" && (
+        <div
+          className="flex w-full items-stretch gap-1 rounded-full p-1"
+          style={{
+            background: "var(--if-nav-bg, rgba(18,18,20,0.90))",
+            backdropFilter: "blur(var(--if-nav-blur, 16px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 16px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.09))",
+            borderRadius: "var(--if-nav-radius, 999px)",
+            boxShadow: "var(--if-nav-shadow, 0 10px 30px rgba(0,0,0,0.5))",
+          }}
+        >
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className="plat-pressable flex min-w-[60px] flex-1 flex-col items-center justify-center gap-0.5 rounded-full py-2"
+                style={active ? { backgroundColor: accent, color: "#08080a" } : undefined}
+                iconClassName="size-[18px]"
+                labelClassName="text-[10px] font-black tracking-[0.06em]"
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── LABELS ON TOP — the label sits above the icon. */}
+      {navStyle === "labels-above" && (
+        <div
+          className="flex w-full items-stretch justify-around rounded-[24px] px-2 pb-1.5 pt-2"
+          style={{
+            background: "var(--if-nav-bg, rgba(18,18,20,0.90))",
+            backdropFilter: "blur(var(--if-nav-blur, 16px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 16px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            borderRadius: "var(--if-nav-radius, 24px)",
+            boxShadow: "var(--if-nav-shadow, 0 10px 30px rgba(0,0,0,0.5))",
+          }}
+        >
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className="plat-pressable flex min-w-[62px] flex-1 flex-col items-center justify-center gap-1 rounded-2xl py-1.5"
+                style={active ? { backgroundColor: "rgba(255,255,255,0.06)" } : undefined}
+                iconClassName="size-[20px]"
+                labelClassName="text-[10px] font-semibold tracking-[0.08em]"
+                labelFirst
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── ROUNDED TILES — each tab is its own tile; the active one is tinted. */}
+      {navStyle === "rounded-tiles" && (
+        <div className="flex w-full items-stretch justify-around gap-2 px-1 py-2">
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className="plat-pressable flex min-w-[58px] flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl border py-2"
+                style={
+                  active
+                    ? { backgroundColor: `${accent}24`, borderColor: `${accent}99` }
+                    : { background: "var(--if-nav-bg, rgba(16,16,18,0.90))", borderColor: "rgba(255,255,255,0.12)" }
+                }
+                iconClassName="size-[19px]"
+                labelClassName="text-[10px] font-bold tracking-[0.06em]"
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── GRADIENT BAR — the bar itself is tinted from the accent. */}
+      {navStyle === "gradient-bar" && (
+        <div
+          className="flex w-full items-stretch justify-around rounded-[26px] px-2 pt-1.5"
+          style={{
+            background: `linear-gradient(135deg, ${accent}3D 0%, var(--if-nav-bg, rgba(14,14,16,0.94)) 62%)`,
+            backdropFilter: "blur(var(--if-nav-blur, 20px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 20px))",
+            border: "1px solid rgba(255,255,255,0.10)",
+            borderRadius: "var(--if-nav-radius, 26px)",
+            boxShadow: "var(--if-nav-shadow, 0 12px 34px rgba(0,0,0,0.55))",
+          }}
+        >
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className="plat-pressable flex min-w-[64px] flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl py-2"
+                style={active ? { backgroundColor: `${accent}22` } : undefined}
+                labelClassName="text-[10px] font-semibold tracking-[0.08em]"
+              />
+            );
+          })}
+        </div>
+      )}
+
+      {/* ── ACTIVE CAPSULE — icon and label side by side, capsule when active. */}
+      {navStyle === "capsule-active" && (
+        <div
+          className="flex w-full items-center justify-around rounded-2xl px-1.5 py-2"
+          style={{
+            background: "var(--if-nav-bg, rgba(16,16,18,0.94))",
+            backdropFilter: "blur(var(--if-nav-blur, 14px))",
+            WebkitBackdropFilter: "blur(var(--if-nav-blur, 14px))",
+            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.08))",
+            borderRadius: "var(--if-nav-radius, 18px)",
+            boxShadow: "var(--if-nav-shadow, 0 12px 30px rgba(0,0,0,0.5))",
+          }}
+        >
+          {TABS.map((tab) => {
+            const active = isActive(tab.to);
+            return (
+              <NavLink
+                key={tab.to}
+                tab={tab}
+                active={active}
+                accent={accent}
+                onClick={onTab(tab)}
+                className={`plat-pressable flex min-w-[64px] items-center justify-center gap-1.5 px-3 py-2${
+                  active ? " rounded-full" : ""
+                }`}
+                style={active ? { backgroundColor: accent, color: "#08080a" } : undefined}
+                iconClassName="size-[18px]"
+                labelClassName="text-[10px] font-black tracking-[0.06em]"
               />
             );
           })}

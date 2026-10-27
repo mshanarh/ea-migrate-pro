@@ -69,22 +69,125 @@ export function BottomNavStyles() {
 /** A miniature of the chosen style — the shapes the real nav will use. */
 function NavPreview({ style, accent }: { style: BottomNavStyle; accent: string }) {
   const labels = style !== "icon-pill" && style !== "compact-dots";
-  const item = (tab: (typeof PREVIEW_TABS)[number], active: boolean) => {
+  const item = (tab: (typeof PREVIEW_TABS)[number], active: boolean, above = false) => {
     const Icon = tab.icon;
+    const icon = (
+      <Icon className="size-4" style={{ color: active ? accent : "rgba(255,255,255,0.45)" }} strokeWidth={2.2} />
+    );
+    const label = (
+      <span className="text-[8px] font-semibold tracking-wide" style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}>
+        {tab.label}
+      </span>
+    );
     return (
       <span key={tab.key} className="flex flex-col items-center justify-center gap-0.5">
-        <Icon className="size-4" style={{ color: active ? accent : "rgba(255,255,255,0.45)" }} strokeWidth={2.2} />
-        {labels && (
-          <span
-            className="text-[8px] font-semibold tracking-wide"
-            style={{ color: active ? accent : "rgba(255,255,255,0.45)" }}
-          >
-            {tab.label}
-          </span>
-        )}
+        {above && labels ? label : null}
+        {icon}
+        {!above && labels ? label : null}
       </span>
     );
   };
+
+  // ── The second wave of looks. Each mini mirrors its real bar.
+  if (style === "neon-glow" || style === "segmented-control" || style === "labels-above"
+    || style === "rounded-tiles" || style === "gradient-bar") {
+    const tiles = style === "rounded-tiles";
+    const segmented = style === "segmented-control";
+    return (
+      <div
+        className={`flex w-full items-center justify-around ${tiles ? "gap-1.5" : segmented ? "gap-1 p-1" : "px-2 py-1.5"} ${
+          segmented ? "rounded-full" : "rounded-[14px]"
+        }`}
+        style={{
+          background:
+            style === "gradient-bar"
+              ? `linear-gradient(135deg, ${accent}3D 0%, rgba(14,14,16,0.94) 62%)`
+              : tiles
+                ? "transparent"
+                : "rgba(18,18,20,0.92)",
+          border:
+            style === "neon-glow"
+              ? `1px solid ${accent}66`
+              : tiles
+                ? "none"
+                : "1px solid rgba(255,255,255,0.1)",
+          boxShadow: style === "neon-glow" ? `0 0 16px ${accent}55` : "none",
+        }}
+      >
+        {PREVIEW_TABS.map((tab, index) => {
+          const active = index === 1;
+          if (tiles) {
+            return (
+              <span
+                key={tab.key}
+                className="flex flex-1 items-center justify-center rounded-xl border py-1"
+                style={
+                  active
+                    ? { backgroundColor: `${accent}24`, borderColor: `${accent}99` }
+                    : { backgroundColor: "rgba(16,16,18,0.9)", borderColor: "rgba(255,255,255,0.12)" }
+                }
+              >
+                {item(tab, active)}
+              </span>
+            );
+          }
+          if (segmented) {
+            return (
+              <span
+                key={tab.key}
+                className="flex flex-1 justify-center rounded-full py-1"
+                style={active ? { backgroundColor: accent, color: "#08080a" } : undefined}
+              >
+                {item(tab, active)}
+              </span>
+            );
+          }
+          if (style === "labels-above") {
+            return (
+              <span
+                key={tab.key}
+                className="flex flex-1 justify-center rounded-lg py-1"
+                style={active ? { backgroundColor: "rgba(255,255,255,0.06)" } : undefined}
+              >
+                {item(tab, active, true)}
+              </span>
+            );
+          }
+          return item(tab, active);
+        })}
+      </div>
+    );
+  }
+
+  if (style === "capsule-active") {
+    return (
+      <div
+        className="flex w-full items-center justify-around rounded-xl px-1.5 py-1.5"
+        style={{ backgroundColor: "rgba(16,16,18,0.94)", border: "1px solid rgba(255,255,255,0.08)" }}
+      >
+        {PREVIEW_TABS.map((tab, index) => {
+          const Icon = tab.icon;
+          const active = index === 1;
+          return (
+            <span
+              key={tab.key}
+              className="flex items-center justify-center gap-1 px-2 py-1 rounded-full"
+              style={active ? { backgroundColor: accent, color: "#08080a" } : undefined}
+            >
+              <Icon
+                className="size-3.5"
+                style={{ color: active ? "#08080a" : "rgba(255,255,255,0.45)" }}
+                strokeWidth={2.4}
+              />
+              <span className="text-[8px] font-black" style={{ color: active ? "#08080a" : "rgba(255,255,255,0.45)" }}>
+                {tab.label}
+              </span>
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
 
   if (style === "circle-dock") {
     return (

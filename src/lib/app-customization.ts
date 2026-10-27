@@ -30,6 +30,21 @@ export const ACCENT_COLORS = [
   { id: "matrix", name: "Matrix Green", value: "#00FF41" },
   { id: "aquamarine", name: "Aquamarine", value: "#7FFFD4" },
   { id: "copper", name: "Copper", value: "#B87333" },
+  // Second wave of accents — cooler tones, metallics and deeper shades, so
+  // every hue family has more than one note to pick from (and the tap-to-cycle
+  // effect walks through all of them).
+  { id: "mint", name: "Mint", value: "#7CFFCB" },
+  { id: "arctic", name: "Arctic", value: "#9FE8FF" },
+  { id: "lavender", name: "Lavender", value: "#C4B5FD" },
+  { id: "orchid", name: "Orchid", value: "#DA70D6" },
+  { id: "galaxy", name: "Galaxy", value: "#4C1D95" },
+  { id: "midnight", name: "Midnight", value: "#1E3A8A" },
+  { id: "steel", name: "Steel", value: "#64748B" },
+  { id: "coral", name: "Coral", value: "#FF7F50" },
+  { id: "peach", name: "Peach", value: "#FFB4A2" },
+  { id: "rust", name: "Rust", value: "#B7410E" },
+  { id: "bronze", name: "Bronze", value: "#CD7F32" },
+  { id: "sand", name: "Sand", value: "#E1C699" },
   // Algohost trade palette — the red/amber/green tokens the Android layer
   // uses for trade-execution notifications and the primary contact colour.
   { id: "algohost-red", name: "Algohost Red", value: "#E11D48" },

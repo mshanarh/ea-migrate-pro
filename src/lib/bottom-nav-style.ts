@@ -1,9 +1,9 @@
 import { useSyncExternalStore } from "react";
 
 /**
- * THE NINE BOTTOM NAVIGATION LOOKS offered in Settings. Every one of them keeps
- * the same three destinations and colours the active tab with the app's theme
- * accent, so the colour cycle keeps working in all of them.
+ * THE FIFTEEN BOTTOM NAVIGATION LOOKS offered in Settings. Every one of them
+ * keeps the same three destinations and colours the active tab with the app's
+ * theme accent, so the colour cycle keeps working in all of them.
  */
 export type BottomNavStyle =
   | "floating-pill" // Rounded glass bar with icons + labels (default / current look)
@@ -14,7 +14,13 @@ export type BottomNavStyle =
   | "outlined-pill" // Thin border, no fill
   | "circle-dock" // Floating dock with a raised round centre button
   | "square-tiles" // Sharp corners, active tile filled
-  | "underline-tabs"; // Text labels with an underline on the active tab
+  | "underline-tabs" // Text labels with an underline on the active tab
+  | "neon-glow" // Accent-lit edge, active tab glowing in the accent
+  | "segmented-control" // One rounded track, active tab is a filled segment
+  | "labels-above" // Small label above each icon
+  | "rounded-tiles" // Every tab its own rounded tile, active one tinted
+  | "gradient-bar" // Bar tinted with a gradient built from the accent
+  | "capsule-active"; // Flat bar, active tab inside a filled capsule
 
 export const BOTTOM_NAV_STYLE_OPTIONS: Array<{
   id: BottomNavStyle;
@@ -65,6 +71,36 @@ export const BOTTOM_NAV_STYLE_OPTIONS: Array<{
     id: "underline-tabs",
     name: "Underline Tabs",
     description: "Text labels with a coloured underline on the active tab",
+  },
+  {
+    id: "neon-glow",
+    name: "Neon Glow Bar",
+    description: "Accent-lit edge with a glowing active tab",
+  },
+  {
+    id: "segmented-control",
+    name: "Segmented Control",
+    description: "One rounded track; the active tab is a filled segment",
+  },
+  {
+    id: "labels-above",
+    name: "Labels On Top",
+    description: "Small label above each icon, active tab tinted",
+  },
+  {
+    id: "rounded-tiles",
+    name: "Rounded Tiles",
+    description: "Every tab its own rounded tile; the active one is tinted",
+  },
+  {
+    id: "gradient-bar",
+    name: "Gradient Bar",
+    description: "Bar tinted with a gradient built from the accent colour",
+  },
+  {
+    id: "capsule-active",
+    name: "Active Capsule",
+    description: "Flat bar; the active tab sits inside a filled capsule",
   },
 ];
 

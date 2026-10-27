@@ -25,6 +25,12 @@ const EXPECTED: BottomNavStyle[] = [
   "circle-dock",
   "square-tiles",
   "underline-tabs",
+  "neon-glow",
+  "segmented-control",
+  "labels-above",
+  "rounded-tiles",
+  "gradient-bar",
+  "capsule-active",
 ];
 
 describe("bottom nav styles", () => {
@@ -35,7 +41,7 @@ describe("bottom nav styles", () => {
     window.localStorage.clear();
   });
 
-  it("offers the original four plus the five new looks", () => {
+  it("offers the original four plus the eleven added looks", () => {
     expect(BOTTOM_NAV_STYLE_OPTIONS.map((option) => option.id)).toEqual(EXPECTED);
     // Every option is user-facing: a name and a line explaining the shape.
     for (const option of BOTTOM_NAV_STYLE_OPTIONS) {
@@ -44,7 +50,7 @@ describe("bottom nav styles", () => {
     }
   });
 
-  it("applies and persists any of the nine styles", () => {
+  it("applies and persists any of the fifteen styles", () => {
     for (const style of EXPECTED) {
       setBottomNavStyle(style);
       expect(getBottomNavStyle()).toBe(style);
