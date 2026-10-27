@@ -9,7 +9,15 @@ REM       this folder (public/bridge). If the download fails, the script
 REM       tells you exactly which URL timed out.
 REM   2.  Starts the scalper DAEMON in its own console window (independent of
 REM       Uvicorn). It reads the state file written by the bridge and runs the
-REM       close-at-TP1 / re-open loop 24/7.
+REM       BATCH cycle 24/7: open the symbol's configured batch, hold it, close
+REM       the whole batch once its combined floating profit is positive, then
+REM       re-analyse fresh candles and open the next batch.
+REM  2b.  Optional per-symbol lots/trades: create scalper.symbols.json next to
+REM       this file, e.g.  {"BTCUSDm": {"lot": 0.01, "trade_count": 4},
+REM       "XAUUSDm": {"lot": 0.01, "trade_count": 10}}  — it is read before
+REM       the flat symbol/lot/trade_count fields, so each symbol can run its
+REM       own batch size. The daemon names the settings source it used in
+REM       scalper-events.log on every start.
 REM   3.  Starts the BRIDGE (Uvicorn) in its own window, on 0.0.0.0:8000.
 REM   4.  Prints a self-check: daemon running, MT5 connected, /scalper/status
 REM       live. The MT5 terminal and the Cloudflare tunnel window are never

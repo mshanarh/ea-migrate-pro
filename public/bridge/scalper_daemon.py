@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-scalper_daemon.py — the scalable scalp loop.
+scalper_daemon.py — the BATCH scalp cycle.
 
 A standalone Python process that runs 24/7 on the VPS next to the MetaTrader 5
 terminal. It is completely independent of Uvicorn and of the web app:
@@ -8,102 +8,452 @@ terminal. It is completely independent of Uvicorn and of the web app:
     # start it on its own line in install-scalper.bat:
     python scalper_daemon.py
 
-It reads every parameter from one state file (scalper.state.json) that the
-bridge's /scalper/start, /scalper/stop and /scalper/status endpoints manage,
-so the double-click script never needs to edit this file at all — the bridge
-writes it.
+Every parameter comes from the state file (scalper.state.json) that the
+bridge's /scalper/start, /scalper/stop and /scalper/status endpoints manage, so
+the double-click script never edits this file — the bridge writes it.
 
-Behaviour
----------
-1. On start it opens the state file, resumes the positions the daemon was
-   managing (they stay open after a crash or a VPS reboot) and then loops:
-2. For each configured symbol it pulls the last 8 COMPLETED M15 candles from
-   MT5 directly and derives the short-term direction:
-     - price rising (close of last bar > close of first bar, and the range is
-       not flat) → BUY, else → SELL.
-   No pullback, no extension filter: a trade is opened immediately.
-3. It executes the order through the SAME MT5 connection the bridge uses, but
-   it does NOT talk HTTP — the bridge is only a proxy. Results are written to
-   the state file's event log, and the app reads them with GET /scalper/status.
-4. Every open position is managed:
-   - CLOSE AT TP1 first (immediate profit take, no holding).
-   - If TP1 was never reached and the trade is running strongly in favour:
-     close when floating profit >= spread cost + 0.2 * ATR of the last 8 bars.
-   - SL protects each side (ATR-based), TP2 is the far leg.
-5. After a winning close it IMMEDIATELY re-analyses the current candles and
-   opens the next trade in the freshly derived direction, repeating non-stop:
-   trade → profit → close → re-analyse → open again.
-6. If a position hits SL: NO revenge trade is stacked. The symbol waits for the
-   next COMPLETED M15 candle before opening again on that symbol.
-7. Hard-block-only skips: never trade when the block fires, and every skip is
-   written to the log with the exact block that fired.
+THE CYCLE (one batch per symbol, independently, forever)
+-------------------------------------------------------
+1. CYCLE START — analyse fresh broker candles (the last 8 COMPLETED M15 bars,
+   nothing hardcoded) to read the direction, then open the WHOLE BATCH at once:
+   that symbol's configured Number of Trades positions at its configured lot
+   size, all in the analysed direction. BTCUSDm set to 4 trades × 0.01 opens
+   4 × 0.01; XAUUSDm set to 10 × 0.01 opens 10 × 0.01.
+2. HOLD THE BATCH — individual positions are NOT closed when they turn
+   positive. A batch rides through the negative legs while the others are up
+   (the reference demo sat on -2.12 and -1.82 next to +1.71 and +1.42 and the
+   batch stayed open). There is no TP-wait, no spread-recovery wait and no
+   countdown anywhere in this file.
+   The stop sits just past the extreme of the completed window, exactly the
+   rule the app's auto-trader uses.
+3. CLOSE THE BATCH — live MT5 positions are polled every 1–2 seconds. The
+   moment the batch's COMBINED floating profit across its open positions is
+   greater than zero, EVERY position in that batch is closed; each close is
+   confirmed by MT5 (retcode 10008/10009/10010) and a failed close is retried
+   on the next pass. The combined result is banked, then the daemon
+   immediately re-analyses fresh candles and opens the next batch for that
+   symbol. Repeat until stopped.
+4. AFTER A STOP LOSS — the symbol waits for the next COMPLETED M15 candle
+   before a new cycle starts. No revenge stacking.
+5. SAFETY — hard blocks only: fresh candle data, executable levels, the 20 %
+   free-margin buffer, and the per-symbol trade-count cap (a cycle can never
+   exceed the configured Number of Trades). Nothing is ever reported as filled
+   that MT5 did not confirm, and both the ANALYSED and the EXECUTED direction
+   of every batch are written to the log.
 
-Shared safety rules (same as the app)
--------------------------------------
-- Only positions the daemon itself opened are ever closed (magic number).
-- 20 % free-margin buffer under the configured margin requirement.
-- Per-symbol position cap: one open ticket per symbol at a time.
-- Directional consistency: order side == analysed side (checked before send).
-- All statuses are real results; no fake profits or false closes.
+Settings source
+---------------
+Per symbol, taken from the Allowed Quotes settings the app/bridge wrote into
+the state file. Accepted shapes:
 
-State file format (scalper.state.json) — written by the bridge endpoints:
+    "symbols": [{"symbol": "BTCUSDm", "lot": 0.01, "trade_count": 4},
+                {"symbol": "XAUUSDm", "lot": 0.01, "trade_count": 10}]
+
+    "pairs": {"BTCUSDm": {"lot": 0.01, "trade_count": 4}, ...}
+    "symbol_settings" / "symbols_detail":   (same two shapes)
+
+A per-symbol entry may carry "enabled": false to be skipped (only enabled
+symbols cycle). Whichever source was used is named in the startup log, so the
+Applied settings are never a guess.
+
+Those keys only exist once something writes them, and /scalper/start still
+sends one flat trio. So the daemon also reads an optional per-symbol file next
+to it — scalper.symbols.json — which needs no bridge change at all:
+
+    {"BTCUSDm": {"lot": 0.01, "trade_count": 4},
+     "XAUUSDm": {"lot": 0.01, "trade_count": 10}}
+
+Precedence: a per-symbol block in the state file, then scalper.symbols.json,
+then the flat symbol/lot/trade_count trio for every listed symbol.
+
+Shared safety rules (unchanged)
+-------------------------------
+- Only positions carrying this daemon's MAGIC number are ever touched.
+- Directional consistency: the side sent == the side analysed (checked).
+- All statuses are real broker results; no invented profits or false closes.
+
+State file (scalper.state.json) — written by the bridge, updated by the daemon:
 {
   "running": bool,
-  "symbol": "BTCUSDm",              # comma list supported
-  "lot": 0.01,                      # the user's configured lot size
-  "trade_count": 1,                 # trades per symbol per run
-  "next_trade_number": 1,           # session counter for notifications
-  "started_at": "ISO8601",
-  "stopped_at": "ISO8601 | null",
-  "positions": {                    # ticket -> {symbol, type, volume,
-    "12345": {"symbol": "BTCUSDm", "type": "BUY", "volume": 0.01,
-              "sl": 90000.0, "tp": 92000.0, "spread": 2.1, "atr": 12.4,
-              "opened_at": "ISO8601"}, ...
-  }
+  "symbol"/"symbols"/"pairs": the per-symbol settings (see above),
+  "lot": 0.01,                     # fallback lot when no per-symbol block
+  "trade_count": 4,                # fallback trades when no per-symbol block
+  "next_trade_number": 1,          # per-session batch numbering
+  "started_at"/"stopped_at": ISO8601,
+  "wait_until": {"BTCUSDm": epoch},# next-M15 wait after a stop loss
+  "batches": {"BTCUSDm": {...}},   # the live batch per symbol
+  "positions": {ticket: {...}}     # metadata for the status view
 }
 """
 from __future__ import annotations
 
 import json
 import os
-import subprocess
-import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
 
 # MT5 python package — shipped with the terminal
 import MetaTrader5 as mt5
-from pydantic import BaseModel
 
-# ── configuration the double-click script never edits ─────────────────────────────
+# ── configuration the double-click script never edits ─────────────────────────
 STATE_FILE = Path(os.getenv("SCALPER_STATE_FILE", Path(__file__).resolve().parent / "scalper.state.json"))
+# Optional per-symbol settings file the operator (or the app) can drop next to
+# the daemon: {"BTCUSDm": {"lot": 0.01, "trade_count": 4}, ...}. It is read
+# BEFORE the flat symbol/lot/trade_count fields, so per-symbol counts always
+# win. The bridge does not have to know about it.
+SYMBOLS_FILE = Path(os.getenv("SCALPER_SYMBOLS_FILE", Path(__file__).resolve().parent / "scalper.symbols.json"))
 EVENT_LOG = Path(os.getenv("SCALPER_EVENT_LOG", Path(__file__).resolve().parent / "scalper-events.log"))
 MAGIC = 98765                        # only this EA's orders are ever touched
 M15 = mt5.TIMEFRAME_M15
-SL_ATR_MULT = 2.0                    # ATR multiple for the stop level
-TP1_MULT = 0.8                       # take profit leg 1 as a fraction of the range
-TP2_MULT = 1.6                       # far take profit (only if TP1 unreachable)
-MIN_MARGIN_BUFFER = 0.20             # 20 % free margin below requirement
-MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
-LAST_BARS = 8                        # short-term direction lens (8 completed M15)
-BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
-BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
-DAEMON_VERSION = "2.3"
+M15_SECONDS = 15 * 60
+LAST_BARS = 8                        # the direction lens: 8 completed M15 bars
+# The direction and the stop are read EXACTLY like the app's auto-trader
+# (src/lib/auto-trade.ts): the net move of the last closes decides the side, the
+# live quote only breaks a flat tie, and the stop sits just past the extreme of
+# the completed window.
+DIRECTION_LOOKBACK = 5               # closes compared: newest vs 5 bars earlier
+STOP_PAD_RATIO = 0.0005              # pad beyond the window extreme, as a ratio
+MIN_MARGIN_BUFFER = 0.20             # 20 % of equity must stay free
+POLL_SECONDS = 1.0                   # close polling: every 1–2 seconds
+# The newest COMPLETED bar must be the current one: catch a dead or behind feed
+# without pretending a bar that legitimately closed 14 minutes ago is stale.
+MAX_CANDLE_LAG_SECONDS = M15_SECONDS + 60
+# A sanity ceiling on the configured Number of Trades. It is NOT a strategy
+# setting: it exists so a typo in the settings cannot fire a thousand orders.
+TRADE_COUNT_CEILING = 200
+DAEMON_VERSION = "3.0"
 
 _log_lines: list[str] = []
 
 
-def _live_magic_positions(creds) -> list[dict]:
-    """Return every open MT5 position the daemon owns (filter by MAGIC).
+def _log(line: str) -> None:
+    """Every daemon line lands in scalper-events.log — that IS the app's feed."""
+    _log_lines.append(line)
+    try:
+        EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with EVENT_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(f"{datetime.now(timezone.utc).isoformat()} | {line}\n")
+    except Exception:
+        pass
 
-    source of truth for what is currently open — the state file is only
-    metadata. The main loop calls this every iteration and decides close
-    management from LIVE positions; state["positions"] is used for
-    logging/metadata only.
+
+def _time_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _read_state() -> dict:
+    try:
+        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "running": False, "symbol": "BTCUSDm", "lot": 0.01, "trade_count": 1,
+            "next_trade_number": 1, "started_at": None, "stopped_at": None,
+            "positions": {}, "batches": {}, "wait_until": {}, "log": [],
+        }
+
+
+def _write_state(state: dict) -> None:
+    try:
+        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    except Exception as exc:
+        _log(f"state write failed: {exc}")
+
+
+# ── settings: the per-symbol plan ────────────────────────────────────────────
+
+def _as_float(value, fallback: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _as_int(value, fallback: int) -> int:
+    try:
+        parsed = int(float(value))
+    except (TypeError, ValueError):
+        return fallback
+    return parsed if parsed > 0 else fallback
+
+
+def _entry_plan(entry: dict, default_lot: float, default_trades: int) -> dict | None:
+    """Normalise ONE per-symbol settings entry. None when it is not usable."""
+    symbol = str(
+        entry.get("symbol") or entry.get("s") or entry.get("name") or ""
+    ).strip()
+    if not symbol:
+        return None
+    enabled = entry.get("enabled", entry.get("active", True))
+    lot = _as_float(
+        entry.get("lot", entry.get("lots", entry.get("lot_size", entry.get("volume")))),
+        default_lot,
+    )
+    trades = _as_int(
+        entry.get("trade_count", entry.get("trades", entry.get("max_trades", entry.get("count")))),
+        default_trades,
+    )
+    return {"symbol": symbol, "lots": lot, "trades": trades, "enabled": bool(enabled)}
+
+
+def _symbols_file_settings() -> object:
+    """The optional per-symbol settings file, or None when absent/unreadable."""
+    try:
+        if SYMBOLS_FILE.exists():
+            return json.loads(SYMBOLS_FILE.read_text(encoding="utf-8"))
+    except Exception as exc:
+        _log(f"{SYMBOLS_FILE.name} ignored — not valid JSON: {exc}")
+    return None
+
+
+def _symbol_plans(state: dict) -> tuple[list[dict], str]:
+    """(the per-symbol plan, where it came from).
+
+    The plan is [{symbol, lots, trades}] for the ENABLED symbols. Per-symbol
+    settings win wherever they are found — inside the state file first, then in
+    scalper.symbols.json — and the flat trio the bridge writes today is only
+    the fallback for every symbol in its list.
+    """
+    default_lot = _as_float(state.get("lot"), 0.01)
+    default_trades = min(_as_int(state.get("trade_count"), 1), TRADE_COUNT_CEILING)
+
+    plans: list[dict] = []
+    source = "the flat symbol/lot/trade_count fields"
+    raw = None
+    for key in ("symbols", "pairs", "symbol_settings", "symbols_detail"):
+        if state.get(key):
+            raw = state[key]
+            source = f"the state file's \"{key}\" block"
+            break
+    if raw is None:
+        file_settings = _symbols_file_settings()
+        if file_settings:
+            raw = file_settings
+            source = SYMBOLS_FILE.name
+
+    if isinstance(raw, dict):
+        # {"BTCUSDm": {"lot": 0.01, "trade_count": 4}, ...}
+        for symbol, value in raw.items():
+            if isinstance(value, dict):
+                plan = _entry_plan({**value, "symbol": symbol}, default_lot, default_trades)
+            else:
+                # {"BTCUSDm": 0.01} — the value is the lot size
+                plan = _entry_plan({"symbol": symbol, "lot": value}, default_lot, default_trades)
+            if plan:
+                plans.append(plan)
+    elif isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict):
+                plan = _entry_plan(item, default_lot, default_trades)
+            else:
+                plan = _entry_plan({"symbol": str(item)}, default_lot, default_trades)
+            if plan:
+                plans.append(plan)
+
+    if not plans:
+        # FLAT FALLBACK — one lot/trade count for every symbol in the list.
+        symbols_raw = state.get("symbol", state.get("symbols"))
+        if isinstance(symbols_raw, str):
+            symbols = [s.strip() for s in symbols_raw.split(",")]
+        elif isinstance(symbols_raw, list):
+            symbols = [str(s).strip() for s in symbols_raw]
+        else:
+            symbols = []
+        for symbol in symbols:
+            if symbol:
+                plans.append({"symbol": symbol, "lots": default_lot,
+                              "trades": default_trades, "enabled": True})
+        if plans:
+            source = f"{source} (no per-symbol settings found)"
+
+    # Dedupe (first wins) and apply the ceiling + the enabled flag.
+    seen: set[str] = set()
+    resolved: list[dict] = []
+    for plan in plans:
+        key = plan["symbol"].upper()
+        if key in seen:
+            continue
+        seen.add(key)
+        if not plan["enabled"]:
+            continue
+        trades = min(plan["trades"], TRADE_COUNT_CEILING)
+        if trades != plan["trades"]:
+            _log(f"SETTINGS {plan['symbol']}: trade count {plan['trades']} capped at "
+                 f"{TRADE_COUNT_CEILING} (the safety ceiling, not a strategy value)")
+        resolved.append({"symbol": plan["symbol"], "lots": plan["lots"], "trades": trades})
+    return resolved, source
+
+
+# ── MT5 connection (broker-agnostic) ─────────────────────────────────────────
+
+def _build_creds() -> dict:
+    """Build the MT5 connection credentials, broker-agnostic.
+
+    If MT5_LOGIN / MT5_PASSWORD / MT5_SERVER are all set, connect to that
+    account exactly as before. If they are NOT set, call mt5.initialize() with
+    NO login/password/server arguments so it attaches to the MT5 terminal
+    already running on the VPS and uses whatever account and broker are logged
+    in there. Never crashes or exits with int(None).
+    """
+    login = os.getenv("MT5_LOGIN")
+    password = os.getenv("MT5_PASSWORD")
+    server = os.getenv("MT5_SERVER")
+    if login is not None and password is not None and server is not None:
+        return {"login": int(login), "password": password, "server": server, "account": None}
+    if not mt5.initialize():
+        error = mt5.last_error()
+        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 initialize failed: {error}")
+        return {"login": None, "password": None, "server": None, "account": None}
+    account = mt5.account_info()
+    if account is None:
+        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 account info is None after initialize")
+    return {"login": None, "password": None, "server": None, "account": account}
+
+
+def _connect(creds):
+    """Attach to MT5 for one operation. See _build_creds for the two modes."""
+    login = creds.get("login")
+    if login is None:
+        account = mt5.account_info()
+        if account is None:
+            if not mt5.initialize():
+                return None, mt5.last_error()
+            account = mt5.account_info()
+            if account is None:
+                return None, "account_info() returned None after re-initialize"
+        return account, None
+    if not mt5.login(login=login, password=creds.get("password"), server=creds.get("server")):
+        error = mt5.last_error()
+        mt5.shutdown()
+        return None, error
+    return mt5.account_info(), None
+
+
+def _disconnect() -> None:
+    mt5.shutdown()
+
+
+# ── candles + direction ──────────────────────────────────────────────────────
+
+def _last_8_completed_candles(creds, symbol: str) -> list[dict] | None:
+    """The last 8 COMPLETED M15 bars, OLDEST → NEWEST (the forming bar dropped).
+
+    The broker's ordering is ASSERTED rather than assumed (the same lesson the
+    app's candle helper learned): the rows are sorted by time, then the newest
+    entry — the still-forming bar — is dropped. Returns None — a hard block —
+    when the data is missing or the feed is behind.
     """
     account, error = _connect(creds)
     if account is None:
+        _log(f"BLOCK {symbol}: candle fetch failed — {error}")
+        return None
+    try:
+        if not mt5.symbol_select(symbol, True):
+            _log(f"BLOCK {symbol}: symbol not selectable in Market Watch")
+            return None
+        rates = mt5.copy_rates_from_pos(symbol, M15, 0, LAST_BARS + 1)
+        if rates is None or len(rates) < 3:
+            _log(f"BLOCK {symbol}: no M15 candles returned")
+            return None
+        ascending = sorted(
+            (
+                {"time": int(row[0]), "open": float(row[1]), "high": float(row[2]),
+                 "low": float(row[3]), "close": float(row[4]), "volume": int(row[5])}
+                for row in rates
+            ),
+            key=lambda bar: bar["time"],
+        )
+        bars = ascending[:-1]            # drop the forming bar (newest)
+        if len(bars) < LAST_BARS:
+            _log(f"BLOCK {symbol}: only {len(bars)} completed M15 candles "
+                 f"(need {LAST_BARS})")
+            return None
+        bars = bars[-LAST_BARS:]
+        lag = time.time() - (bars[-1]["time"] + M15_SECONDS)
+        if lag > MAX_CANDLE_LAG_SECONDS:
+            _log(f"BLOCK {symbol}: the newest completed M15 candle closed {lag:.0f}s "
+                 f"ago (> {MAX_CANDLE_LAG_SECONDS}s) — the feed is behind")
+            return None
+        return bars
+    finally:
+        _disconnect()
+
+
+def _direction(bars: list[dict], price: float) -> tuple[str | None, str]:
+    """(side, reason) — the app's rule: the net move of the closes decides.
+
+    `bars` is OLDEST → NEWEST completed. The live quote only breaks a genuine
+    flat tie; when the closes are flat AND the quote points nowhere there is no
+    direction to trade, so the side is None (a hard block, never a default).
+    """
+    if len(bars) <= DIRECTION_LOOKBACK:
+        return None, f"only {len(bars)} completed candles — no direction readable"
+    newest = bars[-1]
+    reference = bars[-1 - DIRECTION_LOOKBACK]
+    net_move = newest["close"] - reference["close"]
+    if net_move > 0:
+        return "BUY", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
+    if net_move < 0:
+        return "SELL", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
+    move_now = price - newest["close"]
+    if move_now == 0:
+        return None, (f"flat closes ({newest['close']:.5f}) and a flat live quote "
+                      f"({price:.5f}) point nowhere")
+    return ("BUY" if move_now > 0 else "SELL"), f"flat closes, live quote {move_now:+.5f}"
+
+
+def _sl_for(creds, symbol: str, bars: list[dict], side: str) -> float | None:
+    """The stop for the whole batch, or None when the level is not executable.
+
+    Same rule as the app's auto-trader: just past the extreme of the completed
+    window, padded by STOP_PAD_RATIO of the window height, and never inside the
+    broker's minimum stop distance.
+    """
+    high = max(bar["high"] for bar in bars)
+    low = min(bar["low"] for bar in bars)
+    height = high - low
+    if not (height > 0):
+        _log(f"BLOCK {symbol}: the completed window forms no usable stop range")
+        return None
+    pad = height * STOP_PAD_RATIO
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"BLOCK {symbol}: no price for the stop level — {error}")
+        return None
+    try:
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+        if info is None or tick is None or tick.bid <= 0 or tick.ask <= 0:
+            _log(f"BLOCK {symbol}: live price missing — the stop cannot be placed")
+            return None
+        point = float(info.point or 0)
+        min_distance = float(getattr(info, "trade_stops_level", 0) or 0) * point * 1.2
+        price = tick.ask if side == "BUY" else tick.bid
+        raw = low - pad if side == "BUY" else high + pad
+        distance = abs(price - raw)
+        if distance < min_distance:
+            raw = price - min_distance if side == "BUY" else price + min_distance
+        sl = raw
+        if sl <= 0:
+            _log(f"BLOCK {symbol}: computed stop {sl} is not a usable price")
+            return None
+        return sl
+    finally:
+        _disconnect()
+
+
+# ── live positions (the source of truth) ─────────────────────────────────────
+
+def _live_magic_positions(creds) -> list[dict]:
+    """Every open MT5 position this daemon owns (filtered by MAGIC).
+
+    LIVE positions are the source of truth for what is open; the state file is
+    metadata only.
+    """
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"position list failed: {error}")
         return []
     try:
         positions = mt5.positions_get()
@@ -118,6 +468,7 @@ def _live_magic_positions(creds) -> list[dict]:
                 "symbol": pos.symbol,
                 "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
                 "volume": float(pos.volume),
+                "price_open": float(pos.price_open),
                 "price_current": float(pos.price_current),
                 "sl": float(pos.sl), "tp": float(pos.tp),
                 "profit": float(pos.profit), "open": True,
@@ -127,254 +478,119 @@ def _live_magic_positions(creds) -> list[dict]:
         _disconnect()
 
 
-def _count_open_per_symbol(positions: list[dict]) -> dict[str, int]:
-    """Per-symbol count of open magic positions for the open-cap check."""
-    counts: dict[str, int] = {}
-    for p in positions:
-        counts[p["symbol"]] = counts.get(p["symbol"], 0) + 1
-    return counts
+def _group_by_symbol(positions: list[dict]) -> dict[str, list[dict]]:
+    grouped: dict[str, list[dict]] = {}
+    for pos in positions:
+        grouped.setdefault(pos["symbol"], []).append(pos)
+    return grouped
 
 
-def _close_live_position(creds, pos: dict, state: dict, symbol: str) -> bool:
-    """Close ONE live position the moment its profit is > 0, confirmed by
-    MT5 retcode 10008/10009/10010 before logging TRADE CLOSED.
+# ── orders ───────────────────────────────────────────────────────────────────
 
-    Returns True when the ticket was closed, False when the close order
-    failed (already logged).
-    """
-    ticket = pos.get("ticket")
-    if ticket is None:
-        return False
-    account, error = _connect(creds)
-    if account is None:
-        return False
-    try:
-        found = mt5.positions_get(ticket=ticket)
-        if not found:
-            _log(f"CLOSE ticket {ticket}: not found in MT5 (may have been "
-                 f"closed elsewhere)")
-            return True
-        position = found[0]
-        profit = float(position.profit)
-        if profit <= 0:
-            return False
-        # close the position now
-        result = _close_ticket(creds, ticket, symbol, pos["volume"])
-        if result is not None and result.get("closed"):
-            _log(f"TRADE CLOSED — PROFIT ${profit:.2f} on {symbol} (ticket {ticket})")
-            return True
-        # close order did not confirm: log and keep the ticket alive
-        _log(f"CLOSE ORDER FAILED for ticket {ticket}, retrying")
-        return False
-    finally:
-        _disconnect()
-
-
-def _log(line: str) -> None:
-    _log_lines.append(line)
-    try:
-        EVENT_LOG.parent.mkdir(parents=True, exist_ok=True)
-        with EVENT_LOG.open("a", encoding="utf-8") as fh:
-            fh.write(f"{datetime.now(timezone.utc).isoformat()} | {line}\n")
-    except Exception:
-        pass
-
-
-def _read_state() -> dict:
-    try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
-    except Exception:
-        return {
-            "running": False, "symbols": ["BTCUSDm"], "lot": 0.01,
-            "trade_count": 1, "next_trade_number": 1,
-            "started_at": None, "stopped_at": None, "positions": {},
-            "log": [],
-        }
-
-
-def _write_state(state: dict) -> None:
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-
-def _time_now() -> str:
-    return datetime.now(timezone.utc).isoformat()
-
-
-def _connect(creds):
-    """MT5 connect that works for both an explicit creds tuple and a broker-
-    agnostic creds dict built by _build_creds.
-
-    - If MT5_LOGIN/MT5_PASSWORD/MT5_SERVER were all set, creds has login/
-      password/server and we connect to that account exactly as before.
-    - If they were NOT set, _build_creds() already called mt5.initialize()
-      (no login/password/server) to attach to the running MT5 terminal, and
-      creds has login=None. We do NOT call mt5.login() — the terminal is
-      already logged in to whatever account the user has open there, and
-      mt5.account_info() gives us that account.
-    """
-    login = creds.get("login")
-    if login is None:
-        # broker-agnostic path: the terminal is already attached and logged in
-        # (by _build_creds at startup). Just read back the account.
-        account = mt5.account_info()
-        if account is None:
-            # connection may have dropped — try to re-attach once
-            if not mt5.initialize():
-                return None, mt5.last_error()
-            account = mt5.account_info()
-            if account is None:
-                return None, "account_info() returned None after re-initialize"
-        return account, None
-    password = creds.get("password")
-    server = creds.get("server")
-    if not mt5.login(login=login, password=password, server=server):
-        error = mt5.last_error()
-        mt5.shutdown()
-        return None, error
-    return mt5.account_info(), None
-
-
-def _disconnect() -> None:
-    mt5.shutdown()
-
-
-# ── candle analysis ───────────────────────────────────────────────────────────────
-def _average_true_range(symbol: str, bars: list[dict], period: int = 8) -> float:
-    """True Range on the last `period` bars, averaged — the ATR estimate the
-    daemon uses for SL/TP while the bridge's /symbol/candles endpoint does not."""
-    highs = [b["high"] for b in bars]
-    lows = [b["low"] for b in bars]
-    closes = [b["close"] for b in bars]
-    trs = []
-    for i in range(1, len(bars)):
-        tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
-        trs.append(tr)
-    return sum(trs) / max(len(trs), 1)
-
-
-def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
-    """Return the last 8 COMPLETED M15 bars (the forming bar excluded). Returns
-    None when the data is missing or stale (> 2 minutes old — a hard block)."""
-    account, error = _connect(creds)
-    if account is None:
-        _log(f"candle fetch failed for {symbol}: {error}")
-        return None
-    try:
-        symbol_name = symbol
-        if not mt5.symbol_select(symbol_name, True):
-            return None
-        rates = mt5.copy_rates_from_pos(symbol_name, M15, 0, LAST_BARS + 1)
-        if rates is None or len(rates) < 2:
-            return None
-        bars = []
-        for row in rates:
-            bars.append({
-                "time": int(row[0]),
-                "open": float(row[1]),
-                "high": float(row[2]),
-                "low": float(row[3]),
-                "close": float(row[4]),
-                "volume": int(row[5]),
-            })
-        # oldest first; the forming bar is the LAST entry
-        bars = bars[: LAST_BARS]
-        if len(bars) < 2:
-            return None
-        now = time.time()
-        newest = bars[-1]["time"] + 60  # seconds
-        if now - newest > 120:
-            _log(f"BLOCK candle data stale/missing for {symbol} "
-                 f"(age {now - newest:.0f}s > 120s)")
-            return None
-        return bars
-    finally:
-        _disconnect()
-
-
-def _direction(bars: list[dict]) -> str:
-    first_range = bars[-1]["close"] - bars[0]["open"]
-    last_range = bars[-1]["close"] - bars[-2]["close"] if len(bars) > 1 else first_range
-    atr = _average_true_range(bars)
-    if atr < 1e-9:
-        return "BUY" if first_range > 0 else "SELL"
-    # rising: price made a higher high and the trend is up
-    return "BUY" if last_range > 0 else "SELL"
-
-
-def _sl_tp_for(symbol: str, bars: list[dict], side: str) -> tuple[float, float, float, float]:
-    """Return (sl, tp1, tp2, spread) for the analysed direction."""
-    atr = _average_true_range(bars)
-    spread = bars[-1].get("spread") or 2.0
-    base = abs(bars[-1]["close"] - bars[-1]["open"]) if bars else atr * 2
-    sl_dist = max(SL_ATR_MULT * atr, base * 0.3)
-    tp1_dist = max(TP1_MULT * base, atr * 0.4)
-    tp2_dist = max(TP2_MULT * base, atr * 1.0)
-    if side == "BUY":
-        sl = bars[-1]["close"] - sl_dist
-        tp1 = bars[-1]["close"] + tp1_dist
-        tp2 = bars[-1]["close"] + tp2_dist
-    else:
-        sl = bars[-1]["close"] + sl_dist
-        tp1 = bars[-1]["close"] - tp1_dist
-        tp2 = bars[-1]["close"] - tp2_dist
-    return sl, tp1, tp2, spread
-
-
-def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
-    """Execute an order through the MT5 terminal directly."""
+def _open_position(creds, symbol: str, side: str, lot: float, sl: float):
+    """Send ONE market order with the batch's stop. No take profit: the batch
+    itself is the exit (combined profit > 0 closes every leg together), so a
+    per-position TP could never fire first."""
     account, error = _connect(creds)
     if account is None:
         _log(f"open {side} {symbol} {lot}: MT5 init failed: {error}")
         return None
     try:
-        if not mt5.symbol_select(symbol, True):
-            _log(f"open {side} {symbol} {lot}: cannot select symbol")
+        info = mt5.symbol_info(symbol)
+        if info is None or not mt5.symbol_select(symbol, True):
+            _log(f"open {side} {symbol} {lot}: symbol not available")
             return None
         tick = mt5.symbol_info_tick(symbol)
         if tick is None or tick.bid <= 0 or tick.ask <= 0:
             _log(f"open {side} {symbol} {lot}: no live price")
             return None
-        order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
         price = tick.ask if side == "BUY" else tick.bid
+        order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
             "volume": lot,
             "type": order_type,
             "price": price,
+            "sl": sl,
+            "tp": 0.0,
             "deviation": 20,
             "magic": MAGIC,
-            "comment": ticket_note,
+            "comment": f"EA Migrate batch {side}",
             "type_time": mt5.ORDER_TIME_GTC,
         }
-        result = mt5.order_send(request)
+        # Filling modes differ per broker: FOK → IOC → RETURN, and 10030
+        # ("unsupported filling mode") is retried with the next one.
+        result = None
+        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            if result is None:
+                _log(f"open {side} {symbol} {lot}: order_send returned None "
+                     f"({mt5.last_error()})")
+                return None
+            if result.retcode == 10030:
+                continue
+            break
         if result is None:
-            _log(f"open {side} {symbol} {lot}: order_send returned None")
             return None
         filled = result.retcode in (10008, 10009, 10010)
-        return {"retcode": result.retcode, "deal": result.deal,
-                "price": result.price, "filled": filled, "magic": MAGIC}
+        if not filled:
+            _log(f"open {side} {symbol} {lot}: MT5 refused (retcode {result.retcode})")
+        return {
+            "retcode": result.retcode,
+            "order": int(getattr(result, "order", 0) or 0),
+            "deal": int(getattr(result, "deal", 0) or 0),
+            "price": float(result.price),
+            "filled": filled,
+        }
     finally:
         _disconnect()
 
 
+def _realized_profit(ticket: int, fallback: float) -> float:
+    """The position's REALIZED result from MT5 history after the close.
+
+    The floating profit read just before the close is an approximation that
+    ignores the closing spread, swap and commission. The out-deal in history is
+    the broker's own number, so it is used whenever MT5 returns it; the
+    floating reading is only the fallback when history is not available yet.
+    """
+    try:
+        deals = mt5.history_deals_get(position=ticket)
+    except Exception:
+        deals = None
+    if not deals:
+        return fallback
+    out = [deal for deal in deals if int(getattr(deal, "entry", 0)) == 1]  # DEAL_ENTRY_OUT
+    if not out:
+        return fallback
+    return sum(float(getattr(deal, "profit", 0.0)) + float(getattr(deal, "swap", 0.0))
+               + float(getattr(deal, "commission", 0.0)) for deal in out)
+
+
 def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int = 30):
-    """Close ONE position the daemon opened itself."""
+    """Close ONE position this daemon opened. Returns the broker's own profit
+    reading when the close is confirmed, else None."""
     account, error = _connect(creds)
     if account is None:
-        _log(f"close ticket {ticket}: MT5 init failed")
+        _log(f"close ticket {ticket}: MT5 init failed: {error}")
         return None
     try:
         found = mt5.positions_get(ticket=ticket)
         if not found:
-            _log(f"close ticket {ticket}: not found")
+            # Already gone (SL, TP or a manual close) — nothing to do, and the
+            # caller learns it from the live position list, not from an
+            # invented confirmation.
+            _log(f"close ticket {ticket}: not open in MT5 any more")
             return None
         position = found[0]
         if int(getattr(position, "magic", 0)) != MAGIC:
-            _log(f"close ticket {ticket}: magic {getattr(position, 'magic')} "
-                 f"!= {MAGIC} — not my ticket, leaving it alone")
+            _log(f"close ticket {ticket}: magic {getattr(position, 'magic')} != {MAGIC} "
+                 f"— not my ticket, leaving it alone")
             return None
         if not mt5.symbol_select(symbol, True):
+            _log(f"close ticket {ticket}: symbol {symbol} not available")
             return None
         tick = mt5.symbol_info_tick(symbol)
         if tick is None:
@@ -383,6 +599,7 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
         is_buy = position.type == mt5.POSITION_TYPE_BUY
         order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
         price = tick.bid if is_buy else tick.ask
+        profit = float(position.profit)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "position": int(position.ticket),
@@ -392,228 +609,395 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
             "price": price,
             "deviation": slippage,
             "magic": MAGIC,
-            "comment": "EA Migrate scalp close",
+            "comment": "EA Migrate batch close",
             "type_time": mt5.ORDER_TIME_GTC,
         }
-        result = mt5.order_send(request)
-        if result is None:
-            _log(f"close ticket {ticket}: order_send returned None")
+        result = None
+        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            if result is None:
+                _log(f"close ticket {ticket}: order_send returned None "
+                     f"({mt5.last_error()})")
+                return None
+            if result.retcode == 10030:
+                continue
+            break
+        if result is None or result.retcode not in (10008, 10009, 10010):
+            code = "no result" if result is None else f"retcode {result.retcode}"
+            _log(f"close ticket {ticket}: MT5 did not confirm the close ({code})")
             return None
-        closed = result.retcode in (10008, 10009, 10010)
-        return {"retcode": result.retcode, "deal": result.deal,
-                "price": result.price, "closed": closed, "magic": MAGIC}
+        return {"retcode": result.retcode, "price": float(result.price),
+                "profit": _realized_profit(ticket, profit)}
     finally:
         _disconnect()
 
 
-# ── hard-block checks ────────────────────────────────────────────────────────────
-def _hard_block(creds, symbol: str) -> tuple[bool, str]:
-    """Return (blocked, block_name). A block means 'do not open this trade,
-    but keep the existing positions and keep looking.'"""
+# ── hard blocks ──────────────────────────────────────────────────────────────
+
+def _hard_block(creds, symbol: str, open_on_symbol: int, plan_trades: int) -> tuple[bool, str]:
+    """(blocked, reason). A block stops a NEW batch from opening and never
+    stops the management of a batch that is already open."""
     account, error = _connect(creds)
     if account is None:
-        return True, f"MT5 init failed: {error}"
+        return True, f"MT5 not reachable ({error})"
     try:
-        if not mt5.symbol_select(symbol, True):
-            return True, f"symbol not found: {symbol}"
+        info = mt5.symbol_info(symbol)
+        if info is None or not mt5.symbol_select(symbol, True):
+            return True, f"symbol not available: {symbol}"
         tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
+        if tick is None or tick.bid <= 0 or tick.ask <= 0:
             return True, f"live price missing/invalid for {symbol}"
-        margin_free = account.margin_free or 0
-        margin_calc = mt5.symbol_info(symbol).margin_rate or 0
-        if margin_calc <= 0:
-            return True, f"SL/TP invalid for {symbol} (no margin rate)"
-        required = tick.ask * margin_calc / 100000 * 0  # placeholder, replaced below
-        # proper margin check
-        req_margin = account.balance * 0  # filled by the broker when openning
-        # we simply require 20 % free margin: free < 20 % of equity → block
-        if margin_free < 0.2 * (account.equity or 0):
-            return True, f"free margin {margin_free:.2f} below 20 % buffer of equity"
+        equity = float(account.equity or 0)
+        margin_free = float(account.margin_free or 0)
+        if equity > 0 and margin_free < MIN_MARGIN_BUFFER * equity:
+            return True, (f"free margin {margin_free:.2f} is below the "
+                          f"{MIN_MARGIN_BUFFER * 100:.0f}% buffer of equity {equity:.2f}")
+        if open_on_symbol >= plan_trades:
+            return True, (f"per-symbol cap reached — {open_on_symbol} open magic "
+                          f"position(s) for a configured batch of {plan_trades}")
         return False, ""
     finally:
         _disconnect()
 
 
-# ── the loop ─────────────────────────────────────────────────────────────────────
-
-
-def _build_creds() -> dict:
-    """Build the MT5 connection credentials, broker-agnostic.
-
-    If MT5_LOGIN / MT5_PASSWORD / MT5_SERVER are all set, connect to that
-    account exactly as before. If they are NOT set, call mt5.initialize()
-    with NO login/password/server arguments so it attaches to the MT5
-    terminal already running on the VPS and uses whatever account and
-    broker are logged in there. Never crashes or exits with int(None).
-
-    Returns a dict with login, password, server and account (the real
-    account read back from mt5.account_info() after connecting).
-    """
-    login = os.getenv("MT5_LOGIN")
-    password = os.getenv("MT5_PASSWORD")
-    server = os.getenv("MT5_SERVER")
-    has_all = login is not None and password is not None and server is not None
-    if has_all:
-        return {
-            "login": int(login),
-            "password": password,
-            "server": server,
-            "account": None,
-        }
-    # No env vars: attach to the running MT5 terminal with no login/password/
-    # server so it uses whatever account and broker are already logged in there.
-    if not mt5.initialize():
-        error = mt5.last_error()
-        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 initialize failed: {error}")
-        return {"login": None, "password": None, "server": None, "account": None}
-    account = mt5.account_info()
+def _can_open_one_more(creds, lots: float) -> tuple[bool, str]:
+    """The 20 % buffer re-checked before EVERY order of the batch, so a batch
+    can never drain the account on its way in."""
+    account, error = _connect(creds)
     if account is None:
-        _log(f"DAEMON STARTED v{DAEMON_VERSION}: MT5 account info is None after initialize")
-        return {"login": None, "password": None, "server": None, "account": None}
-    # Do NOT stash login/password/server — in broker-agnostic mode _connect()
-    # must not call mt5.login() (the terminal is already logged in). Keep only
-    # the account object for startup logging.
-    return {
-        "login": None,
-        "password": None,
-        "server": None,
-        "account": account,
+        return False, f"MT5 not reachable ({error})"
+    try:
+        equity = float(account.equity or 0)
+        margin_free = float(account.margin_free or 0)
+        if equity > 0 and margin_free < MIN_MARGIN_BUFFER * equity:
+            return False, (f"free margin {margin_free:.2f} below the "
+                           f"{MIN_MARGIN_BUFFER * 100:.0f}% buffer of equity {equity:.2f}")
+        return True, ""
+    finally:
+        _disconnect()
+
+
+# ── the batch ────────────────────────────────────────────────────────────────
+
+def _session_batch_number(state: dict) -> int:
+    return _as_int(state.get("next_trade_number"), 1)
+
+
+def _next_m15_boundary() -> float:
+    """The moment the next M15 candle completes (plus a few seconds to settle)."""
+    now = time.time()
+    return (int(now // (15 * 60)) + 1) * 15 * 60 + 5
+
+
+def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
+    """ANALYSE FRESH CANDLES → OPEN THE WHOLE BATCH AT ONCE.
+
+    Returns the batch record when at least one order was confirmed, else None
+    (the reason is already in the log).
+    """
+    bars = _last_8_completed_candles(creds, symbol)
+    if bars is None:
+        _log(f"BATCH SKIPPED — {symbol}: no usable fresh candle data")
+        return None
+
+    account, error = _connect(creds)
+    tick = mt5.symbol_info_tick(symbol) if account is not None else None
+    if tick is None or tick.bid <= 0 or tick.ask <= 0:
+        _log(f"BATCH SKIPPED — {symbol}: no live price ({error or 'quote empty'})")
+        return None
+    price = (tick.ask + tick.bid) / 2
+
+    side, basis = _direction(bars, price)
+    if side is None:
+        _log(f"BATCH SKIPPED — {symbol}: {basis} — nothing to trade")
+        return None
+    _log(f"ANALYSED {symbol}: {len(bars)} completed M15 candles ({bars[0]['time']} → "
+         f"{bars[-1]['time']}) → direction {side} ({basis}, newest close "
+         f"{bars[-1]['close']:.5f}, live {price:.5f})")
+
+    sl = _sl_for(creds, symbol, bars, side)
+    if sl is None:
+        _log(f"BATCH SKIPPED — {symbol}: the stop level is not executable")
+        return None
+
+    lots = float(plan["lots"])
+    trades = int(plan["trades"])
+    batch_no = _session_batch_number(state)
+
+    # The per-symbol cap is absolute: whatever is ALREADY open for this symbol
+    # (a batch still closing, a resumed batch, an older one) is counted, so a
+    # symbol can never hold more than its configured Number of Trades.
+    already_open = len([
+        pos for pos in _live_magic_positions(creds) if pos["symbol"] == symbol
+    ])
+    if already_open >= trades:
+        _log(f"BATCH SKIPPED — {symbol}: {already_open} position(s) already open for a "
+             f"configured batch of {trades} — the per-symbol cap")
+        return None
+    if already_open:
+        _log(f"BATCH {batch_no} {symbol}: {already_open} position(s) already open — "
+             f"opening the remaining {trades - already_open} of the configured {trades}")
+    wanted = trades - already_open
+
+    opened: list[dict] = []
+    failure: str | None = None
+    for index in range(wanted):
+        allowed, why = _can_open_one_more(creds, lots)
+        if not allowed:
+            failure = failure or why
+            _log(f"BATCH {batch_no} {symbol}: stopped after {index} of {wanted} — {why}")
+            break
+        fill = _open_position(creds, symbol, side, lots, sl)
+        if fill is None or not fill.get("filled"):
+            failure = failure or f"MT5 did not confirm order {index + 1}"
+            break
+        opened.append(fill)
+
+    if not opened:
+        _log(f"BATCH {batch_no} NOT OPENED — {symbol}: {failure or 'no order was confirmed'}")
+        return None
+
+    entries = ", ".join(f"{fill['price']:.5f}" for fill in opened)
+    batch = {
+        "cycle": batch_no,
+        "symbol": symbol,
+        "side": side,
+        "lots": lots,
+        "trades": trades,
+        "opened": len(opened),
+        "tickets": [fill["order"] or fill["deal"] for fill in opened],
+        "entries": [fill["price"] for fill in opened],
+        "sl": sl,
+        "opened_at": _time_now(),
+        "closing": False,
+        "banked": 0.0,
+        "closed_legs": 0,
+        "stop_window": [round(min(bar["low"] for bar in bars), 5),
+                        round(max(bar["high"] for bar in bars), 5)],
     }
+    # PER-SESSION NUMBERING: the number is spent only here, on a real batch.
+    state["next_trade_number"] = batch_no + 1
+
+    partial = "" if len(opened) == wanted else f" (asked {wanted}, confirmed {len(opened)})"
+    if already_open:
+        partial += f" — {already_open} already open, cap {trades}"
+    _log(f"BATCH {batch_no} OPENED — EXECUTED {side} {symbol} · {len(opened)} × {lots} "
+         f"lots{partial} · entries {entries} · SL {sl:.5f} · analysed direction {side}")
+    return batch
+
+
+def _close_batch(creds, symbol: str, batch: dict, positions: list[dict]) -> bool:
+    """CLOSE EVERY LEG — the combined profit is up. Confirmed closes only; a leg
+    that did not confirm is retried on the next pass.
+
+    The batch's own tally (banked result, legs confirmed) accumulates ACROSS
+    those passes, so a retried close still reports the whole batch — never just
+    the legs that happened to close in the final pass.
+    """
+    batch["closing"] = True
+    combined = sum(pos["profit"] for pos in positions)
+    remaining: list[int] = []
+    for pos in positions:
+        result = _close_ticket(creds, pos["ticket"], symbol, pos["volume"])
+        if result is None:
+            remaining.append(pos["ticket"])
+            _log(f"CLOSE ORDER FAILED for ticket {pos['ticket']} on {symbol}, retrying")
+        else:
+            batch["banked"] = float(batch.get("banked") or 0.0) + result["profit"]
+            batch["closed_legs"] = int(batch.get("closed_legs") or 0) + 1
+
+    if remaining:
+        _log(f"BATCH {batch['cycle']} {symbol}: close incomplete — "
+             f"{len(remaining)} of {len(positions)} still open, retrying next pass")
+        return False
+
+    closed_legs = int(batch.get("closed_legs") or len(positions))
+    banked = float(batch.get("banked") or 0.0)
+    _log(f"BATCH {batch['cycle']} CLOSED — {batch['side']} {symbol} · "
+         f"{closed_legs} positions · combined result "
+         f"{'+' if banked >= 0 else '-'}${abs(banked):.2f} (floating at close: "
+         f"{'+' if combined >= 0 else '-'}${abs(combined):.2f})")
+    return True
+
+
+def _settle_state(state: dict, batches: dict[str, dict], waiting: dict[str, float],
+                  live: list[dict]) -> None:
+    """Write the metadata the status view reads. Never a claimed fill."""
+    state["batches"] = {
+        symbol: {key: value for key, value in batch.items()}
+        for symbol, batch in batches.items()
+    }
+    state["wait_until"] = {symbol: until for symbol, until in waiting.items() if until}
+    state["positions"] = {
+        str(pos["ticket"]): {
+            "symbol": pos["symbol"], "type": pos["type"], "volume": pos["volume"],
+            "price_open": pos["price_open"], "price_current": pos["price_current"],
+            "sl": pos["sl"], "tp": pos["tp"], "profit": pos["profit"], "open": True,
+            "batch": (batches.get(pos["symbol"], {}) or {}).get("cycle"),
+        }
+        for pos in live
+    }
+    state["last_tick"] = _time_now()
+    state["daemon_version"] = DAEMON_VERSION
+    _write_state(state)
+
+
+def _adopt_batch(symbol: str, positions: list[dict], state: dict) -> dict:
+    """A batch that survived a restart: the open positions ARE the batch."""
+    saved = (state.get("batches") or {}).get(symbol) or {}
+    batch = {
+        "cycle": _as_int(saved.get("cycle"), _session_batch_number(state)),
+        "symbol": symbol,
+        "side": positions[0]["type"],
+        "lots": float(positions[0]["volume"]),
+        "trades": _as_int(saved.get("trades"), len(positions)),
+        "opened": len(positions),
+        "tickets": [pos["ticket"] for pos in positions],
+        "entries": [pos["price_open"] for pos in positions],
+        "sl": float(positions[0]["sl"]),
+        "opened_at": saved.get("opened_at") or _time_now(),
+        "closing": False,
+        "banked": float(saved.get("banked") or 0.0),
+        "closed_legs": int(saved.get("closed_legs") or 0),
+        "resumed": True,
+    }
+    _log(f"BATCH {batch['cycle']} {symbol} RESUMED — {len(positions)} open magic "
+         f"position(s) {batch['side']} {batch['lots']} lots, "
+         f"combined floating ${sum(p['profit'] for p in positions):+.2f}")
+    return batch
 
 
 def run() -> None:
-    """Entry point: load the state file, resume open positions, then loop."""
+    """Entry point: load settings, resume any live batch, then cycle forever."""
     state = _read_state()
     creds = _build_creds()
-    if creds["login"] is not None:
-        _log(f"DAEMON STARTED v{DAEMON_VERSION} (login {creds['login']}, server {creds['server']}, "
-             f"symbols {state.get('symbol', state.get('symbols'))}, "
-             f"lot {state.get('lot')}, trade_count {state.get('trade_count')})")
+    if creds.get("login") is not None:
+        _log(f"DAEMON STARTED v{DAEMON_VERSION} (login {creds['login']}, "
+             f"server {creds['server']})")
     else:
+        account = creds.get("account")
+        where = f"account {account.login} @ {account.server}" if account else "no account read"
         _log(f"DAEMON STARTED v{DAEMON_VERSION} (no MT5_LOGIN/MT5_PASSWORD/MT5_SERVER set — "
-             f"attached to the running MT5 terminal, broker from that terminal)")
+             f"attached to the running MT5 terminal, {where})")
+
+    plans, source = _symbol_plans(state)
+    if plans:
+        _log(f"SETTINGS from {source}: " + " · ".join(
+            f"{plan['symbol']} {plan['trades']} × {plan['lots']}" for plan in plans))
+    else:
+        _log("SETTINGS: no enabled symbol in the state file — waiting for /scalper/start")
+
     state["started_at"] = _time_now()
+    state["daemon_version"] = DAEMON_VERSION
     _write_state(state)
 
-    # 1) RESUME: manage open positions first (crash/reboot safety)
-    open_pos = []
-    account, error = _connect(creds)
-    if account is None:
-        _log(f"daemon start: MT5 init failed: {error}")
-    else:
-        try:
-            positions = mt5.positions_get()
-            if positions is None:
-                positions = []
-            for pos in positions:
-                if int(getattr(pos, "magic", 0)) != MAGIC:
-                    continue
-                open_pos.append({
-                    "ticket": int(pos.ticket),
-                    "symbol": pos.symbol,
-                    "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
-                    "volume": float(pos.volume),
-                    "price_open": float(pos.price_open),
-                    "price_current": float(pos.price_current),
-                    "sl": float(pos.sl), "tp": float(pos.tp),
-                    "profit": float(pos.profit), "open": True,
-                })
-            state["positions"] = {p["ticket"]: p for p in open_pos}
-            _write_state(state)
-            for p in open_pos:
-                _log(f"RESUMED position {p['ticket']} {p['type']} {p['symbol']} "
-                     f"{p['volume']} lots @ {p['price_open']:.2f}")
-        finally:
-            _disconnect()
+    batches: dict[str, dict] = {}
+    waiting: dict[str, float] = {
+        symbol: float(until) for symbol, until in (state.get("wait_until") or {}).items()
+    }
+    # Resume: whatever is open right now belongs to this daemon.
+    for symbol, positions in _group_by_symbol(_live_magic_positions(creds)).items():
+        batches[symbol] = _adopt_batch(symbol, positions, state)
 
+    stopped_notice = False
     while True:
-        step_state = _read_state()
-        if not step_state.get("running"):
-            _log("DAEMON STOPPED — waiting for /scalper/start")
-            time.sleep(5)
-            continue
+        try:
+            step_state = _read_state()
+            if not step_state.get("running"):
+                if not stopped_notice:
+                    _log(f"DAEMON v{DAEMON_VERSION} idle — waiting for /scalper/start")
+                    stopped_notice = True
+                time.sleep(5)
+                continue
+            stopped_notice = False
 
-        # ── 1) CLOSE MANAGING ──────────────────────────────────────────────
-        # Source of truth for what is open is LIVE MT5, not the state file.
-        # state["positions"] only carries metadata/logging; the state-key bug
-        # that keyed positions by ticket while the loop looked them up by symbol
-        # never entered here because this rewrite already uses _live_magic_positions.
-        #
-        # Every iteration: list LIVE MT5 positions filtered to our MAGIC, and
-        # close each one the instant its floating profit is positive in the
-        # account currency. The close is only treated as done after MT5 confirms
-        # it returned retcode 10008/10009/10010 — a failed close is logged and
-        # the ticket stays open for the next pass to retry.
-        #
-        # Hard blocks (margin buffer, missing candle data) are checked AFTER
-        # this section, so already-open positions are NEVER held up by a block.
-        live_positions = _live_magic_positions(creds)
-        open_by_symbol: dict[str, int] = {}
-        for pos in live_positions:
-            sym = pos["symbol"]
-            open_by_symbol[sym] = open_by_symbol.get(sym, 0) + 1
-            # close the instant floating profit > 0, confirmed by MT5 before we log
-            if pos.get("profit", 0) > 0:
-                _close_live_position(creds, pos, step_state, sym)
-            else:
-                # SL-hit detection (no revenge trade): wait for the next completed
-                # M15 candle before reopening this symbol.
-                sl_hit = False
-                if pos.get("sl", 0) > 0:
-                    if pos["type"] == "BUY" and pos["price_current"] <= pos["sl"]:
-                        sl_hit = True
-                    elif pos["type"] == "SELL" and pos["price_current"] >= pos["sl"]:
-                        sl_hit = True
-                if sl_hit:
-                    _log(f"TRADE CLOSED — STOP LOSS hit on {sym} (ticket {pos['ticket']}), "
-                         f"no revenge trade")
-                    # mark closed so we do not reopen this symbol this cycle
-                    pos["open"] = False
-            # refresh the open-by-symbol counts only after any close so the
-            # open section below sees the live position count
-            live_positions = _live_magic_positions(creds)
-            open_by_symbol = {}
-            for p in live_positions:
-                open_by_symbol[p["symbol"]] = open_by_symbol.get(p["symbol"], 0) + 1
+            plans, _source = _symbol_plans(step_state)
+            plan_by_symbol = {plan["symbol"]: plan for plan in plans}
+            live = _live_magic_positions(creds)
+            grouped = _group_by_symbol(live)
 
-        # ── 2) OPEN / MANAGE (hard blocks only block NEW trades) ────────────
-        symbol_list = step_state.get("symbol", step_state.get("symbols", ["BTCUSDm"]))
-        for s in (symbol_list if isinstance(symbol_list, list) else [symbol_list]):
-            # per-symbol open cap: do not open while a magic position is alive
-            # on this symbol (count live positions)
-            if open_by_symbol.get(s, 0) > 0:
-                _log(f"{s}: already has an open position, not opening another")
-                continue
-            blocked, block = _hard_block(creds, s)
-            if blocked:
-                _log(f"TRADE SKIPPED — {s}: {block}")
-                continue
-            bars = _last_8_completed_candles(s, creds)
-            if bars is None:
-                _log(f"WAITING for candle data on {s}")
-                continue
-            atr = _average_true_range(bars)
-            side = _direction(bars)
-            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
-                 f"ATR {atr:.2f}")
-            # no open ticket on this symbol → open the new trade
-            sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
-            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), s)
-            if ticket is None or not ticket.get("filled"):
-                _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
-                continue
-            step_state["positions"][ticket["order"]] = {
-                "symbol": s, "type": side.upper(), "volume": float(step_state.get("lot", 0.01)),
-                "sl": sl, "tp1": tp1, "tp2": tp2, "spread": spread, "atr": atr,
-                "opened_at": _time_now(), "ticket": ticket["order"],
-            }
-            _write_state(step_state)
-            _log(f"TRADED {s}: OPENED {side} {step_state.get('lot')} lots @ "
-                 f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
-                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
-            # no blocking countdown — the main 1–2 second loop manages closes
+            # A symbol with live positions outside the current plan is still
+            # OURS: it is managed to a close, it just cannot open a new batch.
+            symbols = list(dict.fromkeys([*plan_by_symbol.keys(), *grouped.keys()]))
 
-        time.sleep(1)
+            for symbol in symbols:
+                positions = grouped.get(symbol, [])
+                batch = batches.get(symbol)
+                plan = plan_by_symbol.get(symbol)
+
+                # ── nothing known about these positions yet (restart) ──────
+                if batch is None and positions:
+                    batch = _adopt_batch(symbol, positions, step_state)
+                    batches[symbol] = batch
+
+                # ── 1) MANAGE AN OPEN BATCH ────────────────────────────────
+                if batch is not None:
+                    if not positions:
+                        # every leg is gone: stop loss, or a close we did not
+                        # make. Either way the cycle is over and the symbol
+                        # waits for the next completed M15 candle.
+                        waiting[symbol] = _next_m15_boundary()
+                        batches.pop(symbol, None)
+                        _log(f"BATCH {batch['cycle']} {symbol} GONE — every position was "
+                             f"closed by the broker (stop loss or manual). Waiting for the "
+                             f"next completed M15 candle before a new cycle")
+                        continue
+
+                    combined = sum(pos["profit"] for pos in positions)
+                    # A close that already started MUST finish, whatever the
+                    # market does to the combined figure mid-flight.
+                    if batch["closing"] or combined > 0:
+                        if _close_batch(creds, symbol, batch, positions):
+                            batches.pop(symbol, None)
+                            # ── 3) IMMEDIATE NEXT CYCLE ───────────────────
+                            if plan is None:
+                                _log(f"BATCH {batch['cycle']} CLOSED — no reopen: {symbol} "
+                                     f"is not in the enabled settings any more")
+                                continue
+                            blocked, reason = _hard_block(
+                                creds, symbol, 0, int(plan["trades"]))
+                            if blocked:
+                                _log(f"REOPEN SKIPPED — {symbol}: {reason} · no batch opened")
+                                continue
+                            nxt = _open_batch(creds, symbol, plan, step_state)
+                            if nxt is not None:
+                                batches[symbol] = nxt
+                            else:
+                                waiting[symbol] = _next_m15_boundary()
+                        continue
+
+                    # HOLD — the batch rides through negative legs. Nothing to
+                    # do here on purpose: no per-position close, no TP wait, no
+                    # countdown.
+                    continue
+
+                # ── 2) NO BATCH: start one when the settings allow it ──────
+                if plan is None:
+                    continue
+                until = waiting.get(symbol, 0.0)
+                if until and time.time() < until:
+                    continue
+                if until:
+                    waiting.pop(symbol, None)
+
+                blocked, reason = _hard_block(creds, symbol, 0, int(plan["trades"]))
+                if blocked:
+                    _log(f"BATCH SKIPPED — {symbol}: {reason}")
+                    continue
+
+                batch = _open_batch(creds, symbol, plan, step_state)
+                if batch is not None:
+                    batches[symbol] = batch
+                else:
+                    waiting[symbol] = _next_m15_boundary()
+
+            _settle_state(step_state, batches, waiting, live)
+        except Exception as exc:  # a thrown pass must never kill a 24/7 loop
+            _log(f"LOOP ERROR (v{DAEMON_VERSION}): {exc!r}")
+            time.sleep(POLL_SECONDS)
+
+        time.sleep(POLL_SECONDS)
 
 
 if __name__ == "__main__":
