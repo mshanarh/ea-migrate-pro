@@ -319,6 +319,38 @@ export function warmBotVoice(): void {
  */
 const announced = new Map<string, number>();
 
+/**
+ * THE FIRST TRADE OF A BATCH SPEAKS — THE REST DO NOT.
+ *
+ * A batch opens several positions in one pass (4 × 0.01 BTCUSDm, 10 × 0.01
+ * XAUUSDm), and a full sentence per leg buried the trader in speech. Every leg
+ * still reaches the notification list, the popup and the toast, and the run
+ * summary still counts them — the VOICE says the first confirmed trade of the
+ * batch and stays quiet for the others. The next batch opens with its own
+ * trade 1, so that one speaks again.
+ *
+ * When trade 1 never confirmed (blocked, refused), the first fill that does
+ * come through IS the first trade the trader can hear — so the rule keys on
+ * "has this batch been announced yet", not on an index of 1 alone.
+ */
+const batchAnnounced = new Map<string, number>();
+const BATCH_MEMORY_MS = 10 * 60 * 1000;
+
+function shouldSpeakFill(symbol: string, index: number | null, total: number | null): boolean {
+  const key = `${symbol.trim().toUpperCase()}|${total ?? "?"}`;
+  const now = Date.now();
+  for (const [oldKey, at] of batchAnnounced) {
+    if (now - at > BATCH_MEMORY_MS) batchAnnounced.delete(oldKey);
+  }
+  if (index !== null && index > 1) {
+    if (batchAnnounced.has(key)) return false;
+    batchAnnounced.set(key, now);
+    return true;
+  }
+  batchAnnounced.set(key, now);
+  return true;
+}
+
 function alreadyAnnounced(signature: string): boolean {
   const now = Date.now();
   for (const [key, at] of announced) {
@@ -333,6 +365,7 @@ function alreadyAnnounced(signature: string): boolean {
 /** Test seam — forget everything that was announced. */
 export function resetAnnouncedExecutions(): void {
   announced.clear();
+  batchAnnounced.clear();
 }
 
 /** Shape helpers the scalper voice path uses. They live here so the import of
@@ -500,6 +533,18 @@ export function speakTradeExecution(payload: unknown): void {
     }
     if (Date.now() - lastRefusalSpokenAt < REFUSAL_GAP_MS) {
       console.info("[voice] step 3 skipped — a refusal was already announced within the last 20s");
+      return;
+    }
+  }
+
+  // ── ONLY THE FIRST TRADE OF A BATCH IS SPOKEN ────────────────────────────
+  // (see shouldSpeakFill — the other legs stay silent out loud, still visible
+  // in the notifications and counted by the run summary).
+  if (execution.status === "executed" && !execution.summary) {
+    if (!shouldSpeakFill(execution.symbol, execution.index, execution.total)) {
+      console.info(
+        `[voice] step 4 skipped — trade ${execution.index ?? "?"} of ${execution.total ?? "?"}: only the first trade of a batch is spoken`,
+      );
       return;
     }
   }

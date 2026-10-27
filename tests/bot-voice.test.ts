@@ -81,6 +81,49 @@ describe("bot voice", () => {
     expect(spoken).toHaveLength(0);
   });
 
+  it("speaks only the FIRST trade of a batch, and stays silent for the other legs", () => {
+    // A 4-trade batch, announced with each fill's position in the batch.
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", lotSize: 0.01, entry: 65000, index: 1, total: 4, message: "TRADE 1/4 EXECUTED" });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", lotSize: 0.01, entry: 65000, index: 2, total: 4, message: "TRADE 2/4 EXECUTED" });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", lotSize: 0.01, entry: 65000, index: 3, total: 4, message: "TRADE 3/4 EXECUTED" });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", lotSize: 0.01, entry: 65000, index: 4, total: 4, message: "TRADE 4/4 EXECUTED" });
+
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]?.text).toContain("Trade 1 of 4 executed");
+  });
+
+  it("reads the trade's position from the producer's TRADE n/m label too", () => {
+    // The auto-trader labels each fill; the loop's own broadcast repeats the
+    // same numbering, so a leg is recognised whichever event arrives first.
+    speakTradeExecution({ ok: true, status: "executed", symbol: "XAUUSDm", side: "SELL", message: "TRADE 1/10 EXECUTED", index: 1, total: 10 });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "XAUUSDm", side: "SELL", event: "TRADE 2/10 EXECUTED" });
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]?.text).toContain("Trade 1 of 10 executed");
+  });
+
+  it("speaks the first trade of the NEXT batch again", () => {
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", index: 1, total: 4 });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", index: 2, total: 4 });
+    // Batch closed, a new one opens: its own trade 1 is heard.
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "SELL", index: 1, total: 4 });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "SELL", index: 2, total: 4 });
+    expect(spoken.map((entry) => entry.text)).toHaveLength(2);
+  });
+
+  it("still speaks the first fill that confirms when trade 1 never did", () => {
+    // Trade 1 was blocked, trade 2 is the first real fill — the trader hears it.
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", index: 2, total: 4 });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "BUY", index: 3, total: 4 });
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]?.text).toContain("Trade 2 of 4 executed");
+  });
+
+  it("still speaks closes, and speaks a single-order run", () => {
+    speakTradeExecution({ ok: true, status: "closed", symbol: "BTCUSDm", side: "BUY", entry: 65100 });
+    speakTradeExecution({ ok: true, status: "executed", symbol: "EURUSDm", side: "SELL", index: 1, total: 1, message: "TRADE 1/1 EXECUTED" });
+    expect(spoken.map((entry) => entry.text)).toHaveLength(2);
+  });
+
   it("stays silent when the trader turned the voice off — independently of notifications", () => {
     window.localStorage.setItem("botVoiceEnabled", "false");
     speakTradeExecution({ ok: true, status: "executed", symbol: "BTCUSDm", side: "SELL", message: "TRADE 1/1 EXECUTED" });

@@ -448,7 +448,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         eaName,
         credentials,
         magic: SCALP_MAGIC,
-        onTradeExecute: (trade) => {
+        onTradeExecute: (trade, fillIndex, fillTotal) => {
           if (trade.status === "executed") {
             // A NUMBER IS SPENT ONLY HERE — on a fill MT5 confirmed.
             const opened: OpenedTrade = {
@@ -469,6 +469,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
                 takeProfit: trade.tp,
                 status: "executed",
                 lotSize: trade.lotSize,
+                // WHICH TRADE OF THE BATCH THIS IS. The voice announces only
+                // the first trade of a batch (see bot-voice), so every fill
+                // has to carry its position in the batch — without it a leg 2
+                // looks exactly like a leg 1.
+                index: fillIndex,
+                total: fillTotal,
                 ...(trade.meta?.mtOrderId ? { orderId: trade.meta.mtOrderId } : {}),
                 summary: false,
               },
