@@ -208,6 +208,26 @@ export function TradeAnalysisPopup({
       </div>
     ) : null;
 
+  /**
+   * THE TAP LANDED — either on this card or on the one floating over
+   * MetaTrader. The loop picks the confirmation up on its next pass, so the
+   * card says so instead of going blank while the order is on its way.
+   */
+  const confirmedSignal =
+    pending && pending.state === "confirmed" ? (
+      <div className="mt-3 rounded-[18px] border border-emerald-400/30 bg-emerald-500/10 px-3 py-3">
+        <p className="text-[11px] font-black uppercase tracking-[0.18em] text-emerald-300">
+          Execute tapped
+        </p>
+        <p className="if-text mt-1 text-[12px] font-bold">
+          {pending.direction} · {pending.symbol} — sending {pending.lotSize} lots × {pending.trades}
+        </p>
+        <p className="if-muted mt-1 text-[11px] leading-snug">
+          The order goes out on this pass; the fill is only reported once MT5 confirms it.
+        </p>
+      </div>
+    ) : null;
+
   const invalidSignal =
     pending && pending.state === "invalid" ? (
       <div className="mt-3 rounded-[18px] border border-amber-400/30 bg-amber-500/10 px-3 py-3">
@@ -277,6 +297,7 @@ export function TradeAnalysisPopup({
         )}
 
         {heldSignal}
+        {confirmedSignal}
         {invalidSignal}
 
         {/* The analysis box */}

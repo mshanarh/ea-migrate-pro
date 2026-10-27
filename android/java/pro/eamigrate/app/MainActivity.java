@@ -575,6 +575,48 @@ public class MainActivity extends Activity {
         }
 
         /**
+         * Float the TRADE EXECUTION card over every app (MetaTrader included):
+         * `{ ok, headline, detail }`, green for a fill MT5 confirmed and red
+         * for a refusal in the broker's own words.
+         *
+         * DISPLAY ONLY. The web app decides — and verifies with the broker —
+         * what happened; this method exists so the trader sees it where they
+         * are looking (MetaTrader), not only in a notification.
+         */
+        @JavascriptInterface
+        public void showTradeResult(final String resultJson) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (resultJson == null || resultJson.trim().isEmpty()) return;
+                    // No overlay permission means no floating card at all; a
+                    // trade result is not the moment to hijack the screen with
+                    // a settings page — the notification still arrived.
+                    if (!overlayAllowed()) return;
+                    if (OverlayService.showResultCard(resultJson)) return;
+                    Intent intent = new Intent(MainActivity.this, OverlayService.class);
+                    intent.putExtra("result", resultJson);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(intent);
+                    } else {
+                        startService(intent);
+                    }
+                }
+            });
+        }
+
+        /** Take the execution card down early. */
+        @JavascriptInterface
+        public void hideTradeResult() {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    OverlayService.hideResultCard();
+                }
+            });
+        }
+
+        /**
          * Push a foreground trade-execution notification to the phone when
          * the robot has just filled a trade. Red = loss, amber = pending,
          * green = win — the same Algohost palette the web theme uses.

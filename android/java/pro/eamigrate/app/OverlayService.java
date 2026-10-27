@@ -302,6 +302,13 @@ public class OverlayService extends Service {
             expandAnalysisCard(intent.getStringExtra("analysis"));
             return START_NOT_STICKY;
         }
+        // THE EXECUTION CARD ON ITS OWN — same reasoning as the analysis card:
+        // it is shown over MetaTrader and returns before show(), so a trade
+        // result never puts a stray chat-head on the screen.
+        if (intent != null && intent.hasExtra("result")) {
+            expandResultCard(intent.getStringExtra("result"));
+            return START_NOT_STICKY;
+        }
         if (intent != null && intent.hasExtra("image")) {
             imageUrl = intent.getStringExtra("image");
         }
@@ -817,6 +824,192 @@ public class OverlayService extends Service {
         } catch (Exception ignored) {
         }
         analysisCard = null;
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // TRADE EXECUTION CARD — what the broker just did, floating over every app
+    // ────────────────────────────────────────────────────────────────────────
+
+    /** How long the execution card stays up before it dismisses itself. */
+    private static final long RESULT_CARD_MS = 9_000L;
+
+    /** The currently floating execution card, if any. */
+    private View resultCard;
+
+    /**
+     * Show the execution card on an ALREADY RUNNING service.
+     *
+     * Returns false when the service is not up, so the caller can start it
+     * with the "result" extra instead of the card silently never appearing.
+     */
+    public static boolean showResultCard(final String json) {
+        final OverlayService service = instance;
+        if (service == null || json == null || json.trim().isEmpty()) return false;
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                service.expandResultCard(json);
+            }
+        });
+        return true;
+    }
+
+    /** Take the execution card down. A no-op when the service is not running. */
+    public static void hideResultCard() {
+        final OverlayService service = instance;
+        if (service == null) return;
+        new Handler(Looper.getMainLooper()).post(new Runnable() {
+            @Override
+            public void run() {
+                service.removeResultCard();
+            }
+        });
+    }
+
+    /** Remove the execution card (leaving the bubble, service and analysis card alone). */
+    private void removeResultCard() {
+        try {
+            if (resultCard != null && wm != null) {
+                wm.removeView(resultCard);
+            }
+        } catch (Exception ignored) {
+        }
+        resultCard = null;
+    }
+
+    /**
+     * Build and float the TRADE EXECUTION card.
+     *
+     * Payload: `{ ok, headline, detail }` — e.g.
+     * `{ ok: true, headline: "Trade 1 CONFIRMED · BUY 0.01 BTCUSDm @ 80243.5" }`
+     * or `{ ok: false, headline: "BTCUSDm NOT SENT", detail: "not enough free margin" }`.
+     *
+     * Green means the broker CONFIRMED a fill (retcode 10008/10009/10010 — the
+     * web app only ever sends `ok: true` for those); red is a refusal in the
+     * broker's own words. The native side only DRAWS the line the web app sends:
+     * it never decides that a trade happened.
+     */
+    private void expandResultCard(final String json) {
+        if (wm == null) {
+            wm = (WindowManager) getSystemService(WINDOW_SERVICE);
+        }
+        removeResultCard();
+
+        String headline = "";
+        String detail = "";
+        boolean ok = true;
+        try {
+            JSONObject payload = new JSONObject(json);
+            headline = payload.optString("headline", "").trim();
+            detail = payload.optString("detail", "").trim();
+            ok = payload.optBoolean("ok", true);
+        } catch (Throwable t) {
+            android.util.Log.e("EAMIGRATE", "result payload unreadable: " + t);
+            return;
+        }
+        if (headline.isEmpty()) return;
+
+        final int accent = ok ? Color.parseColor("#4ADE80") : Color.parseColor("#F87171");
+
+        try {
+            LinearLayout card = new LinearLayout(this);
+            card.setOrientation(LinearLayout.VERTICAL);
+            GradientDrawable cardBg = new GradientDrawable();
+            cardBg.setCornerRadius(dp(20));
+            cardBg.setColor(Color.parseColor("#F20A0A0C"));
+            cardBg.setStroke(dp(1), ok
+                    ? Color.parseColor("#594ADE80")
+                    : Color.parseColor("#59F87171"));
+            card.setBackground(cardBg);
+            card.setClipToOutline(true);
+            card.setPadding(dp(16), dp(14), dp(16), dp(16));
+
+            // ── Small-caps title + ✕ ──
+            LinearLayout titleRow = new LinearLayout(this);
+            titleRow.setOrientation(LinearLayout.HORIZONTAL);
+            titleRow.setGravity(Gravity.CENTER_VERTICAL);
+
+            TextView title = new TextView(this);
+            title.setText("TRADE EXECUTION");
+            title.setTextSize(10f);
+            title.setLetterSpacing(0.18f);
+            title.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            title.setTextColor(Color.parseColor("#73FFFFFF"));
+            titleRow.addView(title);
+
+            View titleSpacer = new View(this);
+            titleSpacer.setLayoutParams(new LinearLayout.LayoutParams(0, 1, 1f));
+            titleRow.addView(titleSpacer);
+
+            final TextView close = new TextView(this);
+            close.setText("✕");
+            close.setTextSize(13f);
+            close.setTextColor(Color.parseColor("#B3FFFFFF"));
+            close.setGravity(Gravity.CENTER);
+            GradientDrawable closeBg = new GradientDrawable();
+            closeBg.setShape(GradientDrawable.OVAL);
+            closeBg.setColor(Color.parseColor("#1AFFFFFF"));
+            close.setBackground(closeBg);
+            close.setLayoutParams(new LinearLayout.LayoutParams(dp(26), dp(26)));
+            close.setOnClickListener(new View.OnClickListener() {
+                @Override
+                public void onClick(View v) {
+                    removeResultCard();
+                }
+            });
+            titleRow.addView(close);
+            card.addView(titleRow);
+
+            // ── The line the trader needs: confirmed fill, or the refusal ──
+            TextView line = new TextView(this);
+            line.setText(headline);
+            line.setTextSize(15f);
+            line.setTypeface(android.graphics.Typeface.DEFAULT_BOLD);
+            line.setTextColor(accent);
+            line.setPadding(0, dp(8), 0, 0);
+            card.addView(line);
+
+            if (!detail.isEmpty()) {
+                TextView note = new TextView(this);
+                note.setText(detail);
+                note.setTextSize(11f);
+                note.setTextColor(Color.parseColor("#99FFFFFF"));
+                note.setPadding(0, dp(4), 0, 0);
+                card.addView(note);
+            }
+
+            TextView live = new TextView(this);
+            live.setText(ok ? "confirmed by MT5" : "nothing was sent");
+            live.setTextSize(11f);
+            live.setTextColor(Color.parseColor("#66FFFFFF"));
+            live.setPadding(0, dp(3), 0, 0);
+            card.addView(live);
+
+            final WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    Math.max(dp(200), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+                    PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.TOP | Gravity.START;
+            params.x = dp(16);
+            params.y = dp(140);
+
+            wm.addView(card, params);
+            resultCard = card;
+
+            // A result is news, not a control surface: it takes itself down so
+            // it never sits over MetaTrader covering the chart.
+            final View mine = card;
+            new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
+                @Override
+                public void run() {
+                    if (resultCard == mine) removeResultCard();
+                }
+            }, RESULT_CARD_MS);
+        } catch (Exception e) {
+            android.util.Log.e("EAMIGRATE", "result card failed: " + e);
+        }
     }
 
     /**

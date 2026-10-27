@@ -5,11 +5,11 @@ import {
   type BridgeCredentials,
 } from "./auto-trade";
 import {
-  awaitPendingDecision,
   clearPendingSignal,
   invalidatePendingSignal,
+  peekPendingSignal,
   publishPendingSignal,
-  type SignalDecision,
+  takeConfirmedPendingSignal,
 } from "./pending-signal";
 import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
 import { setExecutionStage, updateExecutionPlan } from "./execution-state";
@@ -121,7 +121,21 @@ type Track = {
 type OpenOutcome =
   | { kind: "opened"; opens: OpenedTrade[] }
   | { kind: "skipped"; reason: string }
-  | { kind: "failed"; reason: string };
+  | { kind: "failed"; reason: string }
+  /** A valid signal is waiting for the trader's Execute tap — nothing sent. */
+  | { kind: "held"; reason: string };
+
+/** The analysed signal a symbol is waiting on, ready for the trader to tap. */
+type HeldSignal = {
+  direction: "BUY" | "SELL";
+  entry: number;
+  stopLoss: number;
+  takeProfit: number;
+  tp2: number;
+  lotSize: number;
+  trades: number;
+  reason: string;
+};
 
 /** One line for the popup / bot log — never a claim the broker did not make. */
 function announce(detail: Record<string, unknown>) {
@@ -185,6 +199,68 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   let stopped = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let monitoringNoticeShown = false;
+
+  /**
+   * THE SIGNALS WAITING FOR A HUMAN TAP — one at a time, keyed by symbol.
+   *
+   * The wait is deliberately NOT a blocking `await` inside the pass: the trader
+   * has to leave the app for MetaTrader to tap the floating card, and a loop
+   * parked on that decision would stop managing every open position while they
+   * are away. The pass therefore re-validates the held signal each time round
+   * and only sends an order once the confirmation comes back.
+   */
+  const heldSignals = new Map<string, HeldSignal>();
+
+  /**
+   * PUBLISH (OR REFRESH) THE HELD SIGNAL FOR A SYMBOL.
+   *
+   * The store does the rest: the in-app card and the native card floating over
+   * MetaTrader both read it, and the overlay's EXECUTE tap comes back to it.
+   */
+  const publishHeldSignal = (
+    symbol: string,
+    direction: { type: "BUY" | "SELL"; entry: number; sl: number; tp: number; tp1?: number; tp2?: number },
+    lotSize: number,
+    tradeCount: number,
+    reason: string,
+  ): HeldSignal => {
+    const held: HeldSignal = {
+      direction: direction.type,
+      entry: direction.entry,
+      stopLoss: direction.sl,
+      takeProfit: direction.tp1 ?? direction.tp,
+      tp2: direction.tp2 ?? direction.tp,
+      lotSize,
+      trades: tradeCount,
+      reason,
+    };
+    heldSignals.set(symbol, held);
+    publishPendingSignal({
+      symbol,
+      direction: held.direction,
+      entry: held.entry,
+      stopLoss: held.stopLoss,
+      takeProfit: held.takeProfit,
+      lotSize,
+      trades: tradeCount,
+      mode,
+      robotName: eaName,
+      reason,
+      state: "ready",
+      updatedAt: Date.now(),
+    });
+    setExecutionStage(`${held.direction} ${symbol} analysed — waiting for your Execute`);
+    broadcast(`${symbol}: ${held.direction} signal held — nothing is sent until you tap Execute`, {
+      symbol,
+      side: held.direction,
+      status: "waiting",
+      entry: held.entry,
+      stopLoss: held.stopLoss,
+      takeProfit: held.takeProfit,
+      lotSize,
+    });
+    return held;
+  };
 
   log(`starting ${mode.toUpperCase()} mode for ${symbols.map((entry) => entry.symbol).join(", ") || "no symbols"}`);
 
@@ -297,14 +373,44 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
 
     // ── PAGE 4: HOLD THE SIGNAL UNTIL THE TRADER TAPS EXECUTE ───────────────
     // The analysis is done; NOTHING has been sent. The card takes over from
-    // here and the loop waits. A market that moved off the signal, a Stop, or
-    // the wait window closing all resolve to "not confirmed", and the broker
-    // is never contacted.
+    // here, on the screen AND floating over MetaTrader, and the trader's tap is
+    // the only thing that can turn this signal into an order.
     if (requireConfirmation) {
-      const confirmed = await holdForConfirmation(symbol, direction, lotSize, tradeCount, analysis.reason);
-      if (!confirmed) {
-        return { kind: "skipped", reason: "signal not confirmed — the broker was never contacted" };
+      // ONE DECISION AT A TIME. While a signal waits for the trader, no other
+      // symbol opens either: a second card would overwrite the one being read.
+      if (heldSignals.size > 0 && !heldSignals.has(symbol)) {
+        const waitingOn = [...heldSignals.keys()][0]!;
+        return { kind: "held", reason: `waiting for your Execute on ${waitingOn}` };
       }
+
+      const held = heldSignals.get(symbol);
+      if (!held) {
+        // A valid signal, held — never sent by itself.
+        publishHeldSignal(symbol, direction, lotSize, tradeCount, analysis.reason);
+        return { kind: "held", reason: "signal held for your Execute" };
+      }
+
+      // ── CONFIRMED — THE TRADER TAPPED EXECUTE ─────────────────────────────
+      // In the app, or on the card floating over MetaTrader: both arrive here
+      // as the same confirmation, and it is consumed exactly once.
+      const settled = takeConfirmedPendingSignal();
+      heldSignals.delete(symbol);
+      if (!settled) {
+        // Still waiting (the pass re-analyses every few seconds; nothing sent).
+        publishHeldSignal(symbol, direction, lotSize, tradeCount, analysis.reason);
+        return { kind: "held", reason: "signal held for your Execute" };
+      }
+      // THE SIDE THAT WAS SHOWN IS THE SIDE THAT GOES OUT. A flip between the
+      // tap and the send is a mismatch, and a mismatch is never traded. The
+      // levels are re-anchored to the live quote by the execution path below,
+      // exactly as they are for every other fill this bot places.
+      if (direction.type !== held.direction) {
+        const mismatch = `the candles flipped to ${direction.type} after you confirmed ${held.direction} — no order was sent`;
+        fail(`${symbol}: ${mismatch}`, { symbol, status: "blocked", reason: mismatch });
+        if (notifyNow) notifyTradeSkipped(symbol, mismatch);
+        return { kind: "skipped", reason: mismatch };
+      }
+      setExecutionStage(`${held.direction} ${symbol} confirmed by you — sending ${tradeCount} order(s)…`);
     }
 
     // The card shows the analysed plan before the broker confirms anything.
@@ -415,128 +521,46 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     return { kind: "failed", reason: failureReason ?? "MT5 did not confirm any order" };
   };
 
-  /** How long a held signal stays open before the loop re-analyses from scratch. */
-  const CONFIRM_WINDOW_MS = 90_000;
-  /** How often a held signal is re-validated against fresh broker candles. */
-  const REVALIDATE_MS = 5_000;
-
   /**
-   * Publish the analysed signal and WAIT for a human decision.
+   * RE-VALIDATE A HELD SIGNAL — once per pass, WITHOUT blocking the loop.
    *
-   * While it waits, the signal is re-validated against fresh broker candles:
-   *  • the same side with the same levels → the card is refreshed in place;
+   * There is no countdown any more. The trader has to leave the app, find the
+   * card floating over MetaTrader and read it; a window that closes while they
+   * are switching screens is the flow dying on the way. The wait therefore ends
+   * only when one of these is true, and never on a clock:
+   *  • the trader taps Execute → the side that was shown is sent;
    *  • the candles now read NO_TRADE → the signal is marked INVALID with the
-   *    broker's own reason and Execute is withdrawn;
+   *    broker's own reason, both cards come down and Execute is withdrawn;
    *  • the direction or the levels moved → the trader is shown the MOVED
    *    signal, still without a single order being sent;
    *  • the bridge cannot answer → the wait continues, because a network
-   *    hiccup must never turn into an order.
+   *    hiccup must never turn into an order;
+   *  • Stop → the signal dies with the session (see `stop`).
    *
-   * Returns true ONLY when the trader tapped Execute.
+   * Because it is a normal pass step, open positions keep being managed the
+   * whole time the trader is away.
    */
-  const holdForConfirmation = async (
-    symbol: string,
-    direction: { type: "BUY" | "SELL"; entry: number; sl: number; tp: number; tp1?: number; tp2?: number },
-    lotSize: number,
-    tradeCount: number,
-    reason: string,
-  ): Promise<boolean> => {
-    let live = direction;
-    publishPendingSignal({
-      symbol,
-      direction: live.type,
-      entry: live.entry,
-      stopLoss: live.sl,
-      takeProfit: live.tp1 ?? live.tp,
-      lotSize,
-      trades: tradeCount,
-      mode,
-      robotName: eaName,
-      reason,
-      state: "ready",
-      updatedAt: Date.now(),
-    });
-    setExecutionStage(`${live.type} ${symbol} analysed — waiting for your Execute`);
-    broadcast(`${symbol}: ${live.type} signal held — nothing is sent until you tap Execute`, {
-      symbol,
-      side: live.type,
-      status: "waiting",
-      entry: live.entry,
-      stopLoss: live.sl,
-      takeProfit: live.tp1 ?? live.tp,
-      lotSize,
-    });
-
-    const outcome: { decision: SignalDecision | null } = { decision: null };
-    void awaitPendingDecision().then((decision) => {
-      outcome.decision = decision;
-    });
-
-    const deadline = Date.now() + CONFIRM_WINDOW_MS;
-    while (outcome.decision === null && !stopped && Date.now() < deadline) {
-      await new Promise((resolve) => setTimeout(resolve, REVALIDATE_MS));
-      if (outcome.decision !== null || stopped) break;
-      try {
-        const fresh = await resolveTradeDirection(symbol, { credentials });
-        if (fresh.direction.type === "NO_TRADE") {
-          invalidatePendingSignal(`the live candles no longer support this signal — ${fresh.direction.reason}`);
-          break;
-        }
-        const next = fresh.direction as typeof live;
-        const moved =
-          next.type !== live.type ||
-          next.entry !== live.entry ||
-          next.sl !== live.sl;
-        if (moved) {
-          live = next;
-          publishPendingSignal({
-            symbol,
-            direction: live.type,
-            entry: live.entry,
-            stopLoss: live.sl,
-            takeProfit: live.tp1 ?? live.tp,
-            lotSize,
-            trades: tradeCount,
-            mode,
-            robotName: eaName,
-            reason: fresh.reason,
-            state: "ready",
-            updatedAt: Date.now(),
-          });
-          setExecutionStage(`${live.type} ${symbol} re-validated on fresh candles — waiting for your Execute`);
-        } else {
-          publishPendingSignal({
-            symbol,
-            direction: live.type,
-            entry: live.entry,
-            stopLoss: live.sl,
-            takeProfit: live.tp1 ?? live.tp,
-            lotSize,
-            trades: tradeCount,
-            mode,
-            robotName: eaName,
-            reason: fresh.reason,
-            state: "ready",
-            updatedAt: Date.now(),
-          });
-        }
-      } catch {
-        // The bridge did not answer. Keep waiting — never trade on a hiccup.
+  const revalidateHeldSignal = async (symbol: string, held: HeldSignal): Promise<void> => {
+    try {
+      const fresh = await resolveTradeDirection(symbol, { credentials });
+      if (fresh.direction.type === "NO_TRADE") {
+        heldSignals.delete(symbol);
+        invalidatePendingSignal(`the live candles no longer support this signal — ${fresh.direction.reason}`);
+        setExecutionStage(`${symbol}: signal no longer valid — watching for the next one`);
+        return;
       }
+      const next = fresh.direction;
+      const moved = next.type !== held.direction || next.entry !== held.entry || next.sl !== held.stopLoss;
+      // Republishing keeps both cards on fresh levels. The store only redraws
+      // the floating card when the card would actually look different, so a
+      // signal that has not moved does not make the overlay flicker.
+      publishHeldSignal(symbol, next, held.lotSize, held.trades, fresh.reason);
+      if (moved) {
+        setExecutionStage(`${next.type} ${symbol} re-validated on fresh candles — waiting for your Execute`);
+      }
+    } catch {
+      // The bridge did not answer. Keep waiting — never trade on a hiccup.
     }
-
-    const decision = outcome.decision;
-    clearPendingSignal();
-    if (decision !== "execute") {
-      setExecutionStage(
-        stopped
-          ? `${symbol}: session stopped — no order sent`
-          : `${symbol}: signal not confirmed — watching for the next one`,
-      );
-      return false;
-    }
-    setExecutionStage(`${live.type} ${symbol} confirmed by you — sending ${tradeCount} order(s)…`);
-    return true;
   };
 
   const tick = async () => {
@@ -695,6 +719,16 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       waitingNotice.delete(symbol);
       waitUntil.delete(symbol);
 
+      // ── A SIGNAL IS HELD FOR THE TRADER ──────────────────────────────────
+      // Re-validation rides the normal pass, so open positions keep being
+      // managed while the trader is in MetaTrader reading the floating card.
+      // A CONFIRMED hold falls through to openFor, which sends it.
+      const held = heldSignals.get(symbol);
+      if (held && peekPendingSignal()?.state !== "confirmed") {
+        await revalidateHeldSignal(symbol, held);
+        continue;
+      }
+
       await openFor(symbol, lotSize, cap);
     }
   };
@@ -726,6 +760,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       timer = null;
       // A held signal dies with the session: Stop must never leave a card up
       // that could still place an order.
+      heldSignals.clear();
       clearPendingSignal();
       log("stopped");
     },

@@ -3,6 +3,7 @@ import { Loader2 } from "lucide-react";
 import { hasNativeBridge, callNative } from "@/lib/native-bridge";
 import { executeAnalysedSignal, readMtCredentials, resolveTradeDirection } from "@/lib/auto-trade";
 import { getAppState } from "@/lib/app-store";
+import { peekPendingSignal } from "@/lib/pending-signal";
 import type { FundamentalsOrderResult } from "@/lib/mt5-bridge.server";
 
 /**
@@ -125,9 +126,15 @@ export function AnalyzeExecuteCard({
    * inside the Android wrapper, so the trader can read it (and tap Execute)
    * while MetaTrader is in front. A wrapper without the feature simply returns
    * false and the in-app card stays the single source of truth.
+   *
+   * THE RUNNING BOT'S HELD SIGNAL OWNS THE FLOATING CARD. While one is waiting
+   * for the trader (see pending-signal.ts), this card must not push its own
+   * analysis over it — there is only one floating card, and the signal the
+   * trader is on their way to read is the one that belongs there.
    */
   useEffect(() => {
     if (!hasNativeBridge()) return;
+    if (peekPendingSignal()) return;
     if (signal) {
       callNative("showTradeAnalysis", JSON.stringify(signal));
     } else {
@@ -262,6 +269,9 @@ export function AnalyzeExecuteCard({
 
   useEffect(() => {
     const handler = () => {
+      // A held BOT signal owns the floating card and its Execute tap — the tap
+      // belongs to the trading loop, not to this page's analysis.
+      if (peekPendingSignal()) return;
       void executeRef.current();
     };
     window.addEventListener("eamp:native-execute", handler);

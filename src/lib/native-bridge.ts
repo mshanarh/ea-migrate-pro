@@ -34,6 +34,17 @@ type NativeBridge = {
   showTradeAnalysis?: (signalJson: string) => void;
   /** Take the analysis card down (called when the analysis is cleared). */
   hideTradeAnalysis?: () => void;
+  /**
+   * THE TRADE EXECUTION CARD — the same rounded card, floating over every app
+   * (MetaTrader included), showing what the broker just did:
+   * `{ ok, headline, detail }`, e.g.
+   * `Trade 1 CONFIRMED · BUY 0.01 BTCUSDm @ 80243.5` in green, or the broker's
+   * own refusal in red. It dismisses itself after a few seconds. Only a
+   * confirmed fill (retcode 10008/10009/10010) may be reported as CONFIRMED.
+   */
+  showTradeResult?: (resultJson: string) => void;
+  /** Take the execution card down early. */
+  hideTradeResult?: () => void;
   pushLog?: (line: string) => void;
   reportError?: (message: string) => void;
   openUrl?: (url: string) => void;

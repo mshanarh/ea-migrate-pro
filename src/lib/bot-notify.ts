@@ -42,6 +42,26 @@ function post(body: string): void {
   callNative("showTradeNotification", NOTIFY_TITLE, `${NOTIFY_TITLE}\n${text}`);
 }
 
+/**
+ * THE TRADE EXECUTION CARD, floating over whatever app is in front.
+ *
+ * A heads-up notification is easy to miss while the trader is looking at
+ * MetaTrader, so every confirmed fill — and every refusal — is ALSO handed to
+ * the native overlay, which draws the same rounded card over the screen:
+ * green `Trade 1 CONFIRMED · BUY 0.01 BTCUSDm @ 80243.5`, or red with the
+ * broker's own words. The native side only draws it; nothing here reports a
+ * fill the broker did not confirm.
+ */
+function postResultCard(ok: boolean, headline: string, detail?: string): void {
+  const line = headline.trim();
+  if (!line) return;
+  console.info(`[notify] result card (${ok ? "confirmed" : "refused"}) — ${line}`);
+  callNative(
+    "showTradeResult",
+    JSON.stringify({ ok, headline: line, detail: (detail ?? "").trim() }),
+  );
+}
+
 /** How long the same symbol+reason is not repeated. */
 const SKIP_COOLDOWN_MS = 5 * 60 * 1000;
 /** The same trade cannot be announced twice from a duplicated event. */
@@ -117,6 +137,21 @@ export type OpenedTrade = {
   lotSize: string | number | null;
   price: string | number | null;
 };
+
+/**
+ * `Trade 1 CONFIRMED · BUY 0.01 BTCUSDm @ 80243.5`
+ *
+ * The execution card's headline. "CONFIRMED" is only ever used here, and only
+ * for a fill that came back from MT5 with retcode 10008/10009/10010 and a real
+ * ticket — every caller of this function has already been through that check.
+ */
+export function describeConfirmed(trade: OpenedTrade): string {
+  const side = trade.side.trim().toUpperCase();
+  const lot = lotText(trade.lotSize);
+  const price = priceText(trade.price);
+  const head = `Trade ${trade.number} CONFIRMED · ${side}${lot ? ` ${lot}` : ""} ${trade.symbol.trim()}`;
+  return price ? `${head} @ ${price}` : head;
+}
 
 /** `Trade 2 opened — SELL XAUUSD 0.01 lots @ 2650.4` */
 export function describeOpen(trade: OpenedTrade): string {
@@ -211,6 +246,7 @@ export function notifyTradeOpened(trade: OpenedTrade): void {
   const signature = `${trade.number}|${trade.side}|${trade.symbol}|${priceText(trade.price) ?? ""}`;
   recentOpens.set(signature, Date.now());
   post(describeOpen(trade));
+  postResultCard(true, describeConfirmed(trade));
 }
 
 /** A close this bot performed, with the broker's confirmed result. */
@@ -255,6 +291,9 @@ export function notifyTradeSkipped(symbol: string, reason: string): boolean {
   if (last !== undefined && now - last < SKIP_COOLDOWN_MS) return false;
   skipSeen.set(key, now);
   post(`Trade skipped — ${blockLabel(reason)}`);
+  // The refusal is shown where the trader is looking, in the broker's own
+  // words — not only as a notification they may never open.
+  postResultCard(false, `${symbol.trim().toUpperCase()} NOT SENT`, blockLabel(reason));
   return true;
 }
 
@@ -334,5 +373,7 @@ export function notifyExecutionResult(result: {
   const number = reserveTradeNumber();
   recentOpens.set(`${number}|${signature}`, Date.now());
   recentOpens.set(signature, Date.now());
-  post(describeOpen({ number, side, symbol, lotSize: result.lotSize ?? null, price: result.entry ?? null }));
+  const opened: OpenedTrade = { number, side, symbol, lotSize: result.lotSize ?? null, price: result.entry ?? null };
+  post(describeOpen(opened));
+  postResultCard(true, describeConfirmed(opened));
 }
