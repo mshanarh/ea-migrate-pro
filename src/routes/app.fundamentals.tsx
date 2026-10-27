@@ -201,6 +201,8 @@ function FundamentalsPage() {
   const [lot, setLot] = useState("0.01");
   const [trades, setTrades] = useState("1");
   const [executing, setExecuting] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [analysisDone, setAnalysisDone] = useState(false);
   const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -229,6 +231,8 @@ function FundamentalsPage() {
   useEffect(() => {
     setResult(null);
     setFormError(null);
+    setAnalysisDone(false);
+    setAnalyzing(false);
   }, [selectedId]);
 
   const selected = selectedId ? EVENTS.find((event) => event.id === selectedId) ?? null : null;
@@ -441,6 +445,24 @@ function FundamentalsPage() {
                   <p className="mt-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
                     {release.released ? "Released" : "Next release"} {release.releaseDate} SAST
                   </p>
+                  <div className="mt-3">
+                    <p className="text-[9px] font-bold uppercase tracking-[0.14em] text-white/40 mb-1.5">All names supported by this event</p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {[release.event.label, ...release.event.match].map((name, idx) => (
+                        <span
+                          key={idx}
+                          className="rounded-md bg-white/5 border border-white/10 px-2 py-0.5 text-[10px] text-white/70"
+                        >
+                          {name}
+                        </span>
+                      ))}
+                    </div>
+                    {calendar.filter((entry) => entry.currency === release.event.currency && matchScore(entry.title, release.event.match) > 0).map((entry) => (
+                      <div key={entry.date + entry.title} className="mt-1.5 text-[10px] text-white/40">
+                        • {entry.title}
+                      </div>
+                    ))}
+                  </div>
                   <div className="mt-3 grid grid-cols-3 gap-2">
                     {[
                       { label: "ACTUAL", value: release.actual },
@@ -458,11 +480,30 @@ function FundamentalsPage() {
 
                 <div className={CARD}>
                   <p className={HEADING}>Signal</p>
-                  {release.direction ? (
+                  {!analysisDone && release.released && release.direction ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setAnalyzing(true);
+                        setTimeout(() => {
+                          setAnalyzing(false);
+                          setAnalysisDone(true);
+                        }, 300);
+                      }}
+                      disabled={analyzing}
+                      className="mt-2 flex h-10 w-full items-center justify-center rounded-full bg-white text-[12px] font-black tracking-wide text-black disabled:opacity-50"
+                    >
+                      {analyzing ? <Loader2 className="size-4 animate-spin" /> : "ANALYZE"}
+                    </button>
+                  ) : null}
+                  {(analysisDone || !release.released || !release.direction) && release.direction ? (
                     <>
                       <p className="mt-1 text-[13px] font-extrabold text-white/90">
                         {release.direction} · {release.event.currency}{" "}
                         {release.direction === "BUY" ? "stronger" : "weaker"} than forecast
+                      </p>
+                      <p className="mt-1 text-[11px] text-white/50">
+                        Market direction analysis: The bot thinks the market will go <span className={release.direction === "BUY" ? "text-emerald-300 font-bold" : "text-red-300 font-bold"}>{release.direction}</span> on this event.
                       </p>
                       {symbols.length === 0 ? (
                         <p className="mt-2 text-[12px] text-amber-200">
@@ -484,7 +525,7 @@ function FundamentalsPage() {
                         </div>
                       )}
                     </>
-                  ) : (
+                  ) : release.released && release.direction && !analysisDone ? null : (
                     <>
                       <p className="mt-1 text-[13px] font-extrabold text-white/90">
                         Not yet released, next release: {release.releaseDate}
