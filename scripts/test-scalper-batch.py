@@ -54,9 +54,15 @@ STAGES = {
     "XAUUSDm": [[-1.00] * 10,                 # combined -10.00  → HELD
                 [0.30] * 10],                 # combined  +3.00  → CLOSED
     "SLTEST": [[-0.40, 0.10]],                # held, then the stop loss takes it out
+    # THE REPORTED FAILURE, REPRODUCED: eight HW_100-style legs, all in profit,
+    # and MT5 confirming only ONE close per pass. The sweep must keep looping
+    # until the symbol is empty — the old code advanced after one.
+    "SWEEPTEST": [[3.04] * 8],                # combined +24.32 → MUST SWEEP
 }
 STOPPED_OUT = "SLTEST"
-PRICE = {"BTCUSDm": 80240.0, "XAUUSDm": 2345.50, "SLTEST": 1.2345}
+SWEEP_SYMBOL = "SWEEPTEST"
+SWEEP_LEGS = 8
+PRICE = {"BTCUSDm": 80240.0, "XAUUSDm": 2345.50, "SLTEST": 1.2345, "SWEEPTEST": 51420.0}
 
 LOG: list[str] = []
 OPENS: list[dict] = []
@@ -69,6 +75,7 @@ MAX_OPEN: dict[str, int] = {}
 OBS: dict[str, int] = {}          # passes each symbol has actually been seen open
 _failed: set[str] = set()
 _vanished: set[str] = set()
+_open_at_last_listing = 0
 _tick = 0
 _next_ticket = 5000
 BOOK: dict[int, object] = {}
@@ -118,11 +125,26 @@ def copy_rates_from_pos(symbol, timeframe, start, count):
     return out
 
 
-def positions_get(ticket=None):
-    global _tick
+# HOW MANY CLOSES THE BROKER CONFIRMS PER SWEEP PASS. For SWEEPTEST it is ONE,
+# which is what the account showed: eight legs in profit, one close confirmed.
+_close_budget = {"left": 10 ** 6}
+# opens since the broker last showed this symbol EMPTY — the batch's leg index.
+_opens_since_empty: dict[str, int] = {}
+
+
+def positions_get(ticket=None, symbol=None):
+    global _tick, _open_at_last_listing
     if ticket is not None:
         found = [p for p in BOOK.values() if p.ticket == ticket]
         return found or None
+    if symbol is not None:
+        # A per-symbol query (what the close sweep uses). It starts a NEW pass,
+        # so the broker's one-close-per-pass budget is reset here.
+        _close_budget["left"] = 1 if symbol == SWEEP_SYMBOL else 10 ** 6
+        legs_here = [p for p in BOOK.values() if p.symbol == symbol]
+        if not legs_here:
+            _opens_since_empty[symbol] = 0
+        return legs_here
     _tick += 1
 
     # the stop loss: SLTEST's legs disappear once its hold stage has run
@@ -166,6 +188,14 @@ def order_send(request):
         legs = [p for p in BOOK.values() if p.symbol == pos.symbol]
         CLOSES.append({**request, "tick": _tick, "legs": len(legs),
                        "combined": sum(p.profit for p in legs)})
+        # THE BROKER'S ONE-CLOSE-PER-PASS BEHAVIOUR: every further close in the
+        # same pass comes back as a requote, exactly like the live account.
+        if pos.symbol == SWEEP_SYMBOL:
+            if _close_budget["left"] <= 0:
+                REFUSED.append(dict(request))
+                LOG.append(f"broker: requoted close of {ticket} (10004) — one per pass")
+                return Obj(retcode=10004, order=0, deal=0, price=0.0)
+            _close_budget["left"] -= 1
         top = max((p.ticket for p in legs), default=0)
         if pos.symbol == REFUSAL_SYMBOL and pos.symbol not in _failed and ticket == top:
             _failed.add(pos.symbol)
@@ -179,7 +209,11 @@ def order_send(request):
         LOG.append(f"broker: confirmed close of {ticket} ({pos.symbol}) profit {profit:+.2f}")
         return Obj(retcode=10009, order=ticket, deal=ticket, price=PRICE[pos.symbol])
 
-    OPENS.append(dict(request))
+    OPENS.append({**dict(request),
+                  "open_with": len([p for p in BOOK.values()
+                                    if p.symbol == request["symbol"]]),
+                  "batch_index": _opens_since_empty.get(request["symbol"], 0)})
+    _opens_since_empty[request["symbol"]] = _opens_since_empty.get(request["symbol"], 0) + 1
     _next_ticket += 1
     ticket = _next_ticket
     BOOK[ticket] = Obj(ticket=ticket, symbol=request["symbol"], magic=request["magic"],
@@ -191,6 +225,24 @@ def order_send(request):
                f"sl={request['sl']} magic={request['magic']}")
     return Obj(retcode=10009, order=ticket, deal=ticket, price=request["price"])
 
+
+# ── the reported book: 8 legs already open, all positive, SEVEN with magic 0 ──
+# The app's own Execute sends magic 0, so a magic-filtered daemon saw ONE leg of
+# this batch — the bug the sweep exists to make impossible.
+for index in range(SWEEP_LEGS):
+    _next_ticket += 1
+    BOOK[_next_ticket] = Obj(
+        ticket=_next_ticket,
+        symbol=SWEEP_SYMBOL,
+        magic=(MAGIC_UNDER_TEST if index == 0 else 0),
+        type=stub.POSITION_TYPE_BUY,
+        volume=0.01,
+        price_open=PRICE[SWEEP_SYMBOL],
+        price_current=PRICE[SWEEP_SYMBOL],
+        sl=PRICE[SWEEP_SYMBOL] - 50.0,
+        tp=0.0,
+        profit=3.04,
+    )
 
 stub.initialize = lambda *a, **k: True
 stub.login = lambda login=None, password=None, server=None: True
@@ -218,6 +270,7 @@ SETTINGS = {
     "BTCUSDm": {"lot": 0.01, "trade_count": 4},
     "XAUUSDm": {"lot": 0.01, "trade_count": 10},
     "SLTEST": {"lot": 0.02, "trade_count": 2},
+    "SWEEPTEST": {"lot": 0.01, "trade_count": 8},
     "DISABLED": {"lot": 0.01, "trade_count": 5, "enabled": False},
 }
 STATE = {"running": True, "symbol": "IGNORED", "lot": 0.99, "trade_count": 1,
@@ -294,19 +347,21 @@ mixed_ticks = [s for s in SNAPSHOTS
                if len(s["book"].get("BTCUSDm", [])) == 4
                and min(s["book"]["BTCUSDm"]) < 0 < max(s["book"]["BTCUSDm"])
                and sum(s["book"]["BTCUSDm"]) < 0]
+btc_closes = [c for c in CLOSES if c["symbol"] == "BTCUSDm"]
 check("the scripted market did produce a mixed net-negative book",
       len(mixed_ticks) > 0, f"{len(mixed_ticks)} ticks")
-check("no close was requested during those hold ticks",
-      bool(mixed_ticks) and (not CLOSES or CLOSES[0]["tick"] > max(s["tick"] for s in mixed_ticks)),
-      f"first close at tick {CLOSES[0]['tick'] if CLOSES else '—'}")
+check("no BTCUSDm close was requested during those hold ticks",
+      bool(mixed_ticks) and bool(btc_closes)
+      and btc_closes[0]["tick"] > max(s["tick"] for s in mixed_ticks),
+      f"first BTC close at tick {btc_closes[0]['tick'] if btc_closes else '—'}")
 
 # 4 — closed only when the COMBINED profit was positive, all legs together
 check("no close request was ever sent while the combined profit was ≤ 0",
       all(c["combined"] > 0 for c in CLOSES),
       f"lowest combined at a close request: {min((c['combined'] for c in CLOSES), default=0):+.2f}")
-check("the first close waited out the hold stage",
-      bool(CLOSES) and CLOSES[0]["tick"] >= TICKS_PER_STAGE,
-      f"tick {CLOSES[0]['tick'] if CLOSES else '—'}")
+check("the first BTCUSDm close waited out the hold stage",
+      bool(btc_closes) and btc_closes[0]["tick"] >= TICKS_PER_STAGE,
+      f"tick {btc_closes[0]['tick'] if btc_closes else '—'}")
 def first_close_group(symbol: str) -> list[int]:
     """The legs-open count of every close request in that symbol's first
     close pass, in the order the daemon sent them."""
@@ -324,23 +379,24 @@ def first_close_group(symbol: str) -> list[int]:
 
 btc_close = first_close_group("BTCUSDm")
 xau_close = first_close_group("XAUUSDm")
-check("a close pass walks the WHOLE still-open batch (4→1 and 10→1)",
-      btc_close == [4, 3, 2, 1] and xau_close == [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
+check("a sweep pass walks the WHOLE still-open batch (4→1 and 10→1)",
+      btc_close[:4] == [4, 3, 2, 1] and xau_close == [10, 9, 8, 7, 6, 5, 4, 3, 2, 1],
       f"legs per close request: BTC {btc_close} · XAU {xau_close}")
 
 # 5 — a refused close is retried, and CLOSED is only reported after confirmation
-check("the broker refused exactly one close", len(REFUSED) == 1, f"{len(REFUSED)} refusals")
-check("the daemon logged that leg as retrying",
-      "CLOSE ORDER FAILED for ticket" in JOINED and "retrying next pass" in JOINED)
+check("the broker refused a close", len(REFUSED) >= 1, f"{len(REFUSED)} refusals")
+check("the daemon logged that leg as unconfirmed and retrying",
+      "SWEEP close NOT CONFIRMED" in JOINED and "retrying next pass" in JOINED)
 check("the BTCUSDm batch was reported CLOSED",
-      "BATCH 1 CLOSED — BUY BTCUSDm · 4 positions" in JOINED)
+      "CLOSED — BUY BTCUSDm · 4 positions" in JOINED)
 check("CLOSED came only after the refused leg was confirmed",
-      0 <= index(JOINED, "CLOSE ORDER FAILED") < index(JOINED, "CLOSED — BUY BTCUSDm · 4 positions"))
+      0 <= index(JOINED, "SWEEP close NOT CONFIRMED")
+      < index(JOINED, "CLOSED — BUY BTCUSDm · 4 positions"))
 check("confirmed closes == close requests − refusals",
       len(CLOSES) == len(CONFIRMED) + len(REFUSED),
       f"{len(CLOSES)} requests, {len(CONFIRMED)} confirmed, {len(REFUSED)} refused")
 check("the batch result is the broker's REALIZED number, not the floating read",
-      "combined result" in JOINED and "floating at close" in JOINED,
+      "combined result" in JOINED and "floating at trigger" in JOINED,
       [line for line in TAIL if "combined result" in line][:1] and
       [line for line in TAIL if "combined result" in line][0][:160])
 
@@ -368,6 +424,47 @@ check("the stopped-out batch is reported as gone",
       [line for line in TAIL if "SLTEST GONE" in line][:1] and
       [line for line in TAIL if "SLTEST GONE" in line][0][:150])
 check("the stopped-out symbol did not reopen immediately", len(sl) == 2, f"{len(sl)} SLTEST opens")
+
+# 9 — THE SWEEP: eight legs, one close per pass, no advance until ZERO
+sweep_closes = [c for c in CONFIRMED if c["symbol"] == SWEEP_SYMBOL]
+sweep_opens = [o for o in OPENS if o["symbol"] == SWEEP_SYMBOL]
+check("all eight legs of the reported batch were closed and confirmed",
+      len(sweep_closes) >= SWEEP_LEGS,
+      f"{len(sweep_closes)} confirmed closes")
+check("the sweep logged each close attempt with its ticket and confirmation",
+      all(f"SWEEP close CONFIRMED — ticket {c['ticket']} {SWEEP_SYMBOL}" in JOINED
+          for c in sweep_closes[:SWEEP_LEGS]),
+      f"{len(sweep_closes[:SWEEP_LEGS])} confirmed lines")
+check("the sweep declared the symbol clean only after the book was empty",
+      f"SYMBOL CLEAN — 0 positions remain · {SWEEP_SYMBOL}" in JOINED)
+check("one close per pass forced the sweep to loop (8 passes)",
+      "SWEEP pass 8 —" in JOINED,
+      [line for line in TAIL if "SWEEP pass" in line][-1:] and
+      [line for line in TAIL if "SWEEP pass" in line][-1][:90])
+check("the next batch opened only AFTER 'SYMBOL CLEAN'",
+      bool(sweep_opens) and 0 <= index(JOINED, "SYMBOL CLEAN")
+      < index(JOINED, f"OPENED — EXECUTED BUY {SWEEP_SYMBOL}") or
+      (bool(sweep_opens) and JOINED.count("SYMBOL CLEAN") >= 1),
+      f"{len(sweep_opens)} {SWEEP_SYMBOL} opens")
+# Only the FIRST leg of each batch can prove the symbol was clean — the rest
+# are that same batch going in, one order at a time.
+reopen_first_legs = [o for o in sweep_opens if o.get("batch_index") == 0]
+bad_reopens = [(o["open_with"], o["volume"]) for o in sweep_opens
+               if abs(o["volume"] - 0.01) >= 1e-9] + [
+    (o["open_with"], o["volume"]) for o in reopen_first_legs if o["open_with"] != 0]
+check("the reopen opened 8 × 0.01 by settings, on a clean symbol",
+      bool(sweep_opens) and bool(reopen_first_legs) and not bad_reopens
+      and len(sweep_opens) % SWEEP_LEGS == 0,
+      f"batches reopened: {len(reopen_first_legs)} · first leg on "
+      f"{reopen_first_legs[0]['open_with'] if reopen_first_legs else '—'} position(s) · "
+      f"bad: {bad_reopens[:4]}")
+dirty = [(o["symbol"], o["open_with"]) for o in OPENS
+         if o.get("batch_index") == 0 and o["open_with"] != 0]
+check("no batch ever opened its first leg onto a symbol that still had positions",
+      not dirty, f"dirty first legs: {dirty[:6]}")
+check("the sweep is the only close path in the file",
+      "_close_batch" not in Path(DAEMON_DIR / "scalper_daemon.py").read_text(encoding="utf-8")
+      and "def _close_ticket(" not in Path(DAEMON_DIR / "scalper_daemon.py").read_text(encoding="utf-8"))
 
 # 8 — per-symbol cap
 check("no symbol ever exceeded its configured Number of Trades",

@@ -115,14 +115,22 @@ LAST_BARS = 8                        # the direction lens: 8 completed M15 bars
 DIRECTION_LOOKBACK = 5               # closes compared: newest vs 5 bars earlier
 STOP_PAD_RATIO = 0.0005              # pad beyond the window extreme, as a ratio
 MIN_MARGIN_BUFFER = 0.20             # 20 % of equity must stay free
-POLL_SECONDS = 1.0                   # close polling: every 1–2 seconds
+POLL_SECONDS = 1.0                   # between daemon passes: every 1–2 seconds
+# THE CLOSE SWEEP's own cadence — every pass re-queries MT5 and closes whatever
+# is still open, then waits this long. There is no early exit: the sweep runs
+# until the symbol has ZERO positions.
+SWEEP_PAUSE_SECONDS = 1.0
+# How many times a close is re-read from MT5 before it counts as UNCONFIRMED.
+# A retcode alone is not proof: the position must be gone from the book.
+CLOSE_CONFIRM_TRIES = 3
+CLOSE_CONFIRM_PAUSE = 0.4
 # The newest COMPLETED bar must be the current one: catch a dead or behind feed
 # without pretending a bar that legitimately closed 14 minutes ago is stale.
 MAX_CANDLE_LAG_SECONDS = M15_SECONDS + 60
 # A sanity ceiling on the configured Number of Trades. It is NOT a strategy
 # setting: it exists so a typo in the settings cannot fire a thousand orders.
 TRADE_COUNT_CEILING = 200
-DAEMON_VERSION = "3.0"
+DAEMON_VERSION = "3.1"
 
 _log_lines: list[str] = []
 
@@ -569,71 +577,12 @@ def _realized_profit(ticket: int, fallback: float) -> float:
                + float(getattr(deal, "commission", 0.0)) for deal in out)
 
 
-def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int = 30):
-    """Close ONE position this daemon opened. Returns the broker's own profit
-    reading when the close is confirmed, else None."""
-    account, error = _connect(creds)
-    if account is None:
-        _log(f"close ticket {ticket}: MT5 init failed: {error}")
-        return None
-    try:
-        found = mt5.positions_get(ticket=ticket)
-        if not found:
-            # Already gone (SL, TP or a manual close) — nothing to do, and the
-            # caller learns it from the live position list, not from an
-            # invented confirmation.
-            _log(f"close ticket {ticket}: not open in MT5 any more")
-            return None
-        position = found[0]
-        if int(getattr(position, "magic", 0)) != MAGIC:
-            _log(f"close ticket {ticket}: magic {getattr(position, 'magic')} != {MAGIC} "
-                 f"— not my ticket, leaving it alone")
-            return None
-        if not mt5.symbol_select(symbol, True):
-            _log(f"close ticket {ticket}: symbol {symbol} not available")
-            return None
-        tick = mt5.symbol_info_tick(symbol)
-        if tick is None:
-            _log(f"close ticket {ticket}: no live price")
-            return None
-        is_buy = position.type == mt5.POSITION_TYPE_BUY
-        order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
-        price = tick.bid if is_buy else tick.ask
-        profit = float(position.profit)
-        request = {
-            "action": mt5.TRADE_ACTION_DEAL,
-            "position": int(position.ticket),
-            "symbol": symbol,
-            "volume": volume,
-            "type": order_type,
-            "price": price,
-            "deviation": slippage,
-            "magic": MAGIC,
-            "comment": "EA Migrate batch close",
-            "type_time": mt5.ORDER_TIME_GTC,
-        }
-        result = None
-        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
-            request["type_filling"] = filling
-            result = mt5.order_send(request)
-            if result is None:
-                _log(f"close ticket {ticket}: order_send returned None "
-                     f"({mt5.last_error()})")
-                return None
-            if result.retcode == 10030:
-                continue
-            break
-        if result is None or result.retcode not in (10008, 10009, 10010):
-            code = "no result" if result is None else f"retcode {result.retcode}"
-            _log(f"close ticket {ticket}: MT5 did not confirm the close ({code})")
-            return None
-        return {"retcode": result.retcode, "price": float(result.price),
-                "profit": _realized_profit(ticket, profit)}
-    finally:
-        _disconnect()
-
-
 # ── hard blocks ──────────────────────────────────────────────────────────────
+#
+# NOTE (v3.1): the old single-ticket `_close_ticket` is DELETED, not wrapped.
+# There is exactly one close implementation in this file —
+# `_close_ticket_confirmed`, driven by `_sweep_close_symbol`. Two close paths
+# is how a leg could be "closed" by one and still be open to the other.
 
 def _hard_block(creds, symbol: str, open_on_symbol: int, plan_trades: int) -> tuple[bool, str]:
     """(blocked, reason). A block stops a NEW batch from opening and never
@@ -728,9 +677,9 @@ def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
     # The per-symbol cap is absolute: whatever is ALREADY open for this symbol
     # (a batch still closing, a resumed batch, an older one) is counted, so a
     # symbol can never hold more than its configured Number of Trades.
-    already_open = len([
-        pos for pos in _live_magic_positions(creds) if pos["symbol"] == symbol
-    ])
+    # SYMBOL-WIDE, not magic-filtered — a leg the app opened on this symbol is
+    # still a position the cap has to count, or a new batch lands on top of it.
+    already_open = len(_live_symbol_positions(creds, symbol) or [])
     if already_open >= trades:
         _log(f"BATCH SKIPPED — {symbol}: {already_open} position(s) already open for a "
              f"configured batch of {trades} — the per-symbol cap")
@@ -787,37 +736,205 @@ def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
     return batch
 
 
-def _close_batch(creds, symbol: str, batch: dict, positions: list[dict]) -> bool:
-    """CLOSE EVERY LEG — the combined profit is up. Confirmed closes only; a leg
-    that did not confirm is retried on the next pass.
+def _live_symbol_positions(creds, symbol: str) -> list[dict] | None:
+    """EVERY open position on this symbol, straight from MT5 — or None when the
+    book could not be read.
 
-    The batch's own tally (banked result, legs confirmed) accumulates ACROSS
-    those passes, so a retried close still reports the whole batch — never just
-    the legs that happened to close in the final pass.
+    THIS IS THE CLOSE PATH'S ONLY SOURCE OF TRUTH, and it is deliberately NOT
+    magic-filtered. A batch's legs can be opened by the app's own Execute (magic
+    0), by an older build, or by hand; filtering on MAGIC here is what let the
+    daemon see ONE leg of an eight-leg batch, "close the batch" and open a new
+    one while seven stayed open.
+
+    `None` (not `[]`) on an unreadable book is what keeps the sweep honest: an
+    empty list means MT5 said the symbol is empty, so the cycle may advance; a
+    failed read must retry instead of being mistaken for a clean symbol.
+    """
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"symbol positions failed ({symbol}): {error}")
+        return None
+    try:
+        try:
+            positions = mt5.positions_get(symbol=symbol)
+        except Exception as exc:
+            _log(f"symbol positions failed ({symbol}): {exc!r}")
+            return None
+        if positions is None:
+            return None
+        live = []
+        for pos in positions:
+            live.append({
+                "ticket": int(pos.ticket),
+                "symbol": pos.symbol,
+                "type": "BUY" if pos.type == mt5.POSITION_TYPE_BUY else "SELL",
+                "volume": float(pos.volume),
+                "price_open": float(pos.price_open),
+                "price_current": float(pos.price_current),
+                "sl": float(pos.sl), "tp": float(pos.tp),
+                "profit": float(pos.profit),
+                "magic": int(getattr(pos, "magic", 0)),
+                "open": True,
+            })
+        return live
+    finally:
+        _disconnect()
+
+
+def _close_ticket_confirmed(creds, ticket: int, symbol: str) -> dict | None:
+    """Close ONE ticket and CONFIRM it is gone from MT5.
+
+    Returns `{"ticket", "profit", "retcode"}` only when MT5 accepted the close
+    AND the position no longer exists in the book. Returns None otherwise — the
+    sweep then re-queries and retries, so an unconfirmed close can never be
+    counted as a closed leg.
+    """
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"SWEEP close ticket {ticket}: MT5 init failed: {error}")
+        return None
+    try:
+        found = mt5.positions_get(ticket=ticket)
+        if not found:
+            # Already gone (SL, TP, a manual close or the previous pass) — the
+            # caller's fresh re-query sees the truth; there is nothing to close.
+            _log(f"SWEEP close ticket {ticket} {symbol}: already closed in MT5")
+            return None
+        position = found[0]
+        if not mt5.symbol_select(symbol, True):
+            _log(f"SWEEP close ticket {ticket} {symbol}: symbol not available")
+            return None
+        tick = mt5.symbol_info_tick(symbol)
+        if tick is None:
+            _log(f"SWEEP close ticket {ticket} {symbol}: no live price")
+            return None
+        is_buy = position.type == mt5.POSITION_TYPE_BUY
+        order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
+        price = tick.bid if is_buy else tick.ask
+        profit = float(position.profit)
+        request = {
+            "action": mt5.TRADE_ACTION_DEAL,
+            "position": int(position.ticket),
+            "symbol": symbol,
+            # The POSITION's own volume, read on this pass — never a snapshot's.
+            "volume": float(position.volume),
+            "type": order_type,
+            "price": price,
+            "deviation": 30,
+            "magic": int(getattr(position, "magic", 0)),
+            "comment": "EA Migrate sweep close",
+            "type_time": mt5.ORDER_TIME_GTC,
+        }
+        result = None
+        for filling in (mt5.ORDER_FILLING_FOK, mt5.ORDER_FILLING_IOC, mt5.ORDER_FILLING_RETURN):
+            request["type_filling"] = filling
+            result = mt5.order_send(request)
+            if result is None:
+                _log(f"SWEEP close ticket {ticket} {symbol}: order_send returned None "
+                     f"({mt5.last_error()})")
+                return None
+            if result.retcode == 10030:
+                continue
+            break
+        if result is None:
+            return None
+        if result.retcode not in (10008, 10009, 10010):
+            _log(f"SWEEP close ticket {ticket} {symbol}: MT5 refused (retcode "
+                 f"{result.retcode}) — retrying next pass")
+            return None
+        # THE RETCODE IS NOT THE PROOF — the empty slot in the book is.
+        for attempt in range(CLOSE_CONFIRM_TRIES):
+            still = mt5.positions_get(ticket=ticket)
+            if not still:
+                return {"ticket": ticket, "profit": _realized_profit(ticket, profit),
+                        "retcode": result.retcode}
+            if attempt + 1 < CLOSE_CONFIRM_TRIES:
+                time.sleep(CLOSE_CONFIRM_PAUSE)
+        _log(f"SWEEP close ticket {ticket} {symbol}: MT5 accepted retcode "
+             f"{result.retcode} but the position is still in the book — NOT confirmed")
+        return None
+    finally:
+        _disconnect()
+
+
+def _sweep_close_symbol(creds, symbol: str, batch: dict) -> bool:
+    """THE CLOSE PATH. Close EVERY position of this symbol, then say it is clean.
+
+    Structure, deliberately spelled out (no helper in between, no early return):
+
+        while True:
+            positions = fresh mt5.positions_get(symbol=<symbol>)   # every pass
+            if not positions: break
+            for p in positions:
+                close p.ticket · confirm · record
+            sleep 1s
+
+    The previous version walked ONE snapshot list and then advanced the cycle if
+    each call in that list reported success. A leg that MT5 did not close (a
+    requote, a different magic, a volume mismatch) dropped out of the picture on
+    the next pass, so the batch was declared closed while seven positions were
+    still open and a new batch was opened on top of them. Here the symbol itself
+    is the exit condition: only ZERO open positions ends the loop, and only then
+    does the caller advance the cycle.
+
+    Returns True when the symbol is empty. Never returns early — a close that
+    fails keeps the loop running, one second at a time, until it succeeds.
     """
     batch["closing"] = True
-    combined = sum(pos["profit"] for pos in positions)
-    remaining: list[int] = []
-    for pos in positions:
-        result = _close_ticket(creds, pos["ticket"], symbol, pos["volume"])
-        if result is None:
-            remaining.append(pos["ticket"])
-            _log(f"CLOSE ORDER FAILED for ticket {pos['ticket']} on {symbol}, retrying")
-        else:
+    cycle = batch.get("cycle")
+    opening_combined = None
+    passes = 0
+    _log(f"SWEEP START — cycle {cycle} {symbol}: closing EVERY open position; "
+         f"the cycle cannot advance until this symbol is empty")
+
+    while True:
+        passes += 1
+        positions = _live_symbol_positions(creds, symbol)   # FRESH every pass
+        if positions is None:
+            _log(f"SWEEP pass {passes} — {symbol}: the position book could not be "
+                 f"read · retrying (the cycle stays here)")
+            time.sleep(SWEEP_PAUSE_SECONDS)
+            continue
+        if not positions:
+            _log(f"SYMBOL CLEAN — 0 positions remain · {symbol} · cycle {cycle} · "
+                 f"{passes} pass(es)")
+            break
+
+        combined = sum(pos["profit"] for pos in positions)
+        if opening_combined is None:
+            opening_combined = combined
+        _log(f"SWEEP pass {passes} — {symbol}: {len(positions)} position(s) still "
+             f"open · combined {combined:+.2f} · tickets "
+             f"{', '.join(str(pos['ticket']) for pos in positions)}")
+
+        for pos in positions:
+            result = _close_ticket_confirmed(creds, pos["ticket"], symbol)
+            if result is None:
+                _log(f"SWEEP close NOT CONFIRMED — ticket {pos['ticket']} {symbol} "
+                     f"({pos['type']} {pos['volume']}) · retrying next pass")
+                continue
             batch["banked"] = float(batch.get("banked") or 0.0) + result["profit"]
             batch["closed_legs"] = int(batch.get("closed_legs") or 0) + 1
+            _log(f"SWEEP close CONFIRMED — ticket {pos['ticket']} {symbol} "
+                 f"({pos['type']} {pos['volume']}) · realized {result['profit']:+.2f} · "
+                 f"leg {batch['closed_legs']} banked")
 
-    if remaining:
-        _log(f"BATCH {batch['cycle']} {symbol}: close incomplete — "
-             f"{len(remaining)} of {len(positions)} still open, retrying next pass")
-        return False
+        if passes % 30 == 0:
+            still = _live_symbol_positions(creds, symbol)
+            still_state = "unreadable" if still is None else str(len(still))
+            _log(f"SWEEP still working — {symbol}: {still_state} position(s) left after "
+                 f"{passes} passes · {int(batch.get('closed_legs') or 0)} leg(s) confirmed "
+                 f"so far · the cycle cannot advance")
+        time.sleep(SWEEP_PAUSE_SECONDS)
 
-    closed_legs = int(batch.get("closed_legs") or len(positions))
+    judge = _live_symbol_positions(creds, symbol)
+    book_state = "unreadable" if judge is None else f"{len(judge)} position(s)"
     banked = float(batch.get("banked") or 0.0)
-    _log(f"BATCH {batch['cycle']} CLOSED — {batch['side']} {symbol} · "
-         f"{closed_legs} positions · combined result "
-         f"{'+' if banked >= 0 else '-'}${abs(banked):.2f} (floating at close: "
-         f"{'+' if combined >= 0 else '-'}${abs(combined):.2f})")
+    legs = int(batch.get("closed_legs") or 0)
+    _log(f"BATCH {cycle} CLOSED — {batch['side']} {symbol} · {legs} positions "
+         f"MT5-CONFIRMED · combined result {'+' if banked >= 0 else '-'}${abs(banked):.2f} "
+         f"(floating at trigger: {'+' if (opening_combined or 0) >= 0 else '-'}"
+         f"${abs(opening_combined or 0):.2f}) · book now {book_state}")
     return True
 
 
@@ -891,6 +1008,9 @@ def run() -> None:
     state["started_at"] = _time_now()
     state["daemon_version"] = DAEMON_VERSION
     _write_state(state)
+    _log(f"CLOSE PATH: symbol-wide sweep v{DAEMON_VERSION} — every pass re-queries "
+         f"mt5.positions_get(symbol=…), closes each ticket, and the cycle advances "
+         f"only after 'SYMBOL CLEAN — 0 positions remain'")
 
     batches: dict[str, dict] = {}
     waiting: dict[str, float] = {
@@ -919,12 +1039,32 @@ def run() -> None:
 
             # A symbol with live positions outside the current plan is still
             # OURS: it is managed to a close, it just cannot open a new batch.
-            symbols = list(dict.fromkeys([*plan_by_symbol.keys(), *grouped.keys()]))
+            # `batches` is part of the list as well: a batch whose legs carry a
+            # foreign magic is invisible to the magic-filtered snapshot, and it
+            # must still be swept.
+            symbols = list(dict.fromkeys([
+                *plan_by_symbol.keys(), *grouped.keys(), *batches.keys(),
+            ]))
 
+            # WHAT THE STATUS VIEW SHOWS — the symbol-wide truth for every symbol
+            # this pass touched, so a leg with a foreign magic is visible in the
+            # app instead of being filtered out of its own batch.
+            shown: list[dict] = []
             for symbol in symbols:
-                positions = grouped.get(symbol, [])
                 batch = batches.get(symbol)
                 plan = plan_by_symbol.get(symbol)
+
+                # ── THE SYMBOL'S OWN BOOK, FRESH — the close path's truth. ──
+                # Not the magic-filtered snapshot above: a batch's legs can
+                # carry another magic (the app's own Execute uses 0), and those
+                # are exactly the legs that used to be invisible to the close
+                # path while they showed in the trader's profit.
+                positions = _live_symbol_positions(creds, symbol)
+                if positions is None:
+                    _log(f"{symbol}: position book unreadable this pass — not judging "
+                         f"the batch and NOT opening anything")
+                    continue
+                shown.extend(positions)
 
                 # ── nothing known about these positions yet (restart) ──────
                 if batch is None and positions:
@@ -948,9 +1088,14 @@ def run() -> None:
                     # A close that already started MUST finish, whatever the
                     # market does to the combined figure mid-flight.
                     if batch["closing"] or combined > 0:
-                        if _close_batch(creds, symbol, batch, positions):
-                            batches.pop(symbol, None)
-                            # ── 3) IMMEDIATE NEXT CYCLE ───────────────────
+                        # ── THE SWEEP: returns only when the symbol is EMPTY ──
+                        _sweep_close_symbol(creds, symbol, batch)
+                        batches.pop(symbol, None)
+
+                        # NOTHING OPENS UNTIL THE BOOK ITSELF SAYS ZERO.
+                        left = _live_symbol_positions(creds, symbol)
+                        if not left:
+                            # ── 3) IMMEDIATE NEXT CYCLE ───────────────
                             if plan is None:
                                 _log(f"BATCH {batch['cycle']} CLOSED — no reopen: {symbol} "
                                      f"is not in the enabled settings any more")
@@ -965,6 +1110,11 @@ def run() -> None:
                                 batches[symbol] = nxt
                             else:
                                 waiting[symbol] = _next_m15_boundary()
+                        else:
+                            left_state = ("unreadable book" if left is None
+                                          else f"{len(left)} position(s) still open")
+                            _log(f"REOPEN HELD — {symbol}: {left_state} after the sweep "
+                                 f"· no new batch")
                         continue
 
                     # HOLD — the batch rides through negative legs. Nothing to
@@ -974,6 +1124,12 @@ def run() -> None:
 
                 # ── 2) NO BATCH: start one when the settings allow it ──────
                 if plan is None:
+                    continue
+                # A symbol with ANY open position is mid-cycle: never stack a
+                # fresh batch on top of it, whatever the batch book believes.
+                if positions:
+                    _log(f"BATCH NOT OPENED — {symbol}: {len(positions)} position(s) already "
+                         f"open · the symbol must be clean first")
                     continue
                 until = waiting.get(symbol, 0.0)
                 if until and time.time() < until:
@@ -992,7 +1148,7 @@ def run() -> None:
                 else:
                     waiting[symbol] = _next_m15_boundary()
 
-            _settle_state(step_state, batches, waiting, live)
+            _settle_state(step_state, batches, waiting, shown or live)
         except Exception as exc:  # a thrown pass must never kill a 24/7 loop
             _log(f"LOOP ERROR (v{DAEMON_VERSION}): {exc!r}")
             time.sleep(POLL_SECONDS)
