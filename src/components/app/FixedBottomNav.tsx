@@ -3,8 +3,10 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { toast } from "sonner";
 import { House, Server, ScanLine } from "lucide-react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
-import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
+import { isVideoActive, setVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 import { useBottomNavStyle, type BottomNavStyle } from "@/lib/bottom-nav-style";
+import { setRobotVideo } from "@/lib/app-store";
+import { lookupRobotVideoForKey } from "@/lib/robot-video";
 
 export type { BottomNavStyle };
 
@@ -123,6 +125,29 @@ function robotHasVideo(): boolean {
   }
 }
 
+/** The active robot as the persisted app state has it (id + licence key). */
+function activeRobotSnapshot(): { id: string; key: string; video?: string } | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem("eamp.app.v3");
+    if (!raw) return null;
+    const state = JSON.parse(raw) as {
+      activeRobotId?: string | null;
+      robots?: { id?: string; key?: string; video?: string }[];
+    };
+    const robots = state.robots ?? [];
+    const robot = robots.find((item) => item.id && item.id === state.activeRobotId) ?? robots[0];
+    if (!robot?.id) return null;
+    return {
+      id: robot.id,
+      key: typeof robot.key === "string" ? robot.key : "",
+      ...(typeof robot.video === "string" && robot.video ? { video: robot.video } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * The one and only bottom navigation for the EA Migrate app.
  *
@@ -143,6 +168,42 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
   const storedStyle = useBottomNavStyle();
   const navStyle = style ?? storedStyle;
 
+  /**
+   * DOUBLE-PRESS HOME — the background toggle.
+   *
+   * The video belongs to the LICENCE KEY, so a robot with nothing cached asks
+   * the server for it (src/lib/robot-video.ts) before any claim is made. "No
+   * robot video yet" appears only when the store answered and confirmed the
+   * key has no video; a lookup that could not answer is a retryable error.
+   */
+  const toggleRobotVideo = async () => {
+    const snapshot = activeRobotSnapshot();
+    if (!snapshot?.video) {
+      if (!snapshot) {
+        toast.info("No robot video yet — your mentor can upload one");
+        return;
+      }
+      const lookup = await lookupRobotVideoForKey(snapshot.key);
+      if (lookup.status === "unavailable") {
+        toast.error("Could not load your robot video", {
+          description: `${lookup.error} Double-press HOME to retry.`,
+          duration: 12000,
+        });
+        return;
+      }
+      if (lookup.status === "none") {
+        toast.info("No robot video yet — your mentor can upload one");
+        return;
+      }
+      setRobotVideo(snapshot.id, lookup.video);
+      setVideoActive(true);
+      toast.success("Playing your video — press HOME twice to stop");
+      return;
+    }
+    toggleVideoPlayback();
+    toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+  };
+
   const handleHomeClick = () => {
     // The Link's SPA navigation still runs — module state (the request
     // timestamp) survives it, so a remounted home screen can pick the
@@ -154,12 +215,7 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
     if (isDoubleTap) {
       // TOGGLE — double-press starts the background video; double-press again
       // stops it (both iOS and Android).
-      if (!robotHasVideo()) {
-        toast.info("No robot video yet — your mentor can upload one");
-        return;
-      }
-      toggleVideoPlayback();
-      toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+      void toggleRobotVideo();
     } else if (robotHasVideo()) {
       toast.info("Press HOME twice to play your video");
     }
