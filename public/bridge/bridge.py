@@ -1,4 +1,13 @@
-# MT5 Execution Bridge — v1.0
+# MT5 Execution Bridge — v1.1
+#
+# v1.1 — /symbol/candles:
+#   * fixed `name 'n' is not defined` in _resolve_symbol (the base-hits sort
+#     named `n` instead of `name`), which crashed EVERY fresh-candle fetch for
+#     a symbol the broker serves under a different name;
+#   * a crash now answers HTTP 500 with the message instead of HTTP 200 with
+#     an error payload, so a failure can never read as a normal refusal;
+#   * per-symbol series are cached for 60 s, so repeated analyses of the same
+#     symbol/timeframe reuse the candles instead of re-reading MT5 history.
 #
 # Runs on the user's VPS next to the MetaTrader 5 terminal.
 #
@@ -25,6 +34,7 @@
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -32,11 +42,12 @@ from typing import Optional
 import MetaTrader5 as mt5
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
 
-app = FastAPI(title="MT5 Execution Bridge", version="1.0.0")
+app = FastAPI(title="MT5 Execution Bridge", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # the web app is served from multiple hosts
@@ -173,7 +184,11 @@ def _resolve_symbol(requested: str) -> Optional[str]:
         if req.startswith(norm) and 0 < len(req) - len(norm) <= 3:
             base_hits.append(name)
     if base_hits:
-        return sorted(base_hits, key=lambda name: (-len(_norm(n)), len(n)))[0]
+        # `name` — NOT `n`: a leftover rename raised NameError here, and this
+        # branch sits on the candle path (_select_broker_symbol), so every
+        # fresh-candle fetch for such a symbol died with
+        # "Error fetching candles: name 'n' is not defined".
+        return sorted(base_hits, key=lambda name: (-len(_norm(name)), len(name)))[0]
     contains = [name for name in names if req in _norm(name) or _norm(name) in req]
     if contains:
         return sorted(contains, key=lambda name: abs(len(_norm(name)) - len(req)))[0]
@@ -272,61 +287,138 @@ class _CandlesRequest(BaseModel):
     count: int = 100
 
 
+# ── candle cache ────────────────────────────────────────────────────────────────
+# One analysis fires several /symbol/candles calls in a row (direction, filter,
+# retry). Re-reading MT5 history each time is slow and re-hits the terminal, so
+# a successful series is reused for 60 s. NEVER longer: analysis must not act on
+# candles older than a minute, so an entry is dropped the moment it turns 60 s.
+_CANDLE_CACHE_TTL_S = 60
+candle_cache: dict = {}       # (symbol, timeframe, count) → (fetched_at, payload)
+_candle_cache_lock = threading.Lock()
+
+
+def _candle_cache_key(req: "_CandlesRequest") -> tuple:
+    # Keyed on the REQUESTED name (normalised), the timeframe and the count —
+    # two different requests must never share one entry.
+    return (_norm(req.symbol), req.timeframe, int(req.count))
+
+
+def _candle_cache_get(key: tuple):
+    """(payload, age_seconds) when the entry is younger than 60 s, else None.
+
+    An expired entry is deleted on the spot, so stale candles can never be
+    served by a later lookup.
+    """
+    with _candle_cache_lock:
+        entry = candle_cache.get(key)
+        if entry is None:
+            return None
+        fetched_at, payload = entry
+        age = time.monotonic() - fetched_at
+        if age >= _CANDLE_CACHE_TTL_S:
+            candle_cache.pop(key, None)
+            return None
+        return payload, age
+
+
+def _candle_cache_put(key: tuple, payload: dict) -> None:
+    with _candle_cache_lock:
+        now = time.monotonic()
+        candle_cache[key] = (now, payload)
+        # Prune everything already older than the TTL so the map stays small.
+        for stale in [k for k, (t, _) in candle_cache.items() if now - t >= _CANDLE_CACHE_TTL_S]:
+            candle_cache.pop(stale, None)
+
+
 @app.post("/symbol/candles")
 def symbol_candles(req: _CandlesRequest, x_bridge_key: Optional[str] = Header(None)):
-    """Historical candle data for one symbol — used for RSI, momentum and other technical analysis."""
+    """Historical candle data for one symbol — used for RSI, momentum and other technical analysis.
+
+    Failure contract (v1.1): a CRASH answers HTTP 500 with the message — never
+    a 200 carrying an error payload — while an ordinary refusal (symbol unknown,
+    no history, unsupported timeframe) still answers 200 with `success:false`
+    and the broker's own explanation.
+    """
     _check_key(x_bridge_key)
-    account, error = _connect(req.credentials)
-    if account is None:
-        _disconnect()
-        return {"success": False, "message": f"Terminal: {error}"}
+
+    # CACHE HIT → answer straight away; no terminal session, no history read.
+    cached = _candle_cache_get(_candle_cache_key(req))
+    if cached is not None:
+        payload, age = cached
+        return {**payload, "cached": True, "cacheAgeSeconds": round(age, 3)}
+
     try:
-        trade_symbol, select_error = _select_broker_symbol(req.symbol)
-        if trade_symbol is None:
-            return {"success": False, "message": select_error}
-        timeframe_map = {
-            "15m": mt5.TIMEFRAME_M15,
-            "1h": mt5.TIMEFRAME_H1,
-            "m30": mt5.TIMEFRAME_M30,
-        }
-        mt5_tf = timeframe_map.get(req.timeframe)
-        if mt5_tf is None:
-            return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
-        rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
-        if rates is None or len(rates) == 0:
+        account, error = _connect(req.credentials)
+        if account is None:
             _disconnect()
-            return {
-                "success": False,
-                "message": (
-                    f"bridge returned 0 candles: MT5 has no {req.timeframe} history for "
-                    f"{trade_symbol} (requested {req.symbol}). Select the symbol in "
-                    f"Market Watch and let the terminal download its history."
-                ),
+            return {"success": False, "message": f"Terminal: {error}"}
+        try:
+            trade_symbol, select_error = _select_broker_symbol(req.symbol)
+            if trade_symbol is None:
+                return {"success": False, "message": select_error}
+            timeframe_map = {
+                "15m": mt5.TIMEFRAME_M15,
+                "1h": mt5.TIMEFRAME_H1,
+                "m30": mt5.TIMEFRAME_M30,
             }
-        candles = []
-        for row in rates:
-            candles.append({
-                "time": int(row[0]),
-                "open": float(row[1]),
-                "high": float(row[2]),
-                "low": float(row[3]),
-                "close": float(row[4]),
-                "volume": int(row[5]),
-                "spread": int(row[6]) if len(row) > 6 else 0,
-            })
-        return {
-            "ok": True,
-            "success": True,
-            "requestedSymbol": req.symbol,
-            "symbol": trade_symbol,
-            "timeframe": req.timeframe,
-            "count": len(candles),
-            "serverTime": datetime.now(timezone.utc).isoformat(),
-            "candles": candles,
-        }
+            mt5_tf = timeframe_map.get(req.timeframe)
+            if mt5_tf is None:
+                return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
+            rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
+            if rates is None or len(rates) == 0:
+                return {
+                    "success": False,
+                    "message": (
+                        f"bridge returned 0 candles: MT5 has no {req.timeframe} history for "
+                        f"{trade_symbol} (requested {req.symbol}). Select the symbol in "
+                        f"Market Watch and let the terminal download its history."
+                    ),
+                }
+            candles = []
+            for row in rates:
+                candles.append({
+                    "time": int(row[0]),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                    "volume": int(row[5]),
+                    "spread": int(row[6]) if len(row) > 6 else 0,
+                })
+            payload = {
+                "ok": True,
+                "success": True,
+                "requestedSymbol": req.symbol,
+                "symbol": trade_symbol,
+                "timeframe": req.timeframe,
+                "count": len(candles),
+                "serverTime": datetime.now(timezone.utc).isoformat(),
+                "candles": candles,
+            }
+            # ONLY a clean, non-empty series is ever cached.
+            _candle_cache_put(_candle_cache_key(req), payload)
+            return payload
+        finally:
+            _disconnect()
     except Exception as exc:
-        _disconnect()
-        return {"success": False, "message": f"Error fetching candles: {exc}"}
+        # A crash is unmistakable: HTTP 500 + the real message, and nothing is
+        # cached, so the next call retries from scratch.
+        try:
+            _disconnect()
+        except Exception:
+            pass
+        message = f"Error fetching candles: {exc}"
+        print(f"[/symbol/candles] HTTP 500 {type(exc).__name__}: {exc}", flush=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
+                "success": False,
+                "error": message,
+                "message": message,
+                "exception": type(exc).__name__,
+            },
+        )
 
 
 class _TradeRequest(BaseModel):
