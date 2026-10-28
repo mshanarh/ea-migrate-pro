@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect, useNavigate, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
@@ -26,6 +26,14 @@ import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan }
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
+import {
+  fetchScalperStatus,
+  planFromAllowedQuotes,
+  startScalperOnBridge,
+  stopScalperOnBridge,
+  type ScalperDaemonStatus,
+} from "@/lib/scalper-bridge";
+import { ScalperStatusStrip } from "@/components/app/ScalperStatusStrip";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -325,6 +333,12 @@ function AppHome() {
   const [modeOpen, setModeOpen] = useState(false);
   const [botMode, setBotMode] = useState<BotMode>(() => readBotMode());
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
+  // WHICH RUN OWNS THE START BUTTON — "scalper" is the VPS daemon, "normal" is
+  // the browser loop. A ref because only the handlers and the status poll read it.
+  const runKindRef = useRef<"scalper" | "normal" | null>(null);
+  const [daemonStatus, setDaemonStatus] = useState<ScalperDaemonStatus | null>(null);
+  const [daemonError, setDaemonError] = useState<string | null>(null);
+  const [scalperBusy, setScalperBusy] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -415,6 +429,47 @@ function AppHome() {
       window.removeEventListener("pageshow", throttled);
     };
   }, [app.email]);
+
+  /**
+   * THE DAEMON IS THE TRUTH.
+   *
+   * Scalper mode lives on the VPS, so the start/stop button follows
+   * GET /scalper/status instead of a local flag that outlives the run. While a
+   * Normal (browser) run is in progress the button belongs to that run and this
+   * sync stays out of its way.
+   */
+  const readDaemon = useCallback(async () => {
+    const result = await fetchScalperStatus();
+    if (!result.ok) {
+      setDaemonStatus(null);
+      setDaemonError(result.error);
+      return;
+    }
+    setDaemonStatus(result.status);
+    setDaemonError(null);
+    if (runKindRef.current === "normal") return;
+    const state = getAppState();
+    const target =
+      state.robots.find((candidate) => candidate.id === state.activeRobotId) ?? state.robots[0];
+    if (!target || target.running === result.status.running) return;
+    toggleRobot(target.id);
+  }, []);
+
+  useEffect(() => {
+    void readDaemon();
+    const poll = window.setInterval(() => {
+      if (document.visibilityState !== "visible") return;
+      void readDaemon();
+    }, 10_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void readDaemon();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      window.clearInterval(poll);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [readDaemon]);
 
   if (access !== "ok") return <AccessSplash />;
 
@@ -650,6 +705,45 @@ function AppHome() {
     }
   };
 
+  /**
+   * STOP — THE DAEMON FIRST, BECAUSE IT IS THE THING THAT TRADES.
+   *
+   * A scalper run is only over when POST /scalper/stop answered 200; the button
+   * is not allowed to read "stopped" while the VPS keeps cycling. A Normal run
+   * is the browser loop, so that one is halted locally.
+   */
+  const stopRun = async (target: Robot) => {
+    if (scalperBusy) return;
+    const kind: "scalper" | "normal" =
+      runKindRef.current ?? (scalpRef.current ? "normal" : "scalper");
+    console.info(`[bot] STOP pressed — halting the ${kind} run`);
+    scalpRef.current?.stop();
+    scalpRef.current = null;
+    // The session is over: cut the voice off wherever it is, including any
+    // lines the native engine still had queued from the last batch.
+    stopBotVoice();
+    stopExecution();
+    setAnalysisOpen(false);
+    if (kind === "scalper") {
+      setScalperBusy(true);
+      const result = await stopScalperOnBridge();
+      setScalperBusy(false);
+      if (!result.ok) {
+        // The daemon may still be cycling — say so instead of clearing the button.
+        console.warn(`[scalper] stop failed: ${result.error}`);
+        toast.error("Could not stop the scalper daemon", { description: result.error });
+        void readDaemon();
+        return;
+      }
+    }
+    runKindRef.current = null;
+    if (target.running) toggleRobot(target.id);
+    window.showBotStarted?.(target.name, "stopped");
+    // "Bot stopped" — no outcome is claimed for the positions that stay open.
+    notifyBotStopped();
+    void readDaemon();
+  };
+
   const handleStart = () => {
     if (!robot) return;
     // The START tap arms audio, so the first announcement of the run is heard.
@@ -658,18 +752,7 @@ function AppHome() {
     // floating bubble changes state. The execution popup and its voice
     // belong to the runs below (scanner Execute / auto trading).
     if (robot.running) {
-      console.info("[bot] STOP pressed — halting the loop (open positions keep their broker SL/TP)");
-      scalpRef.current?.stop();
-      scalpRef.current = null;
-      // The session is over: cut the voice off wherever it is, including any
-      // lines the native engine still had queued from the last batch.
-      stopBotVoice();
-      stopExecution();
-      setAnalysisOpen(false);
-      toggleRobot(robot.id);
-      window.showBotStarted?.(robot.name, "stopped");
-      // "Bot stopped" — no outcome is claimed for the positions that stay open.
-      notifyBotStopped();
+      void stopRun(robot);
       return;
     }
     // STOP ANY PREVIOUS LOOP, then ask which mode this run uses.
@@ -756,7 +839,48 @@ function AppHome() {
     });
   };
 
-  /** Choose a mode: remembered as the default, then the bot starts. */
+  /**
+   * SCALPER MODE HANDS THE RUN TO THE VPS DAEMON.
+   *
+   * This is the WHOLE scalper start path: one POST /scalper/start carrying the
+   * Allowed Quotes (symbols + lot + trade count). It deliberately does NOT start
+   * the browser loop, does NOT call /trade/execute and does NOT open the
+   * execution card — nothing is executed from the phone in this mode. Only a
+   * 200 from the bridge flips the button and announces the run.
+   */
+  const startScalper = async (target: Robot) => {
+    const plans = planFromAllowedQuotes(target.pairs ?? []);
+    console.info(
+      `[scalper] STEP 1 start → ${
+        plans.map((plan) => `${plan.symbol} ${plan.lot}×${plan.trades}`).join(", ") || "no usable quote"
+      }`,
+    );
+    if (plans.length === 0) {
+      toast.error("No usable quote in Allowed Quotes", {
+        description:
+          "Add a symbol with a lot size and a Number of Trades above 0 in Quotes, then start again.",
+      });
+      return;
+    }
+    setScalperBusy(true);
+    const result = await startScalperOnBridge(plans);
+    setScalperBusy(false);
+    if (!result.ok) {
+      console.warn(`[scalper] start failed: ${result.error}`);
+      toast.error("Scalper did not start", { description: result.error });
+      return;
+    }
+    runKindRef.current = "scalper";
+    if (!target.running) toggleRobot(target.id);
+    window.showBotStarted?.(target.name, "started");
+    notifyBotStarted("scalper", result.symbols);
+    await readDaemon();
+    toast.success(`${target.name} — Scalper started on the VPS daemon`, {
+      description: `${result.symbols.join(", ")} · ${result.lot} × ${result.trades}. The daemon trades; the app only starts, stops and monitors it.`,
+    });
+  };
+
+  /** Choose a mode: remembered as the default, then the run starts. */
   const chooseMode = (mode: BotMode) => {
     if (!robot) return;
     setBotMode(mode);
@@ -766,6 +890,12 @@ function AppHome() {
       /* storage blocked — this session still uses the choice */
     }
     setModeOpen(false);
+    if (mode === "scalper") {
+      // THE SCALPER IS THE DAEMON'S RUN — never a browser loop.
+      void startScalper(robot);
+      return;
+    }
+    runKindRef.current = "normal";
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     runBotLoop(robot, mode);
@@ -821,6 +951,14 @@ function AppHome() {
       <div className="app-scroll-area">
         <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
           <EaConfigNote className="pt-1" />
+          {/* THE DAEMON'S REAL STATE — read from GET /scalper/status, never a
+              local flag. Scalper mode trades on the VPS, not in this tab. */}
+          <ScalperStatusStrip
+            status={daemonStatus}
+            error={daemonError}
+            busy={scalperBusy}
+            onRefresh={() => void readDaemon()}
+          />
           <ThemeContent
             robot={robot}
             robots={app.robots}
@@ -849,7 +987,7 @@ function AppHome() {
               {
                 mode: "scalper" as BotMode,
                 title: "Scalper mode",
-                body: "Opens immediately on the last 8 M15 candles, closes each position at TP1 or spread + 0.2 ATR, then re-analyses and opens again — non-stop.",
+                body: "Hands the run to the VPS scalper daemon: it analyses the last 8 completed M15 candles, opens the batch from Allowed Quotes, closes it when the batch turns positive and repeats. The app only starts, stops and monitors it — no trade is opened from this device.",
               },
               {
                 mode: "normal" as BotMode,
@@ -861,7 +999,8 @@ function AppHome() {
                 key={option.mode}
                 type="button"
                 onClick={() => chooseMode(option.mode)}
-                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99]"
+                disabled={scalperBusy}
+                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99] disabled:opacity-60"
                 style={{
                   borderColor: botMode === option.mode ? accent : "rgba(255,255,255,0.12)",
                   borderWidth: botMode === option.mode ? 2 : 1,
