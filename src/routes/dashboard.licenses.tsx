@@ -14,7 +14,7 @@ import {
 import { portalDeleteLicenseKey, portalRemoveLicense, portalUpsertLicense } from "@/lib/portal-cloud";
 import { issueLicenseKeyInKv, removeLicenseKeyInKv } from "@/lib/license-cloud";
 import { inlineVideoForCloud } from "@/lib/media-store";
-import { cloudVideoPointer } from "@/lib/ea-video-key";
+import { linkEaVideo } from "@/lib/ea-video-key";
 import { sendPortalEmail } from "@/lib/send-email";
 
 export const Route = createFileRoute("/dashboard/licenses")({ ssr: false, component: Licenses });
@@ -236,11 +236,6 @@ function Licenses() {
     const done = () =>
       setResult((current) => (current ? { ...current, cloud: "done", cloudError: undefined } : current));
     try {
-      // THE ROBOT VIDEO TRAVELS WITH THE KEY. Its bytes live in the media
-      // store, so the licence record carries a pointer (`videoId`) or, when the
-      // clip is small enough, the source itself — resolved on the client by the
-      // KEY the user activates, never by this device or this session.
-      const videoPointer = await cloudVideoPointer(ea).catch(() => ({}));
       const kv = await issueLicenseKeyInKv({
         key: license.key,
         mentorEmail: account.email,
@@ -253,11 +248,30 @@ function Licenses() {
         // gets its real Quotes list even though nothing read Supabase.
         ...(ea.symbols?.length ? { symbols: ea.symbols } : {}),
         ...(ea.image ? { image: ea.image } : {}),
-        ...videoPointer,
       });
       if (kv.enabled) {
         if (kv.ok) {
           done();
+          // THE ROBOT VIDEO, LINKED TO THIS NEW KEY (and every key of the EA).
+          // Runs behind the result card: the key already exists, so a video
+          // failure must be visible without blocking the key.
+          void linkEaVideo({
+            mentorEmail: account.email,
+            id: ea.id,
+            name: ea.name,
+            video: ea.video,
+          })
+            .then((link) => {
+              if (link.status === "failed") {
+                toast.error("Key created — but the robot video is NOT linked", {
+                  description: link.error,
+                  duration: 14000,
+                });
+              }
+            })
+            .catch((error: unknown) => {
+              console.warn("[licenses] robot video link failed:", error);
+            });
           return;
         }
         fail(

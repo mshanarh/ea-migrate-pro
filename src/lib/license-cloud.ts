@@ -92,6 +92,23 @@ export type KvLookupAnswer = KvAnswer & { found: boolean; license?: LicencedKey;
 export type KvEaConfigAnswer = KvAnswer & { configs: EaConfigEntry[] };
 export type KvEaUpdateAnswer = KvAnswer & { updated?: number; updatedAt?: string };
 
+/** What a stored (chunked) robot video answers with. */
+export type KvVideoInfoAnswer = KvAnswer & {
+  found: boolean;
+  rowId?: string;
+  chunks?: number;
+  bytes?: number;
+};
+
+export type KvVideoChunkAnswer = KvAnswer & { data?: string; chunks?: number };
+
+export type KvVideoLinkAnswer = KvAnswer & {
+  keysLinked?: number;
+  keysForMentor?: number;
+  rowId?: string | null;
+  inline?: boolean;
+};
+
 /** A slow answer is a dead one — the store is a single Redis round trip. */
 const DEADLINE_MS = 12_000;
 
@@ -111,6 +128,13 @@ type ReplyBody = {
   configs?: EaConfigEntry[];
   updated?: number;
   updatedAt?: string;
+  rowId?: string | null;
+  chunks?: number;
+  bytes?: number;
+  data?: string;
+  keysLinked?: number;
+  keysForMentor?: number;
+  inline?: boolean;
 };
 
 /**
@@ -276,6 +300,81 @@ export async function updateEaConfigInKv(input: {
     ok: answer.ok === true,
     ...(typeof answer.updated === "number" ? { updated: answer.updated } : {}),
     ...(typeof answer.updatedAt === "string" ? { updatedAt: answer.updatedAt } : {}),
+    ...(answer.error ? { error: answer.error } : {}),
+  };
+}
+
+/* ── the robot video, stored in this same KV store ───────────────────── */
+
+/**
+ * ONE CHUNK OF THE MENTOR'S MP4. A real video is far too big for a single KV
+ * write (the REST API rejects a body near 1 MB), so it is uploaded in pieces and
+ * reassembled by the app — see api/_handlers/licenses.ts.
+ */
+export async function putEaVideoChunkInKv(input: {
+  mentorEmail: string;
+  eaId: string;
+  index: number;
+  total: number;
+  data: string;
+}): Promise<KvAnswer> {
+  const answer = await post({ action: "video-put", ...input });
+  if (!answer) return offline({ enabled: false, ok: false });
+  return { enabled: true, ok: answer.ok === true, ...(answer.error ? { error: answer.error } : {}) };
+}
+
+/**
+ * SEAL THE UPLOAD AND POINT EVERY KEY OF THE EA AT IT.
+ * `keysLinked` is real: 0 means the video is stored but no key points at it.
+ */
+export async function linkEaVideoInKv(input: {
+  mentorEmail: string;
+  eaId?: string;
+  eaName?: string;
+  video?: string;
+  chunks?: number;
+  bytes?: number;
+}): Promise<KvVideoLinkAnswer> {
+  const answer = await post({ action: "video-link", ...input });
+  if (!answer) return offline({ enabled: false, ok: false });
+  return {
+    enabled: true,
+    ok: answer.ok === true,
+    ...(typeof answer.keysLinked === "number" ? { keysLinked: answer.keysLinked } : {}),
+    ...(typeof answer.keysForMentor === "number" ? { keysForMentor: answer.keysForMentor } : {}),
+    ...(answer.rowId !== undefined ? { rowId: answer.rowId } : {}),
+    ...(answer.inline !== undefined ? { inline: answer.inline } : {}),
+    ...(answer.error ? { error: answer.error } : {}),
+  };
+}
+
+/** Does THIS KEY have a stored video, and in how many chunks? */
+export async function fetchEaVideoInfoInKv(key: string): Promise<KvVideoInfoAnswer> {
+  const answer = await post({ action: "video-info", key });
+  if (!answer) return offline({ enabled: false, ok: false, found: false });
+  return {
+    enabled: true,
+    ok: answer.ok === true,
+    found: answer.found === true,
+    ...(typeof answer.rowId === "string" ? { rowId: answer.rowId } : {}),
+    ...(typeof answer.chunks === "number" ? { chunks: answer.chunks } : {}),
+    ...(typeof answer.bytes === "number" ? { bytes: answer.bytes } : {}),
+    ...(answer.error ? { error: answer.error } : {}),
+  };
+}
+
+/** ONE chunk of the key's video. */
+export async function fetchEaVideoChunkInKv(
+  key: string,
+  index: number,
+): Promise<KvVideoChunkAnswer> {
+  const answer = await post({ action: "video-chunk", key, index });
+  if (!answer) return offline({ enabled: false, ok: false });
+  return {
+    enabled: true,
+    ok: answer.ok === true,
+    ...(typeof answer.data === "string" ? { data: answer.data } : {}),
+    ...(typeof answer.chunks === "number" ? { chunks: answer.chunks } : {}),
     ...(answer.error ? { error: answer.error } : {}),
   };
 }

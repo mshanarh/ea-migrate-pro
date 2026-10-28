@@ -21,7 +21,7 @@
  * URL is stashed locally so localStorage never takes the hit).
  */
 import { loadEaVideoFromCloud } from "@/lib/ea-video-cloud";
-import { fetchEaConfigsInKv } from "@/lib/license-cloud";
+import { fetchEaConfigsInKv, fetchEaVideoChunkInKv, fetchEaVideoInfoInKv } from "@/lib/license-cloud";
 import { travelSizedVideo } from "@/lib/media-store";
 
 export type RobotVideoLookup =
@@ -35,6 +35,51 @@ async function stash(source: string): Promise<string | null> {
   if (/^https?:\/\//i.test(source)) return source;
   const sized = await travelSizedVideo(source);
   return sized ?? null;
+}
+
+type StoredVideo =
+  | { status: "found"; video: string }
+  | { status: "absent" }
+  | { status: "unavailable"; error: string };
+
+/**
+ * THE KEY'S OWN COPY, reassembled from the licence store.
+ *
+ * The mentor's MP4 is uploaded in ≤500 KB base64 chunks under the EA's row, so
+ * it comes back one part at a time and is stashed on the device once. Every
+ * failure here is `unavailable` — a store that cannot answer must never be
+ * reported as "this key has no video".
+ */
+async function videoFromKeyStore(key: string): Promise<StoredVideo> {
+  const info = await fetchEaVideoInfoInKv(key);
+  if (!info.enabled) {
+    return { status: "unavailable", error: info.error ?? "The licence store could not be reached." };
+  }
+  if (!info.ok) {
+    return { status: "unavailable", error: info.error ?? "The licence store could not read this key's video." };
+  }
+  const chunks = info.chunks ?? 0;
+  if (!info.found || chunks < 1) return { status: "absent" };
+  const parts: string[] = [];
+  for (let index = 0; index < chunks; index += 1) {
+    const part = await fetchEaVideoChunkInKv(key, index);
+    if (!part.enabled) {
+      return {
+        status: "unavailable",
+        error: part.error ?? `The video download stopped at part ${index + 1} of ${chunks}.`,
+      };
+    }
+    if (!part.ok || !part.data) {
+      return {
+        status: "unavailable",
+        error: part.error ?? `Part ${index + 1} of ${chunks} of the video could not be read.`,
+      };
+    }
+    parts.push(part.data);
+  }
+  const video = await stash(parts.join(""));
+  if (!video) return { status: "unavailable", error: "The video could not be stored on this device." };
+  return { status: "found", video };
 }
 
 /**
@@ -67,6 +112,14 @@ export async function lookupRobotVideoForKey(key: string | undefined): Promise<R
     const video = await stash(config.video.trim());
     if (video) return { status: "found", video, from: "record" };
   }
+  // 1. THE LICENCE STORE'S OWN CHUNKED COPY — the path that is actually
+  //    written by the mentor's Save (see src/lib/ea-video-key.ts).
+  const stored = await videoFromKeyStore(clean);
+  if (stored.status === "found") return { status: "found", video: stored.video, from: "store" };
+  if (stored.status === "unavailable") return { status: "unavailable", error: stored.error };
+
+  // 2. A LEGACY media row (the first design pointed here). Only consulted when
+  //    the key store has no copy, so an old recording still plays.
   if (typeof config.videoId === "string" && config.videoId.trim()) {
     const dataUrl = await loadEaVideoFromCloud(config.videoId.trim());
     if (!dataUrl) {

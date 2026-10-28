@@ -5,20 +5,32 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
  *
  * "No robot video yet — your mentor can upload one" is a CLAIM: it may only be
  * said when the licence store answered and confirmed the key's EA has no
- * video. A store that could not be asked, or a media row that could not be
+ * video. A store that could not be asked, or a video part that could not be
  * read, must come back as a retryable error instead.
  */
 
 const kv = vi.hoisted(() => ({
-  answer: { enabled: true, ok: true, configs: [] as Array<Record<string, unknown>> },
+  configs: [] as Array<Record<string, unknown>>,
+  configsEnabled: true,
+  configsOk: true,
+  configError: "" as string,
+  info: { enabled: true, ok: true, found: false } as Record<string, unknown>,
+  chunks: {} as Record<number, { enabled: boolean; ok: boolean; data?: string; error?: string }>,
 }));
 
-const media = vi.hoisted(() => ({
-  video: null as string | null,
-}));
+const media = vi.hoisted(() => ({ video: null as string | null }));
 
 vi.mock("@/lib/license-cloud", () => ({
-  fetchEaConfigsInKv: vi.fn(async () => kv.answer),
+  fetchEaConfigsInKv: vi.fn(async () => ({
+    enabled: kv.configsEnabled,
+    ok: kv.configsOk,
+    configs: kv.configs,
+    ...(kv.configError ? { error: kv.configError } : {}),
+  })),
+  fetchEaVideoInfoInKv: vi.fn(async () => kv.info),
+  fetchEaVideoChunkInKv: vi.fn(async (_key: string, index: number) =>
+    kv.chunks[index] ?? { enabled: true, ok: false, error: `no chunk ${index}` },
+  ),
 }));
 
 vi.mock("@/lib/ea-video-cloud", () => ({
@@ -28,6 +40,7 @@ vi.mock("@/lib/ea-video-cloud", () => ({
 }));
 
 const KEY = "EMP-ABCD-1234-WXYZ";
+const CLIP = "data:video/mp4;base64,AAAAIGZ0eXA=";
 
 async function lookup(key: string) {
   const { lookupRobotVideoForKey } = await import("../src/lib/robot-video");
@@ -35,17 +48,18 @@ async function lookup(key: string) {
 }
 
 beforeEach(() => {
-  kv.answer = { enabled: true, ok: true, configs: [] };
+  kv.configs = [];
+  kv.configsEnabled = true;
+  kv.configsOk = true;
+  kv.configError = "";
+  kv.info = { enabled: true, ok: true, found: false };
+  kv.chunks = {};
   media.video = null;
 });
 
 describe("robot video lookup by licence key", () => {
-  it("returns the source the key's record carries", async () => {
-    kv.answer = {
-      enabled: true,
-      ok: true,
-      configs: [{ key: KEY, symbols: null, video: "https://cdn.example.test/demo.mp4" }],
-    };
+  it("returns the source the key's record carries (http URL)", async () => {
+    kv.configs = [{ key: KEY, symbols: null, video: "https://cdn.example.test/demo.mp4" }];
 
     const result = await lookup(KEY);
 
@@ -56,33 +70,50 @@ describe("robot video lookup by licence key", () => {
     }
   });
 
-  it("resolves a media-store pointer returned for the key", async () => {
-    kv.answer = { enabled: true, ok: true, configs: [{ key: KEY, symbols: null, videoId: "ea-ea-1" }] };
-    media.video = "data:video/mp4;base64,AAAAIGZ0eXA=";
+  it("reassembles the video stored for the key from its parts", async () => {
+    kv.configs = [{ key: KEY, symbols: null, videoId: "ea-ea-1" }];
+    kv.info = { enabled: true, ok: true, found: true, rowId: "ea-ea-1", chunks: 2, bytes: CLIP.length * 2 };
+    kv.chunks = {
+      0: { enabled: true, ok: true, data: CLIP.slice(0, 20) },
+      1: { enabled: true, ok: true, data: CLIP.slice(20) },
+    };
 
     const result = await lookup(KEY);
 
     expect(result.status).toBe("found");
     if (result.status === "found") {
-      expect(result.video).toBe("data:video/mp4;base64,AAAAIGZ0eXA=");
+      expect(result.video).toBe(CLIP);
       expect(result.from).toBe("store");
     }
   });
 
+  it("falls back to a legacy media row when the key store has no copy", async () => {
+    kv.configs = [{ key: KEY, symbols: null, videoId: "v_1699_abc" }];
+    kv.info = { enabled: true, ok: true, found: false };
+    media.video = CLIP;
+
+    const result = await lookup(KEY);
+
+    expect(result.status).toBe("found");
+    if (result.status === "found") expect(result.video).toBe(CLIP);
+  });
+
   it("says NONE only when the store answered and the key has no video", async () => {
-    kv.answer = { enabled: true, ok: true, configs: [{ key: KEY, symbols: ["XAUUSDm"] }] };
+    kv.configs = [{ key: KEY, symbols: ["XAUUSDm"] }];
+    kv.info = { enabled: true, ok: true, found: false };
 
     expect((await lookup(KEY)).status).toBe("none");
   });
 
   it("says NONE for a key the store does not hold", async () => {
-    kv.answer = { enabled: true, ok: true, configs: [] };
+    kv.configs = [];
+    kv.info = { enabled: true, ok: true, found: false };
 
     expect((await lookup(KEY)).status).toBe("none");
   });
 
-  it("is UNAVAILABLE — never 'no video' — when the store cannot be asked", async () => {
-    kv.answer = { enabled: false, ok: false, configs: [] };
+  it("is UNAVAILABLE — never 'no video' — when the config store cannot be asked", async () => {
+    kv.configsEnabled = false;
 
     const result = await lookup(KEY);
 
@@ -91,12 +122,8 @@ describe("robot video lookup by licence key", () => {
   });
 
   it("is UNAVAILABLE when the store answered with an error", async () => {
-    kv.answer = {
-      enabled: true,
-      ok: false,
-      configs: [],
-      error: "Licence storage is unavailable. Please try again.",
-    };
+    kv.configsOk = false;
+    kv.configError = "Licence storage is unavailable. Please try again.";
 
     const result = await lookup(KEY);
 
@@ -106,13 +133,23 @@ describe("robot video lookup by licence key", () => {
     }
   });
 
-  it("is UNAVAILABLE when the key points at a media row that cannot be read", async () => {
-    kv.answer = { enabled: true, ok: true, configs: [{ key: KEY, symbols: null, videoId: "ea-ea-1" }] };
-    media.video = null;
+  it("is UNAVAILABLE when the video index is incomplete", async () => {
+    kv.configs = [{ key: KEY, symbols: null, videoId: "ea-ea-1" }];
+    kv.info = { enabled: true, ok: false, found: false, error: "The stored video is incomplete." };
 
     const result = await lookup(KEY);
 
     expect(result.status).toBe("unavailable");
-    if (result.status === "unavailable") expect(result.error).toContain("ea-ea-1");
+  });
+
+  it("is UNAVAILABLE when a part of the video cannot be read", async () => {
+    kv.configs = [{ key: KEY, symbols: null, videoId: "ea-ea-1" }];
+    kv.info = { enabled: true, ok: true, found: true, rowId: "ea-ea-1", chunks: 2, bytes: 100 };
+    kv.chunks = { 0: { enabled: true, ok: true, data: "AAA" } };
+
+    const result = await lookup(KEY);
+
+    expect(result.status).toBe("unavailable");
+    if (result.status === "unavailable") expect(result.error).toBeTruthy();
   });
 });

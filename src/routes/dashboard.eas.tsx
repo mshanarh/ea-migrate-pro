@@ -10,7 +10,7 @@ import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob, vide
 import { syncRegister } from "@/lib/account-sync.server";
 import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 import { updateEaConfigInKv } from "@/lib/license-cloud";
-import { cloudVideoPointer } from "@/lib/ea-video-key";
+import { linkEaVideo } from "@/lib/ea-video-key";
 
 /**
  * Mirrors the account (EAs + video refs) to the cloud so every device — and
@@ -200,23 +200,43 @@ function ManageEAs() {
                 // see the edit on their next refresh — no new key, no
                 // re-activation, no re-login.
                 void (async () => {
-                  // THE VIDEO IS WRITTEN WITH THE SYMBOLS. Editing an EA is the
-                  // mentor's chance to link its robot video to every key issued
-                  // for it; the app resolves it by key (src/lib/robot-video.ts).
-                  const videoPointer = await cloudVideoPointer({
-                    id: editingEa.id,
-                    video: patch.video ?? editingEa.video,
-                  }).catch(() => ({}));
                   const reply = await updateEaConfigInKv({
                     mentorEmail: account.email,
                     eaId: editingEa.id,
                     eaName: editingEa.name,
                     symbols: patch.symbols ?? editingEa.symbols ?? [],
                     ...(patch.image ? { image: patch.image } : {}),
-                    ...videoPointer,
                   });
                   if (reply.enabled && !reply.ok) {
                     console.warn("[eas] live EA config not updated:", reply.error);
+                  }
+
+                  // THE ROBOT VIDEO, LINKED TO EVERY KEY OF THIS EA — in ONE
+                  // idempotent call. This is the step that used to fail without
+                  // a word, so every outcome is reported to the mentor.
+                  const link = await linkEaVideo({
+                    mentorEmail: account.email,
+                    id: editingEa.id,
+                    name: editingEa.name,
+                    video: patch.video ?? editingEa.video,
+                  }).catch((error: unknown) => ({
+                    status: "failed" as const,
+                    error: error instanceof Error ? error.message : "the link could not be attempted",
+                  }));
+                  if (link.status === "failed") {
+                    toast.error("EA saved — but the robot video is NOT linked", {
+                      description: link.error,
+                      duration: 14000,
+                    });
+                  } else if (link.status === "linked") {
+                    toast.success(
+                      `Robot video linked to ${link.keysLinked} licence key${link.keysLinked === 1 ? "" : "s"}`,
+                      {
+                        description: link.inline
+                          ? "The video source is stored on the key itself."
+                          : `${link.chunks} part(s), ${Math.round(link.bytes / 1024)} KB stored for this EA.`,
+                      },
+                    );
                   }
                 })();
                 toast.success("EA updated");

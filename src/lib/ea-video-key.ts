@@ -1,70 +1,64 @@
 /**
- * THE MENTOR → LICENCE-KEY VIDEO LINK.
+ * MENTOR → LICENCE-KEY VIDEO LINK — the one that actually lands.
  *
- * A mentor's robot video lives in the `ea_videos` media store (browser-direct,
- * anon key) as a base64 MP4 row. That row is what every device can read — but
- * until now NOTHING tied it to the licence key, so an activated robot had no
- * way to find it: the home screen only ever read `robot.video` from local state,
- * which the mentor's upload never reached. The card then honestly (and wrongly)
- * said "No robot video yet".
+ * WHAT WAS BROKEN (measured in production): the first version copied the MP4
+ * into a Supabase `ea_videos` row and only logged a console warning when that
+ * failed. On the real deployment it failed — the mentor's blob was no longer on
+ * the device and the upload went nowhere — so `Save Changes` wrote the licence
+ * record with NO pointer at all (`ea-config` answered key + eaId + eaName +
+ * symbols + image + updatedAt, and no video).
  *
- * This module turns the mentor's upload into the two values the licence record
- * carries (see api/_handlers/licenses.ts):
+ * WHAT THIS DOES NOW: the bytes go into the SAME Upstash KV store that holds the
+ * licence records (the store that demonstrably answers), base64-chunked so no
+ * single request comes near the KV body limit, and then ONE `video-link` call
+ * writes the pointer onto EVERY key of the EA (idempotent: the same call twice
+ * changes nothing).
  *
- *   videoId — `ea-<eaId>`, the `ea_videos` row holding the bytes (the normal
- *             case: a real MP4 is far too big for the licence store),
- *   video   — a small playable source, used verbatim when it already is one
- *             (an http(s) URL, or a tiny clip under INLINE_VIDEO_MAX_CHARS).
- *
- * The upload is idempotent per device: the row id is derived from the EA, and a
- * marker remembers which local reference produced it, so saving an EA again
- * does not re-upload megabytes.
+ * EVERY OUTCOME IS RETURNED — `none`, `linked` (with how many keys), or
+ * `failed` (with a sentence the mentor can act on). Nothing is ever silent, and
+ * a missing local file tells the mentor to re-attach the MP4.
  */
-import { loadEaVideoFromCloud, saveEaVideoToCloud } from "@/lib/ea-video-cloud";
+import { linkEaVideoInKv, putEaVideoChunkInKv } from "@/lib/license-cloud";
 import { loadVideoUrl } from "@/lib/media-store";
 
 /** Same ceiling the media store already enforces for cloud travel. */
 const CLOUD_VIDEO_MAX_BYTES = 20 * 1024 * 1024;
 
-/** A source this small is cheaper to carry inline than to fetch as a row. */
+/** A source this small is cheaper to carry inline than to chunk. */
 const INLINE_VIDEO_MAX_CHARS = 200_000;
 
-const MARKER_PREFIX = "eamp.ea-video.sync:";
+/** Under the server's 600 000-character cap and Upstash's ~1 MB body limit. */
+const CHUNK_CHARS = 500_000;
 
-/** The stable media-store row id for one EA's robot video. */
-export function eaVideoRowId(eaId: string | undefined): string | null {
-  const clean = (eaId ?? "").trim();
-  return clean ? `ea-${clean}` : null;
-}
+/** The server refuses more chunks than this (64 × 500 KB ≈ 32 MB). */
+const MAX_CHUNKS = 64;
 
-function readMarker(rowId: string): string | null {
-  try {
-    return window.localStorage.getItem(`${MARKER_PREFIX}${rowId}`);
-  } catch {
-    return null;
-  }
-}
+export type EaVideoLinkResult =
+  | { status: "none" }
+  | {
+      status: "linked";
+      keysLinked: number;
+      keysForMentor: number;
+      chunks: number;
+      bytes: number;
+      inline: boolean;
+    }
+  | { status: "failed"; error: string };
 
-function writeMarker(rowId: string, ref: string): void {
-  try {
-    window.localStorage.setItem(`${MARKER_PREFIX}${rowId}`, ref);
-  } catch {
-    /* storage blocked — the row still exists, the next save just re-checks it */
-  }
-}
-
-/** The video behind a local reference, as a data URL the media store can hold. */
+/** The video behind a local reference, as a data URL the store can carry. */
 async function asDataUrl(video: string): Promise<string | null> {
   if (video.startsWith("data:")) return video;
-  if (/^https?:\/\//i.test(video)) return null; // already a URL — nothing to copy
+  if (/^https?:\/\//i.test(video)) return null; // a URL travels as itself
+  // `idb-video:` (and anything else the media layer understands): resolve the
+  // blob — this also restores it from the cloud backup when the local copy was
+  // evicted, which is the difference between "linked" and "re-attach the file".
   const url = await loadVideoUrl(video);
   if (!url) return null;
   try {
     const blob = await (await fetch(url)).blob();
     if (blob.size > CLOUD_VIDEO_MAX_BYTES) {
       console.warn(
-        `[ea-video] video is ${(blob.size / (1024 * 1024)).toFixed(1)} MB — over the 20 MB limit for the key link; ` +
-          "the robot card will have no video until a smaller MP4 is uploaded",
+        `[ea-video] video is ${(blob.size / (1024 * 1024)).toFixed(1)} MB — over the 20 MB limit for the key link`,
       );
       return null;
     }
@@ -80,37 +74,117 @@ async function asDataUrl(video: string): Promise<string | null> {
 }
 
 /**
- * WHAT THE LICENCE RECORD SHOULD CARRY FOR THIS EA'S VIDEO.
+ * LINK THIS EA'S VIDEO TO EVERY KEY OF THAT EA.
  *
- * `{}` means the EA has no video (or it could not be linked — the console says
- * which). The caller merges the result into the issue / update-ea request, so
- * every key for this EA resolves the video from then on.
+ * Call it after an EA save or a key issue; the reply is what the portal shows.
  */
-export async function cloudVideoPointer(ea: {
+export async function linkEaVideo(ea: {
+  mentorEmail: string;
   id?: string | undefined;
+  name?: string | undefined;
   video?: string | undefined;
-}): Promise<{ video?: string; videoId?: string }> {
-  const video = ea.video?.trim();
-  if (!video) return {};
-  // A URL plays as-is in the WebView — no media row required.
-  if (/^https?:\/\//i.test(video)) return { video };
-  // A tiny inline clip is simpler than a second round trip.
-  if (video.startsWith("data:") && video.length <= INLINE_VIDEO_MAX_CHARS) return { video };
-
-  const rowId = eaVideoRowId(ea.id);
-  if (!rowId) {
-    console.warn("[ea-video] the EA has no id — the video cannot be linked to its keys");
-    return {};
+}): Promise<EaVideoLinkResult> {
+  const mentorEmail = (ea.mentorEmail ?? "").trim().toLowerCase();
+  if (!mentorEmail) {
+    return { status: "failed", error: "No mentor account is signed in — the video was NOT linked." };
   }
-  const existing = await loadEaVideoFromCloud(rowId);
-  if (existing && readMarker(rowId) === video) return { videoId: rowId };
+  const video = ea.video?.trim();
+  if (!video) return { status: "none" };
+
+  const inline =
+    /^https?:\/\//i.test(video) || (video.startsWith("data:") && video.length <= INLINE_VIDEO_MAX_CHARS);
+
+  if (inline) {
+    const reply = await linkEaVideoInKv({
+      mentorEmail,
+      ...(ea.id ? { eaId: ea.id } : {}),
+      ...(ea.name ? { eaName: ea.name } : {}),
+      video,
+    });
+    if (!reply.enabled) {
+      return {
+        status: "failed",
+        error: `The licence store could not be reached — the video was NOT linked${reply.error ? ` (${reply.error})` : ""}.`,
+      };
+    }
+    if (!reply.ok) {
+      return { status: "failed", error: reply.error ?? "The video could not be linked." };
+    }
+    const keysLinked = reply.keysLinked ?? 0;
+    if (keysLinked === 0) {
+      return {
+        status: "failed",
+        error: `The video is stored, but no licence key is linked to this EA yet (${reply.keysForMentor ?? 0} key(s) on this account). Generate a key for this EA, then press Save Changes again.`,
+      };
+    }
+    return { status: "linked", keysLinked, keysForMentor: reply.keysForMentor ?? keysLinked, chunks: 0, bytes: video.length, inline: true };
+  }
 
   const dataUrl = await asDataUrl(video).catch(() => null);
-  if (!dataUrl) return existing ? { videoId: rowId } : {};
-  if (await saveEaVideoToCloud(rowId, dataUrl)) {
-    writeMarker(rowId, video);
-    return { videoId: rowId };
+  if (!dataUrl) {
+    return {
+      status: "failed",
+      error:
+        "The video file is not on this device any more, so it could NOT be linked. Open Edit EA, attach the MP4 again and press Save Changes.",
+    };
   }
-  console.warn("[ea-video] the video could not be stored for this EA's keys");
-  return existing ? { videoId: rowId } : {};
+  if (!ea.id) {
+    return { status: "failed", error: "This EA has no id — the video cannot be linked to its keys." };
+  }
+
+  const total = Math.max(1, Math.ceil(dataUrl.length / CHUNK_CHARS));
+  if (total > MAX_CHUNKS) {
+    return {
+      status: "failed",
+      error: `That video is too large to store for a key (${(dataUrl.length / (1024 * 1024)).toFixed(1)} MB of base64). Use an MP4 under 20 MB.`,
+    };
+  }
+  for (let index = 0; index < total; index += 1) {
+    const chunk = dataUrl.slice(index * CHUNK_CHARS, (index + 1) * CHUNK_CHARS);
+    const put = await putEaVideoChunkInKv({ mentorEmail, eaId: ea.id, index, total, data: chunk });
+    if (!put.enabled) {
+      return {
+        status: "failed",
+        error: `The upload stopped at part ${index + 1} of ${total}: the licence store could not be reached. The video was NOT linked.`,
+      };
+    }
+    if (!put.ok) {
+      return {
+        status: "failed",
+        error: `The upload stopped at part ${index + 1} of ${total}: ${put.error ?? "the store refused that part"}. The video was NOT linked.`,
+      };
+    }
+  }
+
+  const reply = await linkEaVideoInKv({
+    mentorEmail,
+    eaId: ea.id,
+    ...(ea.name ? { eaName: ea.name } : {}),
+    chunks: total,
+    bytes: dataUrl.length,
+  });
+  if (!reply.enabled) {
+    return {
+      status: "failed",
+      error: `The video was uploaded in ${total} part(s) but the link could not be written — the licence store did not answer${reply.error ? ` (${reply.error})` : ""}. Try Save Changes again.`,
+    };
+  }
+  if (!reply.ok) {
+    return { status: "failed", error: reply.error ?? "The video could not be linked." };
+  }
+  const keysLinked = reply.keysLinked ?? 0;
+  if (keysLinked === 0) {
+    return {
+      status: "failed",
+      error: `The video is stored (${total} part(s)), but no licence key is linked to this EA yet (${reply.keysForMentor ?? 0} key(s) on this account). Generate a key for this EA, then press Save Changes again.`,
+    };
+  }
+  return {
+    status: "linked",
+    keysLinked,
+    keysForMentor: reply.keysForMentor ?? keysLinked,
+    chunks: total,
+    bytes: dataUrl.length,
+    inline: false,
+  };
 }

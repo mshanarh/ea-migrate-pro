@@ -160,3 +160,137 @@ describe("licence-key video record", () => {
     expect(config?.["videoId"]).toBe("ea-ea-1");
   });
 });
+
+describe("stored video parts and the backfill", () => {
+  const KEY_A = "EMP-AAAA-1111-2222";
+  const KEY_B = "EMP-BBBB-3333-4444";
+  const PART_1 = "data:video/mp4;base64,AAAAIGZ0eXA=";
+  const PART_2 = "BBBBCCCCDDDD";
+
+  async function twoKeysFor(eaId: string, eaName: string) {
+    await call({ action: "issue", key: KEY_A, mentorEmail: MENTOR, eaId, eaName });
+    await call({ action: "issue", key: KEY_B, mentorEmail: MENTOR, eaId, eaName });
+  }
+
+  async function uploadParts(eaId: string, parts: string[]) {
+    for (let index = 0; index < parts.length; index += 1) {
+      const put = await call({
+        action: "video-put",
+        mentorEmail: MENTOR,
+        eaId,
+        index,
+        total: parts.length,
+        data: parts[index],
+      });
+      expect(put.body["ok"]).toBe(true);
+    }
+  }
+
+  it("stores every part and links ALL keys of the EA, idempotently", async () => {
+    await twoKeysFor("ea-1", "Apex Sniper Pro V6+");
+    await uploadParts("ea-1", [PART_1, PART_2]);
+
+    const link = await call({
+      action: "video-link",
+      mentorEmail: MENTOR,
+      eaId: "ea-1",
+      chunks: 2,
+      bytes: PART_1.length + PART_2.length,
+    });
+    expect(link.body["ok"]).toBe(true);
+    expect(link.body["keysLinked"]).toBe(2);
+
+    const again = await call({
+      action: "video-link",
+      mentorEmail: MENTOR,
+      eaId: "ea-1",
+      chunks: 2,
+      bytes: PART_1.length + PART_2.length,
+    });
+    expect(again.body["keysLinked"]).toBe(2);
+
+    for (const key of [KEY_A, KEY_B]) {
+      const [config] = await configsFor(key);
+      expect(config?.["videoId"]).toBe("ea-1");
+    }
+  });
+
+  it("serves the exact parts back by licence key", async () => {
+    await twoKeysFor("ea-2", "Apex");
+    await uploadParts("ea-2", [PART_1, PART_2]);
+    await call({ action: "video-link", mentorEmail: MENTOR, eaId: "ea-2", chunks: 2, bytes: 30 });
+
+    const info = await call({ action: "video-info", key: KEY_A });
+    expect(info.body).toMatchObject({ ok: true, found: true, rowId: "ea-2", chunks: 2 });
+
+    const first = await call({ action: "video-chunk", key: KEY_A, index: 0 });
+    const second = await call({ action: "video-chunk", key: KEY_B, index: 1 });
+    expect(first.body["data"]).toBe(PART_1);
+    expect(second.body["data"]).toBe(PART_2);
+    expect(`${first.body["data"]}${second.body["data"]}`).toBe(PART_1 + PART_2);
+  });
+
+  it("reports zero linked keys honestly when the EA has no key yet", async () => {
+    await call({ action: "issue", key: KEY_A, mentorEmail: MENTOR, eaId: "ea-other", eaName: "Other" });
+    await uploadParts("ea-3", [PART_1]);
+
+    const link = await call({ action: "video-link", mentorEmail: MENTOR, eaId: "ea-3", chunks: 1, bytes: 10 });
+    expect(link.body["keysLinked"]).toBe(0);
+    expect(link.body["keysForMentor"]).toBe(1);
+  });
+
+  it("matches the EA name case-insensitively", async () => {
+    // The portal shows "Apex Sniper Pro V6+"; the stored record says "Apex sniper pro V6+".
+    await call({
+      action: "issue",
+      key: KEY_A,
+      mentorEmail: MENTOR,
+      eaId: "ea-mvdjri9fl9vmv8",
+      eaName: "Apex sniper pro V6+",
+    });
+    await uploadParts("ea-mvdjri9fl9vmv8", [PART_1]);
+
+    const link = await call({
+      action: "video-link",
+      mentorEmail: MENTOR,
+      eaId: "ea-mvdjri9fl9vmv8",
+      eaName: "Apex Sniper Pro V6+",
+      chunks: 1,
+      bytes: 10,
+    });
+    expect(link.body["keysLinked"]).toBe(1);
+    expect((await configsFor(KEY_A))[0]?.["videoId"]).toBe("ea-mvdjri9fl9vmv8");
+  });
+
+  it("reports a pointer with no stored index as an error, not as 'no video'", async () => {
+    // A pointer written without its parts (the shape a broken link leaves
+    // behind) must answer "incomplete — retry", never "this key has no video".
+    await call({ action: "issue", key: KEY_A, mentorEmail: MENTOR, eaId: "ea-4", eaName: "Broken" });
+    await call({ action: "update-ea", mentorEmail: MENTOR, eaId: "ea-4", videoId: "ea-ghost" });
+
+    const info = await call({ action: "video-info", key: KEY_A });
+    expect(info.status).toBe(503);
+    expect(info.body["ok"]).toBe(false);
+  });
+
+  it("answers a missing part as a failure, not as an empty video", async () => {
+    await twoKeysFor("ea-6", "Partial");
+    await uploadParts("ea-6", [PART_1]);
+    await call({ action: "video-link", mentorEmail: MENTOR, eaId: "ea-6", chunks: 2, bytes: 900 });
+
+    const missing = await call({ action: "video-chunk", key: KEY_A, index: 1 });
+    expect(missing.status).toBe(503);
+    expect(missing.body["ok"]).toBe(false);
+  });
+
+  it("clears the stored video and the pointer", async () => {
+    await twoKeysFor("ea-5", "Clearable");
+    await uploadParts("ea-5", [PART_1]);
+    await call({ action: "video-link", mentorEmail: MENTOR, eaId: "ea-5", chunks: 1, bytes: 10 });
+
+    const cleared = await call({ action: "video-clear", mentorEmail: MENTOR, eaId: "ea-5" });
+    expect(cleared.body["unlinked"]).toBe(2);
+    const info = await call({ action: "video-info", key: KEY_A });
+    expect(info.body).toMatchObject({ ok: true, found: false });
+  });
+});

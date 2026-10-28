@@ -93,6 +93,8 @@ export type LicenceRecord = {
    */
   videoId?: string;
   video?: string;
+  /** Size of the stored video's data URL, in characters (diagnostics + UI). */
+  videoBytes?: number;
   /**
    * WHEN this record's EA config last changed (issue, or a mentor EA edit).
    * The app shows it as the "last updated" note and uses it to tell a live
@@ -135,6 +137,11 @@ const ACTIONS = [
   "claim",
   "ea-config",
   "update-ea",
+  "video-put",
+  "video-link",
+  "video-info",
+  "video-chunk",
+  "video-clear",
 ] as const;
 type Action = (typeof ACTIONS)[number];
 
@@ -542,6 +549,220 @@ async function updateEa(request: ApiRequest): Promise<{ status: number; body: Re
   return { status: 200, body: { ok: true, updated, updatedAt: at } };
 }
 
+/* ── robot video — the bytes live in THIS store ──────────────────────── */
+
+/**
+ * THE ROBOT VIDEO IS STORED NEXT TO THE LICENCE RECORD THAT RESOLVES IT.
+ *
+ * The first cut pointed at the `ea_videos` table in Supabase. Production proved
+ * that link dead: the mentor's Save wrote the record with NO pointer at all
+ * (`ea-config` answered key + eaId + eaName + symbols + image + updatedAt and
+ * nothing else), because the only copy of the MP4 was on the mentor's device
+ * and the upload failed without a word. So the bytes are kept HERE, in the same
+ * Upstash store as the licence records — the store that demonstrably answers:
+ *
+ *   eamp:ea-video:<eaId>   HASH   meta = {"chunks":N,"bytes":B}, c0…cN-1 = data
+ *
+ * A real MP4 is base64-chunked (≤600 KB per chunk) because the KV REST API
+ * rejects a request body near 1 MB. The licence record keeps only `videoId`
+ * (a few dozen bytes), and the app resolves it BY KEY — never by device, never
+ * by the mentor's session.
+ */
+const VIDEO_PREFIX = "eamp:ea-video:";
+const VIDEO_CHUNK_MAX_CHARS = 600_000;
+const VIDEO_CHUNKS_MAX = 64;
+
+function videoKey(rowId: string): string {
+  return `${VIDEO_PREFIX}${rowId}`;
+}
+
+/** The EA's own id is the row id (it already looks like `ea-…`). */
+function videoRowId(eaId: string): string {
+  return eaId.trim();
+}
+
+async function videoMetaFor(rowId: string): Promise<{ chunks: number; bytes: number } | null> {
+  const raw = await kvCommand(["HGET", videoKey(rowId), "meta"]);
+  if (typeof raw !== "string" || !raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { chunks?: unknown; bytes?: unknown };
+    const chunks = Number(parsed.chunks);
+    const bytes = Number(parsed.bytes);
+    if (!Number.isInteger(chunks) || chunks < 1) return null;
+    return { chunks, bytes: Number.isFinite(bytes) ? bytes : 0 };
+  } catch {
+    return null;
+  }
+}
+
+/** ONE chunk of the mentor's upload. Idempotent: re-sending an index replaces it. */
+async function videoPut(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const mentorEmail = normalizeEmail(body["mentorEmail"]);
+  const eaId = text(body["eaId"], 120);
+  if (!mentorEmail) return { status: 400, body: { ok: false, error: "mentorEmail is required" } };
+  if (!eaId) return { status: 400, body: { ok: false, error: "eaId is required" } };
+  const index = Number(body["index"]);
+  const total = Number(body["total"]);
+  const data = typeof body["data"] === "string" ? body["data"] : "";
+  if (!Number.isInteger(index) || index < 0 || !Number.isInteger(total)) {
+    return { status: 400, body: { ok: false, error: "A chunk index and total are required" } };
+  }
+  if (total < 1 || total > VIDEO_CHUNKS_MAX || index >= total) {
+    return { status: 400, body: { ok: false, error: `total must be 1..${VIDEO_CHUNKS_MAX} and index below it` } };
+  }
+  if (!data || data.length > VIDEO_CHUNK_MAX_CHARS) {
+    return {
+      status: 400,
+      body: { ok: false, error: `Each chunk must be 1..${VIDEO_CHUNK_MAX_CHARS} characters` },
+    };
+  }
+  const rowId = videoRowId(eaId);
+  await kvCommand(["HSET", videoKey(rowId), `c${index}`, data]);
+  return { status: 200, body: { ok: true, rowId, index, total } };
+}
+
+/**
+ * SEAL THE UPLOAD AND POINT **EVERY** KEY OF THIS EA AT IT — one idempotent
+ * backfill. `keysLinked: 0` is reported honestly (with how many keys the mentor
+ * has) so the portal can never claim a link that did not happen.
+ */
+async function videoLink(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const mentorEmail = normalizeEmail(body["mentorEmail"]);
+  if (!mentorEmail) return { status: 400, body: { ok: false, error: "mentorEmail is required" } };
+  const eaId = text(body["eaId"], 120);
+  const eaName = text(body["eaName"], 120);
+  if (!eaId && !eaName) {
+    return { status: 400, body: { ok: false, error: "eaId or eaName is required" } };
+  }
+  const inline = typeof body["video"] === "string" ? body["video"].trim() : "";
+  if (inline && inline.length > MAX_VIDEO_CHARS) {
+    return { status: 400, body: { ok: false, error: "That video source is too large to store inline" } };
+  }
+  const chunks = Number(body["chunks"]);
+  const bytes = Number(body["bytes"]);
+  const rowId = eaId ? videoRowId(eaId) : "";
+  if (!inline) {
+    if (!rowId) {
+      return { status: 400, body: { ok: false, error: "eaId is required for a stored video" } };
+    }
+    if (!Number.isInteger(chunks) || chunks < 1 || chunks > VIDEO_CHUNKS_MAX) {
+      return { status: 400, body: { ok: false, error: "chunks is required for a stored video" } };
+    }
+    await kvCommand([
+      "HSET",
+      videoKey(rowId),
+      "meta",
+      JSON.stringify({ chunks, bytes: Number.isFinite(bytes) ? bytes : 0, at: new Date().toISOString() }),
+    ]);
+  }
+
+  const at = new Date().toISOString();
+  const codes = await members(mentorKey(mentorEmail));
+  let keysLinked = 0;
+  const wantedId = eaId.trim().toLowerCase();
+  const wantedName = eaName.trim().toLowerCase();
+  for (const code of codes) {
+    const record = await readRecord(code);
+    if (!record) continue;
+    const sameId = Boolean(wantedId) && record.eaId.trim().toLowerCase() === wantedId;
+    const sameName = Boolean(wantedName) && record.eaName.trim().toLowerCase() === wantedName;
+    if (!sameId && !sameName) continue;
+    const next: LicenceRecord = { ...record, updatedAt: at };
+    delete next.video;
+    if (inline) {
+      next.video = inline;
+      delete next.videoId;
+      delete next.videoBytes;
+    } else {
+      next.videoId = rowId;
+      if (Number.isFinite(bytes) && bytes > 0) next.videoBytes = bytes;
+    }
+    await kvCommand(["HSET", KEYS_HASH, code, JSON.stringify(next)]);
+    keysLinked += 1;
+  }
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      rowId: rowId || null,
+      keysLinked,
+      keysForMentor: codes.length,
+      inline: Boolean(inline),
+    },
+  };
+}
+
+/** WHAT THE APP ASKS FIRST: does this KEY have a stored video, and how big. */
+async function videoInfo(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const key = validKey(parseBody(request)["key"]);
+  if (!key) return { status: 400, body: { ok: false, error: "A valid licence key is required" } };
+  const record = await readRecord(key);
+  if (!record) return { status: 200, body: { ok: true, found: false } };
+  if (!record.videoId) return { status: 200, body: { ok: true, found: Boolean(record.video) } };
+  const meta = await videoMetaFor(record.videoId);
+  if (!meta) {
+    // The record points at a video whose index is missing — an ERROR to retry,
+    // never "this key has no video".
+    return {
+      status: 503,
+      body: { ok: false, error: `The stored video for this key (${record.videoId}) is incomplete.` },
+    };
+  }
+  return { status: 200, body: { ok: true, found: true, rowId: record.videoId, chunks: meta.chunks, bytes: meta.bytes } };
+}
+
+/** ONE chunk at a time — a 6 MB MP4 never has to fit in a single response. */
+async function videoChunk(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const key = validKey(body["key"]);
+  const index = Number(body["index"]);
+  if (!key) return { status: 400, body: { ok: false, error: "A valid licence key is required" } };
+  if (!Number.isInteger(index) || index < 0 || index >= VIDEO_CHUNKS_MAX) {
+    return { status: 400, body: { ok: false, error: "A valid chunk index is required" } };
+  }
+  const record = await readRecord(key);
+  if (!record?.videoId) {
+    return { status: 200, body: { ok: false, found: false, error: "This key has no stored video" } };
+  }
+  const meta = await videoMetaFor(record.videoId);
+  if (!meta) {
+    return { status: 503, body: { ok: false, error: "The stored video is incomplete. Try again." } };
+  }
+  if (index >= meta.chunks) return { status: 400, body: { ok: false, error: "Chunk out of range" } };
+  const data = await kvCommand(["HGET", videoKey(record.videoId), `c${index}`]);
+  if (typeof data !== "string" || !data) {
+    return { status: 503, body: { ok: false, error: `Chunk ${index} of the video is missing.` } };
+  }
+  return { status: 200, body: { ok: true, data, index, chunks: meta.chunks } };
+}
+
+/** Remove a stored video and unlink it from this mentor's keys. */
+async function videoClear(request: ApiRequest): Promise<{ status: number; body: Record<string, unknown> }> {
+  const body = parseBody(request);
+  const mentorEmail = normalizeEmail(body["mentorEmail"]);
+  const eaId = text(body["eaId"], 120);
+  if (!eaId) return { status: 400, body: { ok: false, error: "eaId is required" } };
+  const rowId = videoRowId(eaId);
+  await kvCommand(["DEL", videoKey(rowId)]);
+  const codes = mentorEmail ? await members(mentorKey(mentorEmail)) : [];
+  let unlinked = 0;
+  const wantedId = eaId.trim().toLowerCase();
+  for (const code of codes) {
+    const record = await readRecord(code);
+    if (!record) continue;
+    if (record.eaId.trim().toLowerCase() !== wantedId) continue;
+    const next: LicenceRecord = { ...record, updatedAt: new Date().toISOString() };
+    delete next.videoId;
+    delete next.videoBytes;
+    delete next.video;
+    await kvCommand(["HSET", KEYS_HASH, code, JSON.stringify(next)]);
+    unlinked += 1;
+  }
+  return { status: 200, body: { ok: true, cleared: rowId, unlinked } };
+}
+
 /* ── handler ─────────────────────────────────────────────────────────── */
 
 export default async function handler(request: ApiRequest, response: ApiResponse): Promise<void> {
@@ -587,7 +808,17 @@ export default async function handler(request: ApiRequest, response: ApiResponse
                   ? await claim(request)
                   : action === "ea-config"
                     ? await eaConfig(request)
-                    : await updateEa(request);
+                    : action === "update-ea"
+                      ? await updateEa(request)
+                      : action === "video-put"
+                        ? await videoPut(request)
+                        : action === "video-link"
+                          ? await videoLink(request)
+                          : action === "video-info"
+                            ? await videoInfo(request)
+                            : action === "video-chunk"
+                              ? await videoChunk(request)
+                              : await videoClear(request);
     response.status(answer.status).json(answer.body);
   } catch (error) {
     console.error("[licenses]", action, error);
