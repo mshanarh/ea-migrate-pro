@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { legsOf, sideForCurrency, symbolsForEvent } from "../src/lib/event-symbols";
+import {
+  allSymbolsForEvent,
+  catalogForEvent,
+  legsOf,
+  sideForCurrency,
+  symbolsForEvent,
+} from "../src/lib/event-symbols";
 
 /**
  * A USD event used to offer gold alone, because the old rule was a substring
@@ -65,5 +71,53 @@ describe("sideForCurrency", () => {
 
   it("returns null for a symbol the event does not touch", () => {
     expect(sideForCurrency("AUDNZD", "USD", "BUY")).toBeNull();
+  });
+});
+
+/**
+ * THE EVENT'S OWN LIST — every name it is quoted in, not only this account's
+ * Allowed Quotes. That was the report: a USD event showed gold and little
+ * else, because the list only ever held the pairs already added.
+ */
+describe("allSymbolsForEvent", () => {
+  it("lists the account's own affected pairs first, then every other name", () => {
+    const names = allSymbolsForEvent("USD", ALLOWED);
+    // Own, affected, still carrying their broker spelling and at the top.
+    expect(names.slice(0, 6)).toEqual([
+      "EURUSDm",
+      "GBPUSDm",
+      "USDJPYm",
+      "XAUUSDm",
+      "BTCUSDm",
+      "US30m",
+    ]);
+    // …and the rest of the currency's names are there too.
+    expect(names).toContain("USDCHF");
+    expect(names).toContain("USDCAD");
+    expect(names).toContain("NAS100");
+    expect(names.length).toBeGreaterThan(15);
+  });
+
+  it("never repeats an instrument under a second spelling", () => {
+    const names = allSymbolsForEvent("USD", ALLOWED);
+    // The account's own suffixed pairs already cover these instruments, so the
+    // plain catalog spelling must not appear beside them.
+    expect(names).not.toContain("XAUUSD");
+    expect(names).not.toContain("BTCUSD");
+    expect(names).not.toContain("US30");
+    expect(names).toContain("XAUUSDm");
+    expect(new Set(names.map((name) => name.toUpperCase())).size).toBe(names.length);
+  });
+
+  it("still answers when nothing in Allowed Quotes is affected", () => {
+    // GBP is not in this account's list at all — the page must not go empty.
+    const names = allSymbolsForEvent("GBP", ["XAUUSDm", "BTCUSDm"]);
+    expect(names).toEqual(catalogForEvent("GBP"));
+    expect(names).toContain("GBPUSD");
+    expect(names).toContain("EURGBP");
+  });
+
+  it("falls back to the two USD directions for a currency with no catalog", () => {
+    expect(catalogForEvent("ZAR")).toEqual(["ZARUSD", "USDZAR"]);
   });
 });

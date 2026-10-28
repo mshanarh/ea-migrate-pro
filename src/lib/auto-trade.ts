@@ -2576,8 +2576,17 @@ export type SignalOrderResult = {
   orders: SignalOrderFill[];
 };
 
-/** The order comment on a news-signal trade (brokers are free to rewrite it). */
-const SIGNAL_ORDER_COMMENT = "EA Migrate news signal";
+/**
+ * THE ORDER COMMENT ON AN ANALYSED SIGNAL — and why the caller now chooses it.
+ *
+ * Fundamentals sends "Ea migrate news", because a release-driven order is a
+ * news trade and the trader wants that visible in the account history. The
+ * symbols list leaves it out, and the order then carries the ACTIVE ROBOT'S
+ * NAME — the same comment a trade this bot placed itself would have. This
+ * constant is only the last-resort default (unset/blank comment), never the
+ * news wording on a bot trade.
+ */
+const SIGNAL_ORDER_COMMENT = "EA Migrate";
 
 const normalizeSignalSymbol = (value: string) => value.toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -2620,6 +2629,14 @@ export async function executeAnalysedSignal(options: {
   trades: number;
   stopLoss: number;
   takeProfit: number;
+  /**
+   * THE MT5 COMMENT TO SEND — the caller owns it.
+   *
+   * Fundamentals passes "Ea migrate news"; the symbols list passes the active
+   * robot's name so the order reads exactly like a bot trade. Blank/absent
+   * falls back to the neutral default below, never to the news wording.
+   */
+  comment?: string | undefined;
 }): Promise<SignalOrderResult> {
   const orders: SignalOrderFill[] = [];
   const trades = Math.max(1, Math.min(Math.floor(options.trades), 20));
@@ -2691,6 +2708,11 @@ export async function executeAnalysedSignal(options: {
 
   // 3. One order per requested trade, at the analysed side and levels. Each
   //    fill is recorded only with MT5's own ticket and price.
+  //
+  // THE COMMENT IS THE CALLER'S, resolved once so every leg of the batch reads
+  // the same in the broker's history: "Ea migrate news" from Fundamentals, the
+  // active robot's name from anywhere else.
+  const orderComment = (options.comment ?? "").trim() || SIGNAL_ORDER_COMMENT;
   let firstError: string | null = null;
   for (let i = 0; i < trades; i++) {
     try {
@@ -2699,7 +2721,7 @@ export async function executeAnalysedSignal(options: {
         volume: lotSize,
         stopLoss: options.stopLoss,
         takeProfit: options.takeProfit,
-        comment: SIGNAL_ORDER_COMMENT,
+        comment: orderComment,
       });
       // A fill that came back sided the other way is reported as a mismatch,
       // never as a confirmed trade in the analysed direction.

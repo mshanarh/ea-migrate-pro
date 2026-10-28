@@ -48,6 +48,23 @@ export type AnalyzedSignal = {
 /** The analysis is only executable for this long after it was produced. */
 export const ANALYSIS_MAX_AGE_MS = 5 * 60 * 1000;
 
+/**
+ * THE BOT NAME THIS DEVICE WOULD PLACE A TRADE UNDER.
+ *
+ * A trade started from a symbol page is the same trade the bot would send, so
+ * it must carry the same MT5 comment: the ACTIVE ROBOT'S NAME. Only
+ * Fundamentals is allowed to say otherwise, because an economic-release order
+ * is a different thing and the trader asked for it to be recognisable.
+ *
+ * Falls back to the app's own name when no robot is active — never to an empty
+ * comment, which some brokers reject outright.
+ */
+function activeRobotName(): string {
+  const state = getAppState();
+  const active = state.robots.find((robot) => robot.id === state.activeRobotId);
+  return (active?.name ?? "").trim() || "EA Migrate";
+}
+
 export function formatPrice(value: number | null | undefined, digits?: number | null): string {
   if (value == null || !Number.isFinite(value) || value === 0) return "—";
   if (typeof digits === "number" && digits >= 0 && digits <= 8) return value.toFixed(digits);
@@ -102,6 +119,17 @@ export type AnalyzeExecuteCardProps = {
   eventRead?: { currency: string; direction: "BUY" | "SELL" } | null | undefined;
   /** Which event day the read belongs to, shown on the card. */
   eventLabel?: string | undefined;
+  /**
+   * THE MT5 ORDER COMMENT FOR THIS ENTRY POINT.
+   *
+   * Fundamentals passes "Ea migrate news" — a news-event order is identifiable
+   * as such in the broker's history, by the trader's own request. Everywhere
+   * else it is left out and the order carries the ACTIVE ROBOT'S NAME, exactly
+   * like a trade the bot placed itself (see `activeRobotName`). One card, two
+   * entry points, two honest comments: the account's history never claims a
+   * news trade was a bot trade, or the other way round.
+   */
+  orderComment?: string | undefined;
   /** Called once per finished batch, with MT5's confirmed fills. */
   onResult?: ((result: FundamentalsOrderResult, signal: AnalyzedSignal) => void) | undefined;
 };
@@ -114,6 +142,7 @@ export function AnalyzeExecuteCard({
   contextLabel,
   eventRead,
   eventLabel,
+  orderComment,
   onResult,
 }: AnalyzeExecuteCardProps) {
   const [signal, setSignal] = useState<AnalyzedSignal | null>(null);
@@ -326,6 +355,9 @@ export function AnalyzeExecuteCard({
         trades: tradesValue,
         stopLoss: signal.stopLoss,
         takeProfit: signal.takeProfit1,
+        // Fundamentals: "Ea migrate news". Everywhere else: the robot's name,
+        // exactly as a bot-placed order carries it.
+        comment: (orderComment ?? "").trim() || activeRobotName(),
       });
       setResult(reply);
       if (!reply.ok) setFormError(reply.message);

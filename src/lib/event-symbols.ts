@@ -151,6 +151,100 @@ export function symbolsForEvent(currency: string, allowed: readonly string[]): s
     .map((entry) => entry.symbol);
 }
 
+/**
+ * EVERY NAME THE EVENT'S CURRENCY IS LISTED IN — the standard broker
+ * spellings, independent of what Allowed Quotes happens to hold.
+ *
+ * An event does not only move the pairs somebody already added to their list.
+ * A USD release moves EURUSD, GBPUSD, USDJPY, gold, oil, bitcoin and the US
+ * indices whether or not this account trades them; a GBP release moves cable,
+ * EURGBP, the GBP crosses and UK100. The page is asked to show the names the
+ * EVENT supports, so this catalog is the source for that list, and
+ * `symbolsForEvent` above stays the source for "which of MINE does it move".
+ *
+ * A name only ever reaches a broker through the bridge, which resolves the
+ * account's own spelling (XAUUSDm, EURUSD.a) by prefix — see
+ * bridgeSymbolCandidates. A broker that does not list one of these simply
+ * refuses that leg, and the card reports the refusal in the broker's words.
+ */
+const CATALOG: Record<string, readonly string[]> = {
+  USD: [
+    "EURUSD", "GBPUSD", "USDJPY", "USDCHF", "USDCAD", "AUDUSD", "NZDUSD",
+    "USDCNH", "USDZAR", "USDMXN", "USDTRY", "USDSEK", "USDNOK", "USDPLN",
+    "USDSGD", "USDHKD",
+    "XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD",
+    "BTCUSD", "ETHUSD", "USOIL", "UKOIL",
+    "US30", "NAS100", "SPX500", "US2000",
+  ],
+  EUR: ["EURUSD", "EURGBP", "EURJPY", "EURCHF", "EURCAD", "EURAUD", "EURNZD", "GER40", "DE40", "EU50", "FRA40"],
+  GBP: ["GBPUSD", "EURGBP", "GBPJPY", "GBPCHF", "GBPCAD", "GBPAUD", "GBPNZD", "UK100"],
+  JPY: ["USDJPY", "EURJPY", "GBPJPY", "AUDJPY", "NZDJPY", "CADJPY", "CHFJPY", "JP225"],
+  AUD: ["AUDUSD", "EURAUD", "GBPAUD", "AUDJPY", "AUDCAD", "AUDCHF", "AUDNZD", "AUS200"],
+  NZD: ["NZDUSD", "EURNZD", "GBPNZD", "NZDJPY", "AUDNZD", "NZDCAD", "NZDCHF"],
+  CAD: ["USDCAD", "EURCAD", "GBPCAD", "CADJPY", "AUDCAD", "NZDCAD", "CADCHF"],
+  CHF: ["USDCHF", "EURCHF", "GBPCHF", "CHFJPY", "AUDCHF", "CADCHF", "NZDCHF", "SWI20"],
+  CNY: ["USDCNH", "CHINA50"],
+  HKD: ["USDHKD", "HK50"],
+};
+
+/**
+ * The names the currency is quoted in, in broker-standard spelling.
+ *
+ * A currency with no hand-written entry still answers honestly: the two
+ * directions against USD are the symbols brokers list for it.
+ */
+export function catalogForEvent(currency: string): string[] {
+  const wanted = currency.trim().toUpperCase();
+  if (!wanted) return [];
+  const known = CATALOG[wanted];
+  if (known) return [...known];
+  return [`${wanted}USD`, `USD${wanted}`];
+}
+
+/**
+ * ALL THE NAMES THIS EVENT SUPPORTS — this account's own pairs first (they are
+ * already in Allowed Quotes and carry the event's side), then every other name
+ * the currency is listed in.
+ *
+ * `symbolsForEvent` answers "which of MY quotes does this move"; this answers
+ * "what does this event move", which is what the Fundamentals list shows. The
+ * two are kept as separate questions so neither one can silently become the
+ * other.
+ */
+/**
+ * THE INSTRUMENT, NOT THE SPELLING — so XAUUSDm and XAUUSD are one entry.
+ *
+ * A broker appends its own suffix (XAUUSDm, EURUSD.a, US30m). Deduping on the
+ * raw string would list the same instrument twice the moment the account's own
+ * pair and the standard catalog name differ by a suffix; deduping on the real
+ * legs keeps one row per instrument, and it is the account's own spelling that
+ * survives.
+ */
+function instrumentKey(symbol: string): string {
+  const legs = legsOf(symbol);
+  if (legs) return `${legs.base}|${legs.quote}`;
+  return symbol.trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+export function allSymbolsForEvent(currency: string, allowed: readonly string[]): string[] {
+  const own = symbolsForEvent(currency, allowed);
+  const seen = new Set(own.map(instrumentKey));
+  const rest: string[] = [];
+  for (const symbol of catalogForEvent(currency)) {
+    const key = instrumentKey(symbol);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    rest.push(symbol);
+  }
+  return [...own, ...rest];
+}
+
+/** True when this symbol came from this account's Allowed Quotes. */
+export function isAllowedSymbol(symbol: string, allowed: readonly string[]): boolean {
+  const wanted = symbol.trim().toUpperCase();
+  return allowed.some((entry) => entry.trim().toUpperCase() === wanted);
+}
+
 /** The opposite side. */
 const flip = (direction: "BUY" | "SELL"): "BUY" | "SELL" => (direction === "BUY" ? "SELL" : "BUY");
 

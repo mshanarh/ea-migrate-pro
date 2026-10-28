@@ -6,7 +6,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { getAppState, useAppState } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { AnalyzeExecuteCard } from "@/components/app/AnalyzeExecuteCard";
-import { sideForCurrency, symbolsForEvent } from "@/lib/event-symbols";
+import { allSymbolsForEvent, isAllowedSymbol, sideForCurrency } from "@/lib/event-symbols";
 import type { CalendarEvent, CalendarReply } from "@/lib/news.server";
 import { useTradingPairsStore } from "@/lib/trading-pairs-store";
 
@@ -284,11 +284,14 @@ function FundamentalsPage() {
     () => (selected && calendar.length > 0 ? resolveRelease(selected, calendar) : null),
     [selected, calendar],
   );
-  // EVERY Allowed Quote this event's currency acts on — read from the symbol's
-  // real legs (see event-symbols), so a USD event offers EURUSD, GBPUSD,
-  // USDJPY, XAUUSD and US30 instead of gold alone.
+  // EVERY NAME THIS EVENT IS QUOTED IN — not only the pairs already on this
+  // account's list. The Allowed Quotes come first (they are the ones that carry
+  // a side straight from the event day and are certainly tradeable), then every
+  // other standard spelling the currency is listed in (see event-symbols), so a
+  // USD release offers EURUSD, GBPUSD, USDJPY, gold, oil, bitcoin and the US
+  // indices instead of one or two names.
   const symbols = useMemo(
-    () => (selected ? symbolsForEvent(selected.currency, allowedSymbols) : []),
+    () => (selected ? allSymbolsForEvent(selected.currency, allowedSymbols) : []),
     [selected, allowedSymbols],
   );
   /** event currency → the side it fixes for each affected pair (or null). */
@@ -479,9 +482,10 @@ function FundamentalsPage() {
                   <p className="mt-3 text-[12px] text-white/55">{release.detail}</p>
                 </div>
 
-                {/* PAIRS THAT SUPPORT THIS EVENT — every Allowed Quote the
-                    event's currency acts on, and the side that currency fixes
-                    for each. Tap the one to trade: that choice is what Analyze
+                {/* PAIRS THAT SUPPORT THIS EVENT — every name the event's
+                    currency is quoted in (the account's own quotes first, then
+                    the standard catalog), and the side that currency fixes for
+                    each. Tap the one to trade: that choice is what Analyze
                     below runs on, and it stays yours to change. */}
                 <div className={CARD}>
                   <p className={HEADING}>Pairs for this event</p>
@@ -502,17 +506,18 @@ function FundamentalsPage() {
                   )}
                   {symbols.length === 0 ? (
                     <p className="mt-2 text-[12px] text-amber-200">
-                      No Allowed Quote is affected by {release.event.currency} — add one on the Quotes page.
+                      No known pair is affected by {release.event.currency} — add one on the Quotes page.
                     </p>
                   ) : (
                     <>
                       <p className="mt-2 text-[11px] font-bold uppercase tracking-[0.16em] text-white/35">
-                        Choose the pair to analyze
+                        All {symbols.length} names this event supports · choose one to analyze
                       </p>
                       <div className="mt-1.5 space-y-1.5">
                         {symbols.map((symbol) => {
                           const side = sideFor(symbol);
                           const chosen = (selectedSymbol ?? symbols[0]) === symbol;
+                          const mine = isAllowedSymbol(symbol, allowedSymbols);
                           return (
                             <button
                               key={symbol}
@@ -524,7 +529,14 @@ function FundamentalsPage() {
                                   : "border-transparent bg-white/[0.04]"
                               }`}
                             >
-                              <span className="text-[12px] font-bold text-white/85">{symbol}</span>
+                              <span className="flex items-center gap-1.5 text-[12px] font-bold text-white/85">
+                                {symbol}
+                                {mine ? (
+                                  <span className="rounded bg-white/10 px-1 py-0.5 text-[8px] font-black uppercase tracking-[0.1em] text-white/45">
+                                    allowed
+                                  </span>
+                                ) : null}
+                              </span>
                               {side ? (
                                 <span
                                   className="shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-black"
@@ -558,6 +570,9 @@ function FundamentalsPage() {
                     symbol={analysisSymbol}
                     defaultLot={app.settings.lotSize ?? "0.01"}
                     defaultTrades="1"
+                    // NEWS ORDERS CARRY THE NEWS COMMENT — see the card's
+                    // orderComment. The bot's own trades keep the robot name.
+                    orderComment="Ea migrate news"
                     contextLabel={`Analyze · ${release.event.label}`}
                     eventRead={eventRead}
                     eventLabel={`${release.event.label} · ${release.event.currency}${
