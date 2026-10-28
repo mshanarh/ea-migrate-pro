@@ -5,6 +5,9 @@ import { toast } from "sonner";
 import { AlertTriangle, ChevronDown, ChevronsRight, Clock, Database, Eye, EyeOff, Fingerprint, Lock, RefreshCw, ShieldCheck, User } from "lucide-react";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
+import { EaConfigNote } from "@/components/app/EaConfigNote";
+import { ScalperStatusStrip } from "@/components/app/ScalperStatusStrip";
+import { useScalperDaemonStatus } from "@/lib/use-scalper-status";
 import { connectMt, disconnectMt, getAppState, leaveForCheckout, useAppState, type MtAccount } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
@@ -384,6 +387,11 @@ function AppMetatrader() {
   const isIos = platform === "ios";
   const mt = app.mt;
   const navigate = useNavigate();
+  // The full scalper-daemon detail lives HERE now (the home screen keeps only a
+  // tiny pill): the same GET /scalper/status poll, the STATUS button and the
+  // daemon's last line. The symbols strip's REFRESH reads the server config by
+  // licence key, exactly as it did on the home screen.
+  const { status: daemonStatus, error: daemonError, refresh: refreshDaemon } = useScalperDaemonStatus();
 
   // Full-screen staged verification overlay (CONNECT ACCOUNT → syncing…).
   const [sync, setSync] = useState<SyncState | null>(null);
@@ -806,6 +814,21 @@ function AppMetatrader() {
               {online ? "ONLINE" : "OFFLINE"}
             </span>
           </motion.header>
+
+          {/* THE SCALPER DAEMON — moved off the home screen: its symbols strip,
+              STATUS button and last log line live here, unchanged. */}
+          <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-4">
+            <p className="if-muted text-xs font-bold tracking-[0.3em] uppercase">Scalper &amp; robot config</p>
+            <div className="mt-2 flex flex-col gap-3">
+              <EaConfigNote />
+              <ScalperStatusStrip
+                status={daemonStatus}
+                error={daemonError}
+                busy={false}
+                onRefresh={refreshDaemon}
+              />
+            </div>
+          </motion.section>
 
           <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-5">
             <div className="flex items-center justify-between">

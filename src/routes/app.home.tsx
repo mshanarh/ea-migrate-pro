@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createFileRoute, redirect, useNavigate, useRouter, type ErrorComponentProps } from "@tanstack/react-router";
 import { toast } from "sonner";
 import {
@@ -14,7 +14,7 @@ import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
-import { EaConfigNote } from "@/components/app/EaConfigNote";
+
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, setRobotVideo, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
@@ -28,13 +28,12 @@ import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirec
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
 import {
-  fetchScalperStatus,
   planFromAllowedQuotes,
   startScalperOnBridge,
   stopScalperOnBridge,
-  type ScalperDaemonStatus,
 } from "@/lib/scalper-bridge";
-import { ScalperStatusStrip } from "@/components/app/ScalperStatusStrip";
+import { ScalperStatusPill } from "@/components/app/ScalperStatusPill";
+import { getActiveRunKind, setActiveRunKind, useScalperDaemonStatus } from "@/lib/use-scalper-status";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -334,16 +333,15 @@ function AppHome() {
   const [modeOpen, setModeOpen] = useState(false);
   const [botMode, setBotMode] = useState<BotMode>(() => readBotMode());
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
-  // WHICH RUN OWNS THE START BUTTON — "scalper" is the VPS daemon, "normal" is
-  // the browser loop. A ref because only the handlers and the status poll read it.
-  const runKindRef = useRef<"scalper" | "normal" | null>(null);
-  const [daemonStatus, setDaemonStatus] = useState<ScalperDaemonStatus | null>(null);
-  const [daemonError, setDaemonError] = useState<string | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
   // A per-key video lookup is in flight — the play button must not fire twice.
   const [videoLookupBusy, setVideoLookupBusy] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+  // THE DAEMON'S REAL STATE — polled every 10 s and on focus, and it corrects
+  // the START/STOP button when the VPS disagrees. The home screen only shows a
+  // tiny pill; the full detail lives on the MetaTrader screen.
+  const { status: daemonStatus, error: daemonError, refresh: refreshDaemon } = useScalperDaemonStatus();
 
   useEffect(() => {
     // The mentor's LOCAL store (empty on a client phone) and the REAL server
@@ -432,47 +430,6 @@ function AppHome() {
       window.removeEventListener("pageshow", throttled);
     };
   }, [app.email]);
-
-  /**
-   * THE DAEMON IS THE TRUTH.
-   *
-   * Scalper mode lives on the VPS, so the start/stop button follows
-   * GET /scalper/status instead of a local flag that outlives the run. While a
-   * Normal (browser) run is in progress the button belongs to that run and this
-   * sync stays out of its way.
-   */
-  const readDaemon = useCallback(async () => {
-    const result = await fetchScalperStatus();
-    if (!result.ok) {
-      setDaemonStatus(null);
-      setDaemonError(result.error);
-      return;
-    }
-    setDaemonStatus(result.status);
-    setDaemonError(null);
-    if (runKindRef.current === "normal") return;
-    const state = getAppState();
-    const target =
-      state.robots.find((candidate) => candidate.id === state.activeRobotId) ?? state.robots[0];
-    if (!target || target.running === result.status.running) return;
-    toggleRobot(target.id);
-  }, []);
-
-  useEffect(() => {
-    void readDaemon();
-    const poll = window.setInterval(() => {
-      if (document.visibilityState !== "visible") return;
-      void readDaemon();
-    }, 10_000);
-    const onVisible = () => {
-      if (document.visibilityState === "visible") void readDaemon();
-    };
-    document.addEventListener("visibilitychange", onVisible);
-    return () => {
-      window.clearInterval(poll);
-      document.removeEventListener("visibilitychange", onVisible);
-    };
-  }, [readDaemon]);
 
   /**
    * THE KEY'S VIDEO IS FETCHED QUIETLY ONCE PER ROBOT.
@@ -740,7 +697,7 @@ function AppHome() {
   const stopRun = async (target: Robot) => {
     if (scalperBusy) return;
     const kind: "scalper" | "normal" =
-      runKindRef.current ?? (scalpRef.current ? "normal" : "scalper");
+      getActiveRunKind() ?? (scalpRef.current ? "normal" : "scalper");
     console.info(`[bot] STOP pressed — halting the ${kind} run`);
     scalpRef.current?.stop();
     scalpRef.current = null;
@@ -757,16 +714,16 @@ function AppHome() {
         // The daemon may still be cycling — say so instead of clearing the button.
         console.warn(`[scalper] stop failed: ${result.error}`);
         toast.error("Could not stop the scalper daemon", { description: result.error });
-        void readDaemon();
+        refreshDaemon();
         return;
       }
     }
-    runKindRef.current = null;
+    setActiveRunKind(null);
     if (target.running) toggleRobot(target.id);
     window.showBotStarted?.(target.name, "stopped");
     // "Bot stopped" — no outcome is claimed for the positions that stay open.
     notifyBotStopped();
-    void readDaemon();
+    refreshDaemon();
   };
 
   const handleStart = () => {
@@ -895,11 +852,11 @@ function AppHome() {
       toast.error("Scalper did not start", { description: result.error });
       return;
     }
-    runKindRef.current = "scalper";
+    setActiveRunKind("scalper");
     if (!target.running) toggleRobot(target.id);
     window.showBotStarted?.(target.name, "started");
     notifyBotStarted("scalper", result.symbols);
-    await readDaemon();
+    refreshDaemon();
     toast.success(`${target.name} — Scalper started on the VPS daemon`, {
       description: `${result.symbols.join(", ")} · ${result.lot} × ${result.trades}. The daemon trades; the app only starts, stops and monitors it.`,
     });
@@ -920,7 +877,7 @@ function AppHome() {
       void startScalper(robot);
       return;
     }
-    runKindRef.current = "normal";
+    setActiveRunKind("normal");
     toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
     runBotLoop(robot, mode);
@@ -1007,15 +964,12 @@ function AppHome() {
     >
       <div className="app-scroll-area">
         <main className="flex w-full flex-col gap-4 pt-safe pb-safe-nav">
-          <EaConfigNote className="pt-1" />
-          {/* THE DAEMON'S REAL STATE — read from GET /scalper/status, never a
-              local flag. Scalper mode trades on the VPS, not in this tab. */}
-          <ScalperStatusStrip
-            status={daemonStatus}
-            error={daemonError}
-            busy={scalperBusy}
-            onRefresh={() => void readDaemon()}
-          />
+          {/* ONE QUIET INDICATOR. The symbols strip, the STATUS button and the
+              daemon's log line moved to the Metatrader screen — the polling
+              itself is unchanged (see useScalperDaemonStatus). */}
+          <div className="flex justify-end px-3 pt-1">
+            <ScalperStatusPill status={daemonStatus} error={daemonError} />
+          </div>
           <ThemeContent
             robot={robot}
             robots={app.robots}
