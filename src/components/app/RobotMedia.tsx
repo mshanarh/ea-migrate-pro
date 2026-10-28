@@ -54,7 +54,15 @@ function usePlayableVideo(video: string | undefined) {
 function useEnsurePlaying(active: boolean, playableSrc: string | undefined) {
   const videoRef = useRef<HTMLVideoElement>(null);
   useEffect(() => {
-    if (!active || !playableSrc) return;
+    // Pause the video when deactivating
+    if (!active) {
+      const el = videoRef.current;
+      if (el && !el.paused) {
+        el.pause();
+      }
+      return;
+    }
+    if (!playableSrc) return;
     const el = videoRef.current;
     if (!el) return;
     let cancelled = false;
