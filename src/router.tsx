@@ -88,8 +88,9 @@ export const getRouter = () => {
     // NOTE ON THE 8-SECOND GUARANTEE: `defaultSplashMs` /
     // `defaultSplashTimeoutMs` are NOT options in @tanstack/react-router
     // 1.170 — passing them is rejected by the type checker and ignored at
-    // runtime, so the hard stop lives in the timeout below, which forces the
-    // app into /app/login if the first navigation has not resolved.
+    // runtime. The hard stop therefore lives in the boot path, where it can
+    // produce a real screen: the gate's own deadline (see below) and the
+    // inline watchdog in __root.tsx. Nothing here reloads the page.
   });
 
   /**
@@ -103,20 +104,25 @@ export const getRouter = () => {
    * a genuinely empty first paint.
    */
   let paintedOnce = false;
-  // HARD 8-SECOND GUARANTEE — even if the cloud never answers, the splash
-  // must never hang forever. A timeout after first paint forces the app into
-  // /app/login so the person is never stuck on Loading past the first frame.
-  const splashTimeout = setTimeout(() => {
-    try {
-      window.location.replace("/app/login");
-    } catch {
-      /* a container that refuses to navigate — the route guards still hold */
-    }
-  }, 8_000);
+  /**
+   * NO RELOAD WATCHDOG HERE — IT USED TO MAKE THE SPLASH PERMANENT.
+   *
+   * This used to `window.location.replace("/app/login")` after 8s whenever the
+   * first navigation had not resolved. A reload cannot show a retry screen: it
+   * restarts the whole boot, so a gate that legitimately needed longer than 8s
+   * (the access check alone is allowed up to 15s, and the device-binding read
+   * after it another 15s) was cut off at 8s, reloaded, and cut off again — the
+   * black "Loading…" splash, forever, with no state that could ever recover.
+   *
+   * The 8s guarantee lives where it can actually produce a screen instead:
+   * `requireVerifiedAccess` resolves with its `retry` verdict on a deadline
+   * (BOOT_ACCESS_DEADLINE_MS in @/lib/payment-gate), so the guard lands on
+   * /app/login with the retry line, and the inline boot watchdog in __root.tsx
+   * replaces the splash if the bundle itself never gets as far as rendering.
+   */
   const stopWatching = router.subscribe("onResolved", () => {
     if (paintedOnce) return;
     paintedOnce = true;
-    clearTimeout(splashTimeout);
     stopWatching();
     try {
       router.update({ ...router.options, defaultPendingMs: Infinity });

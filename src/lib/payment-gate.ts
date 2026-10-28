@@ -108,8 +108,33 @@ export type CloudAccess = "admin" | "paid" | "unpaid" | "revoked";
  * customer to choose a plan because a store was down is exactly the bug this
  * closes.
  */
-export const VERIFY_RETRY_MESSAGE =
-  "We could not verify your subscription right now, please try again.";
+export const VERIFY_RETRY_MESSAGE = "Could not verify access. Tap RETRY to try again.";
+
+/**
+ * THE BOOT DEADLINE — THE STARTUP MUST RESOLVE IN 8 SECONDS, ALWAYS.
+ *
+ * The door is a chain of network calls (the access check, then a device-binding
+ * read, then a binding write). Each one is allowed up to 15s of its own, so a
+ * slow store could keep the first navigation pending for half a minute — the
+ * black "Loading…" splash, with nothing on screen to act on. This is the hard
+ * ceiling on that: whatever stage the chain has reached at 8s, the guard gets
+ * an answer it can act on.
+ *
+ * A deadline is answered `retry` — NEVER `pay`, `signin` or `deactivate`: we did
+ * not learn that anybody has not paid, only that we could not ask. The route
+ * guards put that on the sign-in screen as the retry line, so the person is
+ * always looking at something they can press.
+ *
+ * The in-flight work is NOT cancelled — it keeps running and fills the gate's
+ * cache, so the RETRY press finds the answer already waiting.
+ */
+export const BOOT_ACCESS_DEADLINE_MS = 8_000;
+
+const RETRY_VERDICT: AppAccessCheck = {
+  action: "retry",
+  message: VERIFY_RETRY_MESSAGE,
+  undecided: true,
+};
 
 export type AppAccessCheck = {
   action: "pass" | "signin" | "pay" | "deactivate" | "retry";
@@ -595,27 +620,9 @@ export async function retryStoreFetchOnce< T>(fetchFn: () => Promise<T>): Promis
 
 /**
  * LOG ALL STORE VERDICTS for one email, in the exact order the access check
- * consults them. Returns an array of {store, verdict, success} objects so the
- * caller can compose the final answer.
- {
-  try {
-    await new Promise((resolve) => setTimeout(resolve, delayMs));
-    try {
-      const result = await fetchFn();
-      return { success: true, value: result };
-    } catch (error: any) {
-      console.warn("[ACCESS_CHECK] retry fetch failed:", error);
-      return { success: false, value: null };
-    }
-  } catch {
-    return { success: false, value: null };
-  }
-}
-
-/**
- * LOG ALL STORE VERDICTS for one email, in the exact order the access check
- * consults them. Returns an array of {store, verdict, success} objects so the
- * caller can compose the final answer.
+ * consults them. (A merge once left a duplicate body of `retryFetchOnce`
+ * stranded inside this comment block, with no terminator before it — the dead
+ * code is gone and the comment is a comment again.)
  */
 
 /**
@@ -905,6 +912,14 @@ export async function requireVerifiedAccess(
   email: string | null,
   options?: { fresh?: boolean },
 ): Promise<AppAccessCheck> {
+  return withAccessDeadline(resolveVerifiedAccess(email, options));
+}
+
+/** The gate's own work — always wrapped by the deadline above. */
+async function resolveVerifiedAccess(
+  email: string | null,
+  options?: { fresh?: boolean },
+): Promise<AppAccessCheck> {
   const start = Date.now();
   // STALE SESSION KICK — runs BEFORE anything else. A session cached under the
   // previous access rules is not trusted at all: it is signed out here and the
@@ -1039,6 +1054,31 @@ export async function requireVerifiedAccess(
   // asks again quietly), while `undecided` is kept so the guards can still tell
   // "we could not ask" from the ledger's positive "this email never paid".
   return { action: "retry", message: VERIFY_RETRY_MESSAGE, undecided: true };
+}
+
+/**
+ * RACE THE GATE AGAINST ITS OWN CEILING — see BOOT_ACCESS_DEADLINE_MS.
+ *
+ * A rejection and a slow answer are answered the same way: `retry`. Neither
+ * says anything about the account, so neither may be read as a refusal.
+ */
+function withAccessDeadline(work: Promise<AppAccessCheck>): Promise<AppAccessCheck> {
+  return new Promise<AppAccessCheck>((resolve) => {
+    let settled = false;
+    const finish = (verdict: AppAccessCheck) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(verdict);
+    };
+    const timer = setTimeout(() => {
+      console.warn(
+        `[payment-gate] access check exceeded ${BOOT_ACCESS_DEADLINE_MS}ms — answering retry so the splash can resolve`,
+      );
+      finish(RETRY_VERDICT);
+    }, BOOT_ACCESS_DEADLINE_MS);
+    work.then(finish, () => finish(RETRY_VERDICT));
+  });
 }
 
 /**

@@ -53,6 +53,47 @@ const PLATFORM_PREPAINT_SCRIPT = `
       navigator.serviceWorker.register("/sw.js").catch(function () {});
     }
   } catch (e) {}
+  // BOOT WATCHDOG — THE SPLASH MAY NEVER BE THE LAST THING ON SCREEN.
+  //
+  // The SPA shell ships with the router's pending splash painted in the
+  // static HTML, so ANY failure before the first render left that black
+  // "Loading…" card sitting there forever with nothing to press. A reload
+  // cannot fix that either — it just shows the same card again.
+  //
+  // The app stamps data-app-boot on <html> the moment it mounts (see
+  // RootComponent). If, 8 seconds later, that stamp is still missing (the
+  // bundle threw on import, a chunk 404'd, the gate never answered), this
+  // replaces the splash with a retry card. location.reload() re-fetches the
+  // document, so a stale chunk or a transient failure is recoverable by hand.
+  //
+  // This grants nothing: it is a message and a button, never a way into the app.
+  try {
+    var bootWatchdog = setTimeout(function () {
+      try {
+        var html = document.documentElement;
+        if (!html || html.getAttribute("data-app-boot") === "1") return;
+        document.body.innerHTML =
+          '<div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#000;color:#fff;font-family:system-ui,sans-serif;padding:24px;text-align:center">' +
+          '<img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);object-fit:contain;padding:4px"/>' +
+          '<p style="margin:0;font-size:16px;font-weight:600">Could not verify access</p>' +
+          '<p style="margin:0;font-size:13px;line-height:1.5;color:rgba(255,255,255,.6);max-width:320px">The app did not finish starting. Check your connection, then tap retry.</p>' +
+          '<button id="eamp-boot-retry" type="button" style="margin-top:4px;border:0;border-radius:999px;background:#fff;color:#000;font-size:13px;font-weight:800;letter-spacing:.08em;padding:12px 28px">TAP TO RETRY</button>' +
+          "</div>";
+        var retry = document.getElementById("eamp-boot-retry");
+        if (retry) {
+          retry.onclick = function () {
+            try {
+              window.location.reload();
+            } catch (e) {}
+          };
+        }
+      } catch (e) {}
+    }, 8000);
+    // A boot that is merely slow must not lose its watchdog when the module
+    // graph finally runs: the stamp check above means a mounted app is left
+    // alone, and an unmounted one gets the card exactly once.
+    void bootWatchdog;
+  } catch (e) {}
   // Runtime error reporting: in the Android wrapper the page's crashes are
   // forwarded to logcat via the EAMigrate bridge so a black screen is never
   // undiagnosable; elsewhere they land in the console.
@@ -279,6 +320,16 @@ function RootComponent() {
   const shellScope = shellScopeFor(pathname);
   const portalShell = shellScope === "portal";
   const appShell = shellScope === "app";
+
+  // TELL THE SHELL'S BOOT WATCHDOG THIS APP ACTUALLY RENDERED.
+  // The inline script in PLATFORM_PREPAINT_SCRIPT replaces the pre-rendered
+  // splash with a retry card if this stamp is still missing after 8s (see the
+  // comment there). Setting it here — on the very first mount, before any
+  // route guard has answered — keeps a legitimately slow access check on the
+  // router's own splash, which resolves into the app or the sign-in screen.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-app-boot", "1");
+  }, []);
 
   // Re-apply the persisted Colour Matrix body class on every mount/route load.
   useEffect(() => {
