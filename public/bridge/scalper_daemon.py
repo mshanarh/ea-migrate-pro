@@ -94,6 +94,34 @@ DAEMON_VERSION = "2.3"
 _log_lines: list[str] = []
 
 
+def _read_state() -> dict:
+    """Read the state file, ensuring ea_name is always present."""
+    try:
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        # Ensure ea_name exists for comment generation
+        if "ea_name" not in data:
+            data["ea_name"] = "EA Migrate batch"
+        return data
+    except Exception:
+        return {
+            "running": False, "symbol": "BTCUSDm", "lot": 0.01,
+            "trade_count": 1, "ea_name": "EA Migrate batch",
+            "started_at": None, "stopped_at": None, "positions": {},
+            "log": [],
+        }
+
+
+def _write_state(state: dict) -> None:
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def _ea_name(state: dict) -> str:
+    """Return the EA name from state, falling back to default."""
+    name = state.get("ea_name", "")
+    return name.strip() if name else "EA Migrate batch"
+
+
 def _live_magic_positions(creds) -> list[dict]:
     """Return every open MT5 position the daemon owns (filter by MAGIC).
 
@@ -339,6 +367,18 @@ def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
             return None
         order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
         price = tick.ask if side == "BUY" else tick.bid
+        # Use the EA name from state for the comment, falling back to default
+        state = _read_state()
+        ea_comment = _ea_name(state)
+        # Append direction if needed (e.g. "Apex sniper pro V6+ BUY")
+        direction = ticket_note.strip() if ticket_note else None
+        if ea_comment and ea_comment != "EA Migrate batch" and direction:
+            comment = f"{ea_comment} {direction}"
+        elif ea_comment:
+            comment = ea_comment
+        else:
+            comment = "EA Migrate batch"
+        comment = comment[:31]  # MT5 comment limit
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -347,7 +387,7 @@ def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
             "price": price,
             "deviation": 20,
             "magic": MAGIC,
-            "comment": ticket_note,
+            "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
         }
         result = mt5.order_send(request)
@@ -386,6 +426,11 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
         is_buy = position.type == mt5.POSITION_TYPE_BUY
         order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
         price = tick.bid if is_buy else tick.ask
+        # Use the EA name from state for the close comment
+        state = _read_state()
+        ea_comment = _ea_name(state)
+        close_comment = ea_comment if ea_comment else "EA Migrate batch"
+        close_comment = close_comment[:31]  # MT5 comment limit
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "position": int(position.ticket),
@@ -395,7 +440,7 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
             "price": price,
             "deviation": slippage,
             "magic": MAGIC,
-            "comment": "EA Migrate scalp close",
+            "comment": close_comment,
             "type_time": mt5.ORDER_TIME_GTC,
         }
         result = mt5.order_send(request)
@@ -618,7 +663,7 @@ def run() -> None:
                  f"ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
-            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), s)
+            ticket =_open_trade(creds, s, side, float(step_state.get("lot", 0.01)), side)
             if ticket is None or not ticket.get("filled"):
                 _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
                 continue
@@ -656,7 +701,7 @@ def run() -> None:
                  f"ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
-            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), s)
+            ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), side)
             if ticket is None or not ticket.get("filled"):
                 _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
                 continue

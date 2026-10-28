@@ -297,6 +297,20 @@ class TradeRequest(BaseModel):
     magic: int = 0
 
 
+class ScalperStartRequest(BaseModel):
+    credentials: Credentials
+    symbol: str
+    lot: float = 0.01
+    trade_count: int = 1
+    ea_name: str = ""
+    # Comma-separated symbol list, e.g. "BTCUSDm,ETHUSDm"
+    symbols: str = "BTCUSDm"
+
+
+class ScalperStopRequest(BaseModel):
+    pass
+
+
 @app.post("/trade/execute")
 def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None)):
     check_key(x_bridge_key)
@@ -369,6 +383,75 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
         }
     finally:
         disconnect()
+
+
+@app.post("/scalper/start")
+def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header(None)):
+    check_key(x_bridge_key)
+    account, error = connect(req.credentials)
+    if account is None:
+        disconnect()
+        return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
+    try:
+        # Build the EA comment: use the provided name, append direction if needed
+        ea_name = req.ea_name.strip() if req.ea_name.strip() else "EA Migrate batch"
+        # If direction is provided or can be inferred, append it
+        direction = req.direction.strip() if req.direction and req.direction.strip() else None
+        if direction and ea_name:
+            comment = f"{ea_name} {direction}"
+        elif ea_name:
+            comment = ea_name
+        else:
+            comment = "EA Migrate batch"
+        # Ensure comment fits MT5's 31-char limit
+        comment = comment[:31]
+        # Write the state file so the daemon reads it immediately
+        state = {
+            "running": True,
+            "symbol": req.symbol,
+            "lot": req.lot,
+            "trade_count": req.trade_count,
+            "ea_name": req.ea_name,
+            "symbols": req.symbols,
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "positions": {},
+        }
+        STATE_FILE = Path("./scalper.state.json")
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        # Return the analysis data for the AI Trade Analysis card
+        return {
+            "success": True,
+            "analysis": {
+                "symbol": req.symbol,
+                "direction": direction or "SELL",
+                "entry": None,  # will be filled by the daemon's first trade
+                "sl": None,  # will be filled by the daemon's first trade
+                "tp1": None,  # will be filled by the daemon's first trade
+                "lot": req.lot,
+                "trade_count": req.trade_count,
+                "timeframe": "M15",
+                "status": "Analyzing…",
+            },
+            "comment": comment,
+        }
+    finally:
+        disconnect()
+
+
+@app.post("/scalper/stop")
+def scalper_stop(req: ScalperStopRequest, x_bridge_key: Optional[str] = Header(None)):
+    check_key(x_bridge_key)
+    # Acknowledge immediately - the daemon will stop on its next loop iteration
+    state = {
+        "running": False,
+        "stopped_at": datetime.now(timezone.utc).isoformat(),
+        "positions": {},
+    }
+    STATE_FILE = Path("./scalper.state.json")
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    return {"success": True, "acknowledged": True}
 
 
 class PositionsRequest(BaseModel):
