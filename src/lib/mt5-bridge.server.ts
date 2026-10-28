@@ -524,7 +524,7 @@ export const executeFundamentalsTrades = createServerFn({ method: "POST" })
         volume: lotSize,
         stop_loss: data.stopLoss || 0,
         take_profit: data.takeProfit || 0,
-        comment: "EA Migrate news signal",
+        comment: "Ea migrate news",
       });
       if (result.transportError) {
         orders.push({ index: i + 1, status: "failed", error: result.transportError });
