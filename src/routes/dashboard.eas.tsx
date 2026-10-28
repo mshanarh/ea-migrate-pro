@@ -10,6 +10,7 @@ import { deleteVideoBlob, inlineVideoForCloud, loadVideoUrl, saveVideoBlob, vide
 import { syncRegister } from "@/lib/account-sync.server";
 import { portalRegisterAccount, portalCloudConfigured } from "@/lib/portal-cloud";
 import { updateEaConfigInKv } from "@/lib/license-cloud";
+import { cloudVideoPointer } from "@/lib/ea-video-key";
 
 /**
  * Mirrors the account (EAs + video refs) to the cloud so every device — and
@@ -198,17 +199,26 @@ function ManageEAs() {
                 // list onto every licence key issued for this EA, so clients
                 // see the edit on their next refresh — no new key, no
                 // re-activation, no re-login.
-                void updateEaConfigInKv({
-                  mentorEmail: account.email,
-                  eaId: editingEa.id,
-                  eaName: editingEa.name,
-                  symbols: patch.symbols ?? editingEa.symbols ?? [],
-                  ...(patch.image ? { image: patch.image } : {}),
-                }).then((reply) => {
+                void (async () => {
+                  // THE VIDEO IS WRITTEN WITH THE SYMBOLS. Editing an EA is the
+                  // mentor's chance to link its robot video to every key issued
+                  // for it; the app resolves it by key (src/lib/robot-video.ts).
+                  const videoPointer = await cloudVideoPointer({
+                    id: editingEa.id,
+                    video: patch.video ?? editingEa.video,
+                  }).catch(() => ({}));
+                  const reply = await updateEaConfigInKv({
+                    mentorEmail: account.email,
+                    eaId: editingEa.id,
+                    eaName: editingEa.name,
+                    symbols: patch.symbols ?? editingEa.symbols ?? [],
+                    ...(patch.image ? { image: patch.image } : {}),
+                    ...videoPointer,
+                  });
                   if (reply.enabled && !reply.ok) {
                     console.warn("[eas] live EA config not updated:", reply.error);
                   }
-                });
+                })();
                 toast.success("EA updated");
               }} />
     </div>

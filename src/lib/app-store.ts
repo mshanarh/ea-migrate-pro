@@ -1463,7 +1463,30 @@ export function toggleRobot(id: string) {
   persist();
 }
 
+/**
+ * STORE THE VIDEO THE SERVER RETURNED FOR THIS ROBOT'S KEY.
+ *
+ * Kept on the robot (an `idb-video:` reference or a small data/http URL) so the
+ * play button, the card and the background layer all use it without asking the
+ * server again — the bytes were already fetched by the per-key lookup.
+ */
+export function setRobotVideo(id: string, video: string) {
+  load();
+  const clean = video.trim();
+  if (!clean) return;
+  const robot = state.robots.find((candidate) => candidate.id === id);
+  if (!robot || robot.video === clean) return;
+  state = {
+    ...state,
+    robots: state.robots.map((candidate) =>
+      candidate.id === id ? { ...candidate, video: clean } : candidate,
+    ),
+  };
+  persist();
+}
+
 export function removeRobot(id: string) {
+
   load();
   const robots = state.robots.filter((r) => r.id !== id);
   state = { ...state, activeRobotId: state.activeRobotId === id ? (robots[0]?.id ?? null) : state.activeRobotId, robots };

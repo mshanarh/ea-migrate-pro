@@ -17,11 +17,12 @@ import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { EaConfigNote } from "@/components/app/EaConfigNote";
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
-import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { activateKey, appSignOut, getAppState, hasPendingLicense, refreshRobotConfigs, removeRobot, setActiveRobot, setRobotVideo, syncRobotsFromCloudPortal, syncRobotsFromPortal, toggleRobot, useAppState, type Robot } from "@/lib/app-store";
+import { lookupRobotVideoForKey } from "@/lib/robot-video";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
-import { isVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
+import { isVideoActive, setVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
@@ -339,6 +340,8 @@ function AppHome() {
   const [daemonStatus, setDaemonStatus] = useState<ScalperDaemonStatus | null>(null);
   const [daemonError, setDaemonError] = useState<string | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
+  // A per-key video lookup is in flight — the play button must not fire twice.
+  const [videoLookupBusy, setVideoLookupBusy] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
 
@@ -470,6 +473,28 @@ function AppHome() {
       document.removeEventListener("visibilitychange", onVisible);
     };
   }, [readDaemon]);
+
+  /**
+   * THE KEY'S VIDEO IS FETCHED QUIETLY ONCE PER ROBOT.
+   *
+   * Scalper/no-video aside, the double-tap-HOME background and the card both
+   * read `robot.video`, so waiting for the play button would leave them blank
+   * for a trader who never presses it. One lookup by licence key fills it, and
+   * `robot.video` then short-circuits every later mount.
+   */
+  useEffect(() => {
+    const target = robot;
+    if (!target || target.video) return;
+    let cancelled = false;
+    void (async () => {
+      const lookup = await lookupRobotVideoForKey(target.key);
+      if (cancelled || lookup.status !== "found") return;
+      setRobotVideo(target.id, lookup.video);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [robot?.id, robot?.key, robot?.video]);
 
   if (access !== "ok") return <AccessSplash />;
 
@@ -914,13 +939,45 @@ function AppHome() {
   // matched against the route tree (no more typo'd hrefs landing on the 404)
   // and the navigation stays in the SPA instead of reloading the document.
   const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
-  const handlePlayVideo = () => {
-    if (!robot?.video) {
+  /**
+   * PLAY — AND ASK THE SERVER BEFORE CLAIMING THERE IS NO VIDEO.
+   *
+   * The video belongs to the LICENCE KEY, so a robot with nothing cached asks
+   * the server for it (src/lib/robot-video.ts). Only a server answer that
+   * CONFIRMS this key has no video may show the "your mentor can upload one"
+   * toast; a lookup that could not answer is a retryable error instead.
+   */
+  const playRobotVideo = async (target: Robot) => {
+    if (target.video) {
+      toggleVideoPlayback();
+      toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+      return;
+    }
+    if (videoLookupBusy) return;
+    setVideoLookupBusy(true);
+    const lookup = await lookupRobotVideoForKey(target.key);
+    setVideoLookupBusy(false);
+    if (lookup.status === "unavailable") {
+      // NOT a "no video" claim: the store could not be asked. Retry offered.
+      toast.error("Could not load your robot video", {
+        description: `${lookup.error} Tap Retry.`,
+        duration: 12000,
+        action: { label: "Retry", onClick: () => void playRobotVideo(target) },
+      });
+      return;
+    }
+    if (lookup.status === "none") {
       toast.info("No robot video yet — your mentor can upload one");
       return;
     }
-    toggleVideoPlayback();
-    toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+    setRobotVideo(target.id, lookup.video);
+    setVideoActive(true);
+    toast.success("Playing your video — press HOME twice to stop");
+  };
+
+  const handlePlayVideo = () => {
+    if (!robot) return;
+    void playRobotVideo(robot);
   };
   const handleRemove = () => {
     if (!robot) return;

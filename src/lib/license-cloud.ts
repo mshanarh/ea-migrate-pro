@@ -49,6 +49,10 @@ export type LicencedKey = {
   symbols?: string[];
   /** The EA picture, when it fit under the store's size cap. */
   image?: string;
+  /** The row in the `ea_videos` media store holding this EA's robot video. */
+  videoId?: string;
+  /** A small playable video source (http(s) URL or data URL), when one fits. */
+  video?: string;
   /** When the EA config last changed (issue, or a mentor EA edit). */
   updatedAt?: string;
 };
@@ -65,6 +69,10 @@ export type EaConfigEntry = {
   eaName?: string;
   symbols: string[] | null;
   image?: string;
+  /** The media-store row holding this key's robot video ("ea-<eaId>"). */
+  videoId?: string;
+  /** A small playable video source, when the record carries one directly. */
+  video?: string;
   updatedAt?: string;
 };
 
@@ -168,6 +176,9 @@ export async function issueLicenseKeyInKv(input: {
   expiry?: string;
   symbols?: string[];
   image?: string;
+  /** The EA's robot video, linked to the key from the moment it is issued. */
+  videoId?: string;
+  video?: string;
 }): Promise<KvIssueAnswer> {
   const answer = await post({ action: "issue", ...input });
   if (!answer) return offline({ enabled: false, ok: false });
@@ -255,6 +266,8 @@ export async function updateEaConfigInKv(input: {
   eaName?: string;
   symbols: string[];
   image?: string;
+  videoId?: string;
+  video?: string;
 }): Promise<KvEaUpdateAnswer> {
   const answer = await post({ action: "update-ea", ...input });
   if (!answer) return offline({ enabled: false, ok: false });

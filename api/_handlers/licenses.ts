@@ -82,6 +82,18 @@ export type LicenceRecord = {
   /** The EA picture, when it survived the size cap below. */
   image?: string;
   /**
+   * THE EA'S ROBOT VIDEO, TIED TO THIS KEY.
+   *
+   * A mentor's demo video is far too large for this store, so the record keeps
+   * a POINTER: `videoId` names the row in the `ea_videos` media store that
+   * holds the bytes (id `ea-<eaId>` for a mentor upload), and `video` carries a
+   * small playable source (an http(s) URL, or a data URL under the cap below)
+   * when that is all it takes. Either way the lookup is by LICENCE KEY, so
+   * whoever activates the key gets the video — no device, no mentor session.
+   */
+  videoId?: string;
+  video?: string;
+  /**
    * WHEN this record's EA config last changed (issue, or a mentor EA edit).
    * The app shows it as the "last updated" note and uses it to tell a live
    * server config from a local fallback.
@@ -107,6 +119,12 @@ const CLAIM_PREFIX = "eamp:license-claim:";
  * it.
  */
 const MAX_IMAGE_CHARS = 400_000;
+
+/**
+ * The same cap for an INLINE video source. A real demo video is served through
+ * `videoId` (the media store); this only ever carries a small clip or a URL.
+ */
+const MAX_VIDEO_CHARS = 400_000;
 
 const ACTIONS = [
   "issue",
@@ -183,6 +201,8 @@ async function issue(request: ApiRequest): Promise<{ status: number; body: Recor
   const existing = await readRecord(key);
 
   const imageRaw = text(body["image"], MAX_IMAGE_CHARS + 1);
+  const videoIdRaw = text(body["videoId"], 200);
+  const videoRaw = text(body["video"], MAX_VIDEO_CHARS + 1);
   const symbolsRaw = Array.isArray(body["symbols"])
     ? (body["symbols"] as unknown[])
         .filter((symbol): symbol is string => typeof symbol === "string")
@@ -206,6 +226,9 @@ async function issue(request: ApiRequest): Promise<{ status: number; body: Recor
   if (symbolsRaw.length > 0) record.symbols = symbolsRaw;
   // Only keep a picture that fits under the request-size cap (see above).
   if (imageRaw && imageRaw.length <= MAX_IMAGE_CHARS) record.image = imageRaw;
+  // THE VIDEO TRAVELS WITH THE KEY from the moment it is issued.
+  if (videoIdRaw) record.videoId = videoIdRaw;
+  if (videoRaw && videoRaw.length <= MAX_VIDEO_CHARS) record.video = videoRaw;
 
   await kvCommand(["HSET", KEYS_HASH, key, JSON.stringify(record)]);
   await kvCommand(["SADD", mentorKey(mentorEmail), key]);
@@ -458,6 +481,9 @@ async function eaConfig(request: ApiRequest): Promise<{ status: number; body: Re
       ...(record.eaName ? { eaName: record.eaName } : {}),
       symbols: Array.isArray(record.symbols) ? record.symbols : null,
       ...(record.image ? { image: record.image } : {}),
+      // THE ROBOT VIDEO — resolved by key, never by device or mentor session.
+      ...(record.videoId ? { videoId: record.videoId } : {}),
+      ...(record.video ? { video: record.video } : {}),
       updatedAt: record.updatedAt ?? record.createdAt,
     });
   }
@@ -486,6 +512,8 @@ async function updateEa(request: ApiRequest): Promise<{ status: number; body: Re
   const hasSymbols = Array.isArray(body["symbols"]);
   const symbols = symbolList(body["symbols"]);
   const imageRaw = text(body["image"], MAX_IMAGE_CHARS + 1);
+  const videoIdRaw = text(body["videoId"], 200);
+  const videoRaw = text(body["video"], MAX_VIDEO_CHARS + 1);
   const at = new Date().toISOString();
   const codes = await members(mentorKey(mentorEmail));
   let updated = 0;
@@ -503,6 +531,9 @@ async function updateEa(request: ApiRequest): Promise<{ status: number; body: Re
       // An explicit list wins — including an EMPTY one (a removal).
       ...(hasSymbols ? { symbols } : {}),
       ...(imageRaw && imageRaw.length <= MAX_IMAGE_CHARS ? { image: imageRaw } : {}),
+      // A re-uploaded video replaces the pointer; the app reads it by key.
+      ...(videoIdRaw ? { videoId: videoIdRaw } : {}),
+      ...(videoRaw && videoRaw.length <= MAX_VIDEO_CHARS ? { video: videoRaw } : {}),
       updatedAt: at,
     };
     await kvCommand(["HSET", KEYS_HASH, code, JSON.stringify(next)]);
