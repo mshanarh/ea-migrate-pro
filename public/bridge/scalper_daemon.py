@@ -152,12 +152,18 @@ def _time_now() -> str:
 
 def _read_state() -> dict:
     try:
-        return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        # The bridge's /scalper/start writes ea_name; keep it always readable
+        # so the comment logic below never has to special-case a missing key.
+        if "ea_name" not in data:
+            data["ea_name"] = "EA Migrate batch"
+        return data
     except Exception:
         return {
             "running": False, "symbol": "BTCUSDm", "lot": 0.01, "trade_count": 1,
             "next_trade_number": 1, "started_at": None, "stopped_at": None,
             "positions": {}, "batches": {}, "wait_until": {}, "log": [],
+            "ea_name": "EA Migrate batch",
         }
 
 
@@ -166,6 +172,22 @@ def _write_state(state: dict) -> None:
         STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
     except Exception as exc:
         _log(f"state write failed: {exc}")
+
+
+def _ea_name(state: dict) -> str:
+    """The bot/EA name the bridge was started with, else the default batch tag."""
+    name = str(state.get("ea_name", "") or "").strip()
+    return name or "EA Migrate batch"
+
+
+def _trade_comment(state: dict, direction: str) -> str:
+    """MT5's comment: the bot's own name, with the direction appended when the
+    name is a real bot name (31 chars is MT5's hard limit)."""
+    name = _ea_name(state)
+    side = (direction or "").strip()
+    if name != "EA Migrate batch" and side:
+        return f"{name} {side}"[:31]
+    return name[:31]
 
 
 # ── settings: the per-symbol plan ────────────────────────────────────────────
@@ -514,6 +536,9 @@ def _open_position(creds, symbol: str, side: str, lot: float, sl: float):
             return None
         price = tick.ask if side == "BUY" else tick.bid
         order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
+        # The comment carries the bot's own name (state written by
+        # /scalper/start), never a hard-coded tag.
+        comment = _trade_comment(_read_state(), side)
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "symbol": symbol,
@@ -524,7 +549,7 @@ def _open_position(creds, symbol: str, side: str, lot: float, sl: float):
             "tp": 0.0,
             "deviation": 20,
             "magic": MAGIC,
-            "comment": f"EA Migrate batch {side}",
+            "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
         }
         # Filling modes differ per broker: FOK → IOC → RETURN, and 10030
@@ -822,7 +847,7 @@ def _close_ticket_confirmed(creds, ticket: int, symbol: str) -> dict | None:
             "price": price,
             "deviation": 30,
             "magic": int(getattr(position, "magic", 0)),
-            "comment": "EA Migrate sweep close",
+            "comment": _trade_comment(_read_state(), ""),
             "type_time": mt5.ORDER_TIME_GTC,
         }
         result = None
