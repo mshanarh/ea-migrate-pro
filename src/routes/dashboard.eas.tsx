@@ -213,16 +213,23 @@ function ManageEAs() {
 
                   // THE ROBOT VIDEO, LINKED TO EVERY KEY OF THIS EA — in ONE
                   // idempotent call. This is the step that used to fail without
-                  // a word, so every outcome is reported to the mentor.
+                  // a word, so every outcome is reported to the mentor. A big
+                  // MP4 uploads in parts, which takes a moment — say so.
+                  const hasVideo = Boolean(patch.video ?? editingEa.video);
+                  const pending = hasVideo ? toast.loading("Uploading the robot video…") : null;
                   const link = await linkEaVideo({
                     mentorEmail: account.email,
                     id: editingEa.id,
                     name: editingEa.name,
                     video: patch.video ?? editingEa.video,
-                  }).catch((error: unknown) => ({
-                    status: "failed" as const,
-                    error: error instanceof Error ? error.message : "the link could not be attempted",
-                  }));
+                  })
+                    .catch((error: unknown) => ({
+                      status: "failed" as const,
+                      error: error instanceof Error ? error.message : "the link could not be attempted",
+                    }))
+                    .finally(() => {
+                      if (pending !== null) toast.dismiss(pending);
+                    });
                   if (link.status === "failed") {
                     toast.error("EA saved — but the robot video is NOT linked", {
                       description: link.error,
