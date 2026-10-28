@@ -197,11 +197,15 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
       }
       setRobotVideo(snapshot.id, lookup.video);
       setVideoActive(true);
-      toast.success("Playing your video — press HOME twice to stop");
+      toast.success("Robot video on — it now plays behind Settings and the other screens");
       return;
     }
     toggleVideoPlayback();
-    toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+    toast.success(
+      isVideoActive()
+        ? "Robot video on — it now plays behind Settings and the other screens"
+        : "Robot video off on other screens — Home keeps playing it",
+    );
   };
 
   const handleHomeClick = () => {
@@ -217,7 +221,7 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
       // stops it (both iOS and Android).
       void toggleRobotVideo();
     } else if (robotHasVideo()) {
-      toast.info("Press HOME twice to play your video");
+      toast.info("Double-press HOME for the video switch");
     }
   };
 

@@ -278,8 +278,10 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
-        {/* Background picture at full strength — no dim/gradient over it. */}
-        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" autoplayOnLoad />
+        {/* Background picture at full strength — no dim/gradient over it.
+            The shared player (src/lib/shared-video.ts) makes every hero play
+            automatically, so no per-theme autoplay flag is needed. */}
+        <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <div className="absolute top-4 left-4 flex flex-col items-center gap-3">
             <button

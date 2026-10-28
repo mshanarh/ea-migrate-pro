@@ -595,6 +595,18 @@ body.eamp-app-bg [data-eamp-bg-host] {
   background-color: transparent;
 }
 
+/* The shared robot-video layer (RobotVideoLayer) paints full-screen BEHIND the
+   route content, so while it shows the screens' own solid backgrounds step
+   aside the same way they do for the picture layer. The layer only mounts on
+   the routes where the video is allowed — Home and the non-trading pages —
+   and it renders the video see-through, so text, buttons and cards on top stay
+   readable. Metatrader, Scanner and Fundamentals never set this class: they
+   keep their plain black background, whatever the switches say. */
+body.eamp-app-video .app-fullscreen,
+body.eamp-app-video [data-eamp-bg-host] {
+  background-color: transparent;
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    INTERFACE THEMES
    ══════════════════════════════════════════════════════════════════════
@@ -659,7 +671,8 @@ html[data-if-styled] .if-screen.if-screen::after {
 /* The background picture / background animation is the owner's switch: while
    either is ON the interface wash steps aside so the picture reads clearly. */
 body.eamp-app-bg .if-screen.if-screen,
-body.eamp-bg-on .if-screen.if-screen {
+body.eamp-bg-on .if-screen.if-screen,
+body.eamp-app-video .if-screen.if-screen {
   background: transparent !important;
   background-image: none !important;
 }
@@ -668,7 +681,7 @@ body.eamp-bg-on .if-screen.if-screen {
    signature tint (and the interface's own texture) sits over the animation, so
    switching Crimson Navigator → Quantum Blue is obvious without hiding the
    owner's effect. The picture mode above is untouched — no tint over a photo. */
-html[data-if-styled] body.eamp-bg-on:not(.eamp-app-bg) .if-screen.if-screen {
+html[data-if-styled] body.eamp-bg-on:not(.eamp-app-bg, .eamp-app-video) .if-screen.if-screen {
   background: color-mix(in srgb, var(--if-signature) 20%, transparent) !important;
   background-image: var(--if-texture) !important;
 }

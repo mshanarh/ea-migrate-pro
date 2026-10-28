@@ -158,6 +158,7 @@ import { BackgroundEffects } from "@/components/BackgroundEffects";
 import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
 import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
+import { RobotVideoLayer } from "@/components/app/RobotVideoLayer";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { loadBridgeConfig } from "@/lib/bridge-client";
 import { applyShellScope, shellScopeFor } from "@/lib/shell-scope";
@@ -415,6 +416,11 @@ function RootComponent() {
           ) : null}
           {/* The app-wide background picture layer — under the content wrapper below. */}
           <AppBackground />
+          {/* THE ONE robot-video player: mounted once so navigation moves the
+              element between hosts instead of restarting it (Home plays always,
+              Settings-type pages while the Robot Video switch is ON, never on
+              Metatrader / Scanner / Fundamentals). */}
+          <RobotVideoLayer />
         </>
       )}
       <div style={{ position: "relative", zIndex: 1 }}>

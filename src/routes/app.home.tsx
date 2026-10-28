@@ -907,7 +907,11 @@ function AppHome() {
   const playRobotVideo = async (target: Robot) => {
     if (target.video) {
       toggleVideoPlayback();
-      toast.success(isVideoActive() ? "Playing your video — press HOME twice to stop" : "Video stopped");
+      toast.success(
+        isVideoActive()
+          ? "Robot video on — it now plays behind Settings and the other screens"
+          : "Robot video off on other screens — Home keeps playing it",
+      );
       return;
     }
     if (videoLookupBusy) return;
@@ -929,7 +933,7 @@ function AppHome() {
     }
     setRobotVideo(target.id, lookup.video);
     setVideoActive(true);
-    toast.success("Playing your video — press HOME twice to stop");
+    toast.success("Robot video on — it now plays behind Settings and the other screens");
   };
 
   const handlePlayVideo = () => {

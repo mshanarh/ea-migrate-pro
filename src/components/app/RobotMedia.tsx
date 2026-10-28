@@ -1,103 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import { loadVideoUrl } from "@/lib/media-store";
-import { isVideoActive, subscribeVideoActive } from "@/lib/video-playback";
+import { useSharedVideo, useVideoHost } from "@/lib/shared-video";
 
 type RobotMediaProps = {
   image: string;
   video?: string | undefined;
-  /** "hero" = big media screen — plays the video INSIDE the card when active;
+  /** "hero" = the big media screen — hosts THE shared video player;
    *  "avatar" = small round slot — ALWAYS the picture. */
   variant?: "hero" | "avatar";
   className: string;
   /** Kept for call-site compatibility — small slots always show the picture. */
   preferImage?: boolean;
-  /** When true, the big-screen slot autoplays the video as soon as it is
-   *  playable, without waiting for the user's HOME double-press toggle. Use
-   *  this for the full-screen interfaces the owner wants to play on open. */
-  autoplayOnLoad?: boolean;
 };
 
-/** Subscribe to the HOME double-press video toggle. */
-function useVideoActive() {
-  const [active, setActive] = useState(isVideoActive());
-  useEffect(() => subscribeVideoActive(() => setActive(isVideoActive())), []);
-  return active;
-}
-
-/** Resolve an IndexedDB/data/http video reference to a playback-ready src. */
-function usePlayableVideo(video: string | undefined) {
-  const [playableSrc, setPlayableSrc] = useState<string>();
-  useEffect(() => {
-    if (!video) {
-      setPlayableSrc(undefined);
-      return;
-    }
-    let objectUrl: string | undefined;
-    let cancelled = false;
-    loadVideoUrl(video)
-      .then((resolved) => {
-        if (cancelled) {
-          if (resolved) URL.revokeObjectURL(resolved);
-          return;
-        }
-        objectUrl = resolved ?? undefined;
-        setPlayableSrc(resolved ?? video);
-      })
-      .catch(() => {
-        if (!cancelled) setPlayableSrc(video);
-      });
-    return () => {
-      cancelled = true;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [video]);
-  return playableSrc;
-}
-
-/** Keep a <video> element actually playing while active (slow decoders, etc.). */
-function useEnsurePlaying(active: boolean, playableSrc: string | undefined) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  useEffect(() => {
-    if (!active || !playableSrc) return;
-    const el = videoRef.current;
-    if (!el) return;
-    let cancelled = false;
-    const attemptPlay = () => {
-      if (cancelled) return;
-      void el.play().catch(() => {});
-    };
-    attemptPlay();
-    el.addEventListener("loadeddata", attemptPlay);
-    el.addEventListener("canplay", attemptPlay);
-    const retries = window.setTimeout(attemptPlay, 350);
-    const confirmTimer = window.setInterval(() => {
-      if (!el.paused) {
-        window.clearInterval(confirmTimer);
-        return;
-      }
-      attemptPlay();
-    }, 500);
-    const stopConfirming = window.setTimeout(() => window.clearInterval(confirmTimer), 5000);
-    return () => {
-      cancelled = true;
-      el.removeEventListener("loadeddata", attemptPlay);
-      el.removeEventListener("canplay", attemptPlay);
-      window.clearTimeout(retries);
-      window.clearInterval(confirmTimer);
-      window.clearTimeout(stopConfirming);
-    };
-  }, [active, playableSrc]);
-  return videoRef;
-}
-
 /**
- * Media slot renderer:
- *   • Small slots (avatar / preferImage) — ALWAYS the robot's picture.
- *   • Big screens (hero) — the picture by default; when the HOME double-press
- *     turns the video ON, the video plays INSIDE the card (not the background),
- *     exactly as the owner asked for the big-screen interfaces.
- *   • When autoplayOnLoad is true, the big-screen slot autoplays the video as
- *     soon as it is playable, without waiting for the HOME double-press toggle.
+ * Media slot renderer.
+ *
+ * THE PLAYER IS SHARED (src/lib/shared-video.ts): the hero slot does not own a
+ * <video> — it registers a HOST and the app's ONE element is moved into it.
+ * That is what makes Home's big screen play the video automatically (no button
+ * press, any switch position) while switching tabs can never stack a second
+ * decoder or restart the clip from the beginning.
  */
 export function RobotMedia({
   image,
@@ -105,25 +26,19 @@ export function RobotMedia({
   variant = "hero",
   className,
   preferImage = false,
-  autoplayOnLoad = false,
 }: RobotMediaProps) {
-  const active = useVideoActive();
-  const playableSrc = usePlayableVideo(video);
-  const videoRef = useEnsurePlaying(active, playableSrc);
+  const { ready } = useSharedVideo();
+  const setHostEl = useVideoHost("card", { opacity: 1 });
 
-  const playInSlot =
-    variant === "hero" && !preferImage && Boolean(video && playableSrc) &&
-    (active || autoplayOnLoad);
+  const playInSlot = variant === "hero" && !preferImage && Boolean(video) && ready;
+
   if (playInSlot) {
     return (
-      <video
-        ref={videoRef}
-        src={playableSrc}
-        className={className}
-        loop
-        muted
-        playsInline
-        preload="auto"
+      <div
+        ref={setHostEl}
+        aria-hidden
+        data-eamp-video-host="card"
+        className={`${className} pointer-events-none`}
       />
     );
   }
@@ -131,11 +46,13 @@ export function RobotMedia({
 }
 
 /**
- * Full-bleed fixed backdrop driven by the HOME double-press toggle — used by
- * interfaces whose only media is a small circle (BLUEPRINT EDGE): there the
- * video plays edge-to-edge behind the console. Themes with a big media screen
- * play in the card instead (their universal backdrop passes
- * videoWhenActive={false}), so the video never runs in two places at once.
+ * Full-bleed fixed backdrop — the STATIC image behind an interface.
+ *
+ * It never renders a <video> any more: whenever the shared player has a
+ * source, this layer steps aside entirely so the ONE element (mounted in
+ * RobotVideoLayer / the hero slot) owns the full screen. When there is no
+ * video — or the video failed to load — the picture comes back exactly as
+ * before, which is the "fall back to the normal background" behaviour.
  */
 export function VideoBackdrop({
   image,
@@ -145,40 +62,27 @@ export function VideoBackdrop({
   mediaDim = true,
 }: {
   image: string;
+  /** Kept for call-site compatibility — the shared layer reads the app state. */
   video?: string | undefined;
-  /** Kept for call-site compatibility — the backdrop itself no longer paints accent layers. */
+  /** Kept for call-site compatibility — the backdrop paints no accent layer. */
   accent?: string;
-  /** Inactive state: keep the static image layer (theme backgrounds) or nothing. */
+  /** Static image when the shared player is not showing. */
   showImageWhenInactive?: boolean;
-  /** Set false when the theme's big screen plays the video in the card. */
+  /** Kept for call-site compatibility — playback is owned by the shared player. */
   videoWhenActive?: boolean;
-  /**
-   * The "Background Picture" gate. The SCOPE decision (which screens honour
-   * the toggle, which always show) lives in AppBackground; this backdrop
-   * renders the media CLEARLY — no dim, no blur, no gradient on top of it.
-   * Small cards/thumbnails never route through this backdrop.
-   */
+  /** The "Background Picture" gate. */
   mediaDim?: boolean | undefined;
 }) {
-  const active = useVideoActive();
-  const playableSrc = usePlayableVideo(video);
-  const videoRef = useEnsurePlaying(active, playableSrc);
+  const { ready } = useSharedVideo();
+
+  // THE SHARED PLAYER OWNS THE FULL SCREEN while it has a source: painting
+  // anything here would only stack a second layer over (or under) it.
+  if (ready) return null;
 
   // BACKGROUND PICTURE OFF → no media at all, just the clean black behind it.
   if (!mediaDim) return null;
 
   // THE PICTURE IS THE POINT — full strength: no opacity, no scrim, no blur.
-  // Readability contrast belongs to the text on top (shadows), never to a
-  // layer over the whole picture.
-  const playing = Boolean(active && video && playableSrc && videoWhenActive);
-  if (playing) {
-    return (
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
-        <video ref={videoRef} src={playableSrc} className="size-full object-cover" loop muted playsInline preload="auto" />
-      </div>
-    );
-  }
-
   if (showImageWhenInactive) {
     return (
       <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
