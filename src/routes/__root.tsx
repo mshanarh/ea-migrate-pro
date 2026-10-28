@@ -67,11 +67,24 @@ const PLATFORM_PREPAINT_SCRIPT = `
   // document, so a stale chunk or a transient failure is recoverable by hand.
   //
   // This grants nothing: it is a message and a button, never a way into the app.
+  //
+  // TWO TRIGGERS, ONE CARD:
+  //   1. the 8-second deadline below, and
+  //   2. an UNCAUGHT BOOT ERROR (window.onerror / unhandledrejection) while the
+  //      app is still unmounted — a module-level throw means nothing will ever
+  //      mount, so waiting the full 8 seconds just leaves the user staring at
+  //      the spinner. This is exactly the failure class that took production
+  //      down ("Cannot read properties of undefined (reading 'bind')" while the
+  //      app-store chunk evaluated): the error is caught the instant it throws
+  //      and the same pressable retry card paints ~0.8s later.
   try {
-    var bootWatchdog = setTimeout(function () {
+    var bootCardShown = false;
+    var paintBootRetry = function () {
       try {
+        if (bootCardShown) return;
         var html = document.documentElement;
         if (!html || html.getAttribute("data-app-boot") === "1") return;
+        bootCardShown = true;
         document.body.innerHTML =
           '<div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;background:#000;color:#fff;font-family:system-ui,sans-serif;padding:24px;text-align:center">' +
           '<img src="/logo.png" alt="" style="width:56px;height:56px;border-radius:16px;border:1px solid rgba(255,255,255,.12);background:rgba(255,255,255,.05);object-fit:contain;padding:4px"/>' +
@@ -88,11 +101,25 @@ const PLATFORM_PREPAINT_SCRIPT = `
           };
         }
       } catch (e) {}
-    }, 8000);
-    // A boot that is merely slow must not lose its watchdog when the module
-    // graph finally runs: the stamp check above means a mounted app is left
-    // alone, and an unmounted one gets the card exactly once.
+    };
+    var bootWatchdog = setTimeout(paintBootRetry, 8000);
     void bootWatchdog;
+    // A boot error is reported by the listener installed below too; this one
+    // only decides whether the splash has to become a pressable card.
+    window.addEventListener("error", function (event) {
+      try {
+        // Resource failures (a missing image, a slow font) carry no error
+        // object — they are never a reason to replace the screen.
+        if (!event || !event.error) return;
+        setTimeout(paintBootRetry, 800);
+      } catch (e) {}
+    });
+    window.addEventListener("unhandledrejection", function (event) {
+      try {
+        if (!event || !event.reason) return;
+        setTimeout(paintBootRetry, 800);
+      } catch (e) {}
+    });
   } catch (e) {}
   // Runtime error reporting: in the Android wrapper the page's crashes are
   // forwarded to logcat via the EAMigrate bridge so a black screen is never

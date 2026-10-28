@@ -7,6 +7,13 @@ import {
   setSharedVideoSource,
   videoLayerMode,
 } from "@/lib/shared-video";
+import {
+  isRobotVideoStopped,
+  isRobotVideoUltra,
+  setRobotVideoStopped,
+  setRobotVideoUltra,
+  toggleVideoPlayback,
+} from "@/lib/video-playback";
 
 /**
  * THE SHARED ROBOT VIDEO — placement rules and the ONE-element guarantee.
@@ -46,6 +53,8 @@ function makeHost(kind: "card" | "screen", id: string, transparentScreen = true)
 
 beforeEach(() => {
   resetSharedVideoForTests();
+  setRobotVideoStopped(false);
+  setRobotVideoUltra(true);
   vi.spyOn(HTMLMediaElement.prototype, "play").mockResolvedValue(undefined);
   vi.spyOn(HTMLMediaElement.prototype, "pause").mockImplementation(() => {});
   vi.spyOn(HTMLMediaElement.prototype, "load").mockImplementation(() => {});
@@ -53,6 +62,9 @@ beforeEach(() => {
 
 afterEach(() => {
   resetSharedVideoForTests();
+  setRobotVideoStopped(false);
+  setRobotVideoUltra(true);
+  window.localStorage.removeItem("robotVideoUltra");
   document.querySelectorAll("div").forEach((el) => {
     if (el.parentElement === document.body) el.remove();
   });
@@ -148,6 +160,48 @@ describe("one shared element across interfaces", () => {
     expect(screenB.contains(player() as Node)).toBe(true);
     expect(getSharedVideoState().ready).toBe(true);
     expect(load).not.toHaveBeenCalled();
+  });
+
+  it("stops on every host when the HOME gesture stops playback — Home included", async () => {
+    setSharedVideoSource(SOURCE);
+    await until(() => getSharedVideoState().ready, "ready");
+    const card = makeHost("card", "card-1");
+    expect(card.contains(player() as Node)).toBe(true);
+
+    toggleVideoPlayback();
+    expect(isRobotVideoStopped()).toBe(true);
+    // Parked and paused: the big screen cannot keep playing behind a stop.
+    expect(card.contains(player() as Node)).toBe(false);
+    expect(player()?.parentElement?.hasAttribute("data-eamp-video-park")).toBe(true);
+    expect(document.body.classList.contains("eamp-app-video")).toBe(false);
+
+    // A further navigation must not resurrect it — it stays stopped.
+    detachVideoHost("card-1");
+    const screen = makeHost("screen", "screen-1");
+    expect(screen.contains(player() as Node)).toBe(false);
+
+    // The same gesture plays it again.
+    toggleVideoPlayback();
+    expect(isRobotVideoStopped()).toBe(false);
+    expect(screen.contains(player() as Node)).toBe(true);
+  });
+
+  it("defaults to Ultra HD and marks the element for the crisp filter", async () => {
+    expect(isRobotVideoUltra()).toBe(true);
+    setSharedVideoSource(SOURCE);
+    await until(() => getSharedVideoState().ready, "ready");
+    const screen = makeHost("screen", "screen-1");
+    expect(screen.contains(player() as Node)).toBe(true);
+    expect(player()?.hasAttribute("data-eamp-video-ultra")).toBe(true);
+
+    setRobotVideoUltra(false);
+    attachVideoHost({
+      id: "screen-1",
+      kind: "screen",
+      el: screen,
+      getOptions: () => ({ opacity: 0.4, transparentScreen: true }),
+    });
+    expect(player()?.hasAttribute("data-eamp-video-ultra")).toBe(false);
   });
 
   it("drops the player when the source is cleared", async () => {

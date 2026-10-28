@@ -2,12 +2,25 @@ import { useEffect, useState } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { BG_EFFECTS, BG_OVERLAY_KEY } from "@/components/BackgroundEffects";
 import { isBotVoiceEnabled, setBotVoiceEnabled, warmBotVoice } from "@/lib/bot-voice";
-import { isRobotVideoAuto, setRobotVideoAuto, setVideoActive } from "@/lib/video-playback";
+import {
+  isRobotVideoAuto,
+  isRobotVideoUltra,
+  setRobotVideoAuto,
+  setRobotVideoUltra,
+  setVideoActive,
+} from "@/lib/video-playback";
 import { useAppState } from "@/lib/app-store";
 import { loadVideoUrl } from "@/lib/media-store";
 import { setBackgroundPictureOn, useBackgroundPicture } from "@/lib/background-picture";
 
-type RowKind = "canvas" | "matrix" | "overlay" | "robotVideo" | "botVoice" | "backgroundPicture";
+type RowKind =
+  | "canvas"
+  | "matrix"
+  | "overlay"
+  | "robotVideo"
+  | "robotVideoUltra"
+  | "botVoice"
+  | "backgroundPicture";
 
 type EffectRow = {
   id: string;
@@ -91,6 +104,13 @@ const ROWS: EffectRow[] = [
     name: "Robot Video",
     subtitle: "Ask your mentor to upload a video on their EA to unlock this",
     kind: "robotVideo",
+  },
+  {
+    id: "ultra-hd",
+    emoji: "4K",
+    name: "Ultra HD (4K) video",
+    subtitle: "Full-clarity robot video — crisp, no blur, readable behind text",
+    kind: "robotVideoUltra",
   },
   {
     id: "bot-voice",
@@ -209,6 +229,7 @@ export function BackAnimationSection() {
   const [matrix, setMatrix] = useState(false);
   const [voice, setVoice] = useState(true);
   const [robotVideoAuto, setRobotVideoAutoState] = useState(false);
+  const [robotVideoUltra, setRobotVideoUltraState] = useState(true);
   const [hasRobotVideo, setHasRobotVideo] = useState(false);
   const [overlay, setOverlayState] = useState(false);
   // ONE shared persisted store — the same value AppBackground paints from, so
@@ -221,6 +242,7 @@ export function BackAnimationSection() {
     setOverlayState(readOverlay());
     setVoice(isBotVoiceEnabled());
     setRobotVideoAutoState(isRobotVideoAuto());
+    setRobotVideoUltraState(isRobotVideoUltra());
     warmBotVoice();
   }, []);
 
@@ -302,12 +324,18 @@ export function BackAnimationSection() {
       setBackgroundPictureOn(!mediaDim);
       return;
     }
+    if (row.kind === "robotVideoUltra") {
+      const next = !robotVideoUltra;
+      setRobotVideoUltraState(next);
+      setRobotVideoUltra(next);
+      return;
+    }
     if (row.kind === "robotVideo") {
       if (!hasRobotVideo) return; // locked until the mentor uploads a video
       const next = !robotVideoAuto;
       setRobotVideoAutoState(next);
       // The flag persists across visits; the session state starts/stops the
-      // background video right away (on → play, off → stop).
+      // background video right away (on → play everywhere, off → stop).
       setRobotVideoAuto(next);
       setVideoActive(next);
     }
@@ -327,7 +355,9 @@ export function BackAnimationSection() {
                   ? voice
                   : row.kind === "backgroundPicture"
                     ? mediaDim
-                    : robotVideoAuto;
+                    : row.kind === "robotVideoUltra"
+                      ? robotVideoUltra
+                      : robotVideoAuto;
         const locked = row.kind === "robotVideo" && !hasRobotVideo;
         return (
           <div

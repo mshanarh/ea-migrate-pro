@@ -607,6 +607,22 @@ body.eamp-app-video [data-eamp-bg-host] {
   background-color: transparent;
 }
 
+/* THE CLIP ITSELF IS NEVER BLURRED OR WASHED OUT. The shared <video> fills its
+   host with object-fit:cover at its native resolution; Ultra HD (Settings →
+   Back Animation → "Ultra HD (4K) video") adds a light contrast/saturation
+   lift so a compressed MP4 still reads crisp on a phone panel, and keeps the
+   see-through layer clear enough to look like a video, not a grey haze. */
+video[data-eamp-robot-video] {
+  filter: none;
+  image-rendering: auto;
+  -webkit-backface-visibility: hidden;
+  backface-visibility: hidden;
+}
+
+video[data-eamp-robot-video][data-eamp-video-ultra] {
+  filter: contrast(1.05) saturate(1.06);
+}
+
 /* ══════════════════════════════════════════════════════════════════════
    INTERFACE THEMES
    ══════════════════════════════════════════════════════════════════════

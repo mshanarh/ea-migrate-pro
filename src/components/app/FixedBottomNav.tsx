@@ -200,11 +200,14 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
       toast.success("Robot video on — it now plays behind Settings and the other screens");
       return;
     }
+    // DOUBLE-PRESS = STOP. It stops EVERYWHERE, Home's big screen included,
+    // and it stays stopped until the gesture (or the Settings switch) plays it
+    // again — the video must never resume by itself.
     toggleVideoPlayback();
     toast.success(
       isVideoActive()
-        ? "Robot video on — it now plays behind Settings and the other screens"
-        : "Robot video off on other screens — Home keeps playing it",
+        ? "Robot video playing — Home and the other screens"
+        : "Robot video stopped on every screen",
     );
   };
 

@@ -9,7 +9,7 @@ import {
   useVideoHost,
   videoLayerMode,
 } from "@/lib/shared-video";
-import { useRobotVideoAuto } from "@/lib/video-playback";
+import { useRobotVideoAuto, useRobotVideoStopped, useRobotVideoUltra } from "@/lib/video-playback";
 
 /**
  * THE APP-WIDE ROBOT VIDEO LAYER — one shared player, one placement rule.
@@ -34,7 +34,11 @@ import { useRobotVideoAuto } from "@/lib/video-playback";
  */
 
 /** Full strength where Home plays it on-screen; see-through behind content. */
-const OPACITY = { home: 1, background: 0.4 };
+const OPACITY = {
+  home: 1,
+  /** Ultra HD keeps the clip clear and readable behind text; off is a soft wash. */
+  background: { ultra: 0.62, soft: 0.4 },
+};
 
 export function RobotVideoLayer() {
   const pathname = useRouterState({ select: (state) => state.location.pathname });
@@ -51,6 +55,9 @@ export function RobotVideoLayer() {
   }, [source]);
 
   const mode = videoLayerMode(pathname, videoAuto);
+  /** A HOME double-press stop pauses the video on every screen, this one too. */
+  const stopped = useRobotVideoStopped();
+  const ultra = useRobotVideoUltra();
 
   // ONE retryable line per source — never a loop, never a "no video" claim.
   const reportedRef = useRef<string | null>(null);
@@ -73,11 +80,16 @@ export function RobotVideoLayer() {
 
   // Declared unconditionally (hooks rule); the host div only renders below.
   const setHostEl = useVideoHost("screen", {
-    opacity: mode === "background" ? OPACITY.background : OPACITY.home,
+    opacity:
+      mode === "background"
+        ? ultra
+          ? OPACITY.background.ultra
+          : OPACITY.background.soft
+        : OPACITY.home,
     transparentScreen: true,
   });
 
-  if (mode === "none" || !ready) return null;
+  if (stopped || mode === "none" || !ready) return null;
 
   return (
     <div

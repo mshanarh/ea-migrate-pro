@@ -31,6 +31,7 @@
  */
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { loadVideoUrl } from "@/lib/media-store";
+import { isRobotVideoUltra, isRobotVideoStopped, subscribeRobotVideoStopped } from "@/lib/video-playback";
 import { isAppPath } from "@/lib/shell-scope";
 
 export type VideoHostKind = "card" | "screen";
@@ -137,8 +138,10 @@ function ensureVideo(): HTMLVideoElement {
   el.setAttribute("autoplay", "");
   el.setAttribute("aria-hidden", "true");
   el.setAttribute("data-eamp-robot-video", "");
+  // CRISP BY DEFAULT — no blur, no downscale, no filter washing the clip out.
   el.style.cssText =
-    "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;";
+    "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;" +
+    "filter:none;image-rendering:auto;backface-visibility:hidden;transform:translateZ(0);";
   el.addEventListener("error", () => {
     if (!state.sourceRef) return;
     // A load failure is a real, retryable error — never a silent blank.
@@ -184,10 +187,14 @@ function reconcile(): void {
     setScreenClass(false);
     return;
   }
-  const host = state.ready && !state.failed ? pickHost() : null;
+  // A HOME double-press stop wins over EVERY host — Home's big screen included.
+  // Stopped means parked and paused, so nothing keeps playing behind the user.
+  const allowed = !isRobotVideoStopped();
+  const host = allowed && state.ready && !state.failed ? pickHost() : null;
   if (!host) {
     if (el.parentElement !== park()) park().appendChild(el);
     el.style.opacity = "1";
+    el.removeAttribute("data-eamp-video-ultra");
     tryPause(el);
     setScreenClass(false);
     return;
@@ -195,6 +202,7 @@ function reconcile(): void {
   if (el.parentElement !== host.el) host.el.appendChild(el);
   const options = host.getOptions();
   el.style.opacity = String(options.opacity);
+  el.toggleAttribute("data-eamp-video-ultra", isRobotVideoUltra());
   setScreenClass(host.kind === "screen" && options.transparentScreen === true);
   tryPlay(el);
 }
@@ -363,6 +371,14 @@ export function useVideoHost(
 }
 
 /* ── test support ────────────────────────────────────────────────────────── */
+
+/**
+ * A HOME double-press must stop playback on every host at once, so the store
+ * change re-runs placement: the element parks itself, paused, immediately.
+ */
+if (typeof window !== "undefined") {
+  subscribeRobotVideoStopped(() => reconcile());
+}
 
 /** Test-only: drop every host, source and body class so cases stay isolated. */
 export function resetSharedVideoForTests(): void {

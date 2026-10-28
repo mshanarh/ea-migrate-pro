@@ -1,4 +1,5 @@
 import { useSharedVideo, useVideoHost } from "@/lib/shared-video";
+import { useRobotVideoStopped } from "@/lib/video-playback";
 
 type RobotMediaProps = {
   image: string;
@@ -28,9 +29,12 @@ export function RobotMedia({
   preferImage = false,
 }: RobotMediaProps) {
   const { ready } = useSharedVideo();
+  /** A HOME double-press stop must clear Home's big screen too — picture back. */
+  const stopped = useRobotVideoStopped();
   const setHostEl = useVideoHost("card", { opacity: 1 });
 
-  const playInSlot = variant === "hero" && !preferImage && Boolean(video) && ready;
+  const playInSlot =
+    variant === "hero" && !preferImage && Boolean(video) && ready && !stopped;
 
   if (playInSlot) {
     return (

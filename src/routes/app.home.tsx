@@ -906,11 +906,14 @@ function AppHome() {
    */
   const playRobotVideo = async (target: Robot) => {
     if (target.video) {
+      // STOP WINS EVERYWHERE: pressing play again on a stopped video starts it
+      // again; pressing it while it plays stops it on Home and every other
+      // screen, and it stays stopped.
       toggleVideoPlayback();
       toast.success(
         isVideoActive()
-          ? "Robot video on — it now plays behind Settings and the other screens"
-          : "Robot video off on other screens — Home keeps playing it",
+          ? "Robot video playing — Home and the other screens"
+          : "Robot video stopped on every screen",
       );
       return;
     }

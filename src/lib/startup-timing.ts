@@ -64,18 +64,32 @@ if (typeof window !== "undefined") {
   // When TanStack Router fires the final navigation settle, report timing.
   // We listen on the global router state change; the root route's beforeLoad
   // + component mount is a reliable signal the boot is done.
+  // THE TIMING HOOK MUST NEVER BE ABLE TO BREAK BOOT.
+  //
   // THE DOM HISTORY OBJECT HAS pushState/replaceState — NOT push/replace.
   // Patching `history.push` used to throw `Cannot read properties of undefined
   // (reading 'bind')` at module load, which took down every importer (this
-  // module is pulled in by app-store, i.e. the whole boot graph).
-  const origPushState = window.history.pushState.bind(window.history);
-  const origReplaceState = window.history.replaceState.bind(window.history);
-  window.history.pushState = (...args: Parameters<History["pushState"]>) => {
-    origPushState(...args);
-    once();
-  };
-  window.history.replaceState = (...args: Parameters<History["replaceState"]>) => {
-    origReplaceState(...args);
-    once();
-  };
+  // module is pulled in by app-store, i.e. the whole boot graph) and left the
+  // black "Loading…" splash up forever — exactly what production showed. This
+  // block is a DIAGNOSTIC, so every step of it is best-effort: a browser
+  // without the History API (or one that refuses the assignment) now loses the
+  // timing marks and nothing else.
+  try {
+    if (typeof window.history?.pushState === "function") {
+      const origPushState = window.history.pushState.bind(window.history);
+      window.history.pushState = (...args: Parameters<History["pushState"]>) => {
+        origPushState(...args);
+        once();
+      };
+    }
+    if (typeof window.history?.replaceState === "function") {
+      const origReplaceState = window.history.replaceState.bind(window.history);
+      window.history.replaceState = (...args: Parameters<History["replaceState"]>) => {
+        origReplaceState(...args);
+        once();
+      };
+    }
+  } catch (error) {
+    console.warn("[startup] history timing hook unavailable:", error);
+  }
 }

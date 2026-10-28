@@ -1,5 +1,6 @@
 import { QueryClient } from "@tanstack/react-query";
 import { createRouter } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { routeTree } from "./routeTree.gen";
 import { runForceReset } from "./lib/force-reset";
 
@@ -49,8 +50,49 @@ if (typeof window !== "undefined") {
  * one loads. A tap therefore never replaces what the person is looking at —
  * with a cached access verdict the guard answers synchronously, so the new
  * screen arrives on the same frame anyway.
+ *
+ * THE 8-SECOND RULE LIVES HERE. This screen is only ever mounted when the
+ * FIRST navigation has not resolved yet, which is the one case a spinner can
+ * be honest — and the one case that used to be able to last forever: the
+ * shell's inline watchdog disarms the moment React mounts (data-app-boot), so
+ * a guard that never answered used to leave "Loading…" on screen with nothing
+ * to press. After BOOT_DEADLINE_MS this becomes the same retry card the shell
+ * watchdog paints, so boot ALWAYS ends in the interface or in a pressable
+ * screen. The card grants nothing — it reloads the document and the gates run
+ * again from the top.
  */
+const BOOT_DEADLINE_MS = 8_000;
+
 function RoutePending() {
+  const [timedOut, setTimedOut] = useState(false);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setTimedOut(true), BOOT_DEADLINE_MS);
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  if (timedOut) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 text-center text-white">
+        <img
+          src="/logo.png"
+          alt=""
+          className="size-14 rounded-2xl border border-white/10 bg-white/5 object-contain p-1"
+        />
+        <p className="text-base font-semibold">Could not verify access</p>
+        <p className="max-w-xs text-sm leading-relaxed text-white/60">
+          The app did not finish starting. Check your connection, then tap retry.
+        </p>
+        <button
+          type="button"
+          onClick={() => window.location.reload()}
+          className="rounded-full bg-white px-7 py-3 text-xs font-extrabold tracking-widest text-black"
+        >
+          TAP TO RETRY
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-4 bg-black px-6 text-white">
       <img
@@ -89,8 +131,9 @@ export const getRouter = () => {
     // `defaultSplashTimeoutMs` are NOT options in @tanstack/react-router
     // 1.170 — passing them is rejected by the type checker and ignored at
     // runtime. The hard stop therefore lives in the boot path, where it can
-    // produce a real screen: the gate's own deadline (see below) and the
-    // inline watchdog in __root.tsx. Nothing here reloads the page.
+    // produce a real screen: the gate's own deadline (BOOT_ACCESS_DEADLINE_MS),
+    // RoutePending's own 8-second retry card above, and the shell's inline
+    // watchdog in __root.tsx for a bundle that never rendered at all.
   });
 
   /**
