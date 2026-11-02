@@ -187,7 +187,6 @@ import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { RobotVideoLayer } from "@/components/app/RobotVideoLayer";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
-import { loadBridgeConfig } from "@/lib/bridge-client";
 import { applyShellScope, shellScopeFor } from "@/lib/shell-scope";
 import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
 import { EXECUTION_EVENT } from "@/lib/execution-events";
@@ -370,14 +369,6 @@ function RootComponent() {
   useEffect(() => {
     applyShellScope(shellScope);
   }, [shellScope]);
-
-  // READ THE BRIDGE'S CURRENT ADDRESS once per app start. The tunnel hostname
-  // changes whenever cloudflared restarts, so the address is an admin setting
-  // read at runtime (KV via /api/bridge-config) instead of a build constant.
-  // A missing endpoint or an offline start keeps the address already cached.
-  useEffect(() => {
-    void loadBridgeConfig();
-  }, []);
 
   // FIRST GESTURE ARMS THE VOICE. Browsers refuse speechSynthesis before the
   // page has been touched, which silently swallowed the first announcement of

@@ -359,8 +359,8 @@ function AppSettings() {
               <BottomNavStyles />
             </PillSection>
 
-            {/* The tunnel hostname changes whenever cloudflared restarts, so
-                the address is a setting here rather than a build constant. */}
+            {/* The bridge address is built into the app — this section only
+                reports it and lets the user test the connection. */}
             <PillSection
               icon="🛰️"
               label="Trading Bridge"

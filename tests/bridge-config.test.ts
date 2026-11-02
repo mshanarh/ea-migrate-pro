@@ -1,20 +1,19 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
- * THE BRIDGE ADDRESS IS RESOLVED AT RUNTIME.
+ * THE BRIDGE ADDRESS IS HARDCODED.
  *
- * The tunnel hostname changes whenever cloudflared restarts, so a build-time
- * constant goes stale and every request fails with "Failed to fetch" while the
- * bridge is online. These assertions pin the resolution order — admin setting
- * (KV, via /api/bridge-config) → this device's cached address → env → default —
- * and that a known-dead host is never used again.
+ * It used to be resolvable at runtime (admin KV value → device cache → env →
+ * default), which meant a stale tunnel host saved on a phone or in KV could
+ * silently send every request to a dead host while the bridge was online. Now
+ * there is exactly one address in `src/lib/bridge-client.ts`, nothing to
+ * configure and nothing cached: Test bridge and every scalper call read the
+ * same constant.
  */
 
-const STORAGE_KEY = "eamp.bridge.url.v1";
-const DEFAULT_URL = "https://eating-investors-geometry-loans.trycloudflare.com";
-const DEAD_URL = "https://camping-geology-operates-consistency.trycloudflare.com";
+const EXPECTED_URL = "https://class-risks-protective-positions.trycloudflare.com";
 
-/** A fresh copy of the module, so its module-level address is re-resolved. */
+/** A fresh copy of the module, so nothing is shared between assertions. */
 async function freshModule() {
   vi.resetModules();
   return import("../src/lib/bridge-client");
@@ -22,8 +21,6 @@ async function freshModule() {
 
 beforeEach(() => {
   window.localStorage.clear();
-  vi.stubEnv("VITE_MT5_BRIDGE_URL", "");
-  vi.stubEnv("VITE_BRIDGE_URL", "");
 });
 
 afterEach(() => {
@@ -31,129 +28,38 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("bridge URL resolution", () => {
-  it("falls back to the confirmed tunnel when nothing else is known", async () => {
+describe("bridge address", () => {
+  it("is the hardcoded tunnel", async () => {
+    const { getBridgeUrl, BRIDGE_URL } = await freshModule();
+    expect(BRIDGE_URL).toBe(EXPECTED_URL);
+    expect(getBridgeUrl()).toBe(EXPECTED_URL);
+  });
+
+  it("ignores any address left in device storage by an older build", async () => {
+    window.localStorage.setItem("eamp.bridge.url.v1", "https://stale-tunnel.trycloudflare.com");
+    window.localStorage.setItem("bridgeUrl", "http://localhost:8000");
     const { getBridgeUrl } = await freshModule();
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
+    expect(getBridgeUrl()).toBe(EXPECTED_URL);
   });
 
-  it("reads the VITE_-prefixed env override", async () => {
-    vi.stubEnv("VITE_MT5_BRIDGE_URL", "https://from-env.example.com/");
+  it("ignores build-environment URL overrides", async () => {
+    vi.stubEnv("VITE_MT5_BRIDGE_URL", "https://from-env.example.com");
+    vi.stubEnv("VITE_BRIDGE_URL", "https://also-from-env.example.com");
     const { getBridgeUrl } = await freshModule();
-    expect(getBridgeUrl()).toBe("https://from-env.example.com");
+    expect(getBridgeUrl()).toBe(EXPECTED_URL);
   });
 
-  it("prefers the address saved on this device", async () => {
-    window.localStorage.setItem(STORAGE_KEY, "https://saved-tunnel.trycloudflare.com");
-    const { getBridgeUrl } = await freshModule();
-    expect(getBridgeUrl()).toBe("https://saved-tunnel.trycloudflare.com");
+  it("exposes no setter and no loader — the address cannot be changed at runtime", async () => {
+    const mod = (await freshModule()) as Record<string, unknown>;
+    expect(mod["setBridgeUrl"]).toBeUndefined();
+    expect(mod["loadBridgeConfig"]).toBeUndefined();
+    expect(mod["normalizeBridgeUrl"]).toBeUndefined();
   });
 
-  it("never reuses the known-dead tunnel host", async () => {
-    window.localStorage.setItem(STORAGE_KEY, DEAD_URL);
-    const { getBridgeUrl } = await freshModule();
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
-  });
-
-  it("purges stale addresses written under older keys", async () => {
-    window.localStorage.setItem("bridgeUrl", DEAD_URL);
-    window.localStorage.setItem("bridge_url", "http://localhost:8000");
-    await freshModule();
-    expect(window.localStorage.getItem("bridgeUrl")).toBeNull();
-    expect(window.localStorage.getItem("bridge_url")).toBeNull();
-  });
-
-  it("saves a new address, normalising a trailing slash", async () => {
-    const { getBridgeUrl, setBridgeUrl } = await freshModule();
-    expect(setBridgeUrl("https://new-tunnel.trycloudflare.com/")).toBe("https://new-tunnel.trycloudflare.com");
-    expect(getBridgeUrl()).toBe("https://new-tunnel.trycloudflare.com");
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("https://new-tunnel.trycloudflare.com");
-  });
-
-  it("refuses anything that is not an http(s) address", async () => {
-    const { getBridgeUrl, setBridgeUrl } = await freshModule();
-    expect(setBridgeUrl("ftp://bridge.example.com")).toBeNull();
-    expect(setBridgeUrl("not a url")).toBeNull();
-    expect(setBridgeUrl("")).toBeNull();
-    // The address in use is unchanged by a refused save.
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
-  });
-});
-
-describe("loadBridgeConfig", () => {
-  it("adopts the admin-set address from /api/bridge-config", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => ({ ok: true, url: "https://admin-set.trycloudflare.com" }),
-      }) as unknown as Response),
-    );
-    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
-
-    await loadBridgeConfig();
-
-    expect(getBridgeUrl()).toBe("https://admin-set.trycloudflare.com");
-    expect(window.localStorage.getItem(STORAGE_KEY)).toBe("https://admin-set.trycloudflare.com");
-  });
-
-  it("never overwrites the address saved in Settings", async () => {
-    window.localStorage.setItem(STORAGE_KEY, "https://my-own-tunnel.trycloudflare.com");
-    const fetchSpy = vi.fn(async () => ({
-      ok: true,
-      status: 200,
-      json: async () => ({ ok: true, url: "https://admin-set.trycloudflare.com" }),
-    }) as unknown as Response);
-    vi.stubGlobal("fetch", fetchSpy);
-    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
-
-    await loadBridgeConfig();
-
-    expect(getBridgeUrl()).toBe("https://my-own-tunnel.trycloudflare.com");
-    expect(fetchSpy).not.toHaveBeenCalled();
-  });
-
-  it("keeps the current address when the endpoint is missing (static host)", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({
-        ok: true,
-        status: 200,
-        json: async () => {
-          throw new Error("Unexpected token <");
-        },
-      }) as unknown as Response),
-    );
-    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
-
-    await loadBridgeConfig();
-
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
-  });
-
-  it("keeps the current address when the store is unavailable", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: false, status: 503, json: async () => ({ ok: false }) }) as unknown as Response),
-    );
-    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
-
-    await loadBridgeConfig();
-
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
-  });
-
-  it("ignores a dead address coming back from the store", async () => {
-    vi.stubGlobal(
-      "fetch",
-      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({ ok: true, url: DEAD_URL }) }) as unknown as Response),
-    );
-    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
-
-    await loadBridgeConfig();
-
-    expect(getBridgeUrl()).toBe(DEFAULT_URL);
+  it("reports the host without a protocol for short messages", async () => {
+    const { bridgeHost, getBridgeUrl } = await freshModule();
+    expect(bridgeHost()).toBe("class-risks-protective-positions.trycloudflare.com");
+    expect(bridgeHost(getBridgeUrl())).toBe("class-risks-protective-positions.trycloudflare.com");
   });
 });
 
@@ -161,7 +67,7 @@ describe("failure messages", () => {
   it("names the address that was actually called, in the user's terms", async () => {
     const { bridgeUnreachableMessage } = await freshModule();
     const message = bridgeUnreachableMessage(new TypeError("Failed to fetch"));
-    expect(message).toContain(DEFAULT_URL);
+    expect(message).toContain(EXPECTED_URL);
     expect(message).toContain("DNS/hostname not found");
   });
 
@@ -176,12 +82,11 @@ describe("failure messages", () => {
 });
 
 /**
- * TEST BRIDGE — three exact outcomes, a 10-second bound and the real reason.
- * The address under test is the one in use, so the Settings field and every
- * start/stop/status call can never disagree.
+ * TEST BRIDGE — three exact outcomes, a 10-second bound and the real reason,
+ * always against the one hardcoded address.
  */
 describe("testBridgeConnection", () => {
-  it("answers Bridge OK on HTTP 200 and calls /scalper/status on the saved address", async () => {
+  it("answers Bridge OK on HTTP 200 and calls /scalper/status on the hardcoded address", async () => {
     const calls: string[] = [];
     vi.stubGlobal(
       "fetch",
@@ -190,11 +95,21 @@ describe("testBridgeConnection", () => {
         return { ok: true, status: 200, json: async () => ({ running: false }) } as unknown as Response;
       }),
     );
-    const { setBridgeUrl, testBridgeConnection } = await freshModule();
-    const url = setBridgeUrl("https://fresh-tunnel.trycloudflare.com")!;
+    const { testBridgeConnection } = await freshModule();
 
-    await expect(testBridgeConnection()).resolves.toMatchObject({ kind: "ok", url });
-    expect(calls[0]).toBe("https://fresh-tunnel.trycloudflare.com/scalper/status");
+    await expect(testBridgeConnection()).resolves.toMatchObject({ kind: "ok", url: EXPECTED_URL });
+    expect(calls[0]).toBe(`${EXPECTED_URL}/scalper/status`);
+  });
+
+  it("sends the bridge key header", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}) }) as unknown as Response),
+    );
+    const { testBridgeConnection } = await freshModule();
+    await testBridgeConnection();
+    const init = (vi.mocked(fetch).mock.calls[0]?.[1] ?? {}) as RequestInit;
+    expect((init.headers as Record<string, string>)["x-bridge-key"]).toBe("my_secret_bridge_key_2026");
   });
 
   it("reports the bridge's HTTP code when it answers with an error", async () => {
@@ -203,9 +118,9 @@ describe("testBridgeConnection", () => {
       vi.fn(async () => ({ ok: false, status: 502, json: async () => null }) as unknown as Response),
     );
     const { testBridgeConnection } = await freshModule();
-    await expect(testBridgeConnection("https://tunnel.example.com")).resolves.toEqual({
+    await expect(testBridgeConnection()).resolves.toEqual({
       kind: "http",
-      url: "https://tunnel.example.com",
+      url: EXPECTED_URL,
       status: 502,
     });
   });
@@ -218,7 +133,7 @@ describe("testBridgeConnection", () => {
       }),
     );
     const { testBridgeConnection } = await freshModule();
-    const result = await testBridgeConnection("https://slow.example.com");
+    const result = await testBridgeConnection();
     expect(result.kind).toBe("unreachable");
     if (result.kind !== "unreachable") return;
     expect(result.reason).toContain("timeout");
@@ -233,7 +148,7 @@ describe("testBridgeConnection", () => {
       }),
     );
     const { testBridgeConnection } = await freshModule();
-    const result = await testBridgeConnection("https://gone.example.com");
+    const result = await testBridgeConnection();
     expect(result.kind).toBe("unreachable");
     if (result.kind !== "unreachable") return;
     expect(result.reason).toContain("DNS/hostname not found");
@@ -249,19 +164,9 @@ describe("testBridgeConnection", () => {
       }),
     );
     const { testBridgeConnection } = await freshModule();
-    const result = await testBridgeConnection("https://cors.example.com");
+    const result = await testBridgeConnection();
     expect(result.kind).toBe("unreachable");
     if (result.kind !== "unreachable") return;
     expect(result.reason).toContain("CORS");
-  });
-
-  it("refuses a malformed address without calling anything", async () => {
-    const fetchSpy = vi.fn();
-    vi.stubGlobal("fetch", fetchSpy);
-    const { testBridgeConnection } = await freshModule();
-    const result = await testBridgeConnection("not a url");
-    expect(result).toMatchObject({ kind: "unreachable" });
-    if (result.kind === "unreachable") expect(result.reason).toContain("valid http(s) address");
-    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

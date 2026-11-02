@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { setBridgeUrl } from "../src/lib/bridge-client";
+import { BRIDGE_URL } from "../src/lib/bridge-client";
 import {
   fetchScalperStatus,
   planFromAllowedQuotes,
@@ -16,7 +16,8 @@ import {
  * the absence of any /trade/execute call.
  */
 
-const BRIDGE = "https://bridge.example.test";
+/** The address hardcoded in the app — there is no per-device setting any more. */
+const BRIDGE = BRIDGE_URL;
 
 type Captured = { url: string; method: string; body: unknown; headers: Record<string, string> };
 
@@ -48,7 +49,6 @@ function stubBridge(
 
 beforeEach(() => {
   window.localStorage.clear();
-  setBridgeUrl(BRIDGE);
 });
 
 afterEach(() => {

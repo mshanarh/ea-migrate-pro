@@ -1,15 +1,10 @@
 import { createServerFn } from "@tanstack/react-start";
 import { cloudSyncConfigured, getMt5RecordWithSecret, upsertMt5Record } from "@/lib/account-sync.server";
 import { resolveTradeDirection, type BridgeCredentials } from "@/lib/auto-trade";
+import { BRIDGE_URL } from "@/lib/bridge-client";
 
-
-// Server-side calls use the private env var; the fallback is the bridge's
-// current quick-tunnel address (the browser resolves the same address at
-// runtime through /api/bridge-config — see src/lib/bridge-client.ts).
-const BRIDGE_URL =
-  process.env["MT5_BRIDGE_URL"] ||
-  process.env["VITE_MT5_BRIDGE_URL"] ||
-  "https://eating-investors-geometry-loans.trycloudflare.com";
+// Server-side calls use the SAME hardcoded bridge address as the browser (see
+// src/lib/bridge-client.ts) — there is no env override and no setting to read.
 const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
 /** Hard cap on any single bridge request — a dead bridge must fail FAST with
  *  a clear message, never hang the scanner on "EXECUTING" forever. */
@@ -261,11 +256,6 @@ export type ExecuteHatOrderResult =
   | { ok: false; reason: string };
 
 export async function executeHatOrder(input: ExecuteHatOrderInput): Promise<ExecuteHatOrderResult> {
-  const BRIDGE_URL =
-    process.env["MT5_BRIDGE_URL"] ||
-    process.env["VITE_MT5_BRIDGE_URL"] ||
-    "https://eating-investors-geometry-loans.trycloudflare.com";
-
   // Resolve the broker symbol from the currency before touching the bridge (the
   // bridge normalises `currency` to the broker's own symbol name and aborts
   // with a logged mismatch on every send).
