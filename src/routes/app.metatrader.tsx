@@ -771,7 +771,7 @@ function AppMetatrader() {
       // The address being called is part of the message — "Failed to fetch"
       // alone cannot tell a dead tunnel from a network problem.
       console.warn(`[metatrader] bridge verify failed at ${getBridgeUrl()}/account/verify`, error);
-      const message = bridgeUnreachableMessage(error instanceof Error ? error.message : undefined);
+      const message = bridgeUnreachableMessage(error);
       setErrorMessage(message);
       toast.error(message);
     } finally {

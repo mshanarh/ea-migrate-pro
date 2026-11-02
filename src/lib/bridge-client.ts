@@ -113,13 +113,107 @@ export function bridgeHost(url: string = activeBridgeUrl): string {
   }
 }
 
+/* ── failure diagnosis ───────────────────────────────────────────────────── */
+
+/** The test button and the status poll are a quick read, not a job. */
+export const BRIDGE_PROBE_TIMEOUT_MS = 10_000;
+/** Start/stop wait for the daemon to answer — still bounded, never a freeze. */
+export const BRIDGE_COMMAND_TIMEOUT_MS = 30_000;
+
+/**
+ * THE REAL REASON A BRIDGE CALL FAILED — in the user's terms.
+ *
+ * `AbortSignal.timeout()` rejects with a DOMException whose message is literally
+ * "signal timed out", and every caller used to print that, so a DEAD HOSTNAME
+ * and a SLOW DAEMON both looked like "signal timed out". A timeout is now
+ * called a timeout, a refused/DNS/TLS failure is called a network failure, and
+ * anything else carries its own message. Never a generic phrase.
+ */
+export function describeBridgeFailure(error: unknown, timeoutMs: number = BRIDGE_PROBE_TIMEOUT_MS): string {
+  const record = (error ?? {}) as { name?: unknown; message?: unknown };
+  const name = typeof record.name === "string" ? record.name : "";
+  const message = typeof record.message === "string" ? record.message.trim() : String(error ?? "").trim();
+  const seconds = Math.max(1, Math.round(timeoutMs / 1000));
+  if (name === "TimeoutError" || /signal timed out|timed out|timeout/i.test(message)) {
+    return `timeout — the bridge did not answer within ${seconds}s`;
+  }
+  if (name === "AbortError") return "request was cancelled";
+  // The browser deliberately hides DNS vs refused vs TLS behind one opaque
+  // TypeError; the caller adds a probe when it needs to tell them apart.
+  if (/failed to fetch|networkerror|load failed|network request failed|err_connection|err_name|err_cert/i.test(message)) {
+    return "network unreachable — DNS/hostname not found, connection refused or TLS error";
+  }
+  return message || "network unreachable — the request could not be completed";
+}
+
+/** Is the host answering at all (ignoring CORS)? Used only to name the reason. */
+async function probeHostAnswers(baseUrl: string): Promise<boolean> {
+  try {
+    await fetch(baseUrl, {
+      method: "GET",
+      mode: "no-cors",
+      cache: "no-store",
+      signal: AbortSignal.timeout(5_000),
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export type BridgeTestResult =
+  | { kind: "ok"; url: string; latencyMs: number }
+  | { kind: "http"; url: string; status: number }
+  | { kind: "unreachable"; url: string; reason: string };
+
+/**
+ * TEST BRIDGE — `GET {bridgeUrl}/scalper/status` with a 10 s bound.
+ *
+ * Three outcomes, and nothing else: OK, an HTTP error with its real code, or
+ * unreachable with the real reason. A CORS refusal and a dead hostname are
+ * different answers, so the opaque `TypeError` is probed once more without CORS
+ * to find out which one it was.
+ */
+export async function testBridgeConnection(input?: string): Promise<BridgeTestResult> {
+  const normalized = input === undefined ? getBridgeUrl() : normalizeBridgeUrl(input);
+  if (!normalized) {
+    return { kind: "unreachable", url: (input ?? "").trim(), reason: "that is not a valid http(s) address" };
+  }
+  const startedAt = Date.now();
+  try {
+    const response = await fetch(`${normalized}/scalper/status`, {
+      method: "GET",
+      cache: "no-store",
+      headers: { accept: "application/json", "x-bridge-key": BRIDGE_KEY },
+      signal: AbortSignal.timeout(BRIDGE_PROBE_TIMEOUT_MS),
+    });
+    if (!response.ok) return { kind: "http", url: normalized, status: response.status };
+    return { kind: "ok", url: normalized, latencyMs: Date.now() - startedAt };
+  } catch (error) {
+    const reason = describeBridgeFailure(error, BRIDGE_PROBE_TIMEOUT_MS);
+    if (!reason.startsWith("network unreachable")) {
+      return { kind: "unreachable", url: normalized, reason };
+    }
+    const answers = await probeHostAnswers(normalized);
+    return {
+      kind: "unreachable",
+      url: normalized,
+      reason: answers
+        ? "the address answered but blocked the request (CORS) — check the bridge's allowed origins"
+        : "DNS/hostname not found, connection refused or TLS error",
+    };
+  }
+}
+
 /**
  * WHICH ADDRESS FAILED — logged and shown, so "Failed to fetch" can never again
- * hide whether the app was calling the right bridge.
+ * hide whether the app was calling the right bridge, and a timeout is never
+ * reported as the wrong reason.
  */
-export function bridgeUnreachableMessage(detail?: string): string {
+export function bridgeUnreachableMessage(error?: unknown): string {
   const url = getBridgeUrl();
-  return `Could not reach the trading bridge at ${url}${detail ? ` (${detail})` : ""} — check the connection and that bridge.py is running.`;
+  const reason = error === undefined || error === null || error === "" ? "" : describeBridgeFailure(error);
+  return `Could not reach the trading bridge at ${url}${reason ? ` (${reason})` : ""} — check the connection and that bridge.py is running.`;
 }
 
 /** One in-flight read of the server-side setting, shared by every caller. */

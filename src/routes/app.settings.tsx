@@ -7,6 +7,7 @@ import { BackAnimationSection } from "@/components/app/BackAnimationSection";
 import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { MusicSettingsSection } from "@/components/app/MusicSettings";
+import { BridgeSettingsSection } from "@/components/app/BridgeSettings";
 import { BrandLogo } from "@/components/BrandLogo";
 import { BottomNavStyles } from "@/components/app/BottomNavStyles";
 import { usePlatform } from "@/lib/platform";
@@ -356,6 +357,17 @@ function AppSettings() {
               onToggle={() => toggleSection("bottomNav")}
             >
               <BottomNavStyles />
+            </PillSection>
+
+            {/* The tunnel hostname changes whenever cloudflared restarts, so
+                the address is a setting here rather than a build constant. */}
+            <PillSection
+              icon="🛰️"
+              label="Trading Bridge"
+              open={!!openSections["bridge"]}
+              onToggle={() => toggleSection("bridge")}
+            >
+              <BridgeSettingsSection accent={accent} />
             </PillSection>
           </div>
         </main>

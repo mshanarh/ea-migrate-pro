@@ -187,7 +187,7 @@ async function bridgePost<T>(
     return {
       ok: false,
       data: null,
-      error: bridgeUnreachableMessage(error instanceof Error ? error.message : String(error)),
+      error: bridgeUnreachableMessage(error),
     };
   }
 }

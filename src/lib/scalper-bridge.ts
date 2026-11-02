@@ -22,7 +22,14 @@
  * per-symbol overrides live in the daemon's settings file; they are not part of
  * the bridge contract, so this client never pretends to send them.
  */
-import { BRIDGE_KEY, bridgeHost, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
+import {
+  BRIDGE_COMMAND_TIMEOUT_MS,
+  BRIDGE_KEY,
+  BRIDGE_PROBE_TIMEOUT_MS,
+  bridgeHost,
+  bridgeUnreachableMessage,
+  getBridgeUrl,
+} from "./bridge-client";
 
 /** One Allowed Quotes entry reduced to what the bridge can carry. */
 export type ScalperQuotePlan = { symbol: string; lot: number; trades: number };
@@ -51,8 +58,15 @@ export type ScalperStatusResult =
   | { ok: true; status: ScalperDaemonStatus }
   | { ok: false; error: string };
 
-/** A phone on mobile data over a cloudflared tunnel; still a bounded wait. */
-const TIMEOUT_MS = 20_000;
+/**
+ * BOUNDED WAITS — a phone on mobile data over a cloudflared tunnel still has
+ * to answer, so a status read gives up in 10 s and a start/stop command (which
+ * waits for the daemon to write its settings and reply) gets 30 s. Nothing in
+ * the UI can hang on either: the call is async and the button keeps its own
+ * spinner.
+ */
+const STATUS_TIMEOUT_MS = BRIDGE_PROBE_TIMEOUT_MS;
+const COMMAND_TIMEOUT_MS = BRIDGE_COMMAND_TIMEOUT_MS;
 
 const VERSION_IN_LOG = /DAEMON (?:STARTED )?v(\d+(?:\.\d+)*)/i;
 
@@ -95,14 +109,18 @@ type BridgeReply = { ok: true; payload: Record<string, unknown> } | { ok: false;
  * never turned into a success, and the address that answered is logged so a
  * dead tunnel can never again look like a broken button.
  */
-async function callBridge(path: string, init: RequestInit): Promise<BridgeReply> {
+async function callBridge(
+  path: string,
+  init: RequestInit,
+  timeoutMs: number = STATUS_TIMEOUT_MS,
+): Promise<BridgeReply> {
   const url = `${getBridgeUrl()}${path}`;
   const method = init.method ?? "GET";
   try {
     const response = await fetch(url, {
       ...init,
       headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
-      signal: AbortSignal.timeout(TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = (await response.json().catch(() => null)) as unknown;
     const record =
@@ -121,7 +139,8 @@ async function callBridge(path: string, init: RequestInit): Promise<BridgeReply>
   } catch (error) {
     const message = (error as Error)?.message ?? "request failed";
     console.warn(`[scalper] ${method} ${url} failed: ${message} (bridge ${bridgeHost()})`);
-    return { ok: false, error: bridgeUnreachableMessage(message) };
+    // The real reason (timeout / DNS / refused / TLS), never "signal timed out".
+    return { ok: false, error: bridgeUnreachableMessage(error) };
   }
 }
 
@@ -165,7 +184,11 @@ export async function startScalperOnBridge(plans: ScalperQuotePlan[]): Promise<S
   console.info(
     `[scalper] POST /scalper/start → ${symbols.join(", ")} · lot ${body.lot} · trades ${body.trade_count}`,
   );
-  const reply = await callBridge("/scalper/start", { method: "POST", body: JSON.stringify(body) });
+  const reply = await callBridge(
+    "/scalper/start",
+    { method: "POST", body: JSON.stringify(body) },
+    COMMAND_TIMEOUT_MS,
+  );
   if (!reply.ok) return reply;
   if (reply.payload["ok"] !== true || reply.payload["running"] !== true) {
     return {
@@ -184,7 +207,7 @@ export async function startScalperOnBridge(plans: ScalperQuotePlan[]): Promise<S
 
 /** STOP THE VPS DAEMON — only a confirmed 200 counts as stopped. */
 export async function stopScalperOnBridge(): Promise<ScalperStopResult> {
-  const reply = await callBridge("/scalper/stop", { method: "POST", body: "{}" });
+  const reply = await callBridge("/scalper/stop", { method: "POST", body: "{}" }, COMMAND_TIMEOUT_MS);
   if (!reply.ok) return reply;
   if (reply.payload["ok"] !== true || reply.payload["running"] !== false) {
     return {

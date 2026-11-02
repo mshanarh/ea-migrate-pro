@@ -142,10 +142,110 @@ describe("loadBridgeConfig", () => {
 });
 
 describe("failure messages", () => {
-  it("names the address that was actually called", async () => {
+  it("names the address that was actually called, in the user's terms", async () => {
     const { bridgeUnreachableMessage } = await freshModule();
-    const message = bridgeUnreachableMessage("Failed to fetch");
+    const message = bridgeUnreachableMessage(new TypeError("Failed to fetch"));
     expect(message).toContain(DEFAULT_URL);
-    expect(message).toContain("Failed to fetch");
+    expect(message).toContain("DNS/hostname not found");
+  });
+
+  it("never reports a browser timeout as the generic phrase", async () => {
+    const { describeBridgeFailure } = await freshModule();
+    const timeout = new DOMException("signal timed out", "TimeoutError");
+    const reason = describeBridgeFailure(timeout, 10_000);
+    expect(reason).toContain("timeout");
+    expect(reason).toContain("10s");
+    expect(reason).not.toContain("signal timed out");
+  });
+});
+
+/**
+ * TEST BRIDGE — three exact outcomes, a 10-second bound and the real reason.
+ * The address under test is the one in use, so the Settings field and every
+ * start/stop/status call can never disagree.
+ */
+describe("testBridgeConnection", () => {
+  it("answers Bridge OK on HTTP 200 and calls /scalper/status on the saved address", async () => {
+    const calls: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        calls.push(String(input));
+        return { ok: true, status: 200, json: async () => ({ running: false }) } as unknown as Response;
+      }),
+    );
+    const { setBridgeUrl, testBridgeConnection } = await freshModule();
+    const url = setBridgeUrl("https://fresh-tunnel.trycloudflare.com")!;
+
+    await expect(testBridgeConnection()).resolves.toMatchObject({ kind: "ok", url });
+    expect(calls[0]).toBe("https://fresh-tunnel.trycloudflare.com/scalper/status");
+  });
+
+  it("reports the bridge's HTTP code when it answers with an error", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({ ok: false, status: 502, json: async () => null }) as unknown as Response),
+    );
+    const { testBridgeConnection } = await freshModule();
+    await expect(testBridgeConnection("https://tunnel.example.com")).resolves.toEqual({
+      kind: "http",
+      url: "https://tunnel.example.com",
+      status: 502,
+    });
+  });
+
+  it("calls a timeout a timeout", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new DOMException("signal timed out", "TimeoutError");
+      }),
+    );
+    const { testBridgeConnection } = await freshModule();
+    const result = await testBridgeConnection("https://slow.example.com");
+    expect(result.kind).toBe("unreachable");
+    if (result.kind !== "unreachable") return;
+    expect(result.reason).toContain("timeout");
+    expect(result.reason).not.toContain("signal timed out");
+  });
+
+  it("names a dead hostname/refused connection instead of guessing", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => {
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const { testBridgeConnection } = await freshModule();
+    const result = await testBridgeConnection("https://gone.example.com");
+    expect(result.kind).toBe("unreachable");
+    if (result.kind !== "unreachable") return;
+    expect(result.reason).toContain("DNS/hostname not found");
+  });
+
+  it("tells a CORS refusal apart from a dead host", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        // The no-CORS probe answers; the real request was blocked.
+        if (init?.mode === "no-cors") return { ok: true, status: 0 } as unknown as Response;
+        throw new TypeError("Failed to fetch");
+      }),
+    );
+    const { testBridgeConnection } = await freshModule();
+    const result = await testBridgeConnection("https://cors.example.com");
+    expect(result.kind).toBe("unreachable");
+    if (result.kind !== "unreachable") return;
+    expect(result.reason).toContain("CORS");
+  });
+
+  it("refuses a malformed address without calling anything", async () => {
+    const fetchSpy = vi.fn();
+    vi.stubGlobal("fetch", fetchSpy);
+    const { testBridgeConnection } = await freshModule();
+    const result = await testBridgeConnection("not a url");
+    expect(result).toMatchObject({ kind: "unreachable" });
+    if (result.kind === "unreachable") expect(result.reason).toContain("valid http(s) address");
+    expect(fetchSpy).not.toHaveBeenCalled();
   });
 });
