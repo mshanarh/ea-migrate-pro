@@ -229,6 +229,11 @@ let configLoad: Promise<string> | null = null;
 export function loadBridgeConfig(): Promise<string> {
   if (!isBrowser()) return Promise.resolve(activeBridgeUrl);
   if (configLoad) return configLoad;
+  // THE DEVICE SETTING WINS. An address typed into Settings is the trader's
+  // explicit choice, so the admin-set KV value is only adopted when this device
+  // has never saved one — otherwise a stale server value would silently
+  // overwrite the tunnel the user just fixed.
+  if (readCachedBridgeUrl()) return Promise.resolve(activeBridgeUrl);
   const run = (async () => {
     try {
       const reply = await fetch("/api/bridge-config", {

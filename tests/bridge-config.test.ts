@@ -98,6 +98,22 @@ describe("loadBridgeConfig", () => {
     expect(window.localStorage.getItem(STORAGE_KEY)).toBe("https://admin-set.trycloudflare.com");
   });
 
+  it("never overwrites the address saved in Settings", async () => {
+    window.localStorage.setItem(STORAGE_KEY, "https://my-own-tunnel.trycloudflare.com");
+    const fetchSpy = vi.fn(async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, url: "https://admin-set.trycloudflare.com" }),
+    }) as unknown as Response);
+    vi.stubGlobal("fetch", fetchSpy);
+    const { getBridgeUrl, loadBridgeConfig } = await freshModule();
+
+    await loadBridgeConfig();
+
+    expect(getBridgeUrl()).toBe("https://my-own-tunnel.trycloudflare.com");
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it("keeps the current address when the endpoint is missing (static host)", async () => {
     vi.stubGlobal(
       "fetch",
