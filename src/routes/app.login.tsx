@@ -890,26 +890,46 @@ function AppAccess() {
     if (isPaymentExemptEmail(clean)) {
       console.info(`[app-login] ${clean} is the sole admin — signing in without a subscription check`);
       /**
-       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — NOT THE DEVICE RULE.
+       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — AND NOTHING ELSE.
        *
-       * This branch used to sign in immediately, so the admin address that had
-       * just been bound on the web opened on a phone without a word about
-       * reactivation. "One email, one device" applies to every email, admins
-       * included; only PAYMENT is bypassed here.
+       * This branch has been carved down twice. It first signed the owner in
+       * with no device rule at all, so the address that had just been bound on
+       * the web opened on a phone without a word about reactivation. It was
+       * then given a READ of the binding, which still left two holes:
+       *
+       *   • an email that was NOT YET bound was let in without ever recording
+       *     the binding, so the one-device rule only bit on some later
+       *     navigation (and never at all if that write failed quietly);
+       *   • an unreadable/timed-out binding read failed OPEN — "never lock the
+       *     admin out" — while every other account still has to be bound.
+       *
+       * It now makes the SAME call every other sign-in makes (see
+       * `finishSignIn`): `bindDeviceToEmail` WRITES the binding, refuses when
+       * the email is held by another device ("Account already used — Contact
+       * admin for reactivation"), and claims an unbound address for this
+       * device. Admin status exempts payment. It does not exempt the device.
        */
       try {
-        const adminBinding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), 12_000, {
-          boundToOtherDevice: false,
+        const adminBind = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, {
+          ok: false,
+          error: "Device binding timed out",
         });
-        if (adminBinding.boundToOtherDevice) {
-          console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
-          setBlockedEmail(clean);
-          setBusy(false);
-          setRedirecting(false);
-          return;
+        if (!adminBind.ok) {
+          const otherDevice =
+            adminBind.boundToOtherDevice === true ||
+            /already used|another device/i.test(adminBind.error ?? "");
+          if (otherDevice) {
+            console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
+            appSignOut();
+            setBlockedEmail(clean);
+            setBusy(false);
+            setRedirecting(false);
+            return;
+          }
+          console.warn("[app-login] admin device bind:", adminBind.error ?? "unknown failure");
         }
-      } catch {
-        /* an unreadable binding must never lock the admin out */
+      } catch (error) {
+        console.warn("[app-login] admin device bind threw:", error);
       }
       const adminSignIn = appSignIn(clean);
       if (adminSignIn.error) {

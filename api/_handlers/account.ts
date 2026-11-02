@@ -35,6 +35,7 @@ import {
   parseBody,
   saveRegistration,
   setAdminFlag,
+  setDeviceIdForEmail,
   setPaidStatus,
   setReactivationFlag,
   storeConfigured,
@@ -88,7 +89,11 @@ function toProfile(record: Registration): AccountProfile {
     createdAt: record.createdAt,
     status: String(record.status),
     deviceId: record.deviceId ?? null,
-    reactivationEnabled: record.reactivationEnabled === true || isAdminEmail(record.email),
+    // NOT admin-forced. The 🔒 is the account's own unlock flag, and the admin
+    // is subject to it like everybody else: admin status exempts PAYMENT, not
+    // the reactivation rules. The admin's console powers come from the role
+    // (see `requireAdmin`), never from this flag.
+    reactivationEnabled: record.reactivationEnabled === true,
     displayName: record.displayName ?? "",
     firstName: record.firstName ?? "",
   };
@@ -203,8 +208,11 @@ export default async function handler(request: ApiRequest, response: ApiResponse
           return;
         }
         const record = await getRegistration(email);
-        // ADMINS ARE ALWAYS UNLOCKED — a store hiccup must never re-lock the owner.
-        const enabled = isAdminEmail(email) || record?.reactivationEnabled === true;
+        // THE FLAG IS THE FLAG — for the admin too. Answering "unlocked" because
+        // the address is an admin made the owner the one account that could
+        // never be locked out of reactivation, which is the exemption removed
+        // here. Admin actions stay authorised by ROLE in `reactivate` above.
+        const enabled = record?.reactivationEnabled === true;
         response.status(200).json({ ok: true, enabled });
         return;
       }
@@ -260,10 +268,22 @@ export default async function handler(request: ApiRequest, response: ApiResponse
         }
         const record = await getRegistration(email);
         if (!record) {
-          response.status(404).json({
-            ok: false,
-            error: "Not bound — this is not a registered email. Sign in with the email you registered with.",
-          });
+          if (!isAdminEmail(email)) {
+            response.status(404).json({
+              ok: false,
+              error: "Not bound — this is not a registered email. Sign in with the email you registered with.",
+            });
+            return;
+          }
+          // THE ADMIN IS BOUND LIKE EVERYBODY ELSE. The fixed allowlist has no
+          // KV record of its own, so this used to answer 404 and leave the sole
+          // admin permanently "unbound": the one-device rule could never bite
+          // and no reactivation could ever release a device for it. The first
+          // sign-in now creates the record and claims THIS device; every later
+          // device is refused until a reactivation clears the binding.
+          await setDeviceIdForEmail(email, deviceId);
+          console.info(`[account] ${email} → bound to ${deviceId.slice(0, 8)}… (admin record created)`);
+          response.status(200).json({ ok: true, created: true });
           return;
         }
         const bound = record.deviceId ?? null;
@@ -306,7 +326,10 @@ export default async function handler(request: ApiRequest, response: ApiResponse
           return;
         }
         // PAID ONLY — reactivation releases a device, it does not grant access.
-        if (!(record.isPaid === true && record.paidAt)) {
+        // ADMIN = PAYMENT EXEMPT, and ONLY payment: the admin's own device is
+        // released under the same rule as anybody else's, but the paid record
+        // that rule demands is not required of an address that never pays.
+        if (!isAdminEmail(email) && !(record.isPaid === true && record.paidAt)) {
           response.status(409).json({
             ok: false,
             error: "Not reactivated — this email is registered but not marked paid in KV store.",

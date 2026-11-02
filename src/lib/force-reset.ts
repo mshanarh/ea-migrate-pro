@@ -1,4 +1,6 @@
 import { AUTH_EPOCH, enforceAuthEpoch } from "./auth-store";
+import { appSignOut, getAppState } from "./app-store";
+import { adminSessionRevoked } from "./admin-session";
 
 /**
  * ONE-TIME GLOBAL LOGOUT — deploy-gated, runs on every device exactly once.
@@ -22,6 +24,8 @@ import { AUTH_EPOCH, enforceAuthEpoch } from "./auth-store";
  * class of bug this epoch exists to eliminate.
  *
  * To force ANOTHER global logout later, bump AUTH_EPOCH in src/lib/auth-store.ts.
+ * For a logout scoped to the SOLE ADMIN only, bump ADMIN_SESSION_EPOCH in
+ * src/lib/admin-session.ts — that one never touches anybody else.
  */
 export function runForceReset(): void {
   if (typeof window === "undefined") return;
@@ -42,12 +46,21 @@ export function runForceReset(): void {
     /* storage blocked — treat as "no session to kick" */
   }
 
+  // The scoped revocation reads the session email BEFORE the storage wipe, so
+  // a global reset and a scoped one can never mask each other.
+  const sessionEmail = getAppState().email;
   const wiped = enforceAuthEpoch();
+  // A global wipe already dropped this device's admin session; stamping the
+  // scoped epoch as applied is what stops the admin being kicked a second time
+  // the moment they sign back in.
+  if (wiped) adminSessionRevoked(null);
+  const revokedAdmin = !wiped && adminSessionRevoked(sessionEmail);
+  if (revokedAdmin) appSignOut();
 
   // Anyone who HAD a session starts from the email page again. A first-time
   // visitor has nothing to be kicked out of, and any /app/* route already
   // lands them on /app/login through its guard.
-  if (wiped && hadSession) {
+  if ((wiped && hadSession) || revokedAdmin) {
     try {
       window.location.replace("/app/login");
     } catch {

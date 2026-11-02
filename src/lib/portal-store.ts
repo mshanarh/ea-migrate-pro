@@ -16,7 +16,7 @@
  * never be mistaken for an unpaid account — it answers `unavailable: true` and
  * the screens show a retry line instead of the plan chooser.
  */
-import { OWNER_EMAILS, isPaymentExemptEmail } from "./auth-store";
+import { OWNER_EMAILS } from "./auth-store";
 
 /** A KV account record, in the shape the app's screens already expect. */
 export type UserRow = {
@@ -399,14 +399,15 @@ export async function countAdminsAnon(): Promise<number> {
 /* ── reactivation ────────────────────────────────────────────────────── */
 
 /**
- * May this account release a client's device? Locked by default; admins and
- * owners are always unlocked. A store failure answers false here — this is the
- * MENTOR's lock, not a payment verdict, so failing closed locks a tool rather
- * than blocking a customer.
+ * May this account release a client's device? Locked by default; the record's
+ * own 🔒 decides for EVERY account, the admin included — admin status exempts
+ * payment, not reactivation. The admin's console powers come from the role
+ * (`x-admin-email` on the server), so nothing here needs an owner shortcut. A
+ * store failure answers false: this is the account's lock, not a payment
+ * verdict, so failing closed locks a tool rather than blocking a customer.
  */
 export async function getReactivationEnabled(email: string): Promise<boolean> {
   const address = clean(email);
-  if (OWNER_EMAILS.includes(address) || isPaymentExemptEmail(address)) return true;
   const reply = await callAccount("reactivation-flag", { email: address });
   return reply.ok === true && reply.enabled === true;
 }

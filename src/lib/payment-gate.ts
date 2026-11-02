@@ -63,6 +63,7 @@
  */
 import { markEmailPaid, paymentSourceForEmail, paymentStatusForEmail } from "@/lib/auth-store";
 import { appSignOut, getDeviceId } from "@/lib/app-store";
+import { adminSessionRevoked } from "@/lib/admin-session";
 import { checkAccessServer } from "@/lib/portal-store";
 import { getDeviceBinding, bindDeviceToEmail } from "@/lib/portal-store";
 import { readPortalPayment } from "@/lib/portal-paid";
@@ -926,6 +927,15 @@ async function resolveVerifiedAccess(
   // cloud decides again on this very pass. Nobody is exempt, owners included.
   if (consumeStaleSession()) appSignOut();
   if (!email) return { action: "signin" };
+  // SCOPED SESSION REVOCATION — the sole admin, on every device. Same rule as
+  // the global kick above, narrowed to one address: a bumped
+  // ADMIN_SESSION_EPOCH ends this device's admin session ONCE, on the next
+  // /app navigation, so the next sign-in goes through the normal flow. Every
+  // other email is untouched.
+  if (adminSessionRevoked(email)) {
+    appSignOut();
+    return { action: "signin" };
+  }
   // NO OWNER PASS-THROUGH. Platform owners used to return "pass" here before
   // any database call, so the owner account could never be locked out of the
   // app it administers. That is precisely the hole "paid only, everybody"

@@ -600,7 +600,20 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
       "cloud access gate": "admin",
     };
     console.info(diagnosticLine(email, stores, "admin"));
-    return { ok: true, isPaid: true, status: "admin", stores };
+    // THE BINDING TRAVELS WITH THE ADMIN'S VERDICT TOO.
+    //
+    // Returning early here meant the admin's answer carried NO binding, and the
+    // client then fell back to whatever the DEVICE remembered — so an admin
+    // session on a second device was never refused by the route guard, while
+    // every other account's was. Subscription is the only thing the admin
+    // short-circuits; the device rule is read from the same KV record.
+    const adminBinding = await readDeviceBinding(email);
+    const answer: AccessAnswer = { ok: true, isPaid: true, status: "admin", stores };
+    if (adminBinding.readable) {
+      answer["deviceBinding"] = adminBinding.value;
+      if (deviceId) answer["deviceMatches"] = adminBinding.value?.deviceId === deviceId;
+    }
+    return answer;
   }
 
   // ── 2. EVERY STORE, IN PARALLEL, EACH INSIDE ITS OWN GUARD ───────────────
