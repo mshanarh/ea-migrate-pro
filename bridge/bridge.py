@@ -393,18 +393,13 @@ def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header
         disconnect()
         return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
     try:
-        # Build the EA comment: use the provided name, append direction if needed
-        ea_name = req.ea_name.strip() if req.ea_name.strip() else "EA Migrate batch"
-        # If direction is provided or can be inferred, append it
-        direction = req.direction.strip() if req.direction and req.direction.strip() else None
-        if direction and ea_name:
-            comment = f"{ea_name} {direction}"
-        elif ea_name:
-            comment = ea_name
+        # Use the provided robot EA name for the MT5 order comment
+        # Falls back to 'EA Migrate' if missing/empty — never 'EA Migrate batch'
+        ea_name = (req.ea_name or "").strip()
+        if ea_name:
+            comment = ea_name[:31]
         else:
-            comment = "EA Migrate batch"
-        # Ensure comment fits MT5's 31-char limit
-        comment = comment[:31]
+            comment = "EA Migrate"[:31]
         # Write the state file so the daemon reads it immediately
         state = {
             "running": True,

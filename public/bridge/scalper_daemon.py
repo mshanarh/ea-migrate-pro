@@ -117,9 +117,9 @@ def _write_state(state: dict) -> None:
 
 
 def _ea_name(state: dict) -> str:
-    """Return the EA name from state, falling back to default."""
+    """Return the EA name from state, falling back to 'EA Migrate'."""
     name = state.get("ea_name", "")
-    return name.strip() if name else "EA Migrate batch"
+    return name.strip() if name else "EA Migrate"
 
 
 def _live_magic_positions(creds) -> list[dict]:
@@ -367,17 +367,17 @@ def _open_trade(creds, symbol: str, side: str, lot: float, ticket_note: str):
             return None
         order_type = mt5.ORDER_TYPE_BUY if side == "BUY" else mt5.ORDER_TYPE_SELL
         price = tick.ask if side == "BUY" else tick.bid
-        # Use the EA name from state for the comment, falling back to default
+        # Use the EA name from state for the MT5 order comment.
+        # Falls back to 'EA Migrate' if missing/empty — never 'EA Migrate batch'.
         state = _read_state()
-        ea_comment = _ea_name(state)
-        # Append direction if needed (e.g. "Apex sniper pro V6+ BUY")
+        ea_comment = state.get("ea_name", "")
+        ea_comment = ea_comment.strip() if ea_comment else "EA Migrate"
+        # Append direction only if provided
         direction = ticket_note.strip() if ticket_note else None
-        if ea_comment and ea_comment != "EA Migrate batch" and direction:
+        if direction:
             comment = f"{ea_comment} {direction}"
-        elif ea_comment:
-            comment = ea_comment
         else:
-            comment = "EA Migrate batch"
+            comment = ea_comment
         comment = comment[:31]  # MT5 comment limit
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
@@ -426,11 +426,12 @@ def _close_ticket(creds, ticket: int, symbol: str, volume: float, slippage: int 
         is_buy = position.type == mt5.POSITION_TYPE_BUY
         order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
         price = tick.bid if is_buy else tick.ask
-        # Use the EA name from state for the close comment
+        # Use the EA name from state for the close comment.
+        # Falls back to 'EA Migrate' if missing/empty.
         state = _read_state()
-        ea_comment = _ea_name(state)
-        close_comment = ea_comment if ea_comment else "EA Migrate batch"
-        close_comment = close_comment[:31]  # MT5 comment limit
+        ea_comment = state.get("ea_name", "")
+        ea_comment = ea_comment.strip() if ea_comment else "EA Migrate"
+        close_comment = ea_comment[:31]  # MT5 comment limit
         request = {
             "action": mt5.TRADE_ACTION_DEAL,
             "position": int(position.ticket),
