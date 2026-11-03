@@ -1,5 +1,11 @@
 import type { Position, TradeSignal } from "@/types/trading";
-import { BRIDGE_KEY, bridgeHost, bridgeSymbolCandidates, getBridgeUrl } from "./bridge-client";
+import {
+  BRIDGE_KEY,
+  bridgeHost,
+  bridgeSymbolCandidates,
+  describeBridgeFailure,
+  getBridgeUrl,
+} from "./bridge-client";
 import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
 import { recordTrade } from "./trade-history";
 import { mt5OrderComment } from "./utils";
@@ -1962,7 +1968,12 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
   // or an unknown symbol that session can sit there far longer than anyone
   // should wait, so the request is capped rather than awaited forever.
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+  // An abort here is OUR timer firing — say "timeout", not "request aborted".
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, QUOTE_TIMEOUT_MS);
   try {
     const response = await fetch(`${getBridgeUrl()}/symbol/price`, {
       method: "POST",
@@ -1993,7 +2004,9 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
     const minDistance = Math.max(stopsLevelPoints * point * 1.2, Math.abs(ask - bid) * 3, point * 25);
     return { quote: { symbol: resolvedSymbol, bid, ask, digits, point, minDistance } };
   } catch (error) {
-    const message = (error as Error)?.message || "Broker unavailable";
+    const message = timedOut
+      ? `timeout — the bridge did not answer within ${Math.round(QUOTE_TIMEOUT_MS / 1000)}s`
+      : (error as Error)?.message || "Broker unavailable";
     // The ADDRESS is part of the failure: a dead tunnel and a refused broker
     // are different problems and must not read the same.
     console.warn(
@@ -2018,33 +2031,58 @@ async function sendBridgeOrder(
     magic?: number;
   },
 ): Promise<Record<string, unknown>> {
+  // THE ADDRESS EVERY ORDER GOES TO — carried in every error, so a failed
+  // attempt always names the bridge that answered (or did not).
+  const endpoint = `${getBridgeUrl()}/trade/execute`;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), ORDER_TIMEOUT_MS);
+  // OUR OWN TIMER is what aborts this request, so an abort IS a timeout — the
+  // browser reports it only as "AbortError / the user aborted a request",
+  // which is the wrong reason to put on the trader's screen.
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, ORDER_TIMEOUT_MS);
   try {
-    const response = await fetch(`${getBridgeUrl()}/trade/execute`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
-      body: JSON.stringify({
-        credentials,
-        symbol: target,
-        action: params.action,
-        volume: params.volume,
-        stop_loss: params.stopLoss,
-        take_profit: params.takeProfit,
-        comment: params.comment,
-        // The magic number tags the position so the scalper can find and
-        // close ONLY the positions it opened itself.
-        magic: params.magic ?? 0,
-      }),
-      signal: controller.signal,
-    });
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
+        body: JSON.stringify({
+          credentials,
+          symbol: target,
+          action: params.action,
+          volume: params.volume,
+          stop_loss: params.stopLoss,
+          take_profit: params.takeProfit,
+          comment: params.comment,
+          // The magic number tags the position so the scalper can find and
+          // close ONLY the positions it opened itself.
+          magic: params.magic ?? 0,
+        }),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      // The request never reached the broker — a timeout, a dead tunnel or a
+      // refused connection. Named HERE, with the address, instead of
+      // reaching the screen as "Failed to fetch" or "signal is aborted".
+      const reason = timedOut
+        ? `timeout — the bridge did not answer within ${Math.round(ORDER_TIMEOUT_MS / 1000)}s`
+        : describeBridgeFailure(error, ORDER_TIMEOUT_MS);
+      throw new Error(`Could not reach the trading bridge at ${endpoint} (${reason})`);
+    }
     const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     if (!response.ok) {
       const detail =
         (typeof payload["detail"] === "string" && payload["detail"]) ||
         (typeof payload["message"] === "string" && payload["message"]) ||
         `The bridge rejected the order (HTTP ${response.status}).`;
-      const error = new Error(friendlyTradeError(detail)) as Error & { raw?: string };
+      // THE BRIDGE'S OWN WORDS STAY VISIBLE. The friendly translation is a
+      // hint, never a replacement — the screen gets both, plus the address.
+      const friendly = friendlyTradeError(detail);
+      const text = friendly === detail ? detail : `${friendly} — bridge said: ${detail}`;
+      const error = new Error(`${text} (POST ${endpoint})`) as Error & { raw?: string };
       error.raw = detail;
       throw error;
     }
@@ -2065,8 +2103,14 @@ async function sendBridgeOrder(
         (typeof payload["comment"] === "string" && payload["comment"]) ||
         (typeof result["comment"] === "string" && result["comment"]) ||
         "";
+      // The broker's own comment IS the exact MT5 error: it leads, the retcode
+      // names the code, and the address says which bridge answered.
+      const exact =
+        brokerComment && !message.includes(brokerComment)
+          ? `${message} (Broker: ${brokerComment})`
+          : message;
       const refusal = new Error(
-        brokerComment && !message.includes(brokerComment) ? `${message} (Broker: ${brokerComment})` : message,
+        `${exact}${/MT5 code/i.test(exact) ? "" : ` · MT5 code ${retcode}`} (POST ${endpoint})`,
       ) as Error & { raw?: string };
       refusal.raw = message;
       throw refusal;
@@ -2076,7 +2120,9 @@ async function sendBridgeOrder(
         (typeof payload["message"] === "string" && payload["message"]) ||
         (typeof payload["detail"] === "string" && payload["detail"]) ||
         "The broker refused the order.";
-      const refusal = new Error(friendlyTradeError(rawDetail)) as Error & { raw?: string };
+      const friendly = friendlyTradeError(rawDetail);
+      const text = friendly === rawDetail ? rawDetail : `${friendly} — bridge said: ${rawDetail}`;
+      const refusal = new Error(`${text} (POST ${endpoint})`) as Error & { raw?: string };
       refusal.raw = rawDetail;
       throw refusal;
     }
@@ -2379,6 +2425,9 @@ export async function executeAutoTrade(
             ageMs: analysisAgeMs,
           });
         }
+        // The refusal reaches the card and the bot log — a silent `break`
+        // here used to leave the stage on "…was not opened" with no reason.
+        if (onTradeExecute) onTradeExecute(blocked, i + 1, maxTrades);
         break;
       }
 
@@ -2506,6 +2555,11 @@ export async function executeAutoTrade(
           error: failed.message,
         });
       }
+
+      // THE EXACT ERROR REACHES THE SCREEN. Without this call a refused order
+      // only existed in the console: the card said "was not opened — see the
+      // log" and the log said nothing, because no surface was ever told.
+      if (onTradeExecute) onTradeExecute(failed, i + 1, maxTrades);
 
       // STOP on failure - do not continue blindly
       console.error(`[auto-trade] ${symbol}: Trade ${i + 1} failed, stopping batch`);

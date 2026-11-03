@@ -11,7 +11,7 @@ import {
   publishPendingSignal,
   takeConfirmedPendingSignal,
 } from "./pending-signal";
-import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
+import { BRIDGE_KEY, bridgeHost, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
 import { setExecutionStage, updateExecutionPlan } from "./execution-state";
 import {
   notifyBrokerClose,
@@ -429,8 +429,13 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       totalTrades: tradeCount,
       mode,
     });
-    setExecutionStage(`${direction.type} ${symbol} — sending ${tradeCount} order(s)…`);
-    broadcast(`re-analysed: direction now ${direction.type}, opening ${direction.type} ${lotSize} × ${tradeCount}`, {
+    // THE ADDRESS IS PART OF THE ATTEMPT. The card and the bot log name the
+    // endpoint while the order is on its way, so a stalled or refused attempt
+    // is diagnosable from the screen alone.
+    setExecutionStage(
+      `${direction.type} ${symbol} — sending ${tradeCount} order(s) to ${getBridgeUrl()}/trade/execute…`,
+    );
+    broadcast(`re-analysed: direction now ${direction.type}, opening ${direction.type} ${lotSize} × ${tradeCount} · POST ${getBridgeUrl()}/trade/execute`, {
       symbol,
       side: direction.type,
       status: "reanalysed",
@@ -516,7 +521,16 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         });
       }
       setExecutionStage(
-        filled ? `${symbol} ${direction.type} confirmed by MT5` : `${symbol} ${direction.type} was not opened — see the log`,
+        filled
+          ? Number.isFinite(firstTicket)
+            ? `${symbol} ${direction.type} confirmed by MT5 — ticket #${firstTicket}`
+            : `${symbol} ${direction.type} confirmed by MT5`
+          : // THE REAL REASON, NEVER A PLACEHOLDER. `failureReason` carries the
+            // bridge/MT5 words for a refused order (they arrive through the
+            // onTradeExecute handler above), `skipReason` an engine refusal.
+            (failureReason ??
+              skipReason ??
+              `MT5 did not confirm any order (bridge ${bridgeHost()})`),
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

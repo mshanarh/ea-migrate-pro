@@ -162,6 +162,9 @@ export function recordExecutionResult(payload: unknown): void {
     if (stop) parts.push(`SL ${stop}`);
     const target = formatPrice(execution.takeProfit, execution.digits);
     if (target) parts.push(`TP ${target}`);
+    // THE BROKER'S OWN ORDER NUMBER, when the bridge reported one — the
+    // trader checks the fill against MT5 by this ticket.
+    if (execution.orderId) parts.push(`ticket #${execution.orderId}`);
     setState({ ...state, stage: parts.join(" · "), last: execution });
     return;
   }

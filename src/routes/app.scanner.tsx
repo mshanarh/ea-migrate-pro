@@ -407,6 +407,10 @@ function AppScanner() {
       let firstPayload: Record<string, unknown> | null = null;
       let stopRetried = false;
       let lastError: string | null = null;
+      // EVERY REFUSAL ON SCREEN NAMES THE ADDRESS THAT ANSWERED — a failure
+      // without the bridge URL is undiagnosable from the log alone.
+      const withEndpoint = (text: string) =>
+        text.includes(getBridgeUrl()) ? text : `${text} (POST ${getBridgeUrl()}/trade/execute)`;
       for (let index = 1; index <= total; index += 1) {
         try {
           const payload = await executeWithSymbolFallback();
@@ -487,7 +491,7 @@ function AppScanner() {
               new CustomEvent("eamp:execution-result", {
                 detail: {
                   ok: false,
-                  message: `${lastError} — connection closed`,
+                  message: withEndpoint(`${lastError} — connection closed`),
                   status: "failed",
                   symbol,
                   side: direction,
@@ -506,7 +510,7 @@ function AppScanner() {
             new CustomEvent("eamp:execution-result", {
               detail: {
                 ok: false,
-                message: `TRADE ${index} REFUSED — ${refused}`,
+                message: withEndpoint(`TRADE ${index} REFUSED — ${refused}`),
                 status: "failed",
                 symbol,
                 side: direction,

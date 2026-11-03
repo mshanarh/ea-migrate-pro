@@ -131,7 +131,9 @@ async function callBridge(
       console.warn(`[scalper] ${method} ${url} → ${response.status} ${detail}${suffix}`);
       return {
         ok: false,
-        error: `${path} answered ${response.status}${detail ? ` — ${detail}` : ""}${suffix}`,
+        // The FULL address, not just the path — the screen has to say which
+        // bridge answered before anyone can judge the answer.
+        error: `${url} answered ${response.status}${detail ? ` — ${detail}` : ""}${suffix}`,
       };
     }
     console.info(`[scalper] ${method} ${url} → ${response.status}`);

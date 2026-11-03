@@ -114,7 +114,7 @@ export function DraggableBotPopup() {
     ctx.fillStyle = "#0F172A";
     ctx.fillRect(0, headerH, W, H - headerH);
     const lines =
-      currentState === "ready"
+      currentState === "ready" && currentLogs.length === 0
         ? READY_LINES.map((line) => ({
             text: line.kind === "info" ? `${name} ${line.text}` : line.text,
             kind: line.kind,
@@ -315,6 +315,8 @@ export function DraggableBotPopup() {
         symbol?: string;
         stopLoss?: number | string;
         takeProfit?: number | string;
+        /** The broker's own order number, when the bridge reported one. */
+        orderId?: string;
       }>).detail;
       setLogs((prev) => {
         // Build the log from real fills: each executed trade stays as its own line
@@ -332,8 +334,10 @@ export function DraggableBotPopup() {
             const sl = (result as { stopLoss?: number | null }).stopLoss ?? "-";
             const tp = (result as { takeProfit?: number | null }).takeProfit ?? "-";
             const lot = (result as { lotSize?: number | null }).lotSize ?? "-";
+            // THE TICKET: the number the trader checks against MT5.
+            const ticket = result.orderId ? ` · MT5 ticket #${result.orderId}` : "";
             return [...demoted, {
-              text: `TRADE ${tradeNum}/${total} EXECUTED — ${sym} ${side} · ${lot} lot · Entry ${entry} · SL ${sl} · TP ${tp}`,
+              text: `TRADE ${tradeNum}/${total} EXECUTED — ${sym} ${side} · ${lot} lot · Entry ${entry} · SL ${sl} · TP ${tp}${ticket}`,
               kind: "last" as const
             }];
           }
@@ -487,7 +491,11 @@ export function DraggableBotPopup() {
           {/* Terminal trade log */}
           {/* Terminal trade log — scrollable, drops to a bounded height. */}
           <div className="if-well flex-1 overflow-y-auto overflow-x-hidden border-t p-4 font-mono text-[12px] leading-[22px]" style={{ maxHeight: "calc(100% - 220px)" }}>
-            {state === "ready" ? (
+            {/* READY_LINES is the idle placeholder — once the run has
+                streamed real lines (the bridge address an order went to, the
+                broker's refusal, the confirmed ticket) the log shows THOSE,
+                even on a run whose popup was never force-opened. */}
+            {state === "ready" && logs.length === 0 ? (
               READY_LINES.map((line, index) => (
                 <div key={index} className="flex gap-2">
                   <span className="text-gray-500">{">"}</span>

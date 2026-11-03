@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { getAppState, toggleRobot } from "./app-store";
+import { setExecutionStage } from "./execution-state";
 import { fetchScalperStatus, type ScalperDaemonStatus } from "./scalper-bridge";
 
 /**
@@ -45,10 +46,33 @@ export function useScalperDaemonStatus(): ScalperDaemonView {
     if (!result.ok) {
       setStatus(null);
       setError(result.error);
+      // A SCALPER RUN'S STATUS LINE TELLS THE TRUTH — including "the bridge
+      // did not answer" — instead of keeping whatever it said last. This is
+      // the same 10-second poll that owns the START button.
+      if (activeRunKind === "scalper") {
+        setExecutionStage(`Scalper status unreadable — ${result.error}`);
+      }
       return;
     }
     setStatus(result.status);
     setError(null);
+    // RUNNING / STOPPED, straight from the daemon, every 10 seconds — a
+    // stale "Analyzing…" cannot survive the next poll.
+    if (activeRunKind === "scalper") {
+      setExecutionStage(
+        result.status.running
+          ? `Scalper RUNNING — ${
+              result.status.symbols.length > 0
+                ? result.status.symbols.join(", ")
+                : "symbols not reported"
+            }${
+              result.status.lot !== null && result.status.trades !== null
+                ? ` · ${result.status.lot} × ${result.status.trades}`
+                : ""
+            }`
+          : `Scalper STOPPED — ${result.status.message || "the daemon is idle"}`,
+      );
+    }
     // A NORMAL (browser) RUN OWNS THE BUTTON — never fight it.
     if (activeRunKind === "normal") return;
     const state = getAppState();

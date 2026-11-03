@@ -28,10 +28,12 @@ import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirec
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
 import {
+  fetchScalperStatus,
   planFromAllowedQuotes,
   startScalperOnBridge,
   stopScalperOnBridge,
 } from "@/lib/scalper-bridge";
+import { getBridgeUrl } from "@/lib/bridge-client";
 import { ScalperStatusPill } from "@/components/app/ScalperStatusPill";
 import { getActiveRunKind, setActiveRunKind, useScalperDaemonStatus } from "@/lib/use-scalper-status";
 
@@ -844,13 +846,44 @@ function AppHome() {
       });
       return;
     }
+    // THE STATUS LINE NEVER WAITS IN THE DARK. Before the call it names the
+    // exact endpoint, and it is then replaced by RUNNING, STOPPED or the
+    // bridge's own error — a stale "Analyzing…" from an earlier run must not
+    // survive this button press.
+    const firstPlan = plans[0]!;
+    startExecution({
+      symbol: firstPlan.symbol,
+      lotSize: firstPlan.lot,
+      totalTrades: plans.reduce((sum, plan) => sum + plan.trades, 0),
+      robotName: target.name,
+      mode: "scalper",
+    });
+    setExecutionStage(`POST ${getBridgeUrl()}/scalper/start — starting the daemon…`);
     setScalperBusy(true);
+    // Bounded to 30 s inside startScalperOnBridge — a hanging tunnel answers
+    // as a timeout error instead of leaving this button spinning.
     const result = await startScalperOnBridge(plans);
     setScalperBusy(false);
     if (!result.ok) {
       console.warn(`[scalper] start failed: ${result.error}`);
+      // THE EXACT ERROR, ON SCREEN — the endpoint is already in the message
+      // (callBridge reports the full address it called).
+      setExecutionStage(`Scalper did not start — ${result.error}`);
       toast.error("Scalper did not start", { description: result.error });
       return;
+    }
+    // THE REAL STATE, READ NOW. The 10-second poll keeps it fresh afterwards,
+    // but the trader must see RUNNING/STOPPED the moment the start returns.
+    const status = await fetchScalperStatus();
+    if (!status.ok) {
+      setExecutionStage(`Scalper started — status unreadable: ${status.error}`);
+    } else if (status.status.running) {
+      const runningSymbols = status.status.symbols.length > 0 ? status.status.symbols : result.symbols;
+      setExecutionStage(
+        `Scalper RUNNING — ${runningSymbols.join(", ")} · ${result.lot} × ${result.trades}`,
+      );
+    } else {
+      setExecutionStage("Scalper STOPPED — the daemon reported idle right after start");
     }
     setActiveRunKind("scalper");
     if (!target.running) toggleRobot(target.id);
