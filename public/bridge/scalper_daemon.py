@@ -1059,8 +1059,16 @@ def run() -> None:
             step_state = _read_state()
             if not step_state.get("running"):
                 if not stopped_notice:
-                    _log(f"DAEMON v{DAEMON_VERSION} idle — waiting for /scalper/start")
+                    _log(f"DAEMON v{DAEMON_VERSION} stopped — waiting for /scalper/start")
                     stopped_notice = True
+                # LEAVE THE LOOP when the bridge wrote the state file. An idle
+                # thread that never ended is why /scalper/stop used to wait for
+                # its join timeout on every press; ending here lets the stop
+                # land in about one pass, and the next start spawns a fresh
+                # thread. A daemon started by hand with no state file keeps the
+                # old idle wait instead of exiting.
+                if STATE_FILE.exists():
+                    return
                 time.sleep(5)
                 continue
             stopped_notice = False

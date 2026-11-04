@@ -28,7 +28,6 @@ import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirec
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
 import {
-  fetchScalperStatus,
   planFromAllowedQuotes,
   startScalperOnBridge,
   stopScalperOnBridge,
@@ -708,12 +707,23 @@ function AppHome() {
     stopExecution();
     setAnalysisOpen(false);
     if (kind === "scalper") {
+      // THE BUTTON DOES NOT WAIT ON THE TUNNEL. The stop request is already on
+      // its way, so the run is shown as stopping immediately; a refusal puts it
+      // straight back and says exactly why. (The old flow held the button on a
+      // bridge join that burned its full timeout on every press.)
       setScalperBusy(true);
+      setActiveRunKind(null);
+      if (target.running) toggleRobot(target.id);
+      setExecutionStage("Stopping the scalper on the server…");
       const result = await stopScalperOnBridge();
       setScalperBusy(false);
       if (!result.ok) {
-        // The daemon may still be cycling — say so instead of clearing the button.
+        // The daemon may still be cycling — put the run back instead of
+        // leaving the screen claiming a stop that never happened.
         console.warn(`[scalper] stop failed: ${result.error}`);
+        setActiveRunKind("scalper");
+        if (!target.running) toggleRobot(target.id);
+        setExecutionStage(`Scalper still running — ${result.error}`);
         toast.error("Could not stop the scalper daemon", { description: result.error });
         refreshDaemon();
         return;
@@ -874,20 +884,12 @@ function AppHome() {
       toast.error("Scalper did not start", { description: result.error });
       return;
     }
-    // THE REAL STATE, READ NOW. The 10-second poll keeps it fresh afterwards,
-    // but the trader must see RUNNING/STOPPED the moment the start returns.
-    const status = await fetchScalperStatus();
-    if (!status.ok) {
-      setExecutionStage(`Scalper started — status unreadable: ${status.error}`);
-    } else if (status.status.running) {
-      const runningSymbols = status.status.symbols.length > 0 ? status.status.symbols : result.symbols;
-      setExecutionStage(
-        `Scalper RUNNING — ${runningSymbols.join(", ")} · ${result.lot} × ${result.trades}`,
-      );
-    } else {
-      setExecutionStage("Scalper STOPPED — the daemon reported idle right after start");
-    }
+    // NO SECOND ROUND TRIP. The 200 from /scalper/start already confirmed the
+    // daemon is running, so the button and the status line flip NOW — the old
+    // code waited on an extra /scalper/status read before showing anything,
+    // which is what made Start feel slow. The fast poll refreshes the rest.
     setActiveRunKind("scalper");
+    setExecutionStage(`Scalper RUNNING — ${result.symbols.join(", ")} · ${result.lot} × ${result.trades}`);
     if (!target.running) toggleRobot(target.id);
     window.showBotStarted?.(target.name, "started");
     notifyBotStarted("scalper", result.symbols);

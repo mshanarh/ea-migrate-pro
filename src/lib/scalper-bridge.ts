@@ -46,6 +46,27 @@ export type ScalperStartResult =
 
 export type ScalperStopResult = { ok: true; message: string } | { ok: false; error: string };
 
+/**
+ * ONE LEG THE DAEMON HAS OPEN ON THE BROKER'S BOOK.
+ *
+ * These come from the state file the daemon writes after reading MT5, so each
+ * one is a real ticket with the broker's own entry, stop and target — the same
+ * values a normal-mode fill carries. Nothing here is estimated.
+ */
+export type ScalperFill = {
+  /** The broker's ticket number, as the daemon stored it. */
+  ticket: string;
+  symbol: string;
+  side: "BUY" | "SELL" | null;
+  lots: number | null;
+  entry: number | null;
+  stopLoss: number | null;
+  takeProfit: number | null;
+  profit: number | null;
+  /** The daemon's batch (cycle) number this leg belongs to. */
+  batch: number | null;
+};
+
 export type ScalperDaemonStatus = {
   running: boolean;
   /** The daemon's own banner version ("3.1"), read from its event log. */
@@ -56,6 +77,8 @@ export type ScalperDaemonStatus = {
   startedAt: string | null;
   stoppedAt: string | null;
   positions: number;
+  /** Every leg really open on the broker's book right now. */
+  fills: ScalperFill[];
   /** The most recent line the daemon wrote — its real, current activity. */
   message: string;
 };
@@ -83,6 +106,42 @@ function numberOrNull(value: unknown): number | null {
     if (Number.isFinite(parsed)) return parsed;
   }
   return null;
+}
+
+/** MT5 stores a position's direction as "BUY"/"SELL" here; 0/1 is tolerated. */
+function sideOrNull(value: unknown): "BUY" | "SELL" | null {
+  const text = typeof value === "string" ? value.trim().toUpperCase() : "";
+  if (text === "BUY" || text === "0") return "BUY";
+  if (text === "SELL" || text === "1") return "SELL";
+  return null;
+}
+
+/**
+ * The daemon's `positions` map → one fill per leg.
+ *
+ * A leg without a symbol or a ticket is skipped rather than invented: the card
+ * may only ever show a position the daemon actually reported.
+ */
+function parseFills(value: unknown): ScalperFill[] {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+  const fills: ScalperFill[] = [];
+  for (const [ticket, raw] of Object.entries(value as Record<string, unknown>)) {
+    const record = (raw ?? {}) as Record<string, unknown>;
+    const symbol = typeof record["symbol"] === "string" ? record["symbol"].trim() : "";
+    if (!symbol || !ticket.trim()) continue;
+    fills.push({
+      ticket: ticket.trim(),
+      symbol,
+      side: sideOrNull(record["type"]),
+      lots: numberOrNull(record["volume"]),
+      entry: numberOrNull(record["price_open"]),
+      stopLoss: numberOrNull(record["sl"]),
+      takeProfit: numberOrNull(record["tp"]),
+      profit: numberOrNull(record["profit"]),
+      batch: numberOrNull(record["batch"]),
+    });
+  }
+  return fills;
 }
 
 function stringOrNull(value: unknown): string | null {
@@ -267,6 +326,7 @@ export async function fetchScalperStatus(): Promise<ScalperStatusResult> {
       startedAt: stringOrNull(payload["started_at"]),
       stoppedAt: stringOrNull(payload["stopped_at"]),
       positions: numberOrNull(payload["positions_managed"]) ?? 0,
+      fills: parseFills(payload["positions"]),
       message: log.length > 0 ? (log[log.length - 1] ?? "") : "",
     },
   };

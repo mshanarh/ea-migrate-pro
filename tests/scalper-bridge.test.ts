@@ -167,6 +167,64 @@ describe("scalper status", () => {
       expect(result.status.trades).toBe(4);
       expect(result.status.positions).toBe(3);
       expect(result.status.message).toBe("BATCH 1 OPENED — BUY XAUUSDm");
+      // Nothing was reported on the book, so nothing is claimed.
+      expect(result.status.fills).toEqual([]);
+    }
+  });
+
+  it("reads the legs really open on the broker's book", async () => {
+    stubBridge(() => ({
+      payload: {
+        ok: true,
+        running: true,
+        symbol: "XAUUSDm",
+        lot: 0.01,
+        trade_count: 3,
+        positions_managed: 2,
+        positions: {
+          "55123": {
+            symbol: "XAUUSDm",
+            type: "BUY",
+            volume: 0.01,
+            price_open: 2412.35,
+            sl: 2405.5,
+            tp: 2440,
+            profit: 1.75,
+            batch: 4,
+          },
+          "55124": {
+            symbol: "XAUUSDm",
+            type: "SELL",
+            volume: 0.02,
+            price_open: 2413.1,
+            sl: 2420.5,
+            tp: 0,
+            profit: -0.4,
+            batch: 4,
+          },
+        },
+        log: ["BATCH 4 OPENED — EXECUTED BUY XAUUSDm · 2 × 0.01 lots"],
+      },
+    }));
+
+    const result = await fetchScalperStatus();
+
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      // Every leg carries the broker's own ticket, side, entry and stop — the
+      // app announces these exactly like a normal-mode fill.
+      expect(result.status.fills).toHaveLength(2);
+      expect(result.status.fills[0]).toMatchObject({
+        ticket: "55123",
+        symbol: "XAUUSDm",
+        side: "BUY",
+        lots: 0.01,
+        entry: 2412.35,
+        stopLoss: 2405.5,
+        takeProfit: 2440,
+        batch: 4,
+      });
+      expect(result.status.fills[1]).toMatchObject({ ticket: "55124", side: "SELL", lots: 0.02 });
     }
   });
 

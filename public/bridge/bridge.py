@@ -98,11 +98,21 @@ def _current_positions() -> dict:
 
 
 def _stop_daemon() -> None:
+    """Signal the daemon and wait at most 2 s for its current pass to end.
+
+    THE STATE FILE IS THE DAEMON'S REAL STOP SWITCH — it re-reads it on every
+    pass — so /scalper/stop writes `running: false` BEFORE calling this. The
+    join used to be 8 s and burned all of it every single time, because the
+    daemon idled forever instead of leaving its loop; that is what made the
+    Stop button feel stuck. A pass is ~1 s, so 2 s is already generous, and a
+    thread that outlives it keeps its reference so the next start can drain it.
+    """
     _daemon_stop.set()
     global _daemon_thread
     if _daemon_thread is not None:
-        _daemon_thread.join(timeout=8)
-        _daemon_thread = None
+        _daemon_thread.join(timeout=2)
+        if not _daemon_thread.is_alive():
+            _daemon_thread = None
 
 
 # ── the existing broker surface (unchanged in intent) ─────────────────────────────
@@ -670,6 +680,11 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         return {"ok": True, "running": True,
                 "message": "Scalper daemon restarted — open positions kept and "
                            "re-analysed on the next event tick"}
+    # NO TWO LOOPS MAY TRADE THE SAME ACCOUNT. `running` is false right now, so
+    # a thread left over from an earlier run leaves its loop within one pass;
+    # drain it before this start switches trading back on.
+    _stop_daemon()
+    _daemon_stop.clear()
     state.update({
         "running": True,
         "symbol": req.symbol,
@@ -702,13 +717,18 @@ class _ScalperStopRequest(BaseModel):
 
 @app.post("/scalper/stop")
 def scalper_stop(req: _ScalperStopRequest, x_bridge_key: Optional[str] = Header(None)):
-    """Stop the scalper daemon. State file and event log are preserved."""
+    """Stop the scalper daemon. State file and event log are preserved.
+
+    THE ANSWER IS NOT HELD UP BY THE DAEMON: `running: false` is written first
+    (the loop re-reads it every second and leaves), then the thread is given a
+    short, bounded join. A stop used to wait the old 8 s join on every press.
+    """
     _check_key(x_bridge_key)
-    _stop_daemon()
     state = _read_state()
     state["running"] = False
     state["stopped_at"] = datetime.now(timezone.utc).isoformat()
     _write_state(state)
+    _stop_daemon()
     _append_log(f"POST /scalper/stop -> daemon STOPPED "
                 f"(running={state.get('running')})")
     return {"ok": True, "running": False,
@@ -730,6 +750,11 @@ def scalper_status(x_bridge_key: Optional[str] = Header(None)):
         "started_at": state.get("started_at"),
         "stopped_at": state.get("stopped_at"),
         "positions_managed": len(state.get("positions", {})),
+        # WHAT IS REALLY ON THE BOOK — the daemon writes each live leg's ticket,
+        # side, volume, entry, stop and target here. The app shows them exactly
+        # like a normal-mode fill; they are never a claimed number.
+        "positions": state.get("positions") or {},
+        "batches": state.get("batches") or {},
         "log": _read_log(),
     }
 
