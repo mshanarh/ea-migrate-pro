@@ -347,10 +347,10 @@ async function fetchBridgeCandlesResult(
     }
     return { failure: "unavailable", detail: describeCandleResponse(summary), summary };
   } catch (error) {
-    // THE ADDRESS IS PART OF THE FAILURE. "Failed to fetch" alone cannot tell
-    // a dead tunnel (the URL moved) from a broker problem, and the card shows
-    // this detail verbatim.
-    const detail = `${(error as Error)?.message || "bridge unreachable"} (bridge ${bridgeHost()})`;
+    // THE REASON IS WHAT THE CARD SHOWS — never the address. "Failed to fetch"
+    // alone cannot tell a dead tunnel from a broker problem, so the real
+    // message is kept; the URL stays in the console log only.
+    const detail = `${(error as Error)?.message || "bridge unreachable"}`;
     summary.error = detail;
     console.warn(`[auto-trade] candles → ${describeCandleAttempt(summary)}`);
     return { failure: "unreachable", detail, summary };
@@ -2007,12 +2007,13 @@ async function fetchBridgeQuote(credentials: BridgeCredentials, symbol: string):
     const message = timedOut
       ? `timeout — the bridge did not answer within ${Math.round(QUOTE_TIMEOUT_MS / 1000)}s`
       : (error as Error)?.message || "Broker unavailable";
-    // The ADDRESS is part of the failure: a dead tunnel and a refused broker
-    // are different problems and must not read the same.
+    // The real REASON is what goes on screen: a dead tunnel, a timeout and a
+    // refused broker must not read the same. The address stays in the console
+    // log, where it is diagnosable and never displayed.
     console.warn(
       `[auto-trade] Failed to fetch live quote for ${symbol} from ${getBridgeUrl()}/symbol/price (${bridgeHost()}): ${message}`,
     );
-    return { failure: "unreachable", detail: `${message} (bridge ${bridgeHost()})` };
+    return { failure: "unreachable", detail: message };
   } finally {
     clearTimeout(timer);
   }
@@ -2028,6 +2029,15 @@ async function sendBridgeOrder(
     stopLoss: number;
     takeProfit: number;
     comment: string;
+    /**
+     * THE SELECTED ROBOT'S EXACT NAME, sent as its own field — the bridge
+     * uses it as the MT5 order comment. `comment` stays the entry point's
+     * own stamp ("Ea migrate news" for a release trade), so the two are the
+     * same string on a robot trade and differ only where the app deliberately
+     * wants the news wording. Absent → the bridge falls back to `comment`,
+     * then to "EA Migrate".
+     */
+    eaName?: string;
     magic?: number;
   },
 ): Promise<Record<string, unknown>> {
@@ -2057,6 +2067,9 @@ async function sendBridgeOrder(
           stop_loss: params.stopLoss,
           take_profit: params.takeProfit,
           comment: params.comment,
+          // The robot's own name as a NAMED field, so the bridge never has to
+          // guess which EA placed this order.
+          ea_name: params.eaName ?? params.comment ?? "",
           // The magic number tags the position so the scalper can find and
           // close ONLY the positions it opened itself.
           magic: params.magic ?? 0,
@@ -2219,8 +2232,11 @@ export async function executeAutoTrade(
         stopLoss: params.stopLoss,
         takeProfit: params.takeProfit,
         // THE EA NAME EXACTLY AS CONFIGURED — never sanitized, stripped,
-        // shortened or swapped for a brand stamp.
+        // shortened or swapped for a brand stamp. It rides twice: as the
+        // comment the broker stamps and as `ea_name`, the field the bridge
+        // reads when it builds that comment.
         comment: eaName,
+        eaName,
         magic,
       });
     try {
@@ -2776,6 +2792,7 @@ export async function executeAnalysedSignal(options: {
         stopLoss: options.stopLoss,
         takeProfit: options.takeProfit,
         comment: orderComment,
+        eaName: orderComment,
       });
       // A fill that came back sided the other way is reported as a mismatch,
       // never as a confirmed trade in the analysed direction.

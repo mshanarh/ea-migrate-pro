@@ -11,7 +11,7 @@ import {
   publishPendingSignal,
   takeConfirmedPendingSignal,
 } from "./pending-signal";
-import { BRIDGE_KEY, bridgeHost, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
+import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
 import { setExecutionStage, updateExecutionPlan } from "./execution-state";
 import {
   notifyBrokerClose,
@@ -429,13 +429,11 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       totalTrades: tradeCount,
       mode,
     });
-    // THE ADDRESS IS PART OF THE ATTEMPT. The card and the bot log name the
-    // endpoint while the order is on its way, so a stalled or refused attempt
-    // is diagnosable from the screen alone.
-    setExecutionStage(
-      `${direction.type} ${symbol} — sending ${tradeCount} order(s) to ${getBridgeUrl()}/trade/execute…`,
-    );
-    broadcast(`re-analysed: direction now ${direction.type}, opening ${direction.type} ${lotSize} × ${tradeCount} · POST ${getBridgeUrl()}/trade/execute`, {
+    // THE DISPLAYED LINE NEVER CARRIES THE BRIDGE URL — a tunnel hostname is
+    // noise to the trader and must not leak on screen. The details that matter
+    // (symbol, side, lot count) stay.
+    setExecutionStage(`${direction.type} ${symbol} — sending ${tradeCount} order(s) to server…`);
+    broadcast(`re-analysed: direction now ${direction.type}, opening ${direction.type} ${lotSize} × ${tradeCount} · sending trade to server`, {
       symbol,
       side: direction.type,
       status: "reanalysed",
@@ -530,7 +528,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
             // onTradeExecute handler above), `skipReason` an engine refusal.
             (failureReason ??
               skipReason ??
-              `MT5 did not confirm any order (bridge ${bridgeHost()})`),
+              "MT5 did not confirm any order — check the bridge log on the trading machine"),
       );
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);

@@ -89,6 +89,8 @@ describe("MT5 order comment — app request to the bridge", () => {
     expect(order, "the app must POST an order to the bridge").toBeDefined();
     // The exact string the broker receives — every character intact.
     expect(order!.body["comment"]).toBe(EA_NAME);
+    // …and the SAME name as the field the bridge reads to build its comment.
+    expect(order!.body["ea_name"]).toBe(EA_NAME);
     expect(order!.body["comment"]).toHaveLength(EA_NAME.length);
     expect(order!.body["comment"]).toContain("+");
     expect(String(order!.body["comment"])).not.toMatch(/^\s|\s$/);

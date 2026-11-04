@@ -64,11 +64,13 @@ describe("bridge address", () => {
 });
 
 describe("failure messages", () => {
-  it("names the address that was actually called, in the user's terms", async () => {
+  it("names the real reason in the user's terms — and NEVER the address", async () => {
     const { bridgeUnreachableMessage } = await freshModule();
     const message = bridgeUnreachableMessage(new TypeError("Failed to fetch"));
-    expect(message).toContain(EXPECTED_URL);
     expect(message).toContain("DNS/hostname not found");
+    // THE ADDRESS IS AN IMPLEMENTATION DETAIL: it is logged, never displayed.
+    expect(message).not.toContain(EXPECTED_URL);
+    expect(message).not.toContain("trycloudflare");
   });
 
   it("never reports a browser timeout as the generic phrase", async () => {

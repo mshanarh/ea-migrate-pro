@@ -6,7 +6,7 @@
  * open the batch, sweep-close it, re-analyse, repeat — and the bridge at
  * BRIDGE_BASE_URL only switches it on and off:
  *
- *   POST /scalper/start   { symbol, lot, trade_count }
+ *   POST /scalper/start   { symbol, lot, trade_count, ea_name }
  *   POST /scalper/stop    {}                       (FastAPI requires a body)
  *   GET  /scalper/status  → { running, symbol, lot, trade_count, log, … }
  *
@@ -15,12 +15,18 @@
  * "started" claim is only ever made from a 200 answer here, and the button's
  * state is read back from /scalper/status rather than remembered locally.
  *
- * THE BODY IS EXACTLY WHAT THE BRIDGE ACCEPTS. `/scalper/start` carries one
- * flat trio — `symbol`, `lot`, `trade_count`. Several Allowed Quotes travel as
- * a comma-joined `symbol`, which is the shape the daemon's own flat fallback
- * splits (it then applies that one lot/count to every listed symbol). The
- * per-symbol overrides live in the daemon's settings file; they are not part of
- * the bridge contract, so this client never pretends to send them.
+ * THE BODY IS EXACTLY WHAT THE BRIDGE ACCEPTS. `/scalper/start` carries four
+ * flat fields — `symbol`, `lot`, `trade_count` and `ea_name`. Several Allowed
+ * Quotes travel as a comma-joined `symbol`, which is the shape the daemon's
+ * own flat fallback splits (it then applies that one lot/count to every listed
+ * symbol). The per-symbol overrides live in the daemon's settings file; they
+ * are not part of the bridge contract, so this client never pretends to send
+ * them.
+ *
+ * `ea_name` IS THE SELECTED ROBOT'S EXACT NAME. The bridge writes it into the
+ * daemon's state file and every MT5 order the daemon opens carries it as its
+ * comment — without it the comment fell back to a generic batch string the
+ * trader never configured.
  */
 import {
   BRIDGE_COMMAND_TIMEOUT_MS,
@@ -131,9 +137,9 @@ async function callBridge(
       console.warn(`[scalper] ${method} ${url} → ${response.status} ${detail}${suffix}`);
       return {
         ok: false,
-        // The FULL address, not just the path — the screen has to say which
-        // bridge answered before anyone can judge the answer.
-        error: `${url} answered ${response.status}${detail ? ` — ${detail}` : ""}${suffix}`,
+        // The status code and the bridge's own words — NEVER the address: the
+        // app talks to one fixed server, and the URL never goes on screen.
+        error: `The trading server answered ${response.status}${detail ? ` — ${detail}` : ""}${suffix}`,
       };
     }
     console.info(`[scalper] ${method} ${url} → ${response.status}`);
@@ -168,7 +174,11 @@ export function planFromAllowedQuotes(
 }
 
 /** START THE VPS DAEMON — the only thing Scalper Start is allowed to send. */
-export async function startScalperOnBridge(plans: ScalperQuotePlan[]): Promise<ScalperStartResult> {
+export async function startScalperOnBridge(
+  plans: ScalperQuotePlan[],
+  /** The selected robot's name, verbatim — it becomes every order's comment. */
+  eaName?: string,
+): Promise<ScalperStartResult> {
   if (plans.length === 0) {
     return {
       ok: false,
@@ -182,9 +192,12 @@ export async function startScalperOnBridge(plans: ScalperQuotePlan[]): Promise<S
     symbol: symbols.join(","),
     lot: primary.lot,
     trade_count: primary.trades,
+    // Empty only when the caller truly has no name — the bridge then falls
+    // back to "EA Migrate", never to a batch string.
+    ea_name: (eaName ?? "").trim(),
   };
   console.info(
-    `[scalper] POST /scalper/start → ${symbols.join(", ")} · lot ${body.lot} · trades ${body.trade_count}`,
+    `[scalper] POST /scalper/start → ${symbols.join(", ")} · lot ${body.lot} · trades ${body.trade_count} · ea ${body.ea_name || "(unnamed)"}`,
   );
   const reply = await callBridge(
     "/scalper/start",

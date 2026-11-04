@@ -292,6 +292,9 @@ function AppScanner() {
             take_profit: takeProfitValue,
             // The EA name exactly as configured — no client-side rewriting.
             comment: orderComment,
+            // …and the same name as its own field, which is what the bridge
+            // uses to stamp the MT5 comment.
+            ea_name: orderComment,
           }),
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
@@ -407,10 +410,10 @@ function AppScanner() {
       let firstPayload: Record<string, unknown> | null = null;
       let stopRetried = false;
       let lastError: string | null = null;
-      // EVERY REFUSAL ON SCREEN NAMES THE ADDRESS THAT ANSWERED — a failure
-      // without the bridge URL is undiagnosable from the log alone.
-      const withEndpoint = (text: string) =>
-        text.includes(getBridgeUrl()) ? text : `${text} (POST ${getBridgeUrl()}/trade/execute)`;
+      // EVERY REFUSAL ON SCREEN CARRIES THE REAL REASON — but never the bridge
+      // URL: the app talks to one fixed server, and the address is an
+      // implementation detail the trader cannot act on.
+      const withEndpoint = (text: string) => `${text} (sending trade to server)`;
       for (let index = 1; index <= total; index += 1) {
         try {
           const payload = await executeWithSymbolFallback();

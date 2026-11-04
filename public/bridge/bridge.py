@@ -111,6 +111,20 @@ def _check_key(x_bridge_key: Optional[str]) -> None:
         raise HTTPException(status_code=401, detail="Invalid bridge key")
 
 
+def _order_comment(ea_name, comment, limit: int = 31) -> str:
+    """THE MT5 ORDER COMMENT, in the order the app asked for it.
+
+    `ea_name` is the selected robot's exact name — the field every trade
+    request now carries. `comment` is the entry point's own stamp ("Ea migrate
+    news" for a release trade). Neither → "EA Migrate": a real fallback, never
+    a generic batch string. MT5 caps a comment at 31 characters.
+    """
+    for value in (ea_name, comment):
+        if value is not None and str(value).strip():
+            return str(value)[:limit]
+    return "EA Migrate"
+
+
 class Credentials(BaseModel):
     login: int
     password: str
@@ -430,6 +444,8 @@ class _TradeRequest(BaseModel):
     take_profit: float = 0
     slippage: int = 20
     comment: Optional[str] = None
+    # The selected robot's exact name — the bridge stamps this on the order.
+    ea_name: Optional[str] = None
     magic: int = 0
 
 
@@ -460,7 +476,7 @@ def trade_execute(req: _TradeRequest, x_bridge_key: Optional[str] = Header(None)
             "price": price,
             "deviation": req.slippage,
             "magic": req.magic,
-            "comment": (req.comment or "Web Platform Order")[:31],
+            "comment": _order_comment(req.ea_name, req.comment),
             "type_time": mt5.ORDER_TIME_GTC,
         }
         if req.stop_loss:
@@ -624,6 +640,9 @@ class _ScalperStartRequest(BaseModel):
     symbol: str
     lot: float
     trade_count: int
+    # The selected robot's exact name — written straight into the daemon's
+    # state file, where scalper_daemon.py reads it for every order comment.
+    ea_name: Optional[str] = None
 
 
 @app.post("/scalper/start")
@@ -635,15 +654,19 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
     """
     _check_key(x_bridge_key)
     state = _read_state()
+    # THE ROBOT'S NAME IS PART OF THE RUN STATE. The daemon reads it from
+    # here; without it every order fell back to a generic comment.
+    ea_name = (req.ea_name or "").strip() or state.get("ea_name") or "EA Migrate"
     if state.get("running"):
         state["next_trade_number"] = int(state.get("next_trade_number", 1)) + 1
         state["started_at"] = datetime.now(timezone.utc).isoformat()
         state["symbol"] = req.symbol
         state["lot"] = req.lot
         state["trade_count"] = req.trade_count
+        state["ea_name"] = ea_name
         _write_state(state)
         _append_log(f"POST /scalper/start -> daemon RESTARTED "
-                    f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count})")
+                    f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, ea={ea_name})")
         return {"ok": True, "running": True,
                 "message": "Scalper daemon restarted — open positions kept and "
                            "re-analysed on the next event tick"}
@@ -652,6 +675,7 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         "symbol": req.symbol,
         "lot": req.lot,
         "trade_count": req.trade_count,
+        "ea_name": ea_name,
         "next_trade_number": 1,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "stopped_at": None,
@@ -667,7 +691,7 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
     )
     _daemon_thread.start()
     _append_log(f"POST /scalper/start -> daemon STARTED "
-                f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count})")
+                f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, ea={ea_name})")
     return {"ok": True, "running": True,
             "message": "Scalper daemon started (24/7, independent of Uvicorn)"}
 

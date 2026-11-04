@@ -59,16 +59,26 @@ describe("scalper start", () => {
   it("posts the Allowed Quotes to /scalper/start only", async () => {
     const calls = stubBridge(() => ({ payload: { ok: true, running: true, message: "started" } }));
 
-    const result = await startScalperOnBridge([
-      { symbol: "XAUUSDm", lot: 0.01, trades: 4 },
-      { symbol: "BTCUSDm", lot: 0.02, trades: 10 },
-    ]);
+    const result = await startScalperOnBridge(
+      [
+        { symbol: "XAUUSDm", lot: 0.01, trades: 4 },
+        { symbol: "BTCUSDm", lot: 0.02, trades: 10 },
+      ],
+      "Apex Sniper Pro V6+",
+    );
 
     expect(result.ok).toBe(true);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.url).toBe(`${BRIDGE}/scalper/start`);
     expect(calls[0]?.method).toBe("POST");
-    expect(calls[0]?.body).toEqual({ symbol: "XAUUSDm,BTCUSDm", lot: 0.01, trade_count: 4 });
+    expect(calls[0]?.body).toEqual({
+      symbol: "XAUUSDm,BTCUSDm",
+      lot: 0.01,
+      trade_count: 4,
+      // THE ROBOT'S EXACT NAME rides with the plan: the daemon stamps it on
+      // every order, so a missing field would mean a generic comment.
+      ea_name: "Apex Sniper Pro V6+",
+    });
     expect(calls[0]?.headers["x-bridge-key"]).toBeTruthy();
     // NOTHING may execute a trade from the app in scalper mode.
     expect(calls.some((call) => call.url.includes("/trade/execute"))).toBe(false);
@@ -77,7 +87,7 @@ describe("scalper start", () => {
   it("reports the bridge's own error on a non-200 and never claims it started", async () => {
     stubBridge(() => ({ status: 401, payload: { detail: "Invalid bridge key" } }));
 
-    const result = await startScalperOnBridge([{ symbol: "XAUUSDm", lot: 0.01, trades: 1 }]);
+    const result = await startScalperOnBridge([{ symbol: "XAUUSDm", lot: 0.01, trades: 1 }], "");
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
@@ -171,7 +181,11 @@ describe("scalper status", () => {
     const result = await fetchScalperStatus();
 
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toContain(BRIDGE);
+    if (!result.ok) {
+      // The real reason goes on screen — never the bridge URL.
+      expect(result.error).toContain("network unreachable");
+      expect(result.error).not.toContain(BRIDGE);
+    }
   });
 });
 

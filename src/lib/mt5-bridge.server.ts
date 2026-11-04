@@ -10,22 +10,16 @@ const BRIDGE_KEY = process.env["MT5_BRIDGE_KEY"] || "my_secret_bridge_key_2026";
  *  a clear message, never hang the scanner on "EXECUTING" forever. */
 const BRIDGE_TIMEOUT_MS = 12_000;
 
-function bridgeHostLabel(): string {
-  try {
-    return new URL(BRIDGE_URL).host;
-  } catch {
-    return BRIDGE_URL;
-  }
-}
-
-/** Uniform, ACTIONABLE message for any bridge transport failure. */
+/**
+ * Uniform, ACTIONABLE message for any bridge transport failure — the REASON and
+ * the fix, never the address: the bridge URL must not reach the screen.
+ */
 function bridgeTransportError(err: unknown): string {
-  const host = bridgeHostLabel();
   if (err instanceof Error && (err.name === "AbortError" || err.name === "TimeoutError")) {
-    return `VPS bridge timed out after ${BRIDGE_TIMEOUT_MS / 1000}s — ${host} did not respond. Check that bridge.py is running on the VPS.`;
+    return `The trading server timed out after ${BRIDGE_TIMEOUT_MS / 1000}s — it did not respond. Check that bridge.py is running on the VPS.`;
   }
   const detail = err instanceof Error ? err.message : String(err);
-  return `Cannot reach the VPS bridge at ${host} (${detail}). Check that bridge.py is running and that port 8000 is open in the VPS firewall/security group.`;
+  return `Cannot reach the trading server (${detail}). Check that bridge.py is running and that port 8000 is open in the VPS firewall/security group.`;
 }
 
 /** \n * Single bridge transport helper — every call site uses this so timeouts and
@@ -333,6 +327,8 @@ async function executeVpsTradeInternal(input: {
     stop_loss: input.stop_loss || 0,
     take_profit: input.take_profit || 0,
     comment: requestedComment,
+    // The EA name again as a named field — the bridge's own comment rule.
+    ea_name: requestedComment,
   });
 
   if (result.transportError) {
@@ -515,6 +511,7 @@ export const executeFundamentalsTrades = createServerFn({ method: "POST" })
         stop_loss: data.stopLoss || 0,
         take_profit: data.takeProfit || 0,
         comment: "Ea migrate news",
+        ea_name: "Ea migrate news",
       });
       if (result.transportError) {
         orders.push({ index: i + 1, status: "failed", error: result.transportError });

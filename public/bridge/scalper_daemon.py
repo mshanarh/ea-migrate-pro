@@ -156,36 +156,44 @@ def _read_state() -> dict:
         # The bridge's /scalper/start writes ea_name; keep it always readable
         # so the comment logic below never has to special-case a missing key.
         if "ea_name" not in data:
-            data["ea_name"] = "EA Migrate batch"
+            data["ea_name"] = "EA Migrate"
         return data
     except Exception:
         return {
             "running": False, "symbol": "BTCUSDm", "lot": 0.01, "trade_count": 1,
             "next_trade_number": 1, "started_at": None, "stopped_at": None,
             "positions": {}, "batches": {}, "wait_until": {}, "log": [],
-            "ea_name": "EA Migrate batch",
+            "ea_name": "EA Migrate",
         }
 
 
 def _write_state(state: dict) -> None:
     try:
         STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    except Exception as exc:
-        _log(f"state write failed: {exc}")
+    except Exception as exc:        _log(f"state write failed: {exc}")
 
 
 def _ea_name(state: dict) -> str:
-    """The bot/EA name the bridge was started with, else the default batch tag."""
+    """The bot/EA name the bridge was started with, else "EA Migrate".
+
+    NEVER a batch string: the trader's own robot name is what belongs on the
+    order, and when there is no name at all the plain brand tag is the honest
+    fallback.
+    """
     name = str(state.get("ea_name", "") or "").strip()
-    return name or "EA Migrate batch"
+    return name or "EA Migrate"
 
 
 def _trade_comment(state: dict, direction: str) -> str:
-    """MT5's comment: the bot's own name, with the direction appended when the
-    name is a real bot name (31 chars is MT5's hard limit)."""
+    """MT5's comment: the robot's own name, with the direction appended when
+    the name is a real bot name (31 chars is MT5's hard limit).
+
+    With no name configured the comment is exactly "EA Migrate" — the side is
+    never bolted onto a fallback tag.
+    """
     name = _ea_name(state)
     side = (direction or "").strip()
-    if name != "EA Migrate batch" and side:
+    if name != "EA Migrate" and side:
         return f"{name} {side}"[:31]
     return name[:31]
 

@@ -129,14 +129,16 @@ export async function testBridgeConnection(): Promise<BridgeTestResult> {
 }
 
 /**
- * WHICH ADDRESS FAILED — logged and shown, so "Failed to fetch" can never again
- * hide whether the app was calling the right bridge, and a timeout is never
- * reported as the wrong reason.
+ * WHY THE CALL FAILED — in the user's terms, and NEVER the address.
+ *
+ * The bridge URL is an implementation detail (a cloudflared tunnel hostname);
+ * it is logged for diagnosis but must never appear on screen. What the trader
+ * needs is the reason — a timeout is a timeout, a dead hostname is a network
+ * failure — never "signal timed out" and never a URL they cannot act on.
  */
 export function bridgeUnreachableMessage(error?: unknown): string {
-  const url = getBridgeUrl();
   const reason = error === undefined || error === null || error === "" ? "" : describeBridgeFailure(error);
-  return `Could not reach the trading bridge at ${url}${reason ? ` (${reason})` : ""} — check the connection and that bridge.py is running.`;
+  return `Could not reach the trading server${reason ? ` (${reason})` : ""} — check the connection and that the bridge is running.`;
 }
 
 /**

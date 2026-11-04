@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
-import { BRIDGE_URL, testBridgeConnection } from "@/lib/bridge-client";
+import { testBridgeConnection } from "@/lib/bridge-client";
 
 /**
  * THE TRADING BRIDGE — READ ONLY, WITH A TEST BUTTON.
@@ -10,6 +10,8 @@ import { BRIDGE_URL, testBridgeConnection } from "@/lib/bridge-client";
  * quotes, candles, execution) reads that one constant. A pasted address used to
  * be stored per device, which meant a stale tunnel could point this phone at a
  * dead host while the bridge was online — and no screen ever asks for it now.
+ * It is not shown either: not in this card, not in the execution log, not in an
+ * error message. Only the bridge's answers and the real failure reasons appear.
  *
  * TEST BRIDGE calls `GET {bridge}/scalper/status` with a 10-second bound and
  * reports exactly three things: "Bridge OK", "Bridge answered but returned an
@@ -78,12 +80,13 @@ export function BridgeSettingsSection({ accent }: { accent: string }) {
         </p>
       )}
 
-      <p className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 font-mono text-[11px] leading-relaxed text-white/45">
-        In use now: <span className="text-white/70">{BRIDGE_URL}</span>
+      <p className="rounded-2xl border border-white/[0.06] bg-white/[0.03] px-4 py-3 text-[11px] leading-relaxed text-white/45">
+        Connection: built into the app — nothing to set up, and no address to enter. The server address is never
+        displayed; only its answers are.
       </p>
       <p className="text-[11px] leading-relaxed text-white/35">
-        Built into the app — nothing to set up. Every scalper start/stop/status, analysis and execution call uses
-        this address. Testing waits at most 10 seconds, so the button never freezes the app.
+        Every scalper start/stop/status, analysis and execution call uses the same built-in server. Testing waits at
+        most 10 seconds, so the button never freezes the app.
       </p>
     </div>
   );

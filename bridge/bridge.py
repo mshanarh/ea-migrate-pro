@@ -294,6 +294,8 @@ class TradeRequest(BaseModel):
     take_profit: float = 0
     slippage: int = 20
     comment: Optional[str] = None
+    # The selected robot's exact name — used as the MT5 order comment.
+    ea_name: Optional[str] = None
     # Every order carries a magic number so the app can later find and close
     # ONLY the positions it opened itself — never manual trades, never another
     # EA's positions.
@@ -343,7 +345,8 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "price": price,
             "deviation": req.slippage,
             "magic": req.magic,
-            "comment": (req.comment or "Web Platform Order")[:31],
+            "comment": ((req.ea_name if req.ea_name and req.ea_name.strip() else None)
+                        or req.comment or "EA Migrate")[:31],
             "type_time": mt5.ORDER_TIME_GTC,
         }
         if req.stop_loss:
@@ -399,7 +402,7 @@ def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header
         return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
     try:
         # Build the EA comment: use the provided name, append direction if needed
-        ea_name = req.ea_name.strip() if req.ea_name.strip() else "EA Migrate batch"
+        ea_name = req.ea_name.strip() if req.ea_name.strip() else "EA Migrate"
         # If direction is provided or can be inferred, append it
         direction = req.direction.strip() if req.direction and req.direction.strip() else None
         if direction and ea_name:
@@ -407,7 +410,7 @@ def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header
         elif ea_name:
             comment = ea_name
         else:
-            comment = "EA Migrate batch"
+            comment = "EA Migrate"
         # Ensure comment fits MT5's 31-char limit
         comment = comment[:31]
         # Write the state file so the daemon reads it immediately

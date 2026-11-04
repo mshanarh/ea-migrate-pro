@@ -33,7 +33,6 @@ import {
   startScalperOnBridge,
   stopScalperOnBridge,
 } from "@/lib/scalper-bridge";
-import { getBridgeUrl } from "@/lib/bridge-client";
 import { ScalperStatusPill } from "@/components/app/ScalperStatusPill";
 import { getActiveRunKind, setActiveRunKind, useScalperDaemonStatus } from "@/lib/use-scalper-status";
 
@@ -827,10 +826,11 @@ function AppHome() {
    * SCALPER MODE HANDS THE RUN TO THE VPS DAEMON.
    *
    * This is the WHOLE scalper start path: one POST /scalper/start carrying the
-   * Allowed Quotes (symbols + lot + trade count). It deliberately does NOT start
-   * the browser loop, does NOT call /trade/execute and does NOT open the
-   * execution card — nothing is executed from the phone in this mode. Only a
-   * 200 from the bridge flips the button and announces the run.
+   * Allowed Quotes (symbols + lot + trade count) and the selected robot's exact
+   * name — `ea_name` is what the daemon stamps on every MT5 order it opens. It
+   * deliberately does NOT start the browser loop, does NOT call /trade/execute
+   * and does NOT open the execution card — nothing is executed from the phone in
+   * this mode. Only a 200 from the bridge flips the button and announces the run.
    */
   const startScalper = async (target: Robot) => {
     const plans = planFromAllowedQuotes(target.pairs ?? []);
@@ -858,11 +858,13 @@ function AppHome() {
       robotName: target.name,
       mode: "scalper",
     });
-    setExecutionStage(`POST ${getBridgeUrl()}/scalper/start — starting the daemon…`);
+    // The bridge URL is never shown — only what the trader is waiting on.
+    setExecutionStage("Sending start request to server — starting the daemon…");
     setScalperBusy(true);
     // Bounded to 30 s inside startScalperOnBridge — a hanging tunnel answers
-    // as a timeout error instead of leaving this button spinning.
-    const result = await startScalperOnBridge(plans);
+    // as a timeout error instead of leaving this button spinning. `target.name`
+    // is the trader's own robot name, verbatim: it becomes every order comment.
+    const result = await startScalperOnBridge(plans, target.name);
     setScalperBusy(false);
     if (!result.ok) {
       console.warn(`[scalper] start failed: ${result.error}`);
