@@ -87,6 +87,7 @@ TP2_MULT = 1.6                       # far take profit (only if TP1 unreachable)
 MIN_MARGIN_BUFFER = 0.20             # 20 % free margin below requirement
 MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
+FULL_ATR_BARS = 40                       # full series for ATR(14) computation
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
 DAEMON_VERSION = "2.3"
@@ -284,8 +285,9 @@ def _average_true_range(symbol: str, bars: list[dict], period: int = 8) -> float
 
 
 def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
-    """Return the last 8 COMPLETED M15 bars (the forming bar excluded). Returns
-    None when the data is missing or stale (> 2 minutes old — a hard block)."""
+    """Return the last 8 COMPLETED M15 bars (the forming bar excluded). Also returns
+    enough bars for ATR(14) computation from the full series.
+    Returns None when the data is missing or stale (> 2 minutes old — a hard block)."""
     account, error = _connect(creds)
     if account is None:
         _log(f"candle fetch failed for {symbol}: {error}")
@@ -294,8 +296,9 @@ def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
         symbol_name = symbol
         if not mt5.symbol_select(symbol_name, True):
             return None
-        rates = mt5.copy_rates_from_pos(symbol_name, M15, 0, LAST_BARS + 1)
-        if rates is None or len(rates) < 2:
+        # Fetch 40+ completed bars for ATR(14) computation
+        rates = mt5.copy_rates_from_pos(symbol_name, M15, 0, FULL_ATR_BARS + 1)
+        if rates is None or len(rates) < FULL_ATR_BARS + 1:
             return None
         bars = []
         for row in rates:
@@ -308,6 +311,8 @@ def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
                 "volume": int(row[5]),
             })
         # oldest first; the forming bar is the LAST entry
+        # Keep the last 8 for direction/stop window, but keep all for ATR
+        all_bars = bars[:]
         bars = bars[: LAST_BARS]
         if len(bars) < 2:
             return None
@@ -317,7 +322,7 @@ def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
             _log(f"BLOCK candle data stale/missing for {symbol} "
                  f"(age {now - newest:.0f}s > 120s)")
             return None
-        return bars
+        return all_bars  # return full series; _sl_tp_for will use last 8 for stop
     finally:
         _disconnect()
 
@@ -332,12 +337,42 @@ def _direction(bars: list[dict]) -> str:
     return "BUY" if last_range > 0 else "SELL"
 
 
+def _sl_rule_name(sl_dist: float, atr: float, window_sl: float, atr_floor: float) -> str:
+    """Determine which rule set the stop loss distance."""
+    # The three contenders for SL distance:
+    # 1. SL_ATR_MULT * atr (2.0 × ATR) — existing hard floor
+    # 2. window_sl (base × 0.3) — window extreme
+    # 3. atr_floor (1.5 × ATR) — new ATR-based floor
+    sl_from_atr_mult = SL_ATR_MULT * atr
+    if sl_dist >= max(sl_from_atr_mult, window_sl, atr_floor):
+        # Determine the actual max among the three
+        candidates = {
+            "ATR floor": atr_floor,
+            "window extreme": window_sl,
+            "SL_ATR_MULT": sl_from_atr_mult,
+        }
+        winner = max(candidates, key=candidates.get)
+        return winner
+    return "window extreme"
+
 def _sl_tp_for(symbol: str, bars: list[dict], side: str) -> tuple[float, float, float, float]:
-    """Return (sl, tp1, tp2, spread) for the analysed direction."""
+    """Return (sl, tp1, tp2, spread) for the analysed direction.
+
+    ATR floor: SL distance must be AT LEAST 1.5 × ATR(14) from the full bar series.
+    If the window-extreme stop is WIDER than that floor, keep the wider one.
+    The floor is enforced BEFORE the broker minimum-stop-distance check, and that
+    broker check is also kept.
+    """
     atr = _average_true_range(bars)
     spread = bars[-1].get("spread") or 2.0
     base = abs(bars[-1]["close"] - bars[-1]["open"]) if bars else atr * 2
-    sl_dist = max(SL_ATR_MULT * atr, base * 0.3)
+    # ATR-based minimum stop distance floor: at least 1.5 × ATR(14)
+    atr_floor = atr * 1.5
+    # The window-extreme stop (based on the last candle's body size)
+    window_sl = base * 0.3
+    # Use the WIDER of the window extreme or the ATR floor, but also keep the
+    # existing SL_ATR_MULT check as a hard minimum floor
+    sl_dist = max(SL_ATR_MULT * atr, window_sl, atr_floor)
     tp1_dist = max(TP1_MULT * base, atr * 0.4)
     tp2_dist = max(TP2_MULT * base, atr * 1.0)
     if side == "BUY":
@@ -664,6 +699,18 @@ def run() -> None:
                  f"ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
+            # Determine which rule set the stop
+            atr = _average_true_range(bars)
+            window_sl = abs(bars[-1]["close"] - bars[-1]["open"]) * 0.3 if bars else 0
+            atr_floor = atr * 1.5
+            sl_from_atr_mult = SL_ATR_MULT * atr
+            # Compute which of the three was the maximum
+            candidates = {
+                "ATR floor": atr_floor,
+                "window extreme": window_sl,
+                "SL_ATR_MULT": sl_from_atr_mult,
+            }
+            rule = max(candidates, key=candidates.get)
             ticket =_open_trade(creds, s, side, float(step_state.get("lot", 0.01)), side)
             if ticket is None or not ticket.get("filled"):
                 _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
@@ -676,7 +723,7 @@ def run() -> None:
             _write_state(step_state)
             _log(f"TRADED {s}: OPENED {side} {step_state.get('lot')} lots @ "
                  f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
-                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
+                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f}, SL rule: {rule})")
             # no blocking countdown — the main 1–2 second loop manages closes
 
         time.sleep(1)
@@ -702,6 +749,17 @@ def run() -> None:
                  f"ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
+            # Determine which rule set the stop
+            window_sl = abs(bars[-1]["close"] - bars[-1]["open"]) * 0.3 if bars else 0
+            atr_floor = atr * 1.5
+            sl_from_atr_mult = SL_ATR_MULT * atr
+            # Compute which of the three was the maximum
+            candidates = {
+                "ATR floor": atr_floor,
+                "window extreme": window_sl,
+                "SL_ATR_MULT": sl_from_atr_mult,
+            }
+            rule = max(candidates, key=candidates.get)
             ticket = _open_trade(creds, s, side, float(step_state.get("lot", 0.01)), side)
             if ticket is None or not ticket.get("filled"):
                 _log(f"SKIP {s}: could not open {side} {s} {step_state.get('lot')}")
@@ -714,7 +772,7 @@ def run() -> None:
             _write_state(step_state)
             _log(f"TRADED {s}: OPENED {side} {step_state.get('lot')} lots @ "
                  f"{ticket['price']:.2f} (ticket {ticket['order']}, SL {sl:.2f}, "
-                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f})")
+                 f"TP1 {tp1:.2f}, TP2 {tp2:.2f}, SL rule: {rule})")
             # no blocking countdown — the main 1–2 second loop manages closes
 
         time.sleep(1)

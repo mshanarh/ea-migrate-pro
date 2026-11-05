@@ -263,6 +263,26 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     const direction = analysis.direction;
     const tradeCount = Math.max(1, Math.floor(maxTrades));
 
+    // ── ATR-BASED MINIMUM STOP FLOOR ──────────────────────────────────────
+    // Ensure SL distance is at least 1.5 × ATR(14). The ATR is computed from
+    // the same candle series used for direction. If the existing SL is tighter,
+    // widen it so TP1/TP2 also widen proportionally.
+    const atr = analysis.gate?.atr ?? Math.abs(direction.entry - direction.sl) * 0.5;
+    const atrFloor = atr * 1.5;
+    const existingRisk = Math.abs(direction.entry - direction.sl);
+    const adjustedSlPad = Math.max(existingRisk, atrFloor);
+    // Adjust SL outward if the floor is wider, and widen TP1/TP2 proportionally
+    if (adjustedSlPad > existingRisk) {
+      const directionIsBuy = direction.type === "BUY";
+      const entry = direction.entry;
+      const newRisk = adjustedSlPad;
+      direction.sl = directionIsBuy ? entry - newRisk : entry + newRisk;
+      direction.tp1 = directionIsBuy ? entry + newRisk : entry - newRisk;
+      direction.tp2 = directionIsBuy ? entry + newRisk * 2 : entry - newRisk * 2;
+      console.log(`[scalp] ATR floor applied: SL adjusted from ${existingRisk} to ${newRisk} (ATR=${atr}, floor=${atrFloor})`);
+    }
+    const slRule = adjustedSlPad >= existingRisk ? "ATR floor" : "window extreme";
+
     // The card shows the analysed plan before the broker confirms anything.
     updateExecutionPlan({
       symbol,

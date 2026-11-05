@@ -1142,12 +1142,28 @@ export function evaluateMomentum(input: {
   }
 
   const height = high - low;
+  const atrResult = atrOf(candles);
+  if (!atrResult) return {
+    kind: "no-trade",
+    setup: null,
+    price,
+    reason: `ATR unavailable, cannot compute minimum stop floor. No order was sent.`,
+  };
+  const atr = atrResult.atr;
+  // ATR-based minimum stop distance floor: SL must be at least 1.5 × ATR(14)
+  const atrFloor = atr * 1.5;
+  // pad = height * STOP_PAD_RATIO is the original window-extreme stop
   const pad = height * STOP_PAD_RATIO;
+  // Use the WIDER of the window extreme or the ATR floor
+  const slPad = Math.max(pad, atrFloor);
   const entry = signal === "BUY" ? input.ask : input.bid;
   const extreme = signal === "BUY" ? low : high;
-  const sl = signal === "BUY" ? low - pad : high + pad;
+  const sl = signal === "BUY" ? low - slPad : high + slPad;
   const risk = Math.abs(entry - sl);
+  const risk = Math.max(risk, atrFloor);
+  // TP1 = 1× the (adjusted) SL distance from entry
   const tp1 = signal === "BUY" ? entry + risk : entry - risk;
+  // TP2 = 2× the (adjusted) SL distance from entry
   const tp2 = signal === "BUY" ? entry + risk * 2 : entry - risk * 2;
 
   const setup: MarketSetup = {
@@ -1160,7 +1176,11 @@ export function evaluateMomentum(input: {
     stopBars,
     candleTime: newest.time,
   };
-
+  // Record ATR and floor for trade details / logging
+  setup.atr = atr;
+  setup.atrFloor = atrFloor;
+  setup.slPad = slPad;
+  setup.slRule = "ATR floor" + (pad >= atrFloor ? "+window extreme" : "");
   // Levels must sit on the correct side of the live entry — a gap that put the
   // price through the stop is a refusal, never a resize.
   const levelsValid =
@@ -1186,11 +1206,12 @@ export function evaluateMomentum(input: {
   // invalid SL/TP, margin buffer, position cap).
   const gate = measureEntryGate({ candles, price, direction: signal });
 
+  const slRule = pad >= atrFloor ? "window extreme" : "ATR floor";
   const reason =
     `Start-time ${signal} on ${timeframe} (${basis}): closes ${level(reference.close)} → ${level(newest.close)} ` +
     `(net ${netMove >= 0 ? "+" : ""}${level(netMove)}), live price ${level(price)}. ` +
     `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
-    `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
+    `SL rule: ${slRule} (${level(slPad)} >= ${level(atr)}·1.5=${level(atrFloor)}), TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
     `${gate ? `Entry context: ${gate.summary}.` : ""}`;
 
   return { kind: "signal", plan: { signal, setup, gate, entry, sl, tp1, tp2, reason } };
