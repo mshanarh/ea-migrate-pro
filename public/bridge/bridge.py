@@ -339,6 +339,7 @@ class _TradeRequest(BaseModel):
     slippage: int = 20
     comment: Optional[str] = None
     magic: int = 0
+    ea_name: Optional[str] = None
 
 
 @app.post("/trade/execute")
@@ -368,7 +369,7 @@ def trade_execute(req: _TradeRequest, x_bridge_key: Optional[str] = Header(None)
             "price": price,
             "deviation": req.slippage,
             "magic": req.magic,
-            "comment": (req.comment or "Web Platform Order")[:31],
+            "comment": (req.ea_name or "EA Migrate")[:31],
             "type_time": mt5.ORDER_TIME_GTC,
         }
         if req.stop_loss:

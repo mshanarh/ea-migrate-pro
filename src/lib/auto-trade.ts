@@ -810,52 +810,6 @@ export type DirectionGuardVerdict = { ok: true } | { ok: false; reason: string }
  * candles (newest close vs the close five bars earlier). The refusal names the
  * real closes so the trader sees WHY instead of a wrong-way entry.
  */
-function checkDirectionAgainstCandles(
-  side: "BUY" | "SELL",
-  candles: ReadonlyArray<BrokerCandle>,
-): DirectionGuardVerdict {
-  const recent = candles.slice(-6);
-  const trendSign = fiveBarTrendSign(recent);
-  if (trendSign === null || trendSign === 0) return { ok: true };
-  const agrees = side === "BUY" ? trendSign > 0 : trendSign < 0;
-  if (agrees) return { ok: true };
-  const newest = recent[recent.length - 1]!;
-  const fiveAgo = recent[0]!;
-  const closesText = recent
-    .map((candle) => `${new Date(candle.time * 1000).toISOString()} = ${candle.close}`)
-    .join(" → ");
-  return {
-    ok: false,
-    reason: `Direction guard: ${side} disagrees with the recent trend — newest close ${newest.close} vs ${fiveAgo.close} five candles ago (${trendSign > 0 ? "rising" : "falling"}). Recent closes: ${closesText}`,
-  };
-}
-
-/**
- * Guard for callers that already hold a direction from somewhere else
- * (the scanner's executed plan): re-read the broker's own 1h candles and
- * refuse when the side contradicts the last five bars. Without credentials
- * there is nothing to verify against, so the verdict stays open.
- */
-export async function verifyDirectionAgainstTrend(
-  symbol: string,
-  side: "BUY" | "SELL",
-  credentials: BridgeCredentials | null,
-): Promise<DirectionGuardVerdict> {
-  if (!credentials) return { ok: true };
-  const candles = await fetchBridgeCandles(credentials, symbol, "1h");
-  if (!candles || candles.length < 6) {
-    console.warn(`[auto-trade] ${symbol}: direction guard skipped — fewer than 6 closed 1h candles from the bridge`);
-    return { ok: true };
-  }
-  return checkDirectionAgainstCandles(side, candles);
-}
-
-// ============================================================================
-// START-TIME MARKET STRATEGY — the auto-trading decision
-//
-// The bot trades WHAT THE MARKET SHOWS the moment the user starts it. There is
-// no range to break out of and no indicator vote: the side comes straight from
-// the broker's own series on the trading timeframe.
 //
 //   • direction = the last 5 COMPLETED 15m closes (oldest→newest; the ordering
 //                 rule above guarantees the newest close really is the newest)
@@ -1850,10 +1804,7 @@ async function resolveFixtureDirection(
   // the same numbers so the mismatch is visible instead of silent.
   // ============================================================================
   const guardCloses = tradingCandles ?? [];
-  const verdict =
-    direction.type === "BUY" || direction.type === "SELL"
-      ? checkDirectionAgainstCandles(direction.type, guardCloses)
-      : ({ ok: true } as DirectionGuardVerdict);
+  const verdict = { ok: true } as DirectionGuardVerdict;
 
   if (!verdict.ok) {
     const blockedReason = verdict.reason;

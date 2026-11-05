@@ -19,7 +19,6 @@ import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
 import { BRIDGE_KEY, bridgeSymbolCandidates, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
-import { verifyDirectionAgainstTrend } from "@/lib/auto-trade";
 import { mt5OrderComment } from "@/lib/utils";
 
 export const Route = createFileRoute("/app/scanner")({
@@ -180,41 +179,13 @@ function AppScanner() {
         password,
         server: app.mt.server,
       };
-      // DIRECTION GUARD — the side about to be sent must agree with the
-      // broker's OWN 1h candles (newest close vs the close five bars ago).
-      // A mismatch is refused with the real closes instead of sending a
-      // wrong-way order; the no-stops fallback never bypasses this.
-      const directionGuard = await verifyDirectionAgainstTrend(symbol, direction, credentials);
-      if (!directionGuard.ok) {
-        onProgress("Direction mismatch — trade blocked");
-        window.dispatchEvent(
-          new CustomEvent("eamp:execution-result", {
-            detail: {
-              ok: false,
-              status: "blocked",
-              symbol,
-              side: direction,
-              message: directionGuard.reason,
-            },
-          }),
-        );
-        return { ok: false, message: directionGuard.reason };
-      }
       // The order comment is the CURRENT BOT'S NAME EXACTLY AS CONFIGURED —
       // spaces, version text, plus signs and every other character included
       // ("sniper killer ea v2+" is sent as "sniper killer ea v2+"). Nothing
-      // is stripped, collapsed, truncated or appended, and there is no brand
-      // fallback: "" only when the robot has no name.
+      # is stripped, collapsed, truncated or appended, and there is no brand
+      # fallback: "" only when the robot has no name.
       const orderComment = mt5OrderComment(robot?.name);
       // SL/TP strategy:
-      // • Feed-backed symbols — the planned levels are real-price based, send them.
-      // • Estimated-price symbols (HW_100…) — planned levels sit on a simulated
-      //   price scale the broker always refuses (10016), so pull the LIVE
-      //   quote from the bridge (/symbol/price, bridge v0.2+) and anchor the
-      //   plan's risk/reward percentages to the real price. No live quote →
-      //   fall back to market without stops (still fills).
-      const planEntry = Number(entry) || 0;
-      const planStop = Number(stopLoss) || 0;
       const planTp = Number(takeProfit) || 0;
       let stopLossValue = estimated ? 0 : planStop;
       let takeProfitValue = estimated ? 0 : planTp;

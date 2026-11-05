@@ -100,12 +100,12 @@ def _read_state() -> dict:
         data = json.loads(STATE_FILE.read_text(encoding="utf-8"))
         # Ensure ea_name exists for comment generation
         if "ea_name" not in data:
-            data["ea_name"] = "EA Migrate batch"
+            data["ea_name"] = "EA Migrate"
         return data
     except Exception:
         return {
             "running": False, "symbol": "BTCUSDm", "lot": 0.01,
-            "trade_count": 1, "ea_name": "EA Migrate batch",
+            "trade_count": 1, "ea_name": "EA Migrate",
             "started_at": None, "stopped_at": None, "positions": {},
             "log": [],
         }
