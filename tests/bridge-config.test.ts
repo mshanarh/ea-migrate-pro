@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * same constant.
  */
 
-const EXPECTED_URL = "https://class-risks-protective-positions.trycloudflare.com";
+const EXPECTED_URL = "https://recent-projector-museum-apply.trycloudflare.com";
 
 /** A fresh copy of the module, so nothing is shared between assertions. */
 async function freshModule() {
@@ -58,8 +58,8 @@ describe("bridge address", () => {
 
   it("reports the host without a protocol for short messages", async () => {
     const { bridgeHost, getBridgeUrl } = await freshModule();
-    expect(bridgeHost()).toBe("class-risks-protective-positions.trycloudflare.com");
-    expect(bridgeHost(getBridgeUrl())).toBe("class-risks-protective-positions.trycloudflare.com");
+    expect(bridgeHost()).toBe("recent-projector-museum-apply.trycloudflare.com");
+    expect(bridgeHost(getBridgeUrl())).toBe("recent-projector-museum-apply.trycloudflare.com");
   });
 });
 

@@ -23,7 +23,7 @@
 export const BRIDGE_KEY = "my_secret_bridge_key_2026";
 
 /** THE bridge address. The single source of truth for every bridge call. */
-export const BRIDGE_URL = "https://class-risks-protective-positions.trycloudflare.com";
+export const BRIDGE_URL = "https://recent-projector-museum-apply.trycloudflare.com";
 
 /** The address in use right now — every request reads this. */
 export function getBridgeUrl(): string {
