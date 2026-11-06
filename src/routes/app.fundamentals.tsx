@@ -24,12 +24,34 @@ type EventDef = {
   currency: string;
   /** Calendar titles that belong to this event (case-insensitive fragments). */
   match: string[];
+  /** Titles carrying any of these are a DIFFERENT release — never this event. */
+  exclude?: string[];
   /** A higher print is bearish for the currency (unemployment, oil builds). */
   invert?: boolean;
 };
 
 const EVENTS: EventDef[] = [
-  { id: "nfp", label: "Non-Farm Payrolls", currency: "USD", match: ["non farm payrolls", "non-farm payrolls", "nonfarm payrolls"] },
+  {
+    id: "nfp",
+    label: "Non-Farm Payrolls",
+    currency: "USD",
+    // FOREXFACTORY CALLS THE HEADLINE PRINT "Non-Farm Employment Change", not
+    // "Non-Farm Payrolls" — the old fragments therefore never matched this
+    // week's release and the card claimed there was none. The payrolls
+    // spellings stay for other feeds and cached weeks.
+    match: [
+      "non-farm employment change",
+      "non farm employment change",
+      "nonfarm employment change",
+      "non farm payrolls",
+      "non-farm payrolls",
+      "nonfarm payrolls",
+    ],
+    // THE PRIVATE SURVEY IS NOT THE JOBS REPORT. "ADP Non-Farm Employment
+    // Change" prints a day earlier and matches the new fragment, so it is
+    // filtered out by name instead of being allowed to win the pick.
+    exclude: ["adp"],
+  },
   { id: "cpi", label: "CPI", currency: "USD", match: ["cpi", "cpi mom", "cpi yoy", "core cpi"] },
   { id: "fomc", label: "FOMC Interest Rate Decision", currency: "USD", match: ["fed interest rate decision", "federal funds rate"] },
   { id: "gdp", label: "GDP", currency: "USD", match: ["gdp growth rate qoq", "gdp growth rate q/q", "gdp growth rate"] },
@@ -106,11 +128,19 @@ function matchScore(title: string, fragments: string[]): number {
   return best;
 }
 
+/** A title carrying an excluded fragment belongs to a different release. */
+function isExcluded(title: string, fragments: string[] | undefined): boolean {
+  if (!fragments || fragments.length === 0) return false;
+  const lower = title.toLowerCase();
+  return fragments.some((fragment) => lower.includes(fragment.toLowerCase()));
+}
+
 function resolveRelease(event: EventDef, calendar: CalendarEvent[]): ResolvedRelease | null {
   const matches = calendar
     .filter(
       (entry) =>
         entry.currency === event.currency &&
+        !isExcluded(entry.title, event.exclude) &&
         matchScore(entry.title, event.match) > 0,
     )
     .map((entry) => ({ entry, score: matchScore(entry.title, event.match) }));
