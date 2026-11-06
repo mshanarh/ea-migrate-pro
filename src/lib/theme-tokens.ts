@@ -56,6 +56,9 @@ export function applyAccentTokens(accent: string): void {
   }
 
   // Glows, highlights and brand gradients.
+  // Raw channels, so newer CSS (ambient light, neon edges) can build any alpha
+  // of the selected colour without another token per shade.
+  root.style.setProperty("--accent-rgb", `${r} ${g} ${b}`);
   root.style.setProperty("--glow", `0 0 40px rgb(${r} ${g} ${b} / 0.35)`);
   root.style.setProperty("--glow-soft", `0 0 24px rgb(${r} ${g} ${b} / 0.2)`);
   root.style.setProperty("--gradient-brand", `linear-gradient(100deg, ${accent}, ${deep})`);
@@ -91,6 +94,7 @@ export function clearAccentTokens(): void {
     "--gradient-brand",
     "--accent-deep",
     "--accent-soft",
+    "--accent-rgb",
   ]) {
     root.style.removeProperty(name);
   }

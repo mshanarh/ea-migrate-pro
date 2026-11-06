@@ -182,6 +182,7 @@ const PLATFORM_PREPAINT_SCRIPT = `
 `;
 import { Toaster } from "@/components/ui/sonner";
 import { BackgroundEffects } from "@/components/BackgroundEffects";
+import { AmbientGlow } from "@/components/app/AmbientGlow";
 import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
 import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
@@ -416,6 +417,11 @@ function RootComponent() {
     <QueryClientProvider client={queryClient}>
       {portalShell ? null : (
         <>
+          {/* THE AMBIENT GLOW — the picked accent as light behind every screen,
+              under the user's animation/picture/video layers. It paints no
+              background of its own, so those layers still own the screen when
+              they are switched on. */}
+          {appShell ? <AmbientGlow /> : null}
           {/* Animated background sits behind everything; content lifts above it. */}
           <BackgroundEffects />
           {/* Invisible centre-tap surface for the interface colour cycle. */}

@@ -117,6 +117,10 @@ const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
 export function accentColorValue(id: string): string {
+  // A raw custom HEX is a first-class choice: every surface reads its colour
+  // through this function, so the ambient light, borders, buttons and icons
+  // follow it exactly like a named palette colour.
+  if (/^#[0-9a-f]{6}$/i.test(id)) return id.toUpperCase();
   return (ACCENT_COLORS.find((color) => color.id === id) ?? ACCENT_COLORS[1]).value;
 }
 

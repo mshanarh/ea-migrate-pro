@@ -607,6 +607,113 @@ body.eamp-app-video [data-eamp-bg-host] {
   background-color: transparent;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   THE DYNAMIC AMBIENT GLOW — ONE COLOUR, EVERY LIGHT IN THE APP
+   ══════════════════════════════════════════════════════════════════════
+   AmbientGlow.tsx paints this from `--accent` (Settings → Colour), so every
+   hue — green, blue, purple, red, orange, any hex — lights the app with no
+   per-colour rules. The light is the accent at 12–18% alpha dissolving to
+   transparent, which is why it melts into the black page instead of sitting
+   on it as a coloured block. Nothing here declares a hue of its own. */
+.ambient-glow {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  pointer-events: none;
+  /* No fill: the dark page stays dark and only the light is added. */
+}
+.ambient-glow-layer {
+  position: absolute;
+  inset: 0;
+}
+/* The outgoing colour: a colour change eases instead of snapping. */
+.ambient-glow-layer.is-outgoing {
+  animation: ambientFadeOut 900ms ease forwards;
+}
+.ambient-glow-blob {
+  position: absolute;
+  display: block;
+  border-radius: 9999px;
+  will-change: transform, opacity;
+}
+
+@keyframes ambientDriftA {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50% { transform: translate3d(6vw, 4vh, 0) scale(1.08); }
+}
+@keyframes ambientDriftB {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.05); }
+  50% { transform: translate3d(-7vw, -5vh, 0) scale(1); }
+}
+@keyframes ambientPulse {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+@keyframes ambientFadeOut {
+  to { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .ambient-glow-blob { animation: none !important; }
+}
+
+/* The screens stop painting an opaque fill while the ambient light is mounted,
+   so the glow reaches every screen. The picture/video flags below and above
+   still take precedence when those layers are switched on. */
+body.eamp-ambient-theme .app-fullscreen,
+body.eamp-ambient-theme [data-eamp-bg-host] {
+  background-color: transparent;
+}
+
+/* An interface's screen wash is replaced by the ambient light, so the picked
+   accent — not the style's own gradient — is what lights the page. Other
+   screen tokens (text, surfaces, radii) are untouched. */
+body.eamp-ambient-theme .if-screen.if-screen {
+  background: transparent !important;
+  background-image: none !important;
+}
+
+/* The signature rail at the very top of a styled interface follows the accent
+   too, so the colour reads from the first pixel down. */
+body.eamp-ambient-theme .if-screen.if-screen::after {
+  background: linear-gradient(90deg, transparent, var(--accent, #00e5ff), transparent) !important;
+}
+
+/* SMOOTH ACCENT SWITCH — every accent-driven surface eases into a new colour. */
+body.eamp-ambient-theme a,
+body.eamp-ambient-theme nav,
+body.eamp-ambient-theme .if-card,
+body.eamp-ambient-theme .if-chip,
+body.eamp-ambient-theme .panel {
+  transition:
+    background-color 600ms ease,
+    border-color 600ms ease,
+    color 600ms ease,
+    box-shadow 600ms ease;
+}
+
+/* SUBTLE NEON EDGES — the accent rims the important chrome without flooding it:
+   a soft outer halo plus a faint inner light on cards, and the active tab and
+   bar keep their own accent colour. */
+body.eamp-ambient-theme .if-card.if-card,
+body.eamp-ambient-theme .panel {
+  border-color: color-mix(in srgb, var(--accent, #00e5ff) 34%, var(--if-border, rgba(255, 255, 255, 0.12))) !important;
+  box-shadow:
+    var(--if-shadow, none),
+    0 0 22px color-mix(in srgb, var(--accent, #00e5ff) 20%, transparent),
+    inset 0 0 12px color-mix(in srgb, var(--accent, #00e5ff) 8%, transparent) !important;
+}
+
+/* The bar itself carries the accent edge; the ACTIVE tab is the brightest spot
+   on the screen and everything inactive stays muted white/grey. */
+body.eamp-ambient-theme nav[aria-label="App navigation"] {
+  filter: drop-shadow(0 0 12px color-mix(in srgb, var(--accent, #00e5ff) 24%, transparent));
+  transition: filter 600ms ease;
+}
+body.eamp-ambient-theme nav[aria-label="App navigation"] a[aria-current="page"] {
+  filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent, #00e5ff) 60%, transparent));
+}
+
 /* THE CLIP ITSELF IS NEVER BLURRED OR WASHED OUT. The shared <video> fills its
    host with object-fit:cover at its native resolution; Ultra HD (Settings →
    Back Animation → "Ultra HD (4K) video") adds a light contrast/saturation
