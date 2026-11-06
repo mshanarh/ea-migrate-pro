@@ -94,7 +94,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden rounded-[28px]"
+        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
         style={{
           backgroundColor: "#080808",
           border: `2px solid ${accent}`,
@@ -175,7 +175,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative flex app-hero-fold-min w-full flex-col items-center justify-center gap-5 overflow-hidden bg-black px-5 py-7">
+    <div className="home-neon-card relative mx-3 flex app-hero-fold-min w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-5 overflow-hidden px-5 py-7">
       {/* The picture at FULL strength — no dim layer over it. Text contrast
           comes from the shadows on the text itself. */}
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
@@ -242,7 +242,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
+        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
@@ -306,7 +306,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
+        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         {/* Background picture only when the preference is ON — otherwise the

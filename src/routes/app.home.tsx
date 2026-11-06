@@ -940,7 +940,7 @@ function AppHome() {
 
   return (
     <div
-      className="app-fullscreen if-screen flex w-full flex-col bg-black text-white"
+      className="app-fullscreen if-screen home-clean-page flex w-full flex-col bg-black text-white"
       onTouchStart={onTouchStart}
       onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {

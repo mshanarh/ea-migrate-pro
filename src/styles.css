@@ -426,6 +426,32 @@ html[data-portal] [data-font-sample] {
   border-radius: 32px !important;
 }
 
+/* ── THE HOME CARD ───────────────────────────────────────────────────────
+   ONE rule for the card on every Home look: a solid #080808 surface with a
+   sharp 2px accent rim and a glow that stays ON THE EDGE — no radial wash
+   behind the page, no big blurred orb. It is deliberately !important so an
+   interface's own card surface/shadow cannot soften it back into a haze. */
+.home-neon-card,
+html[data-if-styled] .home-neon-card.home-neon-card {
+  background: #080808 !important;
+  background-image: none !important;
+  border: 2px solid var(--accent, #00ff88) !important;
+  border-radius: 28px !important;
+  box-shadow:
+    0 0 24px color-mix(in srgb, var(--accent, #00ff88) 45%, transparent),
+    inset 0 0 12px color-mix(in srgb, var(--accent, #00ff88) 15%, transparent) !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+}
+
+/* HOME IS A CLEAN BLACK PAGE on every interface: the interface's screen wash
+   and texture stop at this container (other screens keep their own look). */
+.home-clean-page,
+html[data-if-styled] .home-clean-page.home-clean-page {
+  background: #000000 !important;
+  background-image: none !important;
+}
+
 /* Chart scanner: the white scan line sweeping up and down over the chart. */
 @keyframes scanMove {
   0% {

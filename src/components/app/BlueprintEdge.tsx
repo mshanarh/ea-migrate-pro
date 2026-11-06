@@ -72,7 +72,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="flex flex-col items-center rounded-[28px] px-4 pb-2 pt-1"
+        className="home-neon-card flex flex-col items-center px-4 pb-2 pt-1"
       >
         <h2 className="max-w-full truncate px-2 text-center text-sm font-bold" style={{ color: accent }}>
           {eaName}
