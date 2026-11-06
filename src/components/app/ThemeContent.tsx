@@ -32,12 +32,8 @@ export function PoweredBadge({
 }) {
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full bg-black/90 px-5 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white"
-      style={{
-        border: `1.5px solid ${accent}`,
-        // A pill's glow stays on its own rim — it never lights the page.
-        boxShadow: `0 0 16px color-mix(in srgb, ${accent} 35%, transparent)`,
-      }}
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/85 px-6 py-2.5 text-sm font-black tracking-[0.12em] text-white"
+      style={{ boxShadow: `0 0 24px ${accent}33` }}
     >
       {label}
     </span>
@@ -77,95 +73,53 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
 
 /* ---------------- NOVA CORE ---------------- */
 
-/**
- * THE HOME CARD — a clean black page with ONE neon-edged card on it.
- *
- * The accent is deliberately kept on the card's rim (and on the icons inside
- * it): no radial wash, no gradient behind the page and no big blurred orb, so
- * the card reads as a sharp neon outline on pure black instead of a coloured
- * haze across the viewport.
- */
-function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void; onOpenScanner: () => void }) {
+function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
       <motion.section
         layout
-        initial={{ opacity: 0, y: 18 }}
+        initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
-        style={{
-          backgroundColor: "#080808",
-          border: `2px solid ${accent}`,
-          // TIGHT AND CONTAINED: the glow is the card's own edge, nothing else.
-          boxShadow: `0 0 24px color-mix(in srgb, ${accent} 45%, transparent), inset 0 0 12px color-mix(in srgb, ${accent} 15%, transparent)`,
-        }}
+        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
+        style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
-        {/* Robot artwork only when the preference is ON — otherwise the card
-            stays the clean #080808 surface with nothing on top of it. */}
+        {/* Background picture only when the preference is ON — otherwise the
+            hero stays a clean solid black with nothing on top of it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
-        <div className="relative flex h-full flex-col items-center justify-end gap-4 px-5 pb-6 pt-4">
+        <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <h1
             className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
-            style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.85)" }}
+            style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
           >
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-
-          {/* Actions: line icons, uppercase labels, black touch targets. */}
-          <div className="grid w-full max-w-xs grid-cols-3 gap-2">
+          <div className="mt-5 grid w-full max-w-xs grid-cols-3 gap-2">
             {actions.map(({ label, icon: Icon, onClick }) => (
-              <button
-                key={label}
-                type="button"
-                onClick={onClick}
-                className="group flex flex-col items-center gap-1.5 rounded-2xl bg-black/90 py-3 transition-transform active:scale-95"
-                style={{ border: `1px solid color-mix(in srgb, ${accent} 45%, transparent)` }}
-              >
-                <Icon
-                  className="size-6 transition-transform duration-200 group-hover:scale-110"
-                  style={{ color: accent }}
-                  strokeWidth={1.8}
-                />
-                <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white">{label}</span>
+              <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-2 py-1">
+                <Icon className="size-9 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} strokeWidth={2.2} />
+                <span className="text-xs font-bold tracking-[0.14em]" style={{ color: accent }}>{label}</span>
               </button>
             ))}
           </div>
-
-          {/* Pills: black capsules, 1.5px accent rim, crisp text. */}
-          <div className="flex flex-wrap items-center justify-center gap-2">
-            <PoweredBadge accent={accent} />
-            <button
-              type="button"
-              onClick={onOpenScanner}
-              className="inline-flex items-center gap-1.5 rounded-full bg-black/90 px-4 py-2 text-[11px] font-black uppercase tracking-[0.16em] text-white transition-transform active:scale-95"
-              style={{
-                border: `1.5px solid ${accent}`,
-                boxShadow: `0 0 16px color-mix(in srgb, ${accent} 35%, transparent)`,
-              }}
-            >
-              <ScanLine className="size-3.5" style={{ color: accent }} strokeWidth={2.2} />
-              AI Scanner
-            </button>
-          </div>
+          <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
         </div>
       </motion.section>
 
-      {/* Add robot stays a pill too — black surface, accent rim, no gradient. */}
       <button
         type="button"
         onClick={onOpenAdd}
-        className="mx-3 flex items-center justify-center gap-3 rounded-full bg-black/90 py-4 transition-transform active:scale-[0.98]"
-        style={{
-          border: `1.5px solid ${accent}`,
-          boxShadow: `0 0 18px color-mix(in srgb, ${accent} 28%, transparent)`,
-        }}
+        className="mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
+        style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
       >
-        <Plus className="size-5" style={{ color: accent }} strokeWidth={2.4} />
-        <span className="text-xs font-black uppercase tracking-[0.18em] text-white">Add robot</span>
-        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-white/45">Host key</span>
+        <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
+        <span className="flex flex-col">
+          <span className="text-xl font-black tracking-wide text-white">ADD ROBOT</span>
+          <span className="text-xs font-semibold tracking-[0.22em] text-white/80">HOST ROBOT KEY</span>
+        </span>
       </button>
+
     </div>
   );
 }
@@ -175,7 +129,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd, onOpenScanner }: Th
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="home-neon-card relative mx-3 flex app-hero-fold-min w-[calc(100%-1.5rem)] flex-col items-center justify-center gap-5 overflow-hidden px-5 py-7">
+    <div className="relative flex app-hero-fold-min w-full flex-col items-center justify-center gap-5 overflow-hidden bg-black px-5 py-7">
       {/* The picture at FULL strength — no dim layer over it. Text contrast
           comes from the shadows on the text itself. */}
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
@@ -242,7 +196,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
       >
         {/* Background picture only when the preference is ON — otherwise the
             hero stays a clean solid black with nothing on top of it. */}
@@ -306,7 +260,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
         initial={{ opacity: 0, y: 22 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="home-neon-card app-hero-fold relative mx-3 w-[calc(100%-1.5rem)] overflow-hidden"
+        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
         style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
       >
         {/* Background picture only when the preference is ON — otherwise the
@@ -471,14 +425,5 @@ function ThemeContentInner(props: ThemeContentProps) {
       />
     );
   }
-  return (
-    <NovaCore
-      {...props}
-      accent={accent}
-      font={font}
-      actions={actions}
-      onOpenAdd={props.onOpenAdd}
-      onOpenScanner={props.onOpenScanner}
-    />
-  );
+  return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
 }

@@ -39,30 +39,29 @@ export function InterfaceConsole({
 
   return (
     <div className="flex flex-col gap-4 px-3 pb-4">
-      {/*
-        THE NEON-EDGED BLACK CARD — the same treatment as the default Home
-        card: #080808 surface, a 2px accent rim and a glow that stays on the
-        edge. `if-card` is deliberately NOT used here: its interface-wide
-        !important surface/border/shadow rules would flatten this back into a
-        tinted panel.
-      */}
       <motion.section
         layout
         initial={{ opacity: 0, y: 18 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-        className="relative overflow-hidden rounded-[28px] p-5"
-        style={{
-          backgroundColor: "#080808",
-          border: `2px solid ${accent}`,
-          boxShadow: `0 0 24px color-mix(in srgb, ${accent} 45%, transparent), inset 0 0 12px color-mix(in srgb, ${accent} 15%, transparent)`,
-        }}
+        className="if-card relative overflow-hidden p-5"
       >
-        {/*
-          NO WASH, NO ORBS — the card is a solid surface with one sharp rim.
-          Only the thin signature lines below stay, so each interface is still
-          recognisable without tinting the black surface.
-        */}
+        {/* The interface's own hero decoration. */}
+        <span aria-hidden className="pointer-events-none absolute inset-0" style={{ background: decoration.wash }} />
+        {definition.decor === "circle" && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute left-1/2 top-1/2 size-56 -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{ backgroundColor: `${definition.signature2}22`, boxShadow: `0 0 60px ${definition.signature2}55` }}
+          />
+        )}
+        {definition.decor === "ice" && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute -right-10 -top-12 size-44 rounded-full"
+            style={{ backgroundColor: `${definition.signature}1f`, boxShadow: `0 0 60px ${definition.signature}55` }}
+          />
+        )}
         {definition.decor === "split" && (
           <span
             aria-hidden

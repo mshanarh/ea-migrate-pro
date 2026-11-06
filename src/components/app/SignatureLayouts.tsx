@@ -115,8 +115,12 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
         <PoweredBadge accent={accent} />
 
         <div
-          className="home-neon-card grid w-full items-center px-3 py-4"
-          style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}
+          className="grid w-full items-center rounded-[48px] border-2 bg-black/90 px-3 py-4"
+          style={{
+            gridTemplateColumns: 'repeat(3, 1fr)',
+            borderColor: accent,
+            boxShadow: `0 0 30px ${accent}70`,
+          }}
         >
           <RoundAction label="Delete" icon={Trash2} onClick={onRemove} accent={accent} />
           <RoundAction label={running ? "Stop" : "Start"} icon={running ? Pause : Play} onClick={onStart} primary accent={accent} />
@@ -162,7 +166,10 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
         <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
 
-        <div className="home-neon-card relative flex min-h-24 w-full items-center justify-between px-5 sm:px-8">
+        <div
+          className="relative flex min-h-24 w-full items-center justify-between rounded-full border-2 bg-black/80 px-5 sm:px-8"
+          style={{ borderColor: accent, boxShadow: `0 0 30px ${accent}70` }}
+        >
           <button type="button" onClick={onRemove} className="flex w-16 flex-col items-center gap-1 text-xs font-black sm:w-auto sm:flex-row sm:gap-2 sm:text-base" style={{ color: accent }}>
             <Trash2 className="size-6" fill="currentColor" /> Remove
           </button>
@@ -199,7 +206,10 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-6 pt-4 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5">
-        <div className="home-neon-card relative flex flex-col items-center px-5 pb-7 pt-7">
+        <div
+          className="relative flex flex-col items-center rounded-[40px] px-5 pb-7 pt-7"
+          style={{ background: `linear-gradient(160deg, ${accent}e6 0%, ${accent}99 45%, rgba(0,0,0,0.75) 100%)`, boxShadow: `0 0 40px ${accent}aa` }}
+        >
           <span className="absolute right-6 top-6 size-3.5 rounded-full" style={{ backgroundColor: running ? "#22C55E" : "#FF1744", boxShadow: `0 0 10px ${running ? "#22C55E" : "#FF1744"}` }} />
           <div className="size-32 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl sm:size-36">
             <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
