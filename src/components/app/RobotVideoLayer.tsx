@@ -92,8 +92,9 @@ export function RobotVideoLayer() {
   if (stopped || mode === "none" || !ready) return null;
 
   return (
+    // NO key: a mode change must not remount the host, because remounting it
+    // detaches the shared player and briefly freezes the clip mid-play.
     <div
-      key={mode}
       ref={setHostEl}
       aria-hidden
       data-eamp-video-layer={mode}

@@ -128,8 +128,9 @@
   --sidebar-border: #262626;
   --sidebar-ring: #38bdf8;
 
-  --glow: 0 0 40px rgb(0 168 255 / 0.35);
-  --glow-soft: 0 0 24px rgb(56 189 248 / 0.2);
+  /* Multi-stage ambient diffusion: tight core, mid bloom, far haze. */
+  --glow: 0 0 50px rgb(0 168 255 / 0.35), 0 0 100px rgb(0 168 255 / 0.2);
+  --glow-soft: 0 0 30px rgb(56 189 248 / 0.25), 0 0 70px rgb(56 189 248 / 0.12);
   --gradient-hero: radial-gradient(
     ellipse 80% 60% at 50% -10%,
     rgb(0 168 255 / 0.2),
@@ -179,7 +180,7 @@ html.light-mode {
   --sidebar-accent: #e8f1fb;
   --surface-panel: linear-gradient(180deg, #ffffff, #f2f5f9);
   --gradient-hero: radial-gradient(ellipse 80% 60% at 50% -10%, rgb(0 168 255 / 0.14), transparent 70%);
-  --glow: 0 0 40px rgb(0 168 255 / 0.18);
+  --glow: 0 0 50px rgb(0 168 255 / 0.18), 0 0 100px rgb(0 168 255 / 0.1);
   color-scheme: light;
 }
 html.light-mode body {
@@ -653,6 +654,38 @@ body.eamp-app-video [data-eamp-bg-host] {
 @keyframes ambientFadeOut {
   to { opacity: 0; }
 }
+
+/* ── OBSIDIAN GLASS + AMBIENT DIFFUSION (hero cards) ─────────────────────
+   The selected accent is never a fill here: the surface stays dark glass and
+   the light blooms BEHIND and AROUND it in three feathered stages, so it
+   spreads like lighting instead of reading as a coloured block with a hard
+   edge. Both classes read only `--accent`, so every hue works unchanged. */
+.ambient-glow-dynamic {
+  position: relative;
+  background: rgba(10, 12, 16, 0.88);
+  border: 1px solid color-mix(in srgb, var(--accent, #00a8ff) 28%, transparent);
+  box-shadow:
+    0 0 50px -10px color-mix(in srgb, var(--accent, #00a8ff) 40%, transparent),
+    0 0 90px -15px color-mix(in srgb, var(--accent, #00a8ff) 25%, transparent),
+    0 0 140px -25px color-mix(in srgb, var(--accent, #00a8ff) 15%, transparent);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  transition: box-shadow 0.5s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.5s ease, background 0.5s ease;
+}
+
+/* A dedicated backlight layer: sits OUTSIDE the card's box (negative inset),
+   blurred wide, so the glow reads as emitted light around the component. */
+.ambient-glow-halo {
+  position: absolute;
+  inset: -1.25rem;
+  border-radius: inherit;
+  background: radial-gradient(circle at 50% 35%, var(--accent, #00a8ff), transparent 70%);
+  filter: blur(52px);
+  opacity: 0.38;
+  pointer-events: none;
+  z-index: -1;
+  transition: opacity 0.5s ease;
+}
 @media (prefers-reduced-motion: reduce) {
   .ambient-glow-blob { animation: none !important; }
 }
@@ -712,6 +745,15 @@ body.eamp-ambient-theme nav[aria-label="App navigation"] {
 }
 body.eamp-ambient-theme nav[aria-label="App navigation"] a[aria-current="page"] {
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent, #00e5ff) 60%, transparent));
+}
+
+/* THE ACCENT WASH IS CONTAINED. Both hosts isolate their stacking context, so
+   the tint over the clip blends with the video only — never with the page
+   behind a card or the fixed layer. */
+[data-eamp-video-host="card"],
+[data-eamp-video-layer],
+[data-eamp-video-park] {
+  isolation: isolate;
 }
 
 /* THE CLIP ITSELF IS NEVER BLURRED OR WASHED OUT. The shared <video> fills its

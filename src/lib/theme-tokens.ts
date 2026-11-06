@@ -59,12 +59,13 @@ export function applyAccentTokens(accent: string): void {
   // Raw channels, so newer CSS (ambient light, neon edges) can build any alpha
   // of the selected colour without another token per shade.
   root.style.setProperty("--accent-rgb", `${r} ${g} ${b}`);
-  root.style.setProperty("--glow", `0 0 40px rgb(${r} ${g} ${b} / 0.35)`);
-  root.style.setProperty("--glow-soft", `0 0 24px rgb(${r} ${g} ${b} / 0.2)`);
+  // Multi-stage diffusion so every glow blooms instead of drawing a hard ring.
+  root.style.setProperty("--glow", `0 0 50px rgb(${r} ${g} ${b} / 0.35), 0 0 100px rgb(${r} ${g} ${b} / 0.2)`);
+  root.style.setProperty("--glow-soft", `0 0 30px rgb(${r} ${g} ${b} / 0.25), 0 0 70px rgb(${r} ${g} ${b} / 0.12)`);
   root.style.setProperty("--gradient-brand", `linear-gradient(100deg, ${accent}, ${deep})`);
   root.style.setProperty("--accent-deep", deep);
   root.style.setProperty("--accent-soft", `${accent}59`);
-  document.body.style.setProperty("--eamp-glow", `rgb(${r} ${g} ${b} / 0.3)`);
+  document.body.style.setProperty("--eamp-glow", `rgb(${r} ${g} ${b} / 0.4)`);
 }
 
 /**

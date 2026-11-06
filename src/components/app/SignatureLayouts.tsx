@@ -206,10 +206,11 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-6 pt-4 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5">
-        <div
-          className="relative flex flex-col items-center rounded-[40px] px-5 pb-7 pt-7"
-          style={{ background: `linear-gradient(160deg, ${accent}e6 0%, ${accent}99 45%, rgba(0,0,0,0.75) 100%)`, boxShadow: `0 0 40px ${accent}aa` }}
-        >
+        {/* Obsidian glass card with the accent as AMBIENT LIGHT: the surface
+            stays dark, the light blooms around it in the halo behind. */}
+        <div className="relative">
+        <span aria-hidden className="ambient-glow-halo rounded-[40px]" />
+        <div className="ambient-glow-dynamic relative flex flex-col items-center rounded-[40px] px-5 pb-7 pt-7">
           <span className="absolute right-6 top-6 size-3.5 rounded-full" style={{ backgroundColor: running ? "#22C55E" : "#FF1744", boxShadow: `0 0 10px ${running ? "#22C55E" : "#FF1744"}` }} />
           <div className="size-32 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl sm:size-36">
             <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
@@ -230,13 +231,13 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
             ))}
           </div>
         </div>
+        </div>
         <button
           type="button"
           onClick={onOpenAdd}
-          className="flex min-h-20 items-center gap-5 rounded-full px-7 text-left transition-transform active:scale-[0.98]"
-          style={{ background: `linear-gradient(90deg, ${accent}, ${accent}55)`, boxShadow: `0 0 30px ${accent}88` }}
+          className="ambient-glow-dynamic flex min-h-20 items-center gap-5 rounded-full px-7 text-left transition-transform active:scale-[0.98]"
         >
-          <span className="flex size-12 items-center justify-center rounded-full bg-white/25"><Plus className="size-6" strokeWidth={3} /></span>
+          <span className="flex size-12 items-center justify-center rounded-full bg-black/60" style={{ border: `1px solid ${accent}` }}><Plus className="size-6" strokeWidth={3} style={{ color: accent }} /></span>
           <span className="flex flex-col">
             <span className="text-2xl font-black uppercase">Add Robot</span>
             <span className="text-sm font-bold uppercase tracking-[0.2em] text-white/85">Host Robot Key</span>

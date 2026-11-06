@@ -77,16 +77,19 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
-      <motion.section
-        layout
-        initial={{ opacity: 0, y: 22 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
-        style={{ boxShadow: `0 0 0 1px ${accent}40, 0 18px 50px ${accent}2e` }}
-      >
+      {/* Ambient backlight lives OUTSIDE the clipped card, so the light spreads
+          around it instead of being cut off at the rounded edge. */}
+      <div className="relative">
+        <span aria-hidden className="ambient-glow-halo rounded-[32px]" />
+        <motion.section
+          layout
+          initial={{ opacity: 0, y: 22 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="app-hero-bleed app-hero-fold ambient-glow-dynamic relative w-full overflow-hidden"
+        >
         {/* Background picture only when the preference is ON — otherwise the
-            hero stays a clean solid black with nothing on top of it. */}
+            hero stays an obsidian glass surface with nothing on top of it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <h1
@@ -105,18 +108,19 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
           </div>
           <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
         </div>
-      </motion.section>
+        </motion.section>
+      </div>
 
+      {/* Dark glass pill with an ambient rim — no filled accent gradient. */}
       <button
         type="button"
         onClick={onOpenAdd}
-        className="mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
-        style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
+        className="ambient-glow-dynamic mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
       >
-        <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
+        <Plus className="size-9 shrink-0" style={{ color: accent }} strokeWidth={2.6} />
         <span className="flex flex-col">
           <span className="text-xl font-black tracking-wide text-white">ADD ROBOT</span>
-          <span className="text-xs font-semibold tracking-[0.22em] text-white/80">HOST ROBOT KEY</span>
+          <span className="text-xs font-semibold tracking-[0.22em] text-white/60">HOST ROBOT KEY</span>
         </span>
       </button>
 
@@ -129,7 +133,9 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
 function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative flex app-hero-fold-min w-full flex-col items-center justify-center gap-5 overflow-hidden bg-black px-5 py-7">
+    <div className="relative mx-3 w-[calc(100%-1.5rem)]">
+      <span aria-hidden className="ambient-glow-halo rounded-[32px]" />
+      <div className="ambient-glow-dynamic relative flex app-hero-fold-min w-full flex-col items-center justify-center gap-5 overflow-hidden px-5 py-7">
       {/* The picture at FULL strength — no dim layer over it. Text contrast
           comes from the shadows on the text itself. */}
       <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
@@ -175,12 +181,12 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
         <button
           type="button"
           onClick={onOpenAdd}
-          className="relative flex h-16 w-full max-w-sm items-center justify-center gap-3 rounded-full text-base font-black text-white transition-transform active:scale-[0.98]"
-          style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 12px 40px ${accent}59` }}
+          className="ambient-glow-dynamic relative flex h-16 w-full max-w-sm items-center justify-center gap-3 rounded-full text-base font-black text-white transition-transform active:scale-[0.98]"
         >
-          <Plus className="size-6" /> ADD ROBOT
+          <Plus className="size-6" style={{ color: accent }} /> ADD ROBOT
         </button>
       )}
+      </div>
     </div>
   );
 }
@@ -191,15 +197,17 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
-      <motion.section
-        layout
-        initial={{ opacity: 0, y: 22 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="app-hero-bleed app-hero-fold relative w-full overflow-hidden bg-black"
-      >
+      <div className="relative">
+        <span aria-hidden className="ambient-glow-halo rounded-[32px]" />
+        <motion.section
+          layout
+          initial={{ opacity: 0, y: 22 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="app-hero-bleed app-hero-fold ambient-glow-dynamic relative w-full overflow-hidden"
+        >
         {/* Background picture only when the preference is ON — otherwise the
-            hero stays a clean solid black with nothing on top of it. */}
+            hero stays an obsidian glass surface with nothing on top of it. */}
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="relative flex h-full flex-col items-center justify-end pb-7">
           <h1
@@ -212,7 +220,8 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
             {robot?.running ? "RUNNING" : "AGGRESSIVE"}
           </p>
         </div>
-      </motion.section>
+        </motion.section>
+      </div>
 
       <div
         className="mx-1 flex items-center justify-around rounded-[40px] border py-5"

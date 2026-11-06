@@ -70,7 +70,27 @@ const VIDEO_NEVER_PATHS = ["/app/metatrader", "/app/scanner", "/app/fundamentals
 const HOME_PATH = "/app/home";
 
 let videoEl: HTMLVideoElement | null = null;
+/**
+ * THE COLOUR WASH that sits over the clip. It is painted with the app's live
+ * `--accent`, so the robot video takes the colour the user picked (green,
+ * blue, purple, any hex) and eases to a new one with the rest of the app. It
+ * is moved WITH the video, so every host — the Home card and the full-screen
+ * layer — is tinted the same way, and it never touches the video's own pixels
+ * (the `<video>` keeps its full resolution and its playback position).
+ */
+let tintEl: HTMLDivElement | null = null;
 let parkEl: HTMLDivElement | null = null;
+/**
+ * A HOST GAP IS NOT A STOP.
+ *
+ * Navigating swaps hosts inside one commit, so for a frame the registry is
+ * empty. Pausing there was the freeze-then-continue the clip showed on every
+ * screen change. The clip now keeps running and only pauses if NO host has
+ * asked for it once the navigation has settled — which is how the plain-black
+ * screens (Metatrader, Scanner, Fundamentals) still never play it.
+ */
+let parkTimer: number | null = null;
+const PARK_PAUSE_MS = 800;
 /** The object URL this module minted for the current source (revoked on swap). */
 let objectUrl: string | null = null;
 const hosts = new Map<string, RegisteredHost>();
@@ -141,15 +161,57 @@ function ensureVideo(): HTMLVideoElement {
   // CRISP BY DEFAULT — no blur, no downscale, no filter washing the clip out.
   el.style.cssText =
     "position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none;" +
-    "filter:none;image-rendering:auto;backface-visibility:hidden;transform:translateZ(0);";
+    "filter:none;image-rendering:auto;backface-visibility:hidden;transform:translateZ(0);z-index:0;";
   el.addEventListener("error", () => {
     if (!state.sourceRef) return;
     // A load failure is a real, retryable error — never a silent blank.
     setState({ sourceRef: state.sourceRef, ready: false, failed: true });
     reconcile();
   });
+  // A PAUSE ON A VISIBLE SCREEN IS NEVER THE USER'S DOING.
+  // Reparenting the element (navigating between interfaces) or a buffer stall
+  // can make the browser fire `pause`; resuming on the next tick is what keeps
+  // the clip running continuously instead of freezing until something calls
+  // play() again. The HOME double-press stop is the one deliberate pause, and
+  // it is checked first. `lastResume` stops two resumes fighting each other.
+  let lastResume = 0;
+  el.addEventListener("pause", () => {
+    if (isRobotVideoStopped() || !state.ready || state.failed) return;
+    const now = Date.now();
+    if (now - lastResume < 400) return;
+    lastResume = now;
+    window.setTimeout(() => {
+      if (isRobotVideoStopped() || !state.ready || state.failed) return;
+      if (!el.getAttribute("src")) return; // source being swapped out
+      if (!pickHost()) return; // parked or on a screen that must stay black
+      tryPlay(el);
+    }, 80);
+  });
   videoEl = el;
   return el;
+}
+
+/**
+ * The accent wash over the clip. `mix-blend-mode: color` keeps the video's
+ * luminance — the picture keeps its shape, motion and contrast — and replaces
+ * only its hue/saturation with the accent, which is why it reads as lighting
+ * rather than a coloured pane. Opacity is deliberately under 1 so the clip is
+ * still recognisable.
+ */
+function ensureTint(): HTMLDivElement {
+  if (tintEl) return tintEl;
+  const tint = document.createElement("div");
+  tint.setAttribute("aria-hidden", "true");
+  tint.setAttribute("data-eamp-video-tint", "");
+  tint.style.cssText =
+    "position:absolute;inset:0;pointer-events:none;z-index:1;" +
+    "mix-blend-mode:color;opacity:0.55;background-color:var(--accent, #00e5ff);" +
+    // A colour change eases with the rest of the app; will-change lets the
+    // compositor keep the wash on the GPU so it cannot stutter the clip.
+    "transition:background-color 600ms ease, opacity 300ms ease;" +
+    "will-change:background-color;backface-visibility:hidden;";
+  tintEl = tint;
+  return tint;
 }
 
 /** Off-screen holder: parked elements keep their position, never their paint. */
@@ -174,9 +236,45 @@ function pickHost(): RegisteredHost | null {
   return screen;
 }
 
+function scheduleParkPause(): void {
+  if (parkTimer !== null || typeof window === "undefined") return;
+  parkTimer = window.setTimeout(() => {
+    parkTimer = null;
+    if (hosts.size === 0 && videoEl) tryPause(videoEl);
+  }, PARK_PAUSE_MS);
+}
+
+function cancelParkPause(): void {
+  if (parkTimer === null) return;
+  window.clearTimeout(parkTimer);
+  parkTimer = null;
+}
+
 function setScreenClass(on: boolean): void {
   if (typeof document === "undefined") return;
   document.body.classList.toggle("eamp-app-video", on);
+}
+
+/**
+ * MOVE THE CLIP WITHOUT RESTARTING IT.
+ *
+ * Some Android WebViews reload a <video> when it is reparented, which showed
+ * as the clip jumping back to the first frame and stalling before it continued.
+ * The playback position and play state are captured before the move and
+ * restored after it, so a host change is invisible to the viewer.
+ */
+function moveIntoHost(el: HTMLVideoElement, hostEl: HTMLElement): void {
+  const at = el.currentTime;
+  const wasPlaying = !el.paused;
+  hostEl.appendChild(el);
+  if (at > 0 && el.currentTime < at - 0.25) {
+    try {
+      el.currentTime = at;
+    } catch {
+      /* seeking unsupported right after the move — play() keeps it going */
+    }
+  }
+  if (wasPlaying) tryPlay(el);
 }
 
 /** Move the ONE element into the right host (or park it) and keep it playing. */
@@ -191,15 +289,28 @@ function reconcile(): void {
   // Stopped means parked and paused, so nothing keeps playing behind the user.
   const allowed = !isRobotVideoStopped();
   const host = allowed && state.ready && !state.failed ? pickHost() : null;
+  const tint = ensureTint();
   if (!host) {
-    if (el.parentElement !== park()) park().appendChild(el);
+    if (el.parentElement !== park()) {
+      park().appendChild(el);
+      park().appendChild(tint);
+    }
     el.style.opacity = "1";
     el.removeAttribute("data-eamp-video-ultra");
-    tryPause(el);
+    // The clip keeps running out of sight (parked, no paint) and is shown again
+    // by the next host already playing, at the same position; only a real stop,
+    // a failure or an empty host registry (after the navigation settles) pauses.
+    if (!allowed || state.failed || !state.ready) tryPause(el);
+    else scheduleParkPause();
     setScreenClass(false);
     return;
   }
-  if (el.parentElement !== host.el) host.el.appendChild(el);
+  cancelParkPause();
+  if (el.parentElement !== host.el) moveIntoHost(el, host.el);
+  // The wash always rides directly above the clip it belongs to.
+  if (tint.parentElement !== host.el || tint.previousElementSibling !== el) {
+    host.el.appendChild(tint);
+  }
   const options = host.getOptions();
   el.style.opacity = String(options.opacity);
   el.toggleAttribute("data-eamp-video-ultra", isRobotVideoUltra());
@@ -245,7 +356,7 @@ function releaseObjectUrl(): void {
   objectUrl = null;
 }
 
-function loadSource(ref: string): void {
+function loadSource(ref: string, forceReload = false): void {
   generation += 1;
   const token = generation;
   const el = ensureVideo();
@@ -266,13 +377,10 @@ function loadSource(ref: string): void {
       target = ref; // let the element's own error event report the failure
     }
     if (token !== generation) return; // a newer source won the race
-    if (el.getAttribute("src") === target) {
-      try {
-        el.load();
-      } catch {
-        /* not implemented (tests) — the src is already correct */
-      }
-    } else {
+    // SAME SOURCE = SAME PLAYBACK. Calling load() here would seek back to 0:00
+    // and stall for a moment — exactly the "jam then continue" the clip showed.
+    // Only a genuinely different source (or an explicit retry) reloads.
+    if (el.getAttribute("src") !== target || forceReload) {
       el.src = target;
     }
     setState({ sourceRef: ref, ready: true, failed: false });
@@ -310,7 +418,7 @@ export function setSharedVideoSource(ref: string | null | undefined): void {
 export function retrySharedVideo(): void {
   const ref = state.sourceRef;
   if (!ref) return;
-  loadSource(ref);
+  loadSource(ref, true);
 }
 
 /* ── React glue ──────────────────────────────────────────────────────────── */
@@ -394,6 +502,10 @@ export function resetSharedVideoForTests(): void {
   if (parkEl) {
     parkEl.remove();
     parkEl = null;
+  }
+  if (tintEl) {
+    tintEl.remove();
+    tintEl = null;
   }
   state = EMPTY_STATE;
   setScreenClass(false);
