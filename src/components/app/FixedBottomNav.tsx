@@ -97,7 +97,12 @@ function NavLink({
       onClick={onClick}
       aria-current={active ? "page" : undefined}
       className={className}
-      style={{ color: active ? accent : INACTIVE, ...style }}
+      style={{
+        color: active ? accent : INACTIVE,
+        // The ACTIVE tab is the only thing the accent lights here.
+        filter: active ? `drop-shadow(0 0 7px ${accent}99)` : undefined,
+        ...style,
+      }}
     >
       {labelFirst && showLabel && <span className={labelClassName}>{tabLabel(tab.label)}</span>}
       <Icon
@@ -238,16 +243,25 @@ export function FixedBottomNav({ style }: { style?: BottomNavStyle } = {}) {
     >
       {navStyle === "floating-pill" && (
         <div
-          className="flex w-full items-stretch justify-around rounded-[28px] px-2 pt-1.5"
+          className="relative flex w-full items-stretch justify-around rounded-[28px] px-2 pt-1.5"
           style={{
-            background: "var(--if-nav-bg, rgba(18,18,20,0.88))",
+            // JET BLACK BAR — no grey glass, no accent fill; the neon lives on
+            // the hairline edge and on the active tab only.
+            background: "#000000",
             backdropFilter: "blur(var(--if-nav-blur, 18px)) saturate(1.6)",
             WebkitBackdropFilter: "blur(var(--if-nav-blur, 18px)) saturate(1.6)",
-            border: "1px solid var(--if-nav-border, rgba(255,255,255,0.10))",
+            border: "1px solid color-mix(in srgb, var(--accent) 30%, rgba(255,255,255,0.10))",
             borderRadius: "var(--if-nav-radius, 28px)",
-            boxShadow: "var(--if-nav-shadow, 0 10px 34px rgba(0,0,0,0.55))",
+            boxShadow:
+              "0 0 18px color-mix(in srgb, var(--accent) 20%, transparent), var(--if-nav-shadow, 0 10px 34px rgba(0,0,0,0.55))",
           }}
         >
+          {/* Thin accent glow line along the top edge of the bar. */}
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-x-8 top-0 h-px"
+            style={{ background: `linear-gradient(90deg, transparent, ${accent}, transparent)` }}
+          />
           {TABS.map((tab) => {
             const active = isActive(tab.to);
             return (
