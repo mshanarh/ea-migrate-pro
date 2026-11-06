@@ -32,7 +32,6 @@ export type BlueprintEdgeProps = {
   onOpenSymbols: () => void;
   onOpenAdd: () => void;
   onSelectRobot: (id: string) => void;
-  onPlayVideo?: () => void | undefined;
 };
 
 function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; icon: typeof Play; onClick: () => void; accent: string }) {
@@ -49,7 +48,7 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
   );
 }
 
-export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot, onPlayVideo }: BlueprintEdgeProps) {
+export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
   const { color } = useCustomization();
   const accent = resolveBlueprintAccent(color);
   // Same persisted Background Picture switch as everywhere else — OFF leaves
@@ -102,9 +101,6 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* MIDDLE CONTROL BAR — white pill: Remove / Start / Quotes */}
       <div className="mx-auto flex w-[95%] items-center justify-around rounded-[40px] bg-white px-3 py-4" style={{ boxShadow: `0 10px 34px ${accent}40` }}>
         <ControlButton label="Remove" icon={Trash2} onClick={onRemove} accent={accent} />
-        {robot?.video && onPlayVideo && (
-          <ControlButton label="Video" icon={Play} onClick={onPlayVideo} accent={accent} />
-        )}
         <ControlButton label={robot?.running ? "Stop" : "Start"} icon={robot?.running ? Pause : Play} onClick={onStart} accent={accent} />
         <ControlButton label="Quotes" icon={DollarSign} onClick={onQuotes} accent={accent} />
       </div>

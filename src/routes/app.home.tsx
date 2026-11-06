@@ -22,7 +22,6 @@ import { lookupRobotVideoForKey } from "@/lib/robot-video";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
-import { isVideoActive, setVideoActive, toggleVideoPlayback } from "@/lib/video-playback";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
@@ -335,7 +334,6 @@ function AppHome() {
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
   // A per-key video lookup is in flight — the play button must not fire twice.
-  const [videoLookupBusy, setVideoLookupBusy] = useState(false);
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   // THE DAEMON'S REAL STATE — polled every 10 s and on focus, and it corrects
@@ -933,53 +931,6 @@ function AppHome() {
   // matched against the route tree (no more typo'd hrefs landing on the 404)
   // and the navigation stays in the SPA instead of reloading the document.
   const handleQuotes = () => void navigate({ to: "/app/trading-pairs" });
-  /**
-   * PLAY — AND ASK THE SERVER BEFORE CLAIMING THERE IS NO VIDEO.
-   *
-   * The video belongs to the LICENCE KEY, so a robot with nothing cached asks
-   * the server for it (src/lib/robot-video.ts). Only a server answer that
-   * CONFIRMS this key has no video may show the "your mentor can upload one"
-   * toast; a lookup that could not answer is a retryable error instead.
-   */
-  const playRobotVideo = async (target: Robot) => {
-    if (target.video) {
-      // STOP WINS EVERYWHERE: pressing play again on a stopped video starts it
-      // again; pressing it while it plays stops it on Home and every other
-      // screen, and it stays stopped.
-      toggleVideoPlayback();
-      toast.success(
-        isVideoActive()
-          ? "Robot video playing — Home and the other screens"
-          : "Robot video stopped on every screen",
-      );
-      return;
-    }
-    if (videoLookupBusy) return;
-    setVideoLookupBusy(true);
-    const lookup = await lookupRobotVideoForKey(target.key);
-    setVideoLookupBusy(false);
-    if (lookup.status === "unavailable") {
-      // NOT a "no video" claim: the store could not be asked. Retry offered.
-      toast.error("Could not load your robot video", {
-        description: `${lookup.error} Tap Retry.`,
-        duration: 12000,
-        action: { label: "Retry", onClick: () => void playRobotVideo(target) },
-      });
-      return;
-    }
-    if (lookup.status === "none") {
-      toast.info("No robot video yet — your mentor can upload one");
-      return;
-    }
-    setRobotVideo(target.id, lookup.video);
-    setVideoActive(true);
-    toast.success("Robot video on — it now plays behind Settings and the other screens");
-  };
-
-  const handlePlayVideo = () => {
-    if (!robot) return;
-    void playRobotVideo(robot);
-  };
   const handleRemove = () => {
     if (!robot) return;
     if (!window.confirm(`Remove ${robot.name} from this device?`)) return;
@@ -1024,7 +975,6 @@ function AppHome() {
             onOpenSymbols={() => { void navigate({ to: "/app/metatrader" }); }}
             onSelectRobot={(id) => { setActiveRobot(id); toast.success("Robot selected"); }}
             onOpenAdd={() => setModalOpen(true)}
-            onPlayVideo={handlePlayVideo}
           />
         </main>
       </div>

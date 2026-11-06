@@ -10,7 +10,6 @@ type SignatureLayoutProps = {
   onRemove: () => void;
   onOpenScanner: () => void;
   onOpenAdd: () => void;
-  onPlayVideo?: () => void | undefined;
 };
 
 function PoweredBadge({ accent }: { accent: string }) {
@@ -105,10 +104,9 @@ function WideRobotCard({ robot, accent, image, crop = "50% 35%" }: { robot: Robo
 }
 
 /** Sniper matches the connected-robot dashboard reference. */
-export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, onPlayVideo }: SignatureLayoutProps) {
+export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
-  const showVideoButton = Boolean(robot?.video);
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:px-5 sm:pt-6">
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
@@ -119,15 +117,12 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, 
         <div
           className="grid w-full items-center rounded-[48px] border-2 bg-black/90 px-3 py-4"
           style={{
-            gridTemplateColumns: showVideoButton ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)',
+            gridTemplateColumns: 'repeat(3, 1fr)',
             borderColor: accent,
             boxShadow: `0 0 30px ${accent}70`,
           }}
         >
           <RoundAction label="Delete" icon={Trash2} onClick={onRemove} accent={accent} />
-          {showVideoButton && (
-            <RoundAction label="Video" icon={Play} onClick={onPlayVideo ?? (() => {})} accent={accent} />
-          )}
           <RoundAction label={running ? "Stop" : "Start"} icon={running ? Pause : Play} onClick={onStart} primary accent={accent} />
           <RoundAction label="Symbols" icon={BarChart3} onClick={onQuotes} accent={accent} />
         </div>
@@ -161,10 +156,9 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, 
 }
 
 /** Phoenix matches the split-control robot-list dashboard reference. */
-export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, onPlayVideo }: SignatureLayoutProps) {
+export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
-  const showVideoButton = Boolean(robot?.video);
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:pt-6">
       <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
@@ -179,11 +173,6 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd,
           <button type="button" onClick={onRemove} className="flex w-16 flex-col items-center gap-1 text-xs font-black sm:w-auto sm:flex-row sm:gap-2 sm:text-base" style={{ color: accent }}>
             <Trash2 className="size-6" fill="currentColor" /> Remove
           </button>
-          {showVideoButton && (
-            <button type="button" onClick={onPlayVideo ?? (() => {})} className="flex w-16 flex-col items-center gap-1 text-xs font-black sm:w-auto sm:flex-row sm:gap-2 sm:text-base" style={{ color: accent }}>
-              <Play className="size-6" fill="currentColor" /> Video
-            </button>
-          )}
           <button type="button" onClick={onQuotes} className="flex w-16 flex-col items-center gap-1 text-xs font-black sm:w-auto sm:flex-row sm:gap-2 sm:text-base" style={{ color: accent }}>
             <DollarSign className="size-6" strokeWidth={3} /> Quotes
           </button>
@@ -212,9 +201,8 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd,
   );
 }
 /** Vortex 1 — glowing accent card with the live robot portrait, name and controls. */
-export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, onPlayVideo }: SignatureLayoutProps) {
+export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   const running = Boolean(robot?.running);
-  const showVideoButton = Boolean(robot?.video);
   return (
     <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-6 pt-4 text-white">
       <div className="mx-auto flex w-full max-w-md flex-col gap-5">
@@ -229,13 +217,7 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd, 
           <h1 className="mt-6 max-w-full break-words text-center text-2xl font-black uppercase leading-none sm:text-3xl" style={{ textShadow: "0 2px 6px rgba(0,0,0,.6)" }}>
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-          <div className="mt-6 grid w-full" style={{ gridTemplateColumns: showVideoButton ? 'repeat(4, 1fr)' : 'repeat(3, 1fr)' }}>
-            {showVideoButton && (
-              <button key="video" type="button" onClick={onPlayVideo ?? (() => {})} className="flex flex-col items-center gap-2 transition-transform active:scale-95">
-                <Play className="size-8" fill="currentColor" />
-                <span className="text-sm font-black uppercase tracking-[0.14em]">Video</span>
-              </button>
-            )}
+          <div className="mt-6 grid w-full" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
             {[
               { label: running ? "Stop" : "Start", icon: running ? Pause : Square, onClick: onStart },
               { label: "Quotes", icon: LineChart, onClick: onQuotes },
