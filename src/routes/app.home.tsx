@@ -22,15 +22,11 @@ import { lookupRobotVideoForKey } from "@/lib/robot-video";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
-import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan } from "@/lib/execution-state";
+import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan, type BotStrategy } from "@/lib/execution-state";
 import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
-import { beginBotSession, notifyBotStarted, notifyBotStopped } from "@/lib/bot-notify";
-import {
-  planFromAllowedQuotes,
-  startScalperOnBridge,
-  stopScalperOnBridge,
-} from "@/lib/scalper-bridge";
+import { beginBotSession, notifyBotStarted, notifyBotStopped, STRATEGY_LABELS } from "@/lib/bot-notify";
+import { stopScalperOnBridge } from "@/lib/scalper-bridge";
 import { ScalperStatusPill } from "@/components/app/ScalperStatusPill";
 import { getActiveRunKind, setActiveRunKind, useScalperDaemonStatus } from "@/lib/use-scalper-status";
 
@@ -299,12 +295,43 @@ function WelcomeMaster() {
   );
 }
 
-/** Remembered bot mode — the last choice is the default next time. */
-const BOT_MODE_KEY = "eamp.botMode.v1";
-function readBotMode(): BotMode {
+/** Remembered strategy — the last choice is the default next time. */
+const BOT_STRATEGY_KEY = "eamp.bot-strategy.v1";
+
+/** The four strategies the START chooser offers, in the order they are shown. */
+const STRATEGY_CHOICES: ReadonlyArray<{
+  strategy: BotStrategy;
+  title: string;
+  body: string;
+}> = [
+  {
+    strategy: "breakout",
+    title: "Breakout Strategy",
+    body: "Trades range breaks — detects key support/resistance levels over the last 20 candles and enters when momentum pushes outside the range.",
+  },
+  {
+    strategy: "swing",
+    title: "Swing Strategy",
+    body: "Wider trend swings — catches extended multi-hour moves with wider 2.5× ATR stops and high risk-to-reward targets.",
+  },
+  {
+    strategy: "scalper",
+    title: "Scalper Strategy",
+    body: "Rapid execution — quick momentum entries, tight stop loss, and fast profit taking.",
+  },
+  {
+    strategy: "trend",
+    title: "Trend Following",
+    body: "Trend continuation — enters in the direction of dominant structural flow.",
+  },
+];
+
+function readBotStrategy(): BotStrategy {
   try {
-    const saved = window.localStorage.getItem(BOT_MODE_KEY);
-    if (saved === "scalper" || saved === "normal") return saved;
+    const saved = window.localStorage.getItem(BOT_STRATEGY_KEY);
+    if (saved === "breakout" || saved === "swing" || saved === "scalper" || saved === "trend") {
+      return saved;
+    }
   } catch {
     /* storage blocked — default below */
   }
@@ -328,9 +355,10 @@ function AppHome() {
   const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
-  // START offers the two modes; the last one chosen is the remembered default.
-  const [modeOpen, setModeOpen] = useState(false);
-  const [botMode, setBotMode] = useState<BotMode>(() => readBotMode());
+  // START offers the four strategies; the last one chosen is the remembered
+  // default and is highlighted when the chooser opens again.
+  const [strategyOpen, setStrategyOpen] = useState(false);
+  const [botStrategy, setBotStrategy] = useState<BotStrategy>(() => readBotStrategy());
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
   // A per-key video lookup is in flight — the play button must not fire twice.
@@ -746,21 +774,23 @@ function AppHome() {
       void stopRun(robot);
       return;
     }
-    // STOP ANY PREVIOUS LOOP, then ask which mode this run uses.
+    // STOP ANY PREVIOUS LOOP, then ask which strategy this run uses.
     scalpRef.current?.stop();
     scalpRef.current = null;
-    setModeOpen(true);
+    setStrategyOpen(true);
   };
 
   /**
-   * BOTH MODES RUN THE SAME LOOP.
-   *   SCALPER — trade, take the profit, re-analyse, open again, non-stop.
-   *   NORMAL  — open on the same short-term direction and let the broker's
-   *             SL/TP manage it; re-analyses on each new M15 candle without
-   *             ever force-closing a winner.
+   * EVERY STRATEGY RUNS THE SAME LOOP — the strategy only changes how the
+   * engine reads the market and where it puts the stop and the targets:
+   *   SCALPER  — trade, take the profit, re-analyse, open again, non-stop.
+   *   THE REST — open on the strategy's own structure and let the broker's
+   *              SL/TP manage it; re-analyses on each new M15 candle without
+   *              ever force-closing a winner.
    */
-  const runBotLoop = (target: Robot, mode: BotMode) => {
-    console.info(`[bot] STEP 1 mode selected: ${mode} for ${target.name}`);
+  const runBotLoop = (target: Robot, strategy: BotStrategy) => {
+    const mode: BotMode = strategy === "scalper" ? "scalper" : "normal";
+    console.info(`[bot] STEP 1 strategy selected: ${strategy} (${mode}) for ${target.name}`);
     const pairs = (target.pairs ?? []).filter((pair) => pair.symbol?.trim());
     if (pairs.length === 0) {
       console.warn("[bot] STEP 2 blocked: no allowed quotes");
@@ -778,13 +808,14 @@ function AppHome() {
       return;
     }
     const totalTrades = pairs.reduce((sum, pair) => sum + safeTradeCount(pair.maxTrades), 0);
-    // THE CARD NAMES THE MODE, so the trader always knows what is running.
+    // THE CARD NAMES THE STRATEGY, so the trader always knows what is running.
     startExecution({
       symbol: pairs[0]?.symbol?.trim() ?? "",
       ...(Number.isFinite(Number(pairs[0]?.lotSize)) ? { lotSize: Number(pairs[0]?.lotSize) } : {}),
       totalTrades,
       robotName: target.name,
       mode,
+      strategy,
     });
     // START ANALYSES FIRST — it never fires an order blindly. The card opens
     // on the waiting line and the loop keeps analysing; the moment the
@@ -811,6 +842,7 @@ function AppHome() {
       eaName: target.name,
       credentials,
       mode,
+      strategy,
       // START TRADES THIS RUN BY ITSELF, exactly as it did before: the loop
       // analyses the Allowed Quotes first and opens a batch the moment a valid
       // signal forms. It does NOT hand the decision back to the trader and it
@@ -823,99 +855,36 @@ function AppHome() {
       requireConfirmation: false,
     });
     console.info("[bot] STEP 5 loop started");
-    // "Bot started — Scalper mode, watching BTCUSDm" (Normal lists the symbols too).
-    notifyBotStarted(mode, pairs.map((pair) => pair.symbol.trim()));
-    toast.success(`${target.name} — ${mode === "scalper" ? "Scalper" : "Normal"} mode`, {
+    // "Bot started — Breakout strategy, watching BTCUSDm"
+    notifyBotStarted(strategy, pairs.map((pair) => pair.symbol.trim()));
+    toast.success(`${target.name} — ${STRATEGY_LABELS[strategy]} Strategy started`, {
       description: `Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}. It opens the batch here as soon as a valid signal forms.`,
     });
   };
 
   /**
-   * SCALPER MODE HANDS THE RUN TO THE VPS DAEMON.
+   * CHOOSE A STRATEGY → the run starts with it.
    *
-   * This is the WHOLE scalper start path: one POST /scalper/start carrying the
-   * Allowed Quotes (symbols + lot + trade count) and the selected robot's exact
-   * name — `ea_name` is what the daemon stamps on every MT5 order it opens. It
-   * deliberately does NOT start the browser loop, does NOT call /trade/execute
-   * and does NOT open the execution card — nothing is executed from the phone in
-   * this mode. Only a 200 from the bridge flips the button and announces the run.
+   * The choice is remembered for the next START, and it is passed unchanged to
+   * every stage of the run: the execution card (so it names the strategy), the
+   * analysis engine (so it reads the side and the levels that strategy defines)
+   * and the phone notification.
    */
-  const startScalper = async (target: Robot) => {
-    const plans = planFromAllowedQuotes(target.pairs ?? []);
-    console.info(
-      `[scalper] STEP 1 start → ${
-        plans.map((plan) => `${plan.symbol} ${plan.lot}×${plan.trades}`).join(", ") || "no usable quote"
-      }`,
-    );
-    if (plans.length === 0) {
-      toast.error("No usable quote in Allowed Quotes", {
-        description:
-          "Add a symbol with a lot size and a Number of Trades above 0 in Quotes, then start again.",
-      });
-      return;
-    }
-    // THE STATUS LINE NEVER WAITS IN THE DARK. Before the call it names the
-    // exact endpoint, and it is then replaced by RUNNING, STOPPED or the
-    // bridge's own error — a stale "Analyzing…" from an earlier run must not
-    // survive this button press.
-    const firstPlan = plans[0]!;
-    startExecution({
-      symbol: firstPlan.symbol,
-      lotSize: firstPlan.lot,
-      totalTrades: plans.reduce((sum, plan) => sum + plan.trades, 0),
-      robotName: target.name,
-      mode: "scalper",
-    });
-    // The bridge URL is never shown — only what the trader is waiting on.
-    setExecutionStage("Sending start request to server — starting the daemon…");
-    setScalperBusy(true);
-    // Bounded to 30 s inside startScalperOnBridge — a hanging tunnel answers
-    // as a timeout error instead of leaving this button spinning. `target.name`
-    // is the trader's own robot name, verbatim: it becomes every order comment.
-    const result = await startScalperOnBridge(plans, target.name);
-    setScalperBusy(false);
-    if (!result.ok) {
-      console.warn(`[scalper] start failed: ${result.error}`);
-      // THE EXACT ERROR, ON SCREEN — the endpoint is already in the message
-      // (callBridge reports the full address it called).
-      setExecutionStage(`Scalper did not start — ${result.error}`);
-      toast.error("Scalper did not start", { description: result.error });
-      return;
-    }
-    // NO SECOND ROUND TRIP. The 200 from /scalper/start already confirmed the
-    // daemon is running, so the button and the status line flip NOW — the old
-    // code waited on an extra /scalper/status read before showing anything,
-    // which is what made Start feel slow. The fast poll refreshes the rest.
-    setActiveRunKind("scalper");
-    setExecutionStage(`Scalper RUNNING — ${result.symbols.join(", ")} · ${result.lot} × ${result.trades}`);
-    if (!target.running) toggleRobot(target.id);
-    window.showBotStarted?.(target.name, "started");
-    notifyBotStarted("scalper", result.symbols);
-    refreshDaemon();
-    toast.success(`${target.name} — Scalper started on the VPS daemon`, {
-      description: `${result.symbols.join(", ")} · ${result.lot} × ${result.trades}. The daemon trades; the app only starts, stops and monitors it.`,
-    });
-  };
-
-  /** Choose a mode: remembered as the default, then the run starts. */
-  const chooseMode = (mode: BotMode) => {
+  const chooseStrategy = (strategy: BotStrategy) => {
     if (!robot) return;
-    setBotMode(mode);
+    setBotStrategy(strategy);
     try {
-      window.localStorage.setItem(BOT_MODE_KEY, mode);
+      window.localStorage.setItem(BOT_STRATEGY_KEY, strategy);
     } catch {
       /* storage blocked — this session still uses the choice */
     }
-    setModeOpen(false);
-    if (mode === "scalper") {
-      // THE SCALPER IS THE DAEMON'S RUN — never a browser loop.
-      void startScalper(robot);
-      return;
-    }
-    setActiveRunKind("normal");
-    toggleRobot(robot.id);
+    setStrategyOpen(false);
+    // Only the scalper harvests tick profits; every other strategy is managed
+    // by the broker's own SL/TP, so the run kind matches that behaviour.
+    setActiveRunKind(strategy === "scalper" ? "scalper" : "normal");
+    if (!robot.running) toggleRobot(robot.id);
     window.showBotStarted?.(robot.name, "started");
-    runBotLoop(robot, mode);
+    runBotLoop(robot, strategy);
   };
 
   // A mode chooser left open, or a running loop, must not outlive the screen.
@@ -979,37 +948,29 @@ function AppHome() {
         </main>
       </div>
 
-      <Dialog open={modeOpen} onOpenChange={setModeOpen}>
+      <Dialog open={strategyOpen} onOpenChange={setStrategyOpen}>
         <DialogContent className="max-w-sm border-white/10 bg-[#0d0d0d] text-white">
           <DialogHeader>
-            <DialogTitle className="text-[15px] font-black tracking-wide">Choose how {robot?.name ?? "the bot"} trades</DialogTitle>
+            <DialogTitle className="text-[15px] font-black tracking-wide">
+              Select Trading Strategy for {robot?.name ?? "the bot"}
+            </DialogTitle>
             <DialogDescription className="text-[12px] text-white/50">
+              The strategy decides how the bot reads the market and where it puts the stop and the targets.
               Your last choice is remembered as the default.
             </DialogDescription>
           </DialogHeader>
           <div className="mt-3 space-y-2">
-            {([
-              {
-                mode: "scalper" as BotMode,
-                title: "Scalper mode",
-                body: "Hands the run to the VPS scalper daemon: it analyses the last 8 completed M15 candles, opens the batch from Allowed Quotes, closes it when the batch turns positive and repeats. The app only starts, stops and monitors it — no trade is opened from this device.",
-              },
-              {
-                mode: "normal" as BotMode,
-                title: "Normal mode",
-                body: "Opens on the same short-term direction and lets the broker's SL/TP1/TP2 manage each trade — re-analysed on every new M15 candle, winners never force-closed.",
-              },
-            ]).map((option) => (
+            {STRATEGY_CHOICES.map((option) => (
               <button
-                key={option.mode}
+                key={option.strategy}
                 type="button"
-                onClick={() => chooseMode(option.mode)}
-                disabled={scalperBusy}
-                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99] disabled:opacity-60"
+                onClick={() => chooseStrategy(option.strategy)}
+                className="w-full rounded-2xl border p-4 text-left active:scale-[0.99]"
                 style={{
-                  borderColor: botMode === option.mode ? accent : "rgba(255,255,255,0.12)",
-                  borderWidth: botMode === option.mode ? 2 : 1,
-                  backgroundColor: botMode === option.mode ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
+                  borderColor: botStrategy === option.strategy ? accent : "rgba(255,255,255,0.12)",
+                  borderWidth: botStrategy === option.strategy ? 2 : 1,
+                  backgroundColor:
+                    botStrategy === option.strategy ? "rgba(255,255,255,0.06)" : "rgba(255,255,255,0.03)",
                 }}
               >
                 <span className="block text-[13px] font-black text-white">{option.title}</span>

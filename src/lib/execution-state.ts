@@ -24,9 +24,18 @@ import {
  * never computes a price, a direction or a status of its own.
  */
 
+/**
+ * The trading strategy a run was STARTED with. It is chosen once, at start
+ * time, and it decides how the engine reads the market and where it puts the
+ * stop and the targets (see `strategyLevels` in auto-trade).
+ */
+export type BotStrategy = "breakout" | "swing" | "scalper" | "trend";
+
 export type ExecutionPlan = {
   /** The symbol the bot is trading on. */
   symbol: string;
+  /** The strategy the run was started with — named on the AI trade card. */
+  strategy?: BotStrategy;
   /** The direction the engine analysed. */
   direction?: ExecutionSide;
   /** The lot size that was sent to the broker. */

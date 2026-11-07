@@ -1,4 +1,5 @@
 import type { Position, TradeSignal } from "@/types/trading";
+import type { BotStrategy } from "./execution-state";
 import {
   BRIDGE_KEY,
   bridgeHost,
@@ -56,8 +57,11 @@ export type MarketSetup = {
   referenceClose: number;
   /** `lastClose − referenceClose` — the move the five closes show. */
   netMove: number;
-  /** Which input read the side: the five closes or the live-quote tiebreaker. */
-  basis: "last 5 closes" | "live quote";
+  /**
+   * Which input read the side: the five closes, the live-quote tiebreaker, or
+   * the strategy structure chosen at start time.
+   */
+  basis: "last 5 closes" | "live quote" | "strategy";
   /** Lowest low (buy) / highest high (sell) of the stop window. */
   stopExtreme: number;
   /** How many completed bars measured the stop (10). */
@@ -920,6 +924,14 @@ export const PULLBACK_BARS = 5;
 /** How far price must have come back off that extreme, in ATR units. */
 export const MIN_PULLBACK_ATR = 0.25;
 
+// ── STRATEGIES ─────────────────────────────────────────────────────────────
+/** Completed M15 candles that define the breakout range. */
+export const BREAKOUT_RANGE_CANDLES = 20;
+/** Completed M15 candles that define the swing structure. */
+export const SWING_STRUCTURE_CANDLES = 20;
+/** Tight stop the scalper keeps on every entry, in ATR(14) units. */
+export const SCALP_STOP_ATR = 1.5;
+
 export type EntryGateVerdict =
   | "enter"
   | "too-extended"
@@ -1015,6 +1027,165 @@ function atrOf(
   return Number.isFinite(atr) && atr > 0 ? { atr, bars: window.length } : null;
 }
 
+/** EMA of a close series — the trend strategy's structural backbone. */
+function emaOf(closes: ReadonlyArray<number>, period: number): number | null {
+  if (closes.length < period) return null;
+  const k = 2 / (period + 1);
+  let value = closes[0]!;
+  for (let i = 1; i < closes.length; i += 1) value = closes[i]! * k + value * (1 - k);
+  return Number.isFinite(value) ? value : null;
+}
+
+/** What a strategy read: its own side and its own stop/target levels. */
+export type StrategyLevels = {
+  signal: "BUY" | "SELL";
+  entry: number;
+  sl: number;
+  tp1: number;
+  tp2: number;
+  reason: string;
+};
+
+/**
+ * THE STRATEGY ENGINE — pure. Given the same completed candles the momentum
+ * read uses, the chosen strategy decides the side and the levels:
+ *
+ *  • BREAKOUT — the last 20 bars form a range. A pierce of its high is a BUY,
+ *    a pierce of its low a SELL; inside the range the side is whichever
+ *    boundary momentum is testing. A real break stops at the range midpoint
+ *    (1.5 ATR when the midpoint sits on the wrong side of entry), an inside
+ *    test stops at the opposite boundary. Targets are 1.5× and 2× the height.
+ *  • SWING — the 20-bar structural slope picks the side and the stop sits
+ *    2.5× ATR beyond the swing low/high, with 2× and 3× the risk as targets.
+ *  • SCALPER — the fast momentum side, a tight 1.5× ATR stop, 1× / 2× targets.
+ *  • TREND — EMA(9) vs EMA(21) structure picks the side and the pullback
+ *    continuation is entered with a 1.5× ATR structural stop, 2× / 3× targets.
+ *
+ * Returns null when the series is too short to measure that structure, and the
+ * caller then keeps the plain momentum read — a strategy never invents levels
+ * out of missing data.
+ */
+export function strategyLevels(input: {
+  strategy: BotStrategy;
+  candles: ReadonlyArray<BrokerCandle>;
+  ask: number;
+  bid: number;
+  price: number;
+  atr: number;
+  defaultSignal: "BUY" | "SELL";
+  stopLow: number;
+  stopHigh: number;
+}): StrategyLevels | null {
+  const { strategy, candles, ask, bid, price, atr, defaultSignal, stopLow, stopHigh } = input;
+  if (!(atr > 0)) return null;
+
+  if (strategy === "breakout") {
+    const range = candles.slice(-BREAKOUT_RANGE_CANDLES);
+    if (range.length < BREAKOUT_RANGE_CANDLES) return null;
+    const rangeHigh = Math.max(...range.map((candle) => candle.high));
+    const rangeLow = Math.min(...range.map((candle) => candle.low));
+    const height = rangeHigh - rangeLow;
+    if (!Number.isFinite(height) || !(height > 0)) return null;
+    const mid = (rangeHigh + rangeLow) / 2;
+
+    // Above the high is a break up, below the low a break down. Inside, the
+    // nearer boundary is the one momentum is testing.
+    const breaking: "BUY" | "SELL" | null =
+      price > rangeHigh ? "BUY" : price < rangeLow ? "SELL" : null;
+    const signal: "BUY" | "SELL" =
+      breaking ?? (rangeHigh - price <= price - rangeLow ? "BUY" : "SELL");
+    const entry = signal === "BUY" ? ask : bid;
+    const sl =
+      breaking === null
+        ? signal === "BUY"
+          ? rangeLow
+          : rangeHigh
+        : signal === "BUY"
+          ? mid < entry
+            ? mid
+            : entry - SCALP_STOP_ATR * atr
+          : mid > entry
+            ? mid
+            : entry + SCALP_STOP_ATR * atr;
+    const tp1 = signal === "BUY" ? entry + height * 1.5 : entry - height * 1.5;
+    const tp2 = signal === "BUY" ? entry + height * 2 : entry - height * 2;
+    return {
+      signal,
+      entry,
+      sl,
+      tp1,
+      tp2,
+      reason: `Breakout ${signal}: price testing/breaking 20-candle range`,
+    };
+  }
+
+  if (strategy === "swing") {
+    const window = candles.slice(-SWING_STRUCTURE_CANDLES);
+    if (window.length < 15) return null;
+    const first = window[0]!;
+    const last = window[window.length - 1]!;
+    // The macro slope, in ATR units, so a quiet drift cannot outvote a trend.
+    const slope = (last.close - first.close) / atr;
+    const signal: "BUY" | "SELL" =
+      slope > 0 ? "BUY" : slope < 0 ? "SELL" : defaultSignal;
+    const swingLow = Math.min(...window.map((candle) => candle.low));
+    const swingHigh = Math.max(...window.map((candle) => candle.high));
+    const entry = signal === "BUY" ? ask : bid;
+    const sl =
+      signal === "BUY" ? swingLow - 2.5 * atr : swingHigh + 2.5 * atr;
+    const risk = Math.abs(entry - sl);
+    if (!(risk > 0)) return null;
+    return {
+      signal,
+      entry,
+      sl,
+      tp1: signal === "BUY" ? entry + risk * 2 : entry - risk * 2,
+      tp2: signal === "BUY" ? entry + risk * 3 : entry - risk * 3,
+      reason: `Swing ${signal}: multi-hour swing structure confirmed with wide 2.5× ATR stop`,
+    };
+  }
+
+  if (strategy === "scalper") {
+    const signal = defaultSignal;
+    const entry = signal === "BUY" ? ask : bid;
+    const sl =
+      signal === "BUY" ? entry - SCALP_STOP_ATR * atr : entry + SCALP_STOP_ATR * atr;
+    const risk = Math.abs(entry - sl);
+    if (!(risk > 0)) return null;
+    return {
+      signal,
+      entry,
+      sl,
+      tp1: signal === "BUY" ? entry + risk : entry - risk,
+      tp2: signal === "BUY" ? entry + risk * 2 : entry - risk * 2,
+      reason: `Scalper ${signal}: fast 15m momentum with a tight 1.5× ATR stop`,
+    };
+  }
+
+  // TREND — the dominant EMA structure, entered on the continuation.
+  const closes = candles.slice(-21).map((candle) => candle.close);
+  const fast = emaOf(closes, 9);
+  const slow = emaOf(closes, 21);
+  if (fast === null || slow === null) return null;
+  const signal: "BUY" | "SELL" =
+    fast > slow ? "BUY" : fast < slow ? "SELL" : defaultSignal;
+  const entry = signal === "BUY" ? ask : bid;
+  const sl =
+    signal === "BUY"
+      ? Math.min(stopLow, entry - SCALP_STOP_ATR * atr)
+      : Math.max(stopHigh, entry + SCALP_STOP_ATR * atr);
+  const risk = Math.abs(entry - sl);
+  if (!(risk > 0)) return null;
+  return {
+    signal,
+    entry,
+    sl,
+    tp1: signal === "BUY" ? entry + risk * 2 : entry - risk * 2,
+    tp2: signal === "BUY" ? entry + risk * 3 : entry - risk * 3,
+    reason: `Trend ${signal}: dominant EMA structure with pullback continuation`,
+  };
+}
+
 /**
  * THE OVEREXTENSION FILTER — pure, so the read can be pinned by a test.
  *
@@ -1106,6 +1277,8 @@ export function evaluateMomentum(input: {
   lookback?: number;
   stopBars?: number;
   timeframe?: string;
+  /** The strategy chosen at start time — omitted means the plain momentum read. */
+  strategy?: BotStrategy;
 }): MarketEvaluation {
   const lookback = input.lookback ?? MOMENTUM_LOOKBACK;
   const stopBars = input.stopBars ?? STOP_LOOKBACK;
@@ -1193,14 +1366,39 @@ export function evaluateMomentum(input: {
     basis = "live quote";
   }
 
+  // ── STRATEGY READING (optional).
+  // The chosen strategy re-reads structure from the same completed candles and
+  // returns ITS side and ITS levels. When the series is too short to measure
+  // that structure the momentum read above stands unchanged — a strategy never
+  // invents levels out of missing data.
+  const atrRead = input.strategy ? atrOf(candles) : null;
+  const strategyRead =
+    input.strategy && atrRead
+      ? strategyLevels({
+          strategy: input.strategy,
+          candles,
+          ask: input.ask,
+          bid: input.bid,
+          price,
+          atr: atrRead.atr,
+          defaultSignal: signal,
+          stopLow: low,
+          stopHigh: high,
+        })
+      : null;
+  if (strategyRead) {
+    signal = strategyRead.signal;
+    basis = "strategy";
+  }
+
   const height = high - low;
   const pad = height * STOP_PAD_RATIO;
-  const entry = signal === "BUY" ? input.ask : input.bid;
+  const entry = strategyRead?.entry ?? (signal === "BUY" ? input.ask : input.bid);
   const extreme = signal === "BUY" ? low : high;
-  const sl = signal === "BUY" ? low - pad : high + pad;
+  const sl = strategyRead?.sl ?? (signal === "BUY" ? low - pad : high + pad);
   const risk = Math.abs(entry - sl);
-  const tp1 = signal === "BUY" ? entry + risk : entry - risk;
-  const tp2 = signal === "BUY" ? entry + risk * 2 : entry - risk * 2;
+  const tp1 = strategyRead?.tp1 ?? (signal === "BUY" ? entry + risk : entry - risk);
+  const tp2 = strategyRead?.tp2 ?? (signal === "BUY" ? entry + risk * 2 : entry - risk * 2);
 
   const setup: MarketSetup = {
     timeframe,
@@ -1238,12 +1436,13 @@ export function evaluateMomentum(input: {
   // invalid SL/TP, margin buffer, position cap).
   const gate = measureEntryGate({ candles, price, direction: signal });
 
-  const reason =
-    `Start-time ${signal} on ${timeframe} (${basis}): closes ${level(reference.close)} → ${level(newest.close)} ` +
-    `(net ${netMove >= 0 ? "+" : ""}${level(netMove)}), live price ${level(price)}. ` +
-    `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
-    `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
-    `${gate ? `Entry context: ${gate.summary}.` : ""}`;
+  const reason = strategyRead
+    ? strategyRead.reason
+    : `Start-time ${signal} on ${timeframe} (${basis}): closes ${level(reference.close)} → ${level(newest.close)} ` +
+      `(net ${netMove >= 0 ? "+" : ""}${level(netMove)}), live price ${level(price)}. ` +
+      `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
+      `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
+      `${gate ? `Entry context: ${gate.summary}.` : ""}`;
 
   return { kind: "signal", plan: { signal, setup, gate, entry, sl, tp1, tp2, reason } };
 }
@@ -1259,6 +1458,8 @@ async function resolveMomentumDirection(
     requireExecutionReady?: boolean;
     rejectProxyData?: boolean;
     credentials?: BridgeCredentials | null;
+    /** Strategy chosen at start time — decides the side and the levels. */
+    strategy?: BotStrategy;
   },
 ): Promise<AnalysisResult> {
   const { requireExecutionReady = true, rejectProxyData = true, credentials } = options;
@@ -1374,7 +1575,12 @@ async function resolveMomentumDirection(
   }
 
   const { quote } = quoteResult;
-  const evaluation = evaluateMomentum({ candles, ask: quote.ask, bid: quote.bid });
+  const evaluation = evaluateMomentum({
+    candles,
+    ask: quote.ask,
+    bid: quote.bid,
+    ...(options.strategy ? { strategy: options.strategy } : {}),
+  });
 
   // ONE LINE PER DECISION — the closes compared, the net move, the live price
   // and the verdict, so the trade can be checked against the chart.
@@ -1448,6 +1654,8 @@ export async function resolveTradeDirection(
      * / paper previews) answers.
      */
     credentials?: BridgeCredentials | null;
+    /** Strategy chosen at start time — decides the side and the levels. */
+    strategy?: BotStrategy;
   } = {},
 ): Promise<AnalysisResult> {
   // LIVE trading path — the market as it is on the broker's own 15m candles.
@@ -1467,6 +1675,8 @@ async function resolveFixtureDirection(
     requireExecutionReady?: boolean;
     rejectProxyData?: boolean;
     credentials?: BridgeCredentials | null;
+    /** Accepted for signature parity; the fixture engine has no broker series. */
+    strategy?: BotStrategy;
   } = {},
 ): Promise<AnalysisResult> {
   const { requireExecutionReady = true, rejectProxyData = true, credentials = null } = options;

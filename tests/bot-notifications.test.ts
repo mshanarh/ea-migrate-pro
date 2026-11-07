@@ -64,15 +64,15 @@ describe("bot notifications", () => {
     );
   });
 
-  it("names the mode and the symbols on start, and says Bot stopped on stop", async () => {
+  it("names the strategy and the symbols on start, and says Bot stopped on stop", async () => {
     const { notifyBotStarted, notifyBotStopped } = await import("../src/lib/bot-notify");
 
     notifyBotStarted("scalper", ["BTCUSDm"]);
-    notifyBotStarted("normal", ["BTCUSDm", "XAUUSD"]);
+    notifyBotStarted("breakout", ["BTCUSDm", "XAUUSD"]);
     notifyBotStopped();
 
-    expect(bodies()[0]).toBe("Bot started — Scalper mode, watching BTCUSDm");
-    expect(bodies()[1]).toBe("Bot started — Normal mode, watching BTCUSDm, XAUUSD");
+    expect(bodies()[0]).toBe("Bot started — Scalper strategy, watching BTCUSDm");
+    expect(bodies()[1]).toBe("Bot started — Breakout strategy, watching BTCUSDm, XAUUSD");
     expect(bodies()[2]).toBe("Bot stopped");
   });
 

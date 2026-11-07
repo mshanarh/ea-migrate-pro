@@ -12,7 +12,7 @@ import {
   takeConfirmedPendingSignal,
 } from "./pending-signal";
 import { BRIDGE_KEY, bridgeUnreachableMessage, getBridgeUrl } from "./bridge-client";
-import { setExecutionStage, updateExecutionPlan } from "./execution-state";
+import { setExecutionStage, updateExecutionPlan, type BotStrategy } from "./execution-state";
 import {
   notifyBrokerClose,
   notifyCloseThenOpen,
@@ -72,6 +72,13 @@ export type ScalpLoopOptions = {
   credentials: BridgeCredentials;
   /** Which behaviour this run uses. Defaults to the scalper. */
   mode?: BotMode;
+  /**
+   * The strategy chosen at start time. It is handed to every analysis so the
+   * engine reads the side and the levels that strategy defines, and it decides
+   * whether a winner is harvested on a tick (scalper) or left to run to the
+   * broker's own SL/TP (breakout, swing, trend).
+   */
+  strategy?: BotStrategy;
   /**
    * ANALYSE FIRST, THEN SEND — the default.
    *
@@ -193,9 +200,15 @@ async function bridgePost<T>(
 }
 
 export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
-  const { symbols, eaName, credentials } = options;
+  const { symbols, eaName, credentials, strategy } = options;
   const mode: BotMode = options.mode ?? "scalper";
   const requireConfirmation = options.requireConfirmation === true;
+  /**
+   * SCALPER harvests a winner the moment the broker's floating profit turns
+   * positive. Every other strategy — and Normal mode — lets the broker's own
+   * SL/TP decide, so a minor floating tick never closes a good swing.
+   */
+  const swingLike = strategy ? strategy !== "scalper" : mode === "normal";
   const tracks = new Map<string, Track>();
   const waitUntil = new Map<string, number>();
   /** The M15 bucket each symbol was last analysed in (normal mode gating). */
@@ -349,7 +362,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
 
     let analysis;
     try {
-      analysis = await resolveTradeDirection(symbol, { credentials });
+      analysis = await resolveTradeDirection(symbol, {
+        credentials,
+        ...(strategy ? { strategy } : {}),
+      });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       fail(`${symbol}: could not reach the bridge — ${reason}`, { symbol, status: "failed" });
@@ -428,6 +444,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       lotSize,
       totalTrades: tradeCount,
       mode,
+      ...(strategy ? { strategy } : {}),
     });
     // THE DISPLAYED LINE NEVER CARRIES THE BRIDGE URL — a tunnel hostname is
     // noise to the trader and must not leak on screen. The details that matter
@@ -565,7 +582,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
    */
   const revalidateHeldSignal = async (symbol: string, held: HeldSignal): Promise<void> => {
     try {
-      const fresh = await resolveTradeDirection(symbol, { credentials });
+      const fresh = await resolveTradeDirection(symbol, {
+        credentials,
+        ...(strategy ? { strategy } : {}),
+      });
       if (fresh.direction.type === "NO_TRADE") {
         heldSignals.delete(symbol);
         invalidatePendingSignal(`the live candles no longer support this signal — ${fresh.direction.reason}`);
@@ -617,10 +637,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         : [];
       const knowsOpen = monitoring ? bridgePositions.length > 0 : Boolean(track);
 
-      // ── NORMAL MODE — nothing to do while a position is open. SL/TP1/TP2
-      // are the broker's job, and a winner is never pulled early.
-      if (mode === "normal" && knowsOpen) continue;        // ── SCALPER MODE, position open: take the profit or leave it be.
-      if (mode === "scalper" && knowsOpen) {
+      // ── SWING / BREAKOUT / TREND (and NORMAL) — nothing to do while a
+      // position is open. SL/TP1/TP2 are the broker's job, and a trade that is
+      // allowed to run toward them is never pulled early on a floating tick.
+      if (swingLike && knowsOpen) continue;
+      // ── SCALPER, position open: take the profit or leave it be.
+      if (!swingLike && knowsOpen) {
         if (!monitoring) {
           // Nothing can be closed without the endpoint, and nothing must be
           // stacked either — the position stays and the loop waits.
@@ -722,10 +744,10 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         continue;
       }
 
-      // NORMAL MODE re-analyses once per NEW completed M15 candle — never on
-      // every poll, and never mid-candle.
+      // SWING / BREAKOUT / TREND (and NORMAL) re-analyse once per NEW completed
+      // M15 candle — never on every poll, and never mid-candle.
       const bucket = Math.floor(Date.now() / M15_MS);
-      if (mode === "normal" && lastBucket.get(symbol) === bucket) continue;
+      if (swingLike && lastBucket.get(symbol) === bucket) continue;
       lastBucket.set(symbol, bucket);
 
       const holdUntil = waitUntil.get(symbol) ?? 0;

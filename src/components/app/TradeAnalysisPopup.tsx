@@ -306,11 +306,19 @@ export function TradeAnalysisPopup({
             className="border-b border-white/10 px-3 py-1.5 text-[10px] font-black tracking-[0.16em] text-white/45"
             style={{ color: `${accent}cc` }}
           >
-            {plan?.mode === "scalper"
-              ? "AI TRADE — SCALPER MODE"
-              : plan?.mode === "normal"
-                ? "AI TRADE — NORMAL MODE"
-                : "AI TRADE ANALYSIS"}
+            {plan?.strategy === "breakout"
+              ? "AI TRADE — BREAKOUT STRATEGY"
+              : plan?.strategy === "swing"
+                ? "AI TRADE — SWING STRATEGY"
+                : plan?.strategy === "scalper"
+                  ? "AI TRADE — SCALPER STRATEGY"
+                  : plan?.strategy === "trend"
+                    ? "AI TRADE — TREND STRATEGY"
+                    : plan?.mode === "scalper"
+                      ? "AI TRADE — SCALPER MODE"
+                      : plan?.mode === "normal"
+                        ? "AI TRADE — NORMAL MODE"
+                        : "AI TRADE ANALYSIS"}
           </p>
           <div className="space-y-1.5 px-3 py-2.5">
             <p className={`text-[13px] font-black tracking-wide ${directionClasses}`}>

@@ -1,3 +1,5 @@
+import type { BotStrategy } from "./execution-state";
+
 /**
  * BOT NOTIFICATIONS — ONE PLACE that decides what the phone is told.
  *
@@ -5,7 +7,7 @@
  *
  *   Trade 1 opened — BUY BTCUSDm 0.01 lots @ 80556.1
  *   Trade 1 closed — profit +$0.45        (or: stop loss -$0.30)
- *   Bot started — Scalper mode, watching BTCUSDm
+ *   Bot started — Breakout strategy, watching BTCUSDm
  *   Trade skipped — not enough free margin
  *   Bot stopped
  *
@@ -197,9 +199,23 @@ export function describeClose(trade: ClosedTrade): string {
   return `${head}closed by the broker`;
 }
 
-/** `Bot started — Scalper mode, watching BTCUSDm, XAUUSD` */
-export function describeStart(mode: "scalper" | "normal", symbols: string[]): string {
-  const modeText = mode === "scalper" ? "Scalper mode" : "Normal mode";
+/** `Bot started — Breakout strategy, watching BTCUSDm, XAUUSD` */
+/** How each strategy is named out loud / on the phone. */
+export const STRATEGY_LABELS: Record<BotStrategy, string> = {
+  breakout: "Breakout",
+  swing: "Swing",
+  scalper: "Scalper",
+  trend: "Trend",
+};
+
+export function describeStart(
+  strategy: BotStrategy | "normal",
+  symbols: string[],
+): string {
+  // `normal` is the pre-strategy label kept for older callers; a real strategy
+  // always reads as "<Name> strategy".
+  const modeText =
+    strategy === "normal" ? "Normal mode" : `${STRATEGY_LABELS[strategy]} strategy`;
   const list = symbols.map((symbol) => symbol.trim()).filter(Boolean).join(", ");
   return list ? `Bot started — ${modeText}, watching ${list}` : `Bot started — ${modeText}`;
 }
@@ -228,8 +244,11 @@ export function blockLabel(reason: string): string {
 // ---------------------------------------------------------------------------
 
 /** Bot started — em and remember the session's numbering. */
-export function notifyBotStarted(mode: "scalper" | "normal", symbols: string[]): void {
-  post(describeStart(mode, symbols));
+export function notifyBotStarted(
+  strategy: BotStrategy | "normal",
+  symbols: string[],
+): void {
+  post(describeStart(strategy, symbols));
 }
 
 /** Bot stopped — no outcome is claimed for the positions that stay open. */
