@@ -187,6 +187,7 @@ import { ColourCycleTap, AccentVarSync } from "@/components/ColourCycleTap";
 import { InterfaceThemeSync } from "@/components/app/InterfaceThemeSync";
 import { AppBackground } from "@/components/app/AppBackground";
 import { RobotVideoLayer } from "@/components/app/RobotVideoLayer";
+import { AccessWatch } from "@/components/app/AccessWatch";
 import { applyColourMatrixFromStorage } from "@/components/app/BackAnimationSection";
 import { applyShellScope, shellScopeFor } from "@/lib/shell-scope";
 import { speakTradeExecution, unlockBotVoice } from "@/lib/bot-voice";
@@ -431,6 +432,11 @@ function RootComponent() {
               by default) and accent (solar orange) on the public site. */}
           {appShell ? (
             <>
+              {/* THE OWNER'S REVOCATION REACHES A DEVICE THAT IS ALREADY INSIDE
+                  the app: a fresh cloud check every 20s (and on wake) signs a
+                  deactivated session out instead of waiting for its next
+                  navigation or for the gate's 5-minute paid cache to expire. */}
+              <AccessWatch />
               {/* Live --accent / --accent-deep / --accent-soft tokens for every screen. */}
               <AccentVarSync />
               {/* Publishes the selected Main Interface definition to <html> so Home,

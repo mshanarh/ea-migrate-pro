@@ -1,10 +1,16 @@
 /**
- * THE ROBOT VIDEO SWITCHES — one persisted background switch, one session stop
- * gate, one quality switch.
+ * THE ROBOT VIDEO SWITCHES — one persisted background switch, one session
+ * playback gate, one quality switch.
+ *
+ * THE VIDEO NEVER STARTS BY ITSELF. Opening the app (Home included) leaves the
+ * clip PAUSED on its first frame: the trader pressed nothing, so nothing
+ * plays. It starts only when they ask for it — the PLAY VIDEO button on Home,
+ * a double-press on HOME, or the Settings → Robot Video switch. The gate below
+ * starts STOPPED for that reason.
  *
  * PLACEMENT (owned by src/lib/shared-video.ts):
- *   • HOME                    → ALWAYS plays the video, whatever the switches
- *                               say: no button press, no gesture needed.
+ *   • HOME                    → the big screen hosts the player once playback
+ *                               has been asked for (never before).
  *   • Settings and the other
  *     non-trading /app pages   → the video plays as a see-through background
  *                               only while the persisted Robot Video switch is
@@ -13,20 +19,22 @@
  *     Fundamentals             → never show the video at all (their route mode
  *                               is "none" — plain black, always).
  *
- * STOP (this file's session gate):
- *   Double-pressing HOME stops the video EVERYWHERE — Home's big screen
- *   included — and it STAYS stopped (it never auto-resumes behind the user's
- *   back). Double-press again, or flip the Settings switch on, to play again.
- *   The stop is session state on purpose: it must not silently flip the
- *   customer's saved preference, and a reload starts fresh.
+ * PLAYBACK (this file's session gate):
+ *   It starts STOPPED and stays stopped until the trader asks for it. PLAY
+ *   VIDEO starts it, a HOME double-press toggles it, and the Settings switch
+ *   sets it both ways. Double-pressing HOME stops it EVERYWHERE — Home's big
+ *   screen included — and it never auto-resumes behind the user's back. The
+ *   gate is session state on purpose: it must not silently flip the customer's
+ *   saved preference, and a reload starts from the same paused beginning.
  *
  * QUALITY:
  *   "Ultra HD (4K)" (on by default) renders the video at full clarity — no
  *   blur, a slightly stronger contrast/saturation, and a clear see-through
  *   opacity behind content. Off keeps the softer wash.
  *
- * The muted inline <video> element itself lives in shared-video.ts and
- * autoplays on iOS and Android alike.
+ * The muted inline <video> element itself lives in shared-video.ts. It is
+ * muted + playsinline so an explicit play() works on iOS and Android alike,
+ * and it carries NO autoplay attribute — the browser must never start it.
  */
 import { useSyncExternalStore } from "react";
 
@@ -89,10 +97,11 @@ export function notifyRobotVideoAutoChanged(): void {
 /* ── the session stop gate (HOME double-press) ───────────────────────────── */
 
 /**
- * Stopped by the user on this session. False until a double-press says
- * otherwise, so Home keeps autoplaying by itself.
+ * Stopped until the user asks for playback on this session. It starts TRUE:
+ * entering the app must never auto-play the clip, and Home is no exception.
+ * PLAY VIDEO, a HOME double-press or the Settings switch clears it.
  */
-let playbackStopped = false;
+let playbackStopped = true;
 
 /** True while the user has stopped the video — every screen honours this. */
 export function isRobotVideoStopped(): boolean {
@@ -112,7 +121,9 @@ export function subscribeRobotVideoStopped(listener: () => void): () => void {
 }
 
 export function useRobotVideoStopped(): boolean {
-  return useSyncExternalStore(subscribeRobotVideoStopped, isRobotVideoStopped, () => false);
+  // The server snapshot matches the client's first paint (nothing plays until
+  // the trader asks), so no hydration flip paints a playing clip.
+  return useSyncExternalStore(subscribeRobotVideoStopped, isRobotVideoStopped, () => true);
 }
 
 /** HOME double-press / PLAY VIDEO: stop a playing video, or start a stopped one. */

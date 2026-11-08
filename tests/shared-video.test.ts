@@ -18,11 +18,12 @@ import {
 /**
  * THE SHARED ROBOT VIDEO — placement rules and the ONE-element guarantee.
  *
- * The rules are the product requirement: Home always plays, the Robot Video
- * switch drives the other non-trading screens, and Metatrader / Scanner /
- * Fundamentals never show a video. The registry tests prove the player is a
- * single element that MOVES between hosts instead of being remounted (which is
- * what used to stack decoders and restart the clip on every navigation).
+ * The rules are the product requirement: Home hosts the clip once playback has
+ * been asked for (nothing autoplays), the Robot Video switch drives the other
+ * non-trading screens, and Metatrader / Scanner / Fundamentals never show a
+ * video. The registry tests prove the player is a single element that MOVES
+ * between hosts instead of being remounted (which is what used to stack
+ * decoders and restart the clip on every navigation).
  */
 
 const SOURCE = "data:video/mp4;base64,AAAA";

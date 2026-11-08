@@ -29,6 +29,8 @@ import { beginBotSession, notifyBotStarted, notifyBotStopped, STRATEGY_LABELS } 
 import { stopScalperOnBridge } from "@/lib/scalper-bridge";
 import { ScalperStatusPill } from "@/components/app/ScalperStatusPill";
 import { getActiveRunKind, setActiveRunKind, useScalperDaemonStatus } from "@/lib/use-scalper-status";
+import { setVideoActive, useRobotVideoStopped } from "@/lib/video-playback";
+import { Play } from "lucide-react";
 
 /**
  * ONE QUIET RE-CHECK FOR AN ACTIVATED DEVICE — see the `undecided` branch below.
@@ -368,6 +370,10 @@ function AppHome() {
   // the START/STOP button when the VPS disagrees. The home screen only shows a
   // tiny pill; the full detail lives on the MetaTrader screen.
   const { status: daemonStatus, error: daemonError, refresh: refreshDaemon } = useScalperDaemonStatus();
+  // THE CLIP WAITS FOR A YES. Entering the app never starts the robot video; a
+  // trader who wants it taps PLAY VIDEO here (a HOME double-press and the
+  // Settings switch do the same thing).
+  const videoStopped = useRobotVideoStopped();
 
   useEffect(() => {
     // The mentor's LOCAL store (empty on a client phone) and the REAL server
@@ -937,7 +943,23 @@ function AppHome() {
           {/* ONE QUIET INDICATOR. The symbols strip, the STATUS button and the
               daemon's log line moved to the Metatrader screen — the polling
               itself is unchanged (see useScalperDaemonStatus). */}
-          <div className="flex justify-end px-3 pt-1">
+          <div className="flex items-center justify-between gap-3 px-3 pt-1">
+            {robot?.video && videoStopped ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setVideoActive(true);
+                  toast.success("Robot video playing");
+                }}
+                className="flex items-center gap-1.5 rounded-full border px-3 py-1.5 active:scale-[0.97]"
+                style={{ borderColor: `${accent}59`, backgroundColor: `${accent}0f`, color: accent }}
+              >
+                <Play className="size-3.5" strokeWidth={2.6} fill="currentColor" />
+                <span className="text-[10px] font-black tracking-[0.18em]">PLAY VIDEO</span>
+              </button>
+            ) : (
+              <span />
+            )}
             <ScalperStatusPill status={daemonStatus} error={daemonError} />
           </div>
           <ThemeContent

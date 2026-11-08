@@ -7,9 +7,14 @@
  * MOVED into the winning host. It is never destroyed, so its position and its
  * playback survive navigation, and there is never more than one decoder.
  *
+ * NO AUTOPLAY, NO RECOLOUR. The clip keeps its OWN colours (nothing is painted
+ * over it) and it only starts when the trader asks for it — the PLAY VIDEO
+ * control on Home, a HOME double-press or the Settings switch (see
+ * isRobotVideoStopped in video-playback.ts). Entering the app paints it paused.
+ *
  * HOSTS
- *   "card"   — the Home big screen's media slot (the landing interface). Plays
- *              on-screen, always, whatever the switches say.
+ *   "card"   — the Home big screen's media slot (the landing interface). Shows
+ *              on-screen once playback has been asked for.
  *   "screen" — a fixed full-screen layer BEHIND the page content. Home uses it
  *              when the active interface theme has no big media slot;
  *              Settings-type pages use it while the Robot Video switch is ON,
@@ -17,7 +22,8 @@
  * A card host always beats a screen host, so Home keeps its in-card video.
  *
  * ROUTE RULES (videoLayerMode)
- *   /app/home                        → "home"      always plays
+ *   /app/home                        → "home"      the only route that hosts
+ *                                                the clip (once asked)
  *   Metatrader / Scanner / Fundamentals → "none"   plain black, no video, ever
  *   every other /app page            → "background" only while the persisted
  *                                                Robot Video switch is ON
@@ -70,15 +76,6 @@ const VIDEO_NEVER_PATHS = ["/app/metatrader", "/app/scanner", "/app/fundamentals
 const HOME_PATH = "/app/home";
 
 let videoEl: HTMLVideoElement | null = null;
-/**
- * THE COLOUR WASH that sits over the clip. It is painted with the app's live
- * `--accent`, so the robot video takes the colour the user picked (green,
- * blue, purple, any hex) and eases to a new one with the rest of the app. It
- * is moved WITH the video, so every host — the Home card and the full-screen
- * layer — is tinted the same way, and it never touches the video's own pixels
- * (the `<video>` keeps its full resolution and its playback position).
- */
-let tintEl: HTMLDivElement | null = null;
 let parkEl: HTMLDivElement | null = null;
 /**
  * A HOST GAP IS NOT A STOP.
@@ -150,12 +147,14 @@ function ensureVideo(): HTMLVideoElement {
   el.muted = true;
   el.defaultMuted = true;
   el.loop = true;
-  el.autoplay = true;
+  // NO autoplay ATTRIBUTE, on purpose: the browser would start the clip on its
+  // own the moment a source lands. Playback is driven by tryPlay() from the
+  // placement pass, which only runs when the trader has asked for it.
+  el.autoplay = false;
   el.playsInline = true;
   el.preload = "auto";
   el.setAttribute("muted", "");
   el.setAttribute("playsinline", "");
-  el.setAttribute("autoplay", "");
   el.setAttribute("aria-hidden", "true");
   el.setAttribute("data-eamp-robot-video", "");
   // CRISP BY DEFAULT — no blur, no downscale, no filter washing the clip out.
@@ -189,29 +188,6 @@ function ensureVideo(): HTMLVideoElement {
   });
   videoEl = el;
   return el;
-}
-
-/**
- * The accent wash over the clip. `mix-blend-mode: color` keeps the video's
- * luminance — the picture keeps its shape, motion and contrast — and replaces
- * only its hue/saturation with the accent, which is why it reads as lighting
- * rather than a coloured pane. Opacity is deliberately under 1 so the clip is
- * still recognisable.
- */
-function ensureTint(): HTMLDivElement {
-  if (tintEl) return tintEl;
-  const tint = document.createElement("div");
-  tint.setAttribute("aria-hidden", "true");
-  tint.setAttribute("data-eamp-video-tint", "");
-  tint.style.cssText =
-    "position:absolute;inset:0;pointer-events:none;z-index:1;" +
-    "mix-blend-mode:color;opacity:0.55;background-color:var(--accent, #00e5ff);" +
-    // A colour change eases with the rest of the app; will-change lets the
-    // compositor keep the wash on the GPU so it cannot stutter the clip.
-    "transition:background-color 600ms ease, opacity 300ms ease;" +
-    "will-change:background-color;backface-visibility:hidden;";
-  tintEl = tint;
-  return tint;
 }
 
 /** Off-screen holder: parked elements keep their position, never their paint. */
@@ -289,12 +265,8 @@ function reconcile(): void {
   // Stopped means parked and paused, so nothing keeps playing behind the user.
   const allowed = !isRobotVideoStopped();
   const host = allowed && state.ready && !state.failed ? pickHost() : null;
-  const tint = ensureTint();
   if (!host) {
-    if (el.parentElement !== park()) {
-      park().appendChild(el);
-      park().appendChild(tint);
-    }
+    if (el.parentElement !== park()) park().appendChild(el);
     el.style.opacity = "1";
     el.removeAttribute("data-eamp-video-ultra");
     // The clip keeps running out of sight (parked, no paint) and is shown again
@@ -307,10 +279,6 @@ function reconcile(): void {
   }
   cancelParkPause();
   if (el.parentElement !== host.el) moveIntoHost(el, host.el);
-  // The wash always rides directly above the clip it belongs to.
-  if (tint.parentElement !== host.el || tint.previousElementSibling !== el) {
-    host.el.appendChild(tint);
-  }
   const options = host.getOptions();
   el.style.opacity = String(options.opacity);
   el.toggleAttribute("data-eamp-video-ultra", isRobotVideoUltra());
@@ -502,10 +470,6 @@ export function resetSharedVideoForTests(): void {
   if (parkEl) {
     parkEl.remove();
     parkEl = null;
-  }
-  if (tintEl) {
-    tintEl.remove();
-    tintEl = null;
   }
   state = EMPTY_STATE;
   setScreenClass(false);

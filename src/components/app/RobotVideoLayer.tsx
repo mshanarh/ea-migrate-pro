@@ -21,7 +21,9 @@ import { useRobotVideoAuto, useRobotVideoStopped, useRobotVideoUltra } from "@/l
  *
  *   • Home        → the big screen hosts the player in-card; when the active
  *                   interface has no media slot this layer shows it full
- *                   screen. Home plays ALWAYS, whatever the switches say.
+ *                   screen. Nothing plays until the trader asks (PLAY VIDEO,
+ *                   a HOME double-press or the Settings switch) — this layer
+ *                   renders nothing while playback is stopped.
  *   • Settings & the other non-trading /app pages → only while the persisted
  *                   "Robot Video" switch is ON, as a see-through layer behind
  *                   the content (opacity below).
@@ -55,7 +57,7 @@ export function RobotVideoLayer() {
   }, [source]);
 
   const mode = videoLayerMode(pathname, videoAuto);
-  /** A HOME double-press stop pauses the video on every screen, this one too. */
+  /** Stopped until playback is asked for — every host honours it, this one too. */
   const stopped = useRobotVideoStopped();
   const ultra = useRobotVideoUltra();
 

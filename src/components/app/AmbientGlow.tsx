@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
+import { isColourCycling } from "@/lib/color-cycle";
 
 /**
  * AMBIENT GLOW — THE SELECTED ACCENT AS LIGHT, NOT PAINT.
@@ -82,6 +83,19 @@ export function AmbientGlow() {
     if (lastRef.current === accent) return;
     const outgoing = lastRef.current;
     lastRef.current = accent;
+    /**
+     * A COLOUR CYCLE STEP IS NOT A CROSSFADE.
+     *
+     * The tap-to-cycle effect changes the accent every 2s, so keeping a fading
+     * outgoing layer under the live one stacked three extra full-screen
+     * animated gradients for most of every step — enough compositing work to
+     * make the background animation and the video hitch. A step simply swaps
+     * the one live layer instead; a one-off colour change still crossfades.
+     */
+    if (isColourCycling()) {
+      setPrevious(null);
+      return;
+    }
     setPrevious(outgoing);
     const timer = window.setTimeout(() => setPrevious(null), 900);
     return () => window.clearTimeout(timer);

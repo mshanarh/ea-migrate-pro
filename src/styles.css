@@ -570,20 +570,21 @@ body.eamp-no-bg-effect #bg-effects-canvas {
 
 /* Interface colour cycle (tap the centre — see color-cycle.ts): while the
    effect runs, colour tokens ease into the next scheme with a short 0.4s
-   shift — quick enough to feel like a 2s rotation, not a slow fade. Only
-   colour-ish properties are eased, so transforms (press/tap feedback) and
-   opacity stay instant. The class is removed the moment the cycle stops,
-   which returns the interface to the user's real theme. */
+   shift — quick enough to feel like a 2s rotation, not a slow fade. Only the
+   CHEAP colour properties are eased (background/border/colour); box-shadow,
+   fill and stroke used to be in this list too, which re-rasterised every glow,
+   pill and card in the app on each step and made the animated background, the
+   ambient glow and the video stutter — that is the "jam" the colour cycle
+   showed. Transforms and opacity stay instant, so press/tap feedback is
+   untouched. The class is removed the moment the cycle stops, which returns
+   the interface to the user's real theme. */
 body.eamp-colour-cycle *,
 body.eamp-colour-cycle *::before,
 body.eamp-colour-cycle *::after {
   transition:
     background-color 400ms ease,
     border-color 400ms ease,
-    color 400ms ease,
-    box-shadow 400ms ease,
-    fill 400ms ease,
-    stroke 400ms ease !important;
+    color 400ms ease !important;
 }
 
 /* The app-wide background picture layer (AppBackground) sits behind the route
@@ -747,9 +748,10 @@ body.eamp-ambient-theme nav[aria-label="App navigation"] a[aria-current="page"] 
   filter: drop-shadow(0 0 8px color-mix(in srgb, var(--accent, #00e5ff) 60%, transparent));
 }
 
-/* THE ACCENT WASH IS CONTAINED. Both hosts isolate their stacking context, so
-   the tint over the clip blends with the video only — never with the page
-   behind a card or the fixed layer. */
+/* THE ACCENT WASH IS CONTAINED. Both hosts isolate their stacking context so
+   nothing over the clip can blend with the page behind it. The clip is never
+   recoloured: it plays in its own colours (the accent wash that used to sit
+   over it is gone). */
 [data-eamp-video-host="card"],
 [data-eamp-video-layer],
 [data-eamp-video-park] {

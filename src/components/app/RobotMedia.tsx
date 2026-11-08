@@ -17,9 +17,12 @@ type RobotMediaProps = {
  *
  * THE PLAYER IS SHARED (src/lib/shared-video.ts): the hero slot does not own a
  * <video> — it registers a HOST and the app's ONE element is moved into it.
- * That is what makes Home's big screen play the video automatically (no button
- * press, any switch position) while switching tabs can never stack a second
- * decoder or restart the clip from the beginning.
+ * That is what makes switching tabs unable to stack a second decoder or
+ * restart the clip from the beginning.
+ *
+ * NOTHING PLAYS BY ITSELF. The hero hosts the player only after the trader has
+ * asked for playback (PLAY VIDEO on Home, a HOME double-press or the Settings
+ * switch); until then it shows the robot's picture.
  */
 export function RobotMedia({
   image,
@@ -29,7 +32,7 @@ export function RobotMedia({
   preferImage = false,
 }: RobotMediaProps) {
   const { ready } = useSharedVideo();
-  /** A HOME double-press stop must clear Home's big screen too — picture back. */
+  /** Playback has not been asked for (or was stopped) — picture, not the clip. */
   const stopped = useRobotVideoStopped();
   const setHostEl = useVideoHost("card", { opacity: 1 });
 
@@ -78,10 +81,13 @@ export function VideoBackdrop({
   mediaDim?: boolean | undefined;
 }) {
   const { ready } = useSharedVideo();
+  const stopped = useRobotVideoStopped();
 
-  // THE SHARED PLAYER OWNS THE FULL SCREEN while it has a source: painting
-  // anything here would only stack a second layer over (or under) it.
-  if (ready) return null;
+  // THE SHARED PLAYER OWNS THE FULL SCREEN while it has a source AND playback
+  // has been asked for: painting anything here would only stack a second layer
+  // over (or under) it. A stopped player paints nothing, so the picture below
+  // is the background instead of an empty black screen.
+  if (ready && !stopped) return null;
 
   // BACKGROUND PICTURE OFF → no media at all, just the clean black behind it.
   if (!mediaDim) return null;
