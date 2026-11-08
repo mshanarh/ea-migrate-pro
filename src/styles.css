@@ -568,24 +568,17 @@ body.eamp-no-bg-effect #bg-effects-canvas {
   display: none !important;
 }
 
-/* Interface colour cycle (tap the centre — see color-cycle.ts): while the
-   effect runs, colour tokens ease into the next scheme with a short 0.4s
-   shift — quick enough to feel like a 2s rotation, not a slow fade. Only the
-   CHEAP colour properties are eased (background/border/colour); box-shadow,
-   fill and stroke used to be in this list too, which re-rasterised every glow,
-   pill and card in the app on each step and made the animated background, the
-   ambient glow and the video stutter — that is the "jam" the colour cycle
-   showed. Transforms and opacity stay instant, so press/tap feedback is
-   untouched. The class is removed the moment the cycle stops, which returns
-   the interface to the user's real theme. */
-body.eamp-colour-cycle *,
-body.eamp-colour-cycle *::before,
-body.eamp-colour-cycle *::after {
-  transition:
-    background-color 400ms ease,
-    border-color 400ms ease,
-    color 400ms ease !important;
-}
+/* THE INTERFACE COLOUR CYCLE HAS NO TRANSITION RULE — ON PURPOSE.
+   (Tap the middle of the screen — see lib/color-cycle.ts.)
+
+   There used to be a `body.eamp-colour-cycle * { transition: … !important }`
+   block here. Marking EVERY element in the document with a transition forced
+   the engine to re-resolve style for the whole tree the moment the cycle
+   started (one long freeze before the first colour even appeared), and then
+   re-animate hundreds of backgrounds, borders, texts and box-shadows for 400ms
+   on every 2s step — which is the jam the cycle showed. Each step is now ONE
+   instant colour swap: a single style pass and a single paint, no animation,
+   nothing for the background animation, the glow or the video to compete with. */
 
 /* The app-wide background picture layer (AppBackground) sits behind the route
    content; while it shows, the screens' own solid backgrounds step aside so

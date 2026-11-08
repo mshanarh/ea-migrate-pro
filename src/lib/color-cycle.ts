@@ -25,10 +25,8 @@ function cycleIds(): string[] {
   return cachedIds;
 }
 
-/** How long each colour is shown — 2s, with a ~0.4s ease between steps. */
+/** How long each colour is shown — 2s, then an instant swap to the next. */
 const STEP_MS = 2000;
-/** Body flag while running — styles.css eases the colour shift under it. */
-const BODY_CLASS = "eamp-colour-cycle";
 
 let active = false;
 let step = 0;
@@ -56,21 +54,18 @@ export function toggleColourCycle(): void {
   active = !active;
   step = 0;
   if (active) {
-    if (typeof document !== "undefined") {
-      document.body.classList.add(BODY_CLASS);
-    }
+    // NO BODY CLASS, NO TRANSITION — a step is one instant colour swap. The
+    // class this used to toggle existed only to switch on a global
+    // `* { transition }` rule, which froze the whole document at the moment
+    // the cycle was started and then re-animated every coloured element on
+    // every step (the reported jam). See the note in styles.css.
     timer = setInterval(() => {
       step = (step + 1) % cycleIds().length;
       notify();
     }, STEP_MS);
-  } else {
-    if (typeof document !== "undefined") {
-      document.body.classList.remove(BODY_CLASS);
-    }
-    if (timer) {
-      clearInterval(timer);
-      timer = null;
-    }
+  } else if (timer) {
+    clearInterval(timer);
+    timer = null;
   }
   notify();
 }
