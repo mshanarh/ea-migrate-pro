@@ -468,6 +468,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         eaName,
         credentials,
         magic: SCALP_MAGIC,
+        // THE PLAN ON THE CARD IS THE PLAN TRADED. The analysis that produced
+        // this side/entry/SL/TP is handed straight in, and the strategy rides
+        // along for any re-analysis, so Breakout / Swing / Scalper / Trend is
+        // never silently replaced by a plain momentum read.
+        ...(strategy ? { strategy } : {}),
+        precomputedAnalysis: analysis,
         onTradeExecute: (trade, fillIndex, fillTotal) => {
           if (trade.status === "executed") {
             // A NUMBER IS SPENT ONLY HERE — on a fill MT5 confirmed.

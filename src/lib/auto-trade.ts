@@ -1395,10 +1395,27 @@ export function evaluateMomentum(input: {
   const pad = height * STOP_PAD_RATIO;
   const entry = strategyRead?.entry ?? (signal === "BUY" ? input.ask : input.bid);
   const extreme = signal === "BUY" ? low : high;
-  const sl = strategyRead?.sl ?? (signal === "BUY" ? low - pad : high + pad);
+
+  // ── THE STOP IS ALWAYS ON THE TRADEABLE SIDE OF THE LIVE PRICE.
+  // A completed-candle extreme (or a strategy level measured from an older
+  // bar) can sit on the WRONG side of the live entry after a gap. That used to
+  // reach the safety check below as "inverted SL/TP" and refuse a signal that
+  // was perfectly tradeable, so the stop is now pulled to at least the minimum
+  // distance this read measured — 1.5 ATR when the candles give an ATR, else
+  // the same 5% range pad the momentum stop already uses.
+  const minDistance = atrRead ? atrRead.atr * 1.5 : pad;
+  const rawSl = strategyRead?.sl ?? (signal === "BUY" ? low - pad : high + pad);
+  const sl =
+    signal === "SELL" ? Math.max(rawSl, entry + minDistance) : Math.min(rawSl, entry - minDistance);
   const risk = Math.abs(entry - sl);
-  const tp1 = strategyRead?.tp1 ?? (signal === "BUY" ? entry + risk : entry - risk);
-  const tp2 = strategyRead?.tp2 ?? (signal === "BUY" ? entry + risk * 2 : entry - risk * 2);
+  // Targets are re-placed on the profit side with at least one risk unit (and
+  // never less than the minimum distance) between them, so a stop that had to
+  // move can never leave a target behind the entry.
+  const minReward = Math.max(risk, minDistance);
+  const rawTp1 = strategyRead?.tp1 ?? (signal === "BUY" ? entry + risk : entry - risk);
+  const rawTp2 = strategyRead?.tp2 ?? (signal === "BUY" ? entry + risk * 2 : entry - risk * 2);
+  const tp1 = signal === "BUY" ? Math.max(rawTp1, entry + minReward) : Math.min(rawTp1, entry - minReward);
+  const tp2 = signal === "BUY" ? Math.max(rawTp2, tp1 + minReward) : Math.min(rawTp2, tp1 - minReward);
 
   const setup: MarketSetup = {
     timeframe,
@@ -2398,12 +2415,24 @@ export interface AutoTradeOptions {
    * Without it the run stays on simulated (paper) fills.
    */
   credentials?: BridgeCredentials | null;
+  /**
+   * The strategy chosen at start time. It rides on every re-analysis, so a
+   * Breakout / Swing / Scalper / Trend run is never re-read as plain momentum.
+   */
+  strategy?: BotStrategy;
+  /**
+   * The analysis the caller ALREADY ran (the plan the card shows). When it is
+   * for this symbol it is used as-is instead of firing a second, strategy-less
+   * momentum read that could flip the side between the card and the order.
+   */
+  precomputedAnalysis?: AnalysisResult;
 }
 
 export async function executeAutoTrade(
   options: AutoTradeOptions,
 ): Promise<ExecutedTrade[]> {
   const { symbol, lotSize, maxTrades, eaName, onTradeExecute, emitEvent, paperTrading = false } = options;
+  const strategy = options.strategy;
   const magic = options.magic ?? 0;
   const credentials = options.credentials && options.credentials.password ? options.credentials : null;
   const results: ExecutedTrade[] = [];
@@ -2488,14 +2517,30 @@ export async function executeAutoTrade(
 
   for (let i = 0; i < maxTrades; i++) {
     try {
-      // 1. Get analysis with safety checks. LIVE mode hands its credentials
-      // to the analysis so RSI/momentum/candle structure come from the
-      // broker's OWN candles (oldest→newest) instead of the fixtures.
-      const analysis = await resolveTradeDirection(symbol, {
-        requireExecutionReady: true,
-        rejectProxyData: true,
-        credentials,
-      });
+      // 1. Get analysis with safety checks. A caller that already analysed this
+      // symbol hands its result in (the plan on the card IS the plan traded).
+      // Otherwise the read runs here, carrying the chosen strategy so the side
+      // and the levels are the strategy's own — not a default momentum read.
+      // LIVE mode hands its credentials to the analysis so RSI/momentum/candle
+      // structure come from the broker's OWN candles (oldest→newest) instead
+      // of the fixtures.
+      const precomputed =
+        options.precomputedAnalysis &&
+        options.precomputedAnalysis.symbol.trim().toUpperCase() === symbol.trim().toUpperCase()
+          ? options.precomputedAnalysis
+          : null;
+      const analysis =
+        precomputed ??
+        (await resolveTradeDirection(symbol, {
+          requireExecutionReady: true,
+          rejectProxyData: true,
+          credentials,
+          ...(strategy ? { strategy } : {}),
+        }));
+
+      if (precomputed) {
+        console.log(`[auto-trade] ${symbol}: using the start-time analysis handed in by the caller`);
+      }
 
       console.log(`[auto-trade] ${symbol} trade ${i + 1}/${maxTrades}: ${analysis.direction.type} - ${analysis.reason}`);
 

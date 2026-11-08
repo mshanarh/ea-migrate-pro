@@ -573,7 +573,10 @@ function AppHome() {
       try {
         // Credentialled analysis: the direction comes from the broker's own
         // candles (oldest→newest), not the fixture tables.
-        const analysis = await resolveTradeDirection(symbol, { credentials });
+        // The active strategy is read too, so the plan the card shows is the
+        // plan the batch trades — and executeAutoTrade gets the SAME analysis
+        // below instead of re-reading a strategy-less momentum side.
+        const analysis = await resolveTradeDirection(symbol, { credentials, strategy: botStrategy });
 
         // ENTRY CONTEXT, ON THE CARD. The direction derivation is unchanged;
         // this only shows what was measured (trend, extension in ATR). It is
@@ -635,6 +638,9 @@ function AppHome() {
           eaName: target.name,
           // LIVE orders on the trader's own account through the VPS bridge.
           credentials,
+          // THE ANALYSED PLAN IS THE PLAN SENT, with the strategy carried along.
+          strategy: botStrategy,
+          precomputedAnalysis: analysis,
           onTradeExecute: (trade, index, total) => {
             tradeNumber += 1;
             const runIndex = tradeNumber;

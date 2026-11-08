@@ -210,12 +210,16 @@ describe("Direction guard", () => {
 
     expect(result.setup?.netMove).toBeLessThan(0);
     expect(result.setup?.basis).toBe("last 5 closes");
-    // The falling closes win even though the quote sits above them — and the
-    // live price is above the 10-bar high, so the SELL levels are refused
-    // rather than inverted (invalid SL/TP is the only honest outcome).
-    expect(result.direction.type).toBe("NO_TRADE");
-    const reason = result.direction.type === "NO_TRADE" ? result.direction.reason : "";
-    expect(reason).toContain("Invalid SL/TP levels");
-    expect(result.executionReady).toBe(false);
+    // The falling closes win even though the quote sits above them. The live
+    // price is above the 10-bar high, so the SELL stop is pulled to the
+    // TRADEABLE side of that live entry (entry + the range pad) instead of
+    // being refused as an inverted, untradeable SL/TP.
+    expect(result.direction.type).toBe("SELL");
+    if (result.direction.type === "NO_TRADE") return;
+    expect(result.direction.entry).toBe(111);
+    expect(result.direction.sl).toBeGreaterThan(result.direction.entry);
+    expect(result.direction.tp1).toBeLessThan(result.direction.entry);
+    expect(result.direction.tp2).toBeLessThan(result.direction.tp1!);
+    expect(result.executionReady).toBe(true);
   });
 });
