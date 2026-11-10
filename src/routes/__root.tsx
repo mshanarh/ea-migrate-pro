@@ -349,6 +349,8 @@ function RootComponent() {
   const shellScope = shellScopeFor(pathname);
   const portalShell = shellScope === "portal";
   const appShell = shellScope === "app";
+  /** The public site (`/`, and every other non-app, non-portal page). */
+  const marketingShell = shellScope === "marketing";
 
   // TELL THE SHELL'S BOOT WATCHDOG THIS APP ACTUALLY RENDERED.
   // The inline script in PLATFORM_PREPAINT_SCRIPT replaces the pre-rendered
@@ -423,8 +425,10 @@ function RootComponent() {
               background of its own, so those layers still own the screen when
               they are switched on. */}
           {appShell ? <AmbientGlow /> : null}
-          {/* Animated background sits behind everything; content lifts above it. */}
-          <BackgroundEffects />
+          {/* Animated background sits behind the APP only; content lifts above
+              it. The marketing site is not a trading terminal — the falling $
+              / coin canvas must never rain over the public landing page. */}
+          {marketingShell ? null : <BackgroundEffects />}
           {/* Invisible centre-tap surface for the interface colour cycle. */}
           <ColourCycleTap />
           {/* APP ROUTES ONLY — the landing page is a marketing page, not the app.

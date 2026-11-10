@@ -34,7 +34,6 @@ import {
 import { BrandLogo } from "@/components/BrandLogo";
 import { SiteHeader } from "@/components/SiteHeader";
 import { BrokerPromoPopup } from "@/components/BrokerPromoPopup";
-import { MaintenancePopup } from "@/components/MaintenancePopup";
 import heroPhone from "/ea-migrate-hero.jpg";
 
 /**
@@ -934,7 +933,6 @@ function Home() {
 
       <LandingChatbot />
       <BrokerPromoPopup />
-      <MaintenancePopup />
     </div>
   );
 }
