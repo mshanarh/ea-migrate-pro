@@ -61,10 +61,12 @@ export function RobotVideoLayer() {
   const stopped = useRobotVideoStopped();
   const ultra = useRobotVideoUltra();
 
-  // ONE retryable line per source — never a loop, never a "no video" claim.
+  // ONE retryable line per source — never a loop, never a "no video" claim —
+  // and only on a screen that actually uses the clip (`mode === "none"` means
+  // this screen never shows it, so a load failure there is nobody's business).
   const reportedRef = useRef<string | null>(null);
   useEffect(() => {
-    if (!failed || !sourceRef) return;
+    if (!failed || !sourceRef || mode === "none") return;
     if (reportedRef.current === sourceRef) return;
     reportedRef.current = sourceRef;
     toast.error("Could not load your robot video", {
@@ -78,7 +80,7 @@ export function RobotVideoLayer() {
         },
       },
     });
-  }, [failed, sourceRef]);
+  }, [failed, sourceRef, mode]);
 
   // Declared unconditionally (hooks rule); the host div only renders below.
   const setHostEl = useVideoHost("screen", {

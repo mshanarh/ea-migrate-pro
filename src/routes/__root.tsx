@@ -448,13 +448,16 @@ function RootComponent() {
               <InterfaceThemeSync />
             </>
           ) : null}
-          {/* The app-wide background picture layer — under the content wrapper below. */}
-          <AppBackground />
+          {/* APP ROUTES ONLY, like every other app layer: the marketing pages
+              are not the app. Mounting the background picture and the robot
+              video player globally is what made the landing page try to play a
+              saved robot clip and pop up "Could not load your robot video". */}
+          {appShell ? <AppBackground /> : null}
           {/* THE ONE robot-video player: mounted once so navigation moves the
               element between hosts instead of restarting it (Home plays always,
               Settings-type pages while the Robot Video switch is ON, never on
               Metatrader / Scanner / Fundamentals). */}
-          <RobotVideoLayer />
+          {appShell ? <RobotVideoLayer /> : null}
         </>
       )}
       <div style={{ position: "relative", zIndex: 1 }}>
