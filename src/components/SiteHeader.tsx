@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { Menu, ChevronDown, Smartphone, Apple, Sun, Moon } from "lucide-react";
+import { Menu, ChevronDown, Smartphone, Apple, Sun, Moon, LogIn } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { BrandLogo } from "@/components/BrandLogo";
 
 const LIGHT_KEY = "ea_migrate_light";
 
@@ -41,12 +42,12 @@ export function SiteHeader() {
     <header className="sticky top-0 z-50 border-b border-border/60 bg-background/85 backdrop-blur-xl">
       <div className="mx-auto flex h-16 w-full max-w-6xl items-center justify-between overflow-hidden px-5">
         <Link to="/" className="group flex min-w-0 items-center gap-1.5 transition-transform duration-200 ease-out hover:scale-[1.01]">
-          <img
-            src="/logo.png"
+          {/* Settings → App logo flows here automatically (no hardcoded file). */}
+          <BrandLogo
             alt="EA Migrate"
-            className="logo-spin size-12 min-w-[40px] shrink-0 rounded-full border border-border/60 object-cover"
+            className="logo-spin size-10 min-w-[36px] shrink-0 rounded-full border border-border/60 object-cover sm:size-12"
           />
-          <span className="text-base font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5">
+          <span className="text-sm font-bold tracking-tight whitespace-nowrap uppercase transition-transform duration-200 ease-out group-hover:-translate-x-0.5 sm:text-base">
             EA <span className="text-primary">Migrate</span>
           </span>
         </Link>
@@ -60,6 +61,16 @@ export function SiteHeader() {
           >
             {light ? <Moon className="size-5" /> : <Sun className="size-5" />}
           </button>
+
+          {/* Visible on every screen size — the phone view drops the "Mentor". */}
+          <Link
+            to="/signin"
+            className="flex h-11 items-center gap-2 rounded-xl border border-primary/40 bg-primary/10 px-2.5 text-xs font-semibold whitespace-nowrap text-primary transition-colors hover:bg-primary/20 sm:px-4 sm:text-sm"
+          >
+            <LogIn className="hidden size-4 sm:block" />
+            <span className="hidden sm:inline">Mentor Sign In</span>
+            <span className="sm:hidden">Sign In</span>
+          </Link>
 
           <Sheet open={open} onOpenChange={setOpen}>
           <SheetTrigger asChild>
