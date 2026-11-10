@@ -134,14 +134,18 @@ function SignIn() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="Enter your email address"
-            className="h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]"
+            className="h-14 rounded-full border-white/10 bg-[#111111] px-5 text-white placeholder:text-white/35 focus:border-[#00F5A0] focus:ring-[#00F5A0]"
           />
         </Field>
 
         <Field
           label="Password"
           right={
-            <button type="button" onClick={openReset} className="text-xs text-primary hover:underline">
+            <button
+              type="button"
+              onClick={openReset}
+              className="text-xs font-semibold text-[#00F5A0] hover:underline"
+            >
               Forgot password?
             </button>
           }
@@ -153,16 +157,21 @@ function SignIn() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             placeholder="Enter your password"
-            className="h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]"
+            className="h-14 rounded-full border-white/10 bg-[#111111] px-5 text-white placeholder:text-white/35 focus:border-[#00F5A0] focus:ring-[#00F5A0]"
           />
         </Field>
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" disabled={busy} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={busy}
+          className="h-14 w-full rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-base font-bold uppercase shadow-[0_10px_30px_rgba(0,245,160,.35)]"
+        >
           {busy ? (
             <span className="flex items-center gap-3">
-              <span className="size-5 animate-spin rounded-full border-2 border-white/40 border-t-white" />
+              <span className="size-5 animate-spin rounded-full border-2 border-[#021810]/25 border-t-[#021810]" />
               Signing in…
             </span>
           ) : (
@@ -173,17 +182,17 @@ function SignIn() {
         </Button>
 
         <div className="flex justify-center gap-6 text-sm text-muted-foreground">
-          <Link to="/" className="hover:text-primary">
+          <Link to="/" className="hover:text-[#00F5A0]">
             Back home
           </Link>
         </div>
       </form>
 
       <Dialog open={resetOpen} onOpenChange={setResetOpen}>
-        <DialogContent className="rounded-3xl border-white/10 bg-[#111111] p-6 text-white sm:max-w-md">
+        <DialogContent className="rounded-3xl border-[#00F5A0]/20 bg-[#111111] p-6 text-white shadow-[0_0_60px_rgba(0,245,160,.18)] sm:max-w-md">
           <div className="flex items-start gap-3">
-            <div className="flex size-11 items-center justify-center rounded-2xl bg-primary/12">
-              <KeyRound className="size-5 text-primary" />
+            <div className="flex size-11 items-center justify-center rounded-2xl bg-[#00F5A0]/12">
+              <KeyRound className="size-5 text-[#00F5A0]" />
             </div>
             <div className="min-w-0 flex-1">
               <DialogTitle className="text-xl font-bold">Reset password</DialogTitle>
@@ -219,7 +228,7 @@ function SignIn() {
             }}
           >
             <Field label="Email address">
-              <div className="flex h-14 items-center gap-3 rounded-full border border-white/10 bg-[#1A2332] px-5">
+              <div className="flex h-14 items-center gap-3 rounded-full border border-white/10 bg-[#111111] px-5">
                 <Mail className="size-4 text-muted-foreground" />
                 <input
                   type="email"
@@ -239,7 +248,7 @@ function SignIn() {
                 value={newPassword}
                 onChange={(e) => setNewPassword(e.target.value)}
                 placeholder="At least 8 characters"
-                className="h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]"
+                className="h-14 rounded-full border-white/10 bg-[#111111] px-5 text-white placeholder:text-white/35 focus:border-[#00F5A0] focus:ring-[#00F5A0]"
               />
             </Field>
             <Field label="Confirm password">
@@ -250,11 +259,14 @@ function SignIn() {
                 value={confirmPassword}
                 onChange={(e) => setConfirmPassword(e.target.value)}
                 placeholder="Repeat your new password"
-                className="h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]"
+                className="h-14 rounded-full border-white/10 bg-[#111111] px-5 text-white placeholder:text-white/35 focus:border-[#00F5A0] focus:ring-[#00F5A0]"
               />
             </Field>
             {resetError && <p className="text-center text-sm text-destructive">{resetError}</p>}
-            <Button type="submit" className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+            <Button
+              type="submit"
+              className="h-14 w-full rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-base font-bold uppercase text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.35)]"
+            >
               Reset password
             </Button>
           </form>

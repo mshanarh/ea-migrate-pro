@@ -30,7 +30,8 @@ export const Route = createFileRoute("/signup")({
   component: SignUp,
 });
 
-const inputClass = "h-14 rounded-full border-white/10 bg-[#1A2332] px-5 text-white placeholder:text-white/35 focus:border-[#38BDF8] focus:ring-[#38BDF8]";
+const inputClass =
+  "h-14 rounded-full border-white/10 bg-[#111111] px-5 text-white placeholder:text-white/35 focus:border-[#00F5A0] focus:ring-[#00F5A0]";
 
 function SignUp() {
   const navigate = useNavigate();
@@ -147,20 +148,25 @@ function SignUp() {
         <label className="flex items-center gap-3 pt-1 text-sm">
           <Checkbox checked={agree} onCheckedChange={(v) => setAgree(v === true)} />
           <span>
-            I agree to the <span className="text-primary">Terms</span> and{" "}
-            <span className="text-primary">Privacy Policy</span>
+            I agree to the <span className="font-semibold text-[#00F5A0]">Terms</span> and{" "}
+            <span className="font-semibold text-[#00F5A0]">Privacy Policy</span>
           </span>
         </label>
 
         {error && <p className="text-center text-sm text-destructive">{error}</p>}
 
-        <Button type="submit" size="lg" disabled={saving} className="h-14 w-full rounded-full text-base font-bold uppercase glow-ring">
+        <Button
+          type="submit"
+          size="lg"
+          disabled={saving}
+          className="h-14 w-full rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-base font-bold uppercase shadow-[0_10px_30px_rgba(0,245,160,.35)]"
+        >
           <UserPlus className="size-5" /> {saving ? "Saving account..." : "Create account"}
         </Button>
 
         <p className="text-center text-sm text-muted-foreground">
           Already registered?{" "}
-          <Link to="/signin" className="text-primary">
+          <Link to="/signin" className="font-semibold text-[#00F5A0] hover:underline">
             Sign in
           </Link>
         </p>

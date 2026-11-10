@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type CSSProperties } from "react";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import {
   Apple,
@@ -420,10 +420,10 @@ function LandingChatbot() {
         onClick={() => setOpen((value) => !value)}
         whileHover={{ scale: 1.05 }}
         whileTap={{ scale: 0.95 }}
-        className="relative flex size-14 items-center justify-center rounded-full border-2 border-primary bg-background/80 p-1.5 shadow-[0_0_28px_rgba(0,168,255,.55)] backdrop-blur-sm"
+        className="relative flex size-14 items-center justify-center rounded-full border-2 border-[#00F5A0] bg-background/80 p-1.5 shadow-[0_0_28px_rgba(0,245,160,.55)] backdrop-blur-sm"
       >
         <BrandLogo alt="" className="size-full object-contain" />
-        <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-background bg-[#22C55E]" />
+        <span className="absolute right-0 bottom-0 size-4 rounded-full border-2 border-background bg-[#10B981]" />
         <MessageCircle className="absolute -top-1 -right-1 size-5 rounded-full bg-primary p-1 text-primary-foreground" />
       </motion.button>
     </div>
@@ -469,6 +469,24 @@ function Home() {
     <div
       data-eamp-no-cycle
       className="min-h-screen w-full max-w-[100vw] overflow-x-hidden bg-background text-foreground"
+      /* THE MARKETING ACCENT — Cyber Mint / Neon Profit Emerald. Publishing it
+         as the primary + glow tokens themes every text-primary / bg-primary /
+         glow-ring / hero-glow / text-brand utility below in one place, so the
+         page cannot drift back to the old electric blue. */
+      style={
+        {
+          /* `@theme inline` means text-primary / bg-primary read --primary
+             directly, so the accent is overridden here, not --color-primary. */
+          "--primary": "#00F5A0",
+          "--primary-foreground": "#021810",
+          "--ring": "#10B981",
+          "--glow": "0 0 50px rgba(0,245,160,.32), 0 0 100px rgba(16,185,129,.18)",
+          "--glow-soft": "0 0 30px rgba(0,245,160,.3), 0 0 70px rgba(16,185,129,.16)",
+          "--gradient-hero":
+            "radial-gradient(ellipse 80% 60% at 50% -10%, rgba(0,245,160,.18), transparent 70%)",
+          "--gradient-brand": "linear-gradient(100deg, #00F5A0, #10B981)",
+        } as CSSProperties
+      }
     >
       <SiteHeader />
 
@@ -477,7 +495,7 @@ function Home() {
         <section className="relative overflow-hidden hero-glow">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 -top-32 h-72 bg-[radial-gradient(ellipse_at_50%_0%,rgba(0,168,255,.28),transparent_70%)]"
+            className="pointer-events-none absolute inset-x-0 -top-32 h-72 bg-[radial-gradient(ellipse_at_50%_0%,rgba(0,245,160,.26),transparent_70%)]"
           />
           <div className="relative mx-auto max-w-5xl px-5 pt-12 pb-16 text-center sm:pt-16">
             <motion.div
@@ -500,7 +518,9 @@ function Home() {
             >
               Mobile VPS
               <br />
-              <span className="text-[#38BDF8] [text-shadow:0_0_38px_rgba(0,168,255,.45)]">on the go</span>
+              <span className="text-[#00F5A0] [text-shadow:0_0_38px_rgba(0,245,160,.45)]">
+                on the go
+              </span>
             </motion.h1>
 
             <motion.p
@@ -523,7 +543,7 @@ function Home() {
               <button
                 type="button"
                 onClick={() => void handleAndroidDownload()}
-                className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#38BDF8] to-[#00A8FF] text-base font-bold text-[#04121f] shadow-[0_12px_40px_rgba(0,168,255,.45)] transition hover:brightness-110 active:scale-[0.99]"
+                className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-base font-bold text-[#021810] shadow-[0_12px_40px_rgba(0,245,160,.4)] transition hover:brightness-110 active:scale-[0.99]"
               >
                 <Smartphone className="size-5" /> Download Android
               </button>
@@ -550,7 +570,7 @@ function Home() {
               >
                 <UserPlus className="size-4 text-primary" />
                 Mentor Sign Up [FREE]
-                <span className="absolute -top-2 right-3 rounded-full bg-[#22C55E] px-2 py-0.5 text-[10px] font-black tracking-wide text-white uppercase">
+                <span className="absolute -top-2 right-3 rounded-full bg-[#00F5A0] px-2 py-0.5 text-[10px] font-black tracking-wide text-[#021810] uppercase shadow-[0_0_18px_rgba(0,245,160,.5)]">
                   Free
                 </span>
               </Link>
@@ -572,7 +592,7 @@ function Home() {
               <span className="inline-flex items-center gap-1.5">
                 <span className="flex items-center gap-0.5">
                   {[0, 1, 2, 3, 4].map((i) => (
-                    <Star key={i} className="size-3.5 fill-[#38BDF8] text-[#38BDF8]" />
+                    <Star key={i} className="size-3.5 fill-[#00F5A0] text-[#00F5A0]" />
                   ))}
                 </span>
                 4.8/5 from 337+ reviews
@@ -586,7 +606,7 @@ function Home() {
               {/* glow behind the device */}
               <div
                 aria-hidden
-                className="pointer-events-none absolute inset-0 -z-10 scale-125 rounded-[50%] bg-[radial-gradient(circle_at_50%_50%,rgba(0,168,255,.28),transparent_65%)] blur-2xl"
+                className="pointer-events-none absolute inset-0 -z-10 scale-125 rounded-[50%] bg-[radial-gradient(circle_at_50%_50%,rgba(0,245,160,.28),transparent_65%)] blur-2xl"
               />
               {/* side screenshots — desktop only, they read as depth */}
               <div
@@ -606,7 +626,7 @@ function Home() {
                 initial={{ opacity: 0, y: 28 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.1, ease: [0.22, 1, 0.36, 1] }}
-                className="relative overflow-hidden rounded-[2.6rem] border border-white/12 bg-[#05070a] p-2.5 shadow-[0_0_80px_rgba(0,168,255,.35)]"
+                className="relative overflow-hidden rounded-[2.6rem] border border-white/10 bg-[#0d1117] p-2.5 shadow-[0_0_80px_rgba(0,245,160,.32)]"
               >
                 <div className="absolute top-3.5 left-1/2 z-10 h-1.5 w-16 -translate-x-1/2 rounded-full bg-white/20" />
                 <img
@@ -663,7 +683,7 @@ function Home() {
             transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
             className="panel p-6 sm:p-8"
           >
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-[#22C55E]/20 to-[#00A8FF]/20 px-3 py-1 text-[11px] font-black tracking-[0.16em] text-[#38BDF8] uppercase ring-1 ring-[#38BDF8]/30">
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-gradient-to-r from-[#00F5A0]/20 to-[#10B981]/20 px-3 py-1 text-[11px] font-black tracking-[0.16em] text-[#00F5A0] uppercase ring-1 ring-[#00F5A0]/30">
               <Sparkles className="size-3.5" /> New Update
             </span>
             <h2 className="mt-4 text-2xl font-black tracking-tight text-white sm:text-3xl">
@@ -676,7 +696,7 @@ function Home() {
             <button
               type="button"
               onClick={() => void handleAndroidDownload()}
-              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#38BDF8] to-[#00A8FF] text-sm font-bold text-[#04121f] shadow-[0_10px_30px_rgba(0,168,255,.4)] transition hover:brightness-110"
+              className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-sm font-bold text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.4)] transition hover:brightness-110"
             >
               <Smartphone className="size-4" /> Download Android
             </button>
@@ -721,7 +741,7 @@ function Home() {
         {/* ── ACCESS FEE PLANS ──────────────────────────────────────── */}
         <section
           id="plans"
-          className="border-y border-border/60 bg-[linear-gradient(180deg,rgba(0,168,255,.06),transparent_60%)]"
+          className="border-y border-border/60 bg-[linear-gradient(180deg,rgba(0,245,160,.07),transparent_60%)]"
         >
           <div className="mx-auto max-w-5xl px-5 py-16">
             <h2 className="text-center text-3xl font-black tracking-tight text-white sm:text-4xl">
@@ -742,12 +762,12 @@ function Home() {
                   transition={{ duration: 0.5, delay: index * 0.08, ease: [0.22, 1, 0.36, 1] }}
                   className={`panel relative flex flex-col p-6 sm:p-8 ${
                     plan.highlight
-                      ? "border-primary/50 shadow-[0_0_60px_rgba(0,168,255,.25)]"
+                      ? "border-[#00F5A0]/50 shadow-[0_0_50px_rgba(0,245,160,.25)]"
                       : ""
                   }`}
                 >
                   {plan.highlight && (
-                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-[#38BDF8] to-[#00A8FF] px-3 py-1 text-[10px] font-black tracking-[0.14em] whitespace-nowrap text-[#04121f] uppercase">
+                    <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] px-3 py-1 text-[10px] font-black tracking-[0.14em] whitespace-nowrap text-[#021810] uppercase shadow-[0_0_24px_rgba(0,245,160,.45)]">
                       Most Popular · Best Value
                     </span>
                   )}
@@ -784,7 +804,7 @@ function Home() {
                     href={plan.href}
                     target="_blank"
                     rel="noreferrer sponsored"
-                    className="mt-7 flex h-12 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#38BDF8] to-[#00A8FF] text-sm font-bold text-[#04121f] shadow-[0_10px_30px_rgba(0,168,255,.35)] transition hover:brightness-110"
+                    className="mt-7 flex h-12 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-sm font-bold text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.35)] transition hover:brightness-110"
                   >
                     {plan.cta} <ArrowRight className="size-4" />
                   </a>
@@ -823,7 +843,7 @@ function Home() {
                 transition={{ duration: 0.4, delay: index * 0.08 }}
                 className="relative flex items-start gap-4"
               >
-                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-primary text-base font-black text-primary-foreground shadow-[0_0_24px_rgba(0,168,255,.45)]">
+                <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-[#00F5A0] to-[#10B981] text-base font-black text-[#021810] shadow-[0_0_24px_rgba(0,245,160,.45)]">
                   {index + 1}
                 </span>
                 <p className="pt-2 text-base leading-snug text-foreground">{step}</p>
@@ -926,9 +946,9 @@ function Home() {
         target="_blank"
         rel="noreferrer"
         aria-label="Chat to EA Migrate support on WhatsApp"
-        className="fixed bottom-5 left-4 z-[9998] flex size-14 items-center justify-center rounded-full bg-[#22C55E] text-white shadow-[0_10px_30px_rgba(34,197,94,.45)] transition hover:brightness-110"
+        className="fixed bottom-5 left-4 z-[9998] flex size-14 items-center justify-center rounded-full bg-gradient-to-br from-[#00F5A0] to-[#10B981] text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.45)] transition hover:brightness-110"
       >
-        <MessageCircle className="size-7 fill-white" />
+        <MessageCircle className="size-7 fill-[#021810]" />
       </a>
 
       <LandingChatbot />
