@@ -9,7 +9,6 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as IndexRouteImport } from './routes/index'
 import { Route as AdminRouteImport } from './routes/admin'
 import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as MigrateRouteImport } from './routes/migrate'
@@ -42,11 +41,6 @@ import { Route as DashboardWebsiteRouteImport } from './routes/dashboard.website
 import { Route as MentorSlugRouteImport } from './routes/mentor.$slug'
 import { Route as AppAdminReactivateRouteImport } from './routes/app.admin.reactivate'
 
-const IndexRoute = IndexRouteImport.update({
-  id: '/',
-  path: '/',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AdminRoute = AdminRouteImport.update({
   id: '/admin',
   path: '/admin',
@@ -204,7 +198,6 @@ const AppAdminReactivateRoute = AppAdminReactivateRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
-  '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/migrate': typeof MigrateRoute
@@ -238,7 +231,6 @@ export interface FileRoutesByFullPath {
   '/app/admin/reactivate': typeof AppAdminReactivateRoute
 }
 export interface FileRoutesByTo {
-  '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/migrate': typeof MigrateRoute
   '/news': typeof NewsRoute
@@ -272,7 +264,6 @@ export interface FileRoutesByTo {
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
-  '/': typeof IndexRoute
   '/admin': typeof AdminRoute
   '/dashboard': typeof DashboardRouteWithChildren
   '/migrate': typeof MigrateRoute
@@ -308,7 +299,6 @@ export interface FileRoutesById {
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    | '/'
     | '/admin'
     | '/dashboard'
     | '/migrate'
@@ -342,7 +332,6 @@ export interface FileRouteTypes {
     | '/app/admin/reactivate'
   fileRoutesByTo: FileRoutesByTo
   to:
-    | '/'
     | '/admin'
     | '/migrate'
     | '/news'
@@ -375,7 +364,6 @@ export interface FileRouteTypes {
     | '/app/admin/reactivate'
   id:
     | '__root__'
-    | '/'
     | '/admin'
     | '/dashboard'
     | '/migrate'
@@ -410,7 +398,6 @@ export interface FileRouteTypes {
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute
   AdminRoute: typeof AdminRoute
   DashboardRoute: typeof DashboardRouteWithChildren
   MigrateRoute: typeof MigrateRoute
@@ -434,13 +421,6 @@ export interface RootRouteChildren {
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/': {
-      id: '/'
-      path: '/'
-      fullPath: '/'
-      preLoaderRoute: typeof IndexRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/admin': {
       id: '/admin'
       path: '/admin'
@@ -706,7 +686,6 @@ const AppAdminRouteWithChildren = AppAdminRoute._addFileChildren(
 )
 
 const rootRouteChildren: RootRouteChildren = {
-  IndexRoute: IndexRoute,
   AdminRoute: AdminRoute,
   DashboardRoute: DashboardRouteWithChildren,
   MigrateRoute: MigrateRoute,
