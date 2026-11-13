@@ -277,21 +277,26 @@ def _disconnect() -> None:
 
 
 # ── candle analysis ───────────────────────────────────────────────────────────────
-def _average_true_range(bars: list[dict], period: int = 14) -> float:
-    """ATR(`period`) — the true range includes the gap from the previous close,
-    so a weekend gap cannot read as a tiny range. Averages the last `period`
-    true ranges only; more history than that is used for the EMAs, not the ATR."""
-    if len(bars) < 2:
+def _average_true_range(bars: list[dict]) -> float:
+    """True Range on the ATR window, averaged — the SL/TP estimate the daemon
+    uses while the bridge's /symbol/candles endpoint does not.
+
+    It measures the SAME window it always did (FULL_ATR_BARS bars) even though
+    more history is fetched for the EMA trend filter: the extra 200+ bars must
+    not move the stop or the targets, so SL/TP distances stay exactly as they
+    were before the trend filter existed.
+    """
+    window = bars[-FULL_ATR_BARS:] if len(bars) > FULL_ATR_BARS else bars
+    if len(window) < 2:
         return 0.0
-    highs = [b["high"] for b in bars]
-    lows = [b["low"] for b in bars]
-    closes = [b["close"] for b in bars]
+    highs = [b["high"] for b in window]
+    lows = [b["low"] for b in window]
+    closes = [b["close"] for b in window]
     trs = []
-    for i in range(1, len(bars)):
+    for i in range(1, len(window)):
         tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
         trs.append(tr)
-    window = trs[-period:] if period > 0 else trs
-    return sum(window) / max(len(window), 1)
+    return sum(trs) / max(len(trs), 1)
 
 
 def _ema(closes: list[float], period: int) -> float | None:
