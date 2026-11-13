@@ -172,29 +172,50 @@ export function CustomizationPanel() {
           open={openSection === "appearance"}
           onToggle={() => toggle("appearance")}
         >
-          <button
-            type="button"
-            onClick={() => setAppearanceMode("black")}
-            aria-pressed={appearanceMode === "black"}
-            className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
-            style={{
-              borderColor: accent,
-              backgroundColor: `${accent}14`,
-              boxShadow: `0 0 22px ${accent}33, inset 0 0 12px ${accent}14`,
-            }}
-          >
-            <span className="min-w-0">
-              <span className="block text-sm font-black tracking-wide text-white">Black / Dark</span>
-              <span className="block text-xs text-white/60">
-                Obsidian glass, pure white text, accent glow.
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => setAppearanceMode("black")}
+              aria-pressed={appearanceMode === "black"}
+              className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+              style={{
+                borderColor: appearanceMode === "black" ? accent : "rgba(255,255,255,0.1)",
+                backgroundColor: appearanceMode === "black" ? `${accent}14` : "rgba(255,255,255,0.03)",
+                boxShadow: appearanceMode === "black" ? `0 0 22px ${accent}33` : "none",
+              }}
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-black tracking-wide text-white">Black / Dark</span>
+                <span className="block text-xs text-white/60">
+                  Obsidian glass, pure white text, accent glow.
+                </span>
               </span>
-            </span>
-            <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
-          </button>
-          <p className="mt-2 px-1 text-[11px] font-semibold text-white/50">
-            Light surfaces are retired — every screen stays deep black with high-contrast white
-            text.
-          </p>
+              {appearanceMode === "black" && (
+                <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+              )}
+            </button>
+            <button
+              type="button"
+              onClick={() => setAppearanceMode("white")}
+              aria-pressed={appearanceMode === "white"}
+              className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+              style={{
+                borderColor: appearanceMode === "white" ? accent : "rgba(255,255,255,0.1)",
+                backgroundColor: appearanceMode === "white" ? `${accent}14` : "rgba(255,255,255,0.03)",
+                boxShadow: appearanceMode === "white" ? `0 0 22px ${accent}33` : "none",
+              }}
+            >
+              <span className="min-w-0">
+                <span className="block text-sm font-black tracking-wide text-white">White / Light</span>
+                <span className="block text-xs text-white/60">
+                  Home screen background turns white — interface stays black.
+                </span>
+              </span>
+              {appearanceMode === "white" && (
+                <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+              )}
+            </button>
+          </div>
         </PillRow>
 
         <PillRow

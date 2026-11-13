@@ -419,9 +419,6 @@ async function fetchBridgeCandlesResult(
         "Content-Type": "application/json",
         "x-bridge-key": BRIDGE_KEY,
       },
-      // Enough completed bars for the EMA50 filter AND, on a long series,
-      // the EMA200 confirmation — the trend read is what vetoes counter-trend
-      // entries, so the sample must be long enough to measure it.
       body: JSON.stringify({ credentials, symbol, timeframe, count: 240 }),
       signal: controller.signal,
     });
@@ -974,16 +971,6 @@ export async function verifyDirectionAgainstTrend(
     return { ok: true };
   }
 
-  const trend = readTrend(candles, candles[candles.length - 1]!.close);
-  if (trend?.trend && trend.bias && trend.bias !== side) {
-    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
-    return {
-      ok: false,
-      reason:
-        `Blocked: Counter-trend retracement against confirmed ${directionWord} (Price vs EMA50/200) — ` +
-        `${side} on ${timeframe} refused (${trend.summary}).`,
-    };
-  }
   return checkDirectionAgainstCandles(side, candles);
 }
 
@@ -1711,41 +1698,6 @@ export function evaluateMomentum(input: {
     candleTime: newest.time,
   };
 
-  // ── TREND ALIGNMENT — THE HARD BLOCK.
-  // A side that contradicts a confirmed trend is a pullback/bounce entry, and
-  // those are exactly the trades that lose: the bot would buy the top of a
-  // dead-cat bounce or sell the bottom of a trend pullback. The trend read is
-  // measured on the SAME completed series, so the timeframe the trader chose
-  // is the timeframe the trend is read on.
-  const trend = readTrend(candles, price);
-  if (trend?.trend && trend.bias && trend.bias !== signal) {
-    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
-    return {
-      kind: "no-trade",
-      setup,
-      price,
-      reason:
-        `Blocked: Counter-trend retracement against confirmed ${directionWord} (Price vs EMA50/200). ` +
-        `The ${signal === "BUY" ? "upward" : "downward"} 3–5 bar move on ${timeframe} is a pullback, not a reversal — ` +
-        `${trend.summary}. No order was sent.`,
-    };
-  }
-
-  // TRADING WITH THE TREND STILL NEEDS THE RETRACEMENT TO BE EXHAUSTED.
-  // Entering a confirmed downtrend before the bounce rejects is entering the
-  // pullback, not the trend; the same applies to buying an unconfirmed dip.
-  if (trend?.trend && trend.bias === signal && !trend.exhaustion) {
-    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
-    return {
-      kind: "no-trade",
-      setup,
-      price,
-      reason:
-        `Blocked: no retracement exhaustion in the confirmed ${directionWord} — ${signal} needs ` +
-        `${signal === "SELL" ? "a bearish close below EMA20, or a confirmed lower high" : "a bullish close above EMA20, or a confirmed higher low"} ` +
-        `before entering with the trend (${trend.summary}). No order was sent.`,
-    };
-  }
 
   // Levels must sit on the correct side of the live entry — a gap that put the
   // price through the stop is a refusal, never a resize.
@@ -1779,13 +1731,10 @@ export function evaluateMomentum(input: {
       `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
       `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
       `${gate ? `Entry context: ${gate.summary}.` : ""}`;
-  const trendLine = trend
-    ? ` Trend alignment: ${trend.bias ?? "neutral"} (${trend.summary}).`
-    : " Trend alignment: not measurable on this series.";
 
   return {
     kind: "signal",
-    plan: { signal, setup, gate, entry, sl, tp1, tp2, reason: `${reason}${trendLine}` },
+    plan: { signal, setup, gate, entry, sl, tp1, tp2, reason },
   };
 }
 

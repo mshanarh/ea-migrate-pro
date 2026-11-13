@@ -455,12 +455,22 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
 
 export type AppearanceMode = "black" | "white";
 
-/** Pin the document to the obsidian palette. Idempotent and synchronous. */
-export function applyAppearanceMode(_mode: AppearanceMode = "black"): void {
+/**
+ * Apply the appearance mode to the document.
+ *
+ * BLACK: stamps `data-appearance="black"` + `color-scheme: dark` — the
+ * obsidian palette everywhere.
+ *
+ * WHITE: stamps `data-appearance="white"` + `color-scheme: light` so the
+ * home screen background switch (which reads `[data-appearance="white"]`)
+ * can apply a light page background. The interface itself stays black via the
+ * interface definition tokens — only the home screen background changes.
+ */
+export function applyAppearanceMode(mode: AppearanceMode = "black"): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.setAttribute("data-appearance", "black");
-  root.style.colorScheme = "dark";
+  root.setAttribute("data-appearance", mode);
+  root.style.colorScheme = mode === "white" ? "light" : "dark";
 }
 
 /** The Home hero decoration values for one definition. */

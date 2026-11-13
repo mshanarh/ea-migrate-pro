@@ -7,17 +7,19 @@ import {
 import { applyAppearanceMode, interfaceDefinitionFor } from "@/lib/interface-themes";
 
 /**
- * APPEARANCE MODE — OBSIDIAN ONLY.
+ * APPEARANCE MODE — BLACK (obsidian) or WHITE (light, home-screen-only).
  *
- * The app is a black console on every screen and every Main Interface. Light
- * surfaces were retired because they rendered white plates behind white text
- * (and dark ink on dark glass) on the layouts that hardcode their colours.
+ * BLACK: deep obsidian surfaces, pure white ink and the user's accent across
+ * every screen.
+ *
+ * WHITE: the HOME SCREEN background switches to a light/white surface while
+ * the interface (cards, controls, text, nav) stays black — the white theme
+ * only affects the home screen background, not the whole UI.
  * These tests pin the parts that decide what is painted:
- *   • the preference loads as black, and a stored legacy "white" is REWRITTEN
- *     to black so no device stays washed out after the update;
- *   • the setter clamps to black — nothing can publish light tokens again;
- *   • the document is always stamped `data-appearance="black"` with the dark
- *     color-scheme, and the interface's own obsidian tokens are untouched.
+ *   • the preference loads as black by default;
+ *   • the setter accepts "black" or "white" and stamps the document accordingly;
+ *   • the document is stamped `data-appearance="black"` or `data-appearance="white"`
+ *     with the matching color-scheme.
  */
 describe("appearance mode", () => {
   beforeEach(() => {
@@ -43,23 +45,35 @@ describe("appearance mode", () => {
     expect(getCustomization().appearanceMode).toBe("black");
   });
 
-  it("migrates a stored legacy white preference to black on launch", async () => {
+  it("accepts stored white preference and keeps it", async () => {
     window.localStorage.setItem(APPEARANCE_KEY, "white");
     // A launch is a fresh module: reload the store and read storage again.
     vi.resetModules();
     const fresh = await import("@/lib/app-customization");
-    expect(fresh.getCustomization().appearanceMode).toBe("black");
-    // …and the stale value is rewritten, so the device stays black.
-    expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("black");
+    expect(fresh.getCustomization().appearanceMode).toBe("white");
+    // …and the value is preserved, so the device respects the choice.
+    expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("white");
   });
 
-  it("clamps any mode to black and keeps the document dark", () => {
+  it("sets white mode and keeps the document light", () => {
     setAppearanceMode("white");
+
+    const root = document.documentElement;
+    expect(root.getAttribute("data-appearance")).toBe("white");
+    expect(root.style.colorScheme).toBe("light");
+    // No interface surface tokens are published by the appearance mode.
+    expect(root.style.getPropertyValue("--if-surface")).toBe("");
+    expect(root.style.getPropertyValue("--if-text")).toBe("");
+    expect(root.style.getPropertyValue("--if-bg")).toBe("");
+  });
+
+  it("sets black mode and keeps the document dark", () => {
+    setAppearanceMode("black");
 
     const root = document.documentElement;
     expect(root.getAttribute("data-appearance")).toBe("black");
     expect(root.style.colorScheme).toBe("dark");
-    // No light surface tokens may be published.
+    // No interface surface tokens are published by the appearance mode.
     expect(root.style.getPropertyValue("--if-surface")).toBe("");
     expect(root.style.getPropertyValue("--if-text")).toBe("");
     expect(root.style.getPropertyValue("--if-bg")).toBe("");
@@ -74,12 +88,13 @@ describe("appearance mode", () => {
     expect(document.documentElement.style.getPropertyValue("--if-surface")).toBe("");
   });
 
-  it("is idempotent — repeated calls never introduce a white surface", () => {
+  it("is idempotent — repeated calls keep the chosen appearance", () => {
     applyAppearanceMode("black");
+    expect(document.documentElement.getAttribute("data-appearance")).toBe("black");
     applyAppearanceMode("white");
+    expect(document.documentElement.getAttribute("data-appearance")).toBe("white");
     applyAppearanceMode("black");
-    const root = document.documentElement;
-    expect(root.getAttribute("data-appearance")).toBe("black");
-    expect(root.style.getPropertyValue("--if-surface")).toBe("");
+    expect(document.documentElement.getAttribute("data-appearance")).toBe("black");
+    expect(document.documentElement.style.getPropertyValue("--if-surface")).toBe("");
   });
 });

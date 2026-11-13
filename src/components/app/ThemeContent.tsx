@@ -26,14 +26,22 @@ export type ThemeContentProps = {
 export function PoweredBadge({
   accent,
   label = "Powered By EA MIGRATE",
+  whiteMode,
 }: {
   accent: string;
   label?: string;
+  whiteMode?: boolean;
 }) {
+  const isWhite = whiteMode === true;
   return (
     <span
-      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-black/85 px-6 py-2.5 text-sm font-black tracking-[0.12em] text-white"
-      style={{ boxShadow: `0 0 24px ${accent}33` }}
+      className="inline-flex items-center gap-1.5 rounded-full border px-6 py-2.5 text-sm font-black tracking-[0.12em]"
+      style={{
+        borderColor: isWhite ? "rgba(0,0,0,0.15)" : "rgba(255,255,255,0.10)",
+        backgroundColor: isWhite ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.05)",
+        color: "#ffffff",
+        boxShadow: `0 0 24px ${accent}33`,
+      }}
     >
       {label}
     </span>
@@ -51,7 +59,7 @@ function useActions({ robot, onStart, onQuotes, onRemove }: Pick<ThemeContentPro
   ];
 }
 
-function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => void }) {
+function EmptyRobot({ accent, onOpenAdd, whiteMode }: { accent: string; onOpenAdd: () => void; whiteMode?: boolean }) {
   return (
     <motion.button
       type="button"
@@ -65,15 +73,15 @@ function EmptyRobot({ accent, onOpenAdd }: { accent: string; onOpenAdd: () => vo
       <span className="flex size-16 items-center justify-center rounded-3xl" style={{ backgroundColor: `${accent}26` }}>
         <Plus className="size-8" style={{ color: accent }} />
       </span>
-      <span className="text-xl font-black tracking-tight text-white">No robot yet</span>
-      <span className="text-sm text-white/55">Add your HOST ROBOT KEY to bring your EA onto this device.</span>
+      <span className="text-xl font-black tracking-tight" style={{ color: whiteMode ? "#000000" : "#ffffff" }}>No robot yet</span>
+      <span className="text-sm" style={{ color: whiteMode ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)" }}>Add your HOST ROBOT KEY to bring your EA onto this device.</span>
     </motion.button>
   );
 }
 
 /* ---------------- NOVA CORE ---------------- */
 
-function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
+function NovaCore({ robot, accent, font, actions, onOpenAdd, whiteMode }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void; whiteMode?: boolean }) {
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
@@ -93,8 +101,12 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="relative flex h-full flex-col items-center justify-end px-4 pb-6 pt-4">
           <h1
-            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
-            style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
+            className="mx-auto max-w-full break-words px-2 text-center uppercase sm:text-3xl"
+            style={{
+              fontFamily: fontStack(font),
+              color: whiteMode ? "#000000" : "#ffffff",
+              textShadow: whiteMode ? "none" : "0 2px 18px rgba(0,0,0,0.8)",
+            }}
           >
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
@@ -106,7 +118,15 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
               </button>
             ))}
           </div>
-          <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
+          <p
+            className="mt-5 text-[11px] font-semibold tracking-[0.3em] uppercase"
+            style={{
+              color: whiteMode ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.45)",
+              textShadow: whiteMode ? "none" : "0 2px 8px rgba(0,0,0,.85)",
+            }}
+          >
+            Powered by Ea migrate
+          </p>
         </div>
         </motion.section>
       </div>
@@ -119,8 +139,8 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
       >
         <Plus className="size-9 shrink-0" style={{ color: accent }} strokeWidth={2.6} />
         <span className="flex flex-col">
-          <span className="text-xl font-black tracking-wide text-white">ADD ROBOT</span>
-          <span className="text-xs font-semibold tracking-[0.22em] text-white/60">HOST ROBOT KEY</span>
+          <span className="text-xl font-black tracking-wide" style={{ color: whiteMode ? "#000000" : "#ffffff" }}>ADD ROBOT</span>
+          <span className="text-xs font-semibold tracking-[0.22em]" style={{ color: whiteMode ? "rgba(0,0,0,0.60)" : "rgba(255,255,255,0.60)" }}>HOST ROBOT KEY</span>
         </span>
       </button>
 
@@ -130,7 +150,7 @@ function NovaCore({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps
 
 /* ---------------- PHANTOM PULSE ---------------- */
 
-function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
+function PhantomPulse({ robot, accent, font, actions, onOpenAdd, whiteMode }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void; whiteMode?: boolean }) {
   const image = robot?.image || "/logo.png";
   return (
     <div className="relative mx-3 w-[calc(100%-1.5rem)]">
@@ -151,16 +171,28 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
           <RobotMedia image={image} video={robot?.video} variant="avatar" preferImage className="size-full rounded-full object-cover" />
         </motion.span>
 
-        <p className="mt-5 text-sm font-bold tracking-[0.34em] text-white/60 uppercase" style={{ textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>You're trading with</p>
+        <p
+          className="mt-5 text-sm font-bold tracking-[0.34em] uppercase"
+          style={{
+            color: whiteMode ? "rgba(0,0,0,0.60)" : "rgba(255,255,255,0.60)",
+            textShadow: whiteMode ? "none" : "0 2px 10px rgba(0,0,0,.85)",
+          }}
+        >
+          You're trading with
+        </p>
         <h1
-          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-2xl font-black leading-tight tracking-wide text-white uppercase sm:text-3xl"
-          style={{ fontFamily: fontStack(font), textShadow: `0 0 34px ${accent}80` }}
+          className="mx-auto mt-2 max-w-full break-words px-2 text-center text-2xl font-black leading-tight tracking-wide uppercase sm:text-3xl"
+          style={{
+            fontFamily: fontStack(font),
+            color: whiteMode ? "#000000" : "#ffffff",
+            textShadow: whiteMode ? "none" : `0 0 34px ${accent}80`,
+          }}
         >
           {robot?.name ?? "YOUR ROBOT"}
         </h1>
       </div>
 
-      <div className="relative mt-1"><PoweredBadge accent={accent} /></div>
+      <div className="relative mt-1"><PoweredBadge accent={accent} whiteMode={!!whiteMode} /></div>
 
       {robot ? (
         <div className="relative grid w-full max-w-sm grid-cols-3 gap-3">
@@ -193,7 +225,7 @@ function PhantomPulse({ robot, accent, font, actions, onOpenAdd }: ThemeContentP
 
 /* ---------------- TITAN EDGE ---------------- */
 
-function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenScanner: () => void }) {
+function TitanEdge({ robot, accent, font, actions, onOpenScanner, whiteMode }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenScanner: () => void; whiteMode?: boolean }) {
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
@@ -211,12 +243,22 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         <RobotMedia image={image} video={robot?.video} variant="hero" className="absolute inset-0 size-full object-cover" />
         <div className="relative flex h-full flex-col items-center justify-end pb-7">
           <h1
-            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black leading-tight text-white sm:text-3xl"
-            style={{ fontFamily: fontStack(font), textShadow: "0 2px 20px rgba(0,0,0,0.85)" }}
+            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black leading-tight sm:text-3xl"
+            style={{
+              fontFamily: fontStack(font),
+              color: whiteMode ? "#000000" : "#ffffff",
+              textShadow: whiteMode ? "none" : "0 2px 20px rgba(0,0,0,0.85)",
+            }}
           >
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-          <p className="mt-2 text-sm font-bold tracking-[0.34em] text-white/70 uppercase" style={{ color: accent, textShadow: "0 2px 10px rgba(0,0,0,.85)" }}>
+          <p
+            className="mt-2 text-sm font-bold tracking-[0.34em] uppercase"
+            style={{
+              color: whiteMode ? `${accent}` : accent,
+              textShadow: whiteMode ? "none" : "0 2px 10px rgba(0,0,0,.85)",
+            }}
+          >
             {robot?.running ? "RUNNING" : "AGGRESSIVE"}
           </p>
         </div>
@@ -230,12 +272,12 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
         {actions.map(({ label, icon: Icon, onClick }) => (
           <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-1.5 px-3">
             <Icon className="size-7 transition-transform duration-200 group-hover:scale-110" style={{ color: accent }} />
-            <span className="text-[11px] font-black tracking-[0.18em] text-white/85">{label}</span>
+            <span className="text-[11px] font-black tracking-[0.18em]" style={{ color: whiteMode ? "rgba(0,0,0,0.85)" : "rgba(255,255,255,0.85)" }}>{label}</span>
           </button>
         ))}
       </div>
 
-      <div className="flex justify-center"><PoweredBadge accent={accent} /></div>
+      <div className="flex justify-center"><PoweredBadge accent={accent} whiteMode={!!whiteMode} /></div>
 
       <button
         type="button"
@@ -248,8 +290,8 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
             <ChartLine className="size-6" style={{ color: accent }} />
           </span>
           <span>
-            <span className="block text-base font-black tracking-wide text-white">AI CHART SCANNER</span>
-            <span className="block text-sm text-white/55">Upload chart, get AI trade analysis</span>
+            <span className="block text-base font-black tracking-wide" style={{ color: whiteMode ? "#000000" : "#ffffff" }}>AI CHART SCANNER</span>
+            <span className="block text-sm" style={{ color: whiteMode ? "rgba(0,0,0,0.55)" : "rgba(255,255,255,0.55)" }}>Upload chart, get AI trade analysis</span>
           </span>
         </span>
         <Info className="size-5 shrink-0" style={{ color: accent }} />
@@ -260,7 +302,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
 
 /* ---------------- PRIME FORGE (key-activation classic) ---------------- */
 
-function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void }) {
+function PrimeForge({ robot, accent, font, actions, onOpenAdd, whiteMode }: ThemeContentProps & { accent: string; font: string; actions: ActionDef[]; onOpenAdd: () => void; whiteMode?: boolean }) {
   const image = robot?.image || "/logo.png";
   return (
     <div className="flex flex-col gap-4">
@@ -294,13 +336,16 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
             </span>
           </div>
 
-          <h1
-            className="mx-auto max-w-full break-words px-2 text-center text-2xl font-black tracking-[0.08em] text-white uppercase sm:text-3xl"
-            style={{ fontFamily: fontStack(font), textShadow: "0 2px 18px rgba(0,0,0,0.8)" }}
+                      <h1
+            className="mx-auto max-w-full break-words px-2 text-center uppercase sm:text-3xl"
+            style={{
+              fontFamily: fontStack(font),
+              color: whiteMode ? "#000000" : "#ffffff",
+              textShadow: whiteMode ? "none" : "0 2px 18px rgba(0,0,0,0.8)",
+            }}
           >
             {robot?.name ?? "YOUR ROBOT"}
           </h1>
-
           <div className="mt-5 grid w-full max-w-xs grid-cols-3 gap-2">
             {actions.map(({ label, icon: Icon, onClick }) => (
               <button key={label} type="button" onClick={onClick} className="group flex flex-col items-center gap-2 py-1">
@@ -309,8 +354,15 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
               </button>
             ))}
           </div>
-
-          <p className="mt-5 text-[11px] font-semibold tracking-[0.3em] text-white/45 uppercase" style={{ textShadow: "0 2px 8px rgba(0,0,0,.85)" }}>Powered by Ea migrate</p>
+          <p
+            className="mt-5 text-[11px] font-semibold tracking-[0.3em] uppercase"
+            style={{
+              color: whiteMode ? "rgba(0,0,0,0.45)" : "rgba(255,255,255,0.45)",
+              textShadow: whiteMode ? "none" : "0 2px 8px rgba(0,0,0,.85)",
+            }}
+          >
+            Powered by Ea migrate
+          </p>
         </div>
       </motion.section>
 
@@ -322,8 +374,8 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
       >
         <Plus className="size-9 shrink-0 text-white" strokeWidth={2.6} />
         <span className="flex flex-col">
-          <span className="text-xl font-black tracking-wide text-white">ADD ROBOT</span>
-          <span className="text-xs font-semibold tracking-[0.22em] text-white/80">HOST ROBOT KEY</span>
+          <span className="text-xl font-black tracking-wide" style={{ color: whiteMode ? "#000000" : "#ffffff" }}>ADD ROBOT</span>
+          <span className="text-xs font-semibold tracking-[0.22em]" style={{ color: whiteMode ? "rgba(0,0,0,0.80)" : "rgba(255,255,255,0.80)" }}>HOST ROBOT KEY</span>
         </span>
       </button>
     </div>
@@ -333,8 +385,9 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
 /* ---------------- SWITCH ---------------- */
 
 export function ThemeContent(props: ThemeContentProps) {
-  const { theme, color } = useCustomization();
+  const { theme, color, appearanceMode } = useCustomization();
   const accent = accentColorValue(color);
+  const isWhiteMode = appearanceMode === "white";
   // Home's themed backdrop follows the SAME persisted Background Picture
   // switch as every other screen: OFF → no image, no video, clean black.
   const mediaDim = useMediaDim();
@@ -360,9 +413,10 @@ export function ThemeContent(props: ThemeContentProps) {
 }
 
 function ThemeContentInner(props: ThemeContentProps) {
-  const { theme, color, font } = useCustomization();
+  const { theme, color, font, appearanceMode } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
+  const whiteMode = appearanceMode === "white";
 
   // The eight real Main Interfaces (Crimson Navigator … Ultron Mega) render
   // the definition-driven console: same live robot/broker data, the
@@ -384,7 +438,7 @@ function ThemeContentInner(props: ThemeContentProps) {
   if (!props.robot) {
     return (
       <div className="flex flex-col gap-6">
-        <EmptyRobot accent={accent} onOpenAdd={props.onOpenAdd} />
+        <EmptyRobot accent={accent} onOpenAdd={props.onOpenAdd} whiteMode={whiteMode} />
         {(theme === "NOVA CORE" || theme === "PRIME FORGE") && (
           <button
             type="button"
@@ -404,13 +458,13 @@ function ThemeContentInner(props: ThemeContentProps) {
   }
 
   if (theme === "PHANTOM PULSE") {
-    return <PhantomPulse {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+    return <PhantomPulse {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} whiteMode={whiteMode} />;
   }
   if (theme === "TITAN EDGE") {
-    return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} />;
+    return <TitanEdge {...props} accent={accent} font={font} actions={actions} onOpenScanner={props.onOpenScanner} whiteMode={whiteMode} />;
   }
   if (theme === "PRIME FORGE") {
-    return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+    return <PrimeForge {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} whiteMode={whiteMode} />;
   }
   if (theme === "SNIFFER") {
     return <Sniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
@@ -435,5 +489,5 @@ function ThemeContentInner(props: ThemeContentProps) {
       />
     );
   }
-  return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} />;
+  return <NovaCore {...props} accent={accent} font={font} actions={actions} onOpenAdd={props.onOpenAdd} whiteMode={whiteMode} />;
 }

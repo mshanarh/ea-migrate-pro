@@ -122,15 +122,14 @@ const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
 /**
- * APPEARANCE MODE — OBSIDIAN ONLY.
+ * APPEARANCE MODE — BLACK (obsidian) or WHITE (light, home-screen-only).
  *
- * The app is a black console: deep obsidian surfaces, pure white ink and the
- * user's accent. The light surfaces that a "white" mode once published washed
- * the screens out (white plates behind white text, dark ink on dark glass on
- * every layout that hardcodes its colours), so the preference is normalised to
- * black on load and the setter clamps to black. The stored key is kept and
- * REWRITTEN to "black", which restores devices that saved "white" without a
- * manual cache clear.
+ * BLACK: deep obsidian surfaces, pure white ink and the user's accent across
+ * every screen.
+ *
+ * WHITE: the HOME SCREEN background switches to a light/white surface while
+ * the interface (cards, controls, text, nav) stays black — the white theme
+ * only affects the home screen background, not the whole UI.
  */
 export const APPEARANCE_KEY = "eamp.appearanceMode";
 export const DEFAULT_APPEARANCE_MODE: AppearanceMode = "black";
@@ -145,6 +144,11 @@ export const APPEARANCE_CHOICES: ReadonlyArray<{
     mode: "black",
     title: "Black / Dark",
     body: "Obsidian glass, pure white text, accent glow.",
+  },
+  {
+    mode: "white",
+    title: "White / Light",
+    body: "Home screen background turns white — interface stays black.",
   },
 ];
 
@@ -224,20 +228,19 @@ function load() {
   const storedTheme = window.localStorage.getItem(THEME_KEY) as InterfaceThemeId | null;
   const storedFont = window.localStorage.getItem(FONT_KEY) as FontOptionId | null;
   const storedAppearance = window.localStorage.getItem(APPEARANCE_KEY);
-  // A saved "white" from an older build is migrated back to obsidian black.
-  if (storedAppearance && storedAppearance !== DEFAULT_APPEARANCE_MODE) {
-    window.localStorage.setItem(APPEARANCE_KEY, DEFAULT_APPEARANCE_MODE);
-  }
   // A font removed from the lineup falls back to the default instead of
   // rendering as an invisible system stack.
   const validFont = FONT_OPTIONS.some((option) => option.id === storedFont);
+  // Accept "black" or "white" — anything else falls back to the default.
+  const validAppearance =
+    storedAppearance === "black" || storedAppearance === "white"
+      ? storedAppearance
+      : DEFAULT_APPEARANCE_MODE;
   state = {
     color: storedColor ?? DEFAULT_COLOR,
     theme: storedTheme ?? DEFAULT_THEME,
     font: validFont ? (storedFont as FontOptionId) : DEFAULT_FONT,
-    // OBSIDIAN ONLY — every stored value (including a legacy "white") loads
-    // as black, so the very first paint is the deep black interface.
-    appearanceMode: DEFAULT_APPEARANCE_MODE,
+    appearanceMode: validAppearance,
   };
 }
 
@@ -311,16 +314,17 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
 /**
  * THE APPEARANCE SETTER — the only writer of `appearanceMode`.
  *
- * It CLAMPS to obsidian black: light surfaces are retired, so a stale caller
- * (or a restored "white" preference) can never splash a white plate behind
- * the interface again. It still repaints immediately (no reload) and persists
- * the normalised value so the next launch starts black too.
+ * Accepts "black" or "white". White mode switches the HOME SCREEN background
+ * to a light surface while the interface (cards, controls, text, nav) stays
+ * black. It repaints immediately (no reload) and persists the value.
  */
-export function setAppearanceMode(_mode: AppearanceMode = DEFAULT_APPEARANCE_MODE) {
+export function setAppearanceMode(mode: AppearanceMode = DEFAULT_APPEARANCE_MODE) {
   load();
-  state = { ...state, appearanceMode: DEFAULT_APPEARANCE_MODE };
+  // Clamp to the two valid values only.
+  const clamped = mode === "white" ? "white" : "black";
+  state = { ...state, appearanceMode: clamped };
   persist();
-  applyAppearanceMode(DEFAULT_APPEARANCE_MODE);
+  applyAppearanceMode(clamped);
 }
 
 export function setFontOption(id: FontOptionId) {

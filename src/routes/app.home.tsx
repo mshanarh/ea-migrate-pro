@@ -250,8 +250,9 @@ function AddRobotModal({ open, onOpenChange, onSubmit }: { open: boolean; onOpen
 }
 
 function WelcomeMaster() {
-  const { color } = useCustomization();
+  const { color, appearanceMode } = useCustomization();
   const accent = accentColorValue(color);
+  const isWhiteMode = appearanceMode === "white";
   const [show, setShow] = useState(false);
 
   useEffect(() => {
@@ -272,12 +273,15 @@ function WelcomeMaster() {
   if (!show) return null;
 
   return (
-    <div
-      role="status"
-      aria-label="Welcome"
-      className="fixed inset-0 z-[10000] flex flex-col items-center justify-center bg-black"
-      style={{ animation: "welcomeIn 0.25s ease-out both" }}
-    >
+          <div
+        role="status"
+        aria-label="Welcome"
+        className="fixed inset-0 z-[10000] flex flex-col items-center justify-center"
+        style={{
+          backgroundColor: isWhiteMode ? "rgba(255,255,255,0.95)" : "#000000",
+          animation: "welcomeIn 0.25s ease-out both",
+        }}
+      >
       <div
         aria-hidden
         className="absolute inset-0"
@@ -286,18 +290,31 @@ function WelcomeMaster() {
       <img
         src="/logo.png"
         alt=""
-        className="relative size-24 rounded-[24px] bg-white/5 object-contain p-1"
-        style={{ boxShadow: `0 0 44px ${accent}66`, border: `2px solid ${accent}55`, animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both" }}
+        className="relative size-24 rounded-[24px] object-contain p-1"
+        style={{
+          backgroundColor: isWhiteMode ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)",
+          boxShadow: `0 0 44px ${accent}66`,
+          border: `2px solid ${accent}55`,
+          animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both",
+        }}
       />
       <h1
-        className="relative mt-6 text-3xl font-black tracking-tight text-white"
-        style={{ textShadow: `0 0 32px ${accent}88`, animation: "welcomeUp 0.35s ease-out 0.15s both" }}
+        className="relative mt-6 text-3xl font-black tracking-tight"
+        style={{
+          color: isWhiteMode ? "#000000" : "#ffffff",
+          textShadow: isWhiteMode ? "none" : `0 0 32px ${accent}88`,
+          animation: "welcomeUp 0.35s ease-out 0.15s both",
+        }}
       >
         WELCOME <span style={{ color: accent }}>MASTER</span>
       </h1>
       <p
-        className="relative mt-2 text-sm font-semibold tracking-wide text-white/70"
-        style={{ animation: "welcomeUp 0.3s ease-out 0.3s both", paddingBottom: "var(--sa-bottom)" }}
+        className="relative mt-2 text-sm font-semibold tracking-wide"
+        style={{
+          color: isWhiteMode ? "rgba(0,0,0,0.70)" : "rgba(255,255,255,0.70)",
+          animation: "welcomeUp 0.3s ease-out 0.3s both",
+          paddingBottom: "var(--sa-bottom)",
+        }}
       >
         It&apos;s time to make money 💰
       </p>
@@ -350,8 +367,9 @@ function readBotStrategy(): BotStrategy {
 
 function AppHome() {
   const app = useAppState();
-  const { color: accentChoice } = useCustomization();
+  const { color: accentChoice, appearanceMode } = useCustomization();
   const accent = accentColorValue(accentChoice);
+  const isWhiteMode = appearanceMode === "white";
   // SPA navigation for the QUOTES / SCANNER / METATRADER buttons — a
   // window.location.* call reloaded the whole document, which rebooted the
   // app and flashed the full-screen "Loading…" splash on EVERY press.
@@ -942,7 +960,9 @@ function AppHome() {
 
   return (
     <div
-      className="app-fullscreen if-screen flex w-full flex-col bg-black text-white"
+      className="app-fullscreen if-screen flex w-full flex-col text-white"
+      data-eamp-appearance={appearanceMode}
+      style={{ backgroundColor: isWhiteMode ? "#f5f5f5" : "#000000" }}
       onTouchStart={onTouchStart}
       onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {
