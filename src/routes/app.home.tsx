@@ -370,7 +370,10 @@ function AppHome() {
   const [strategyOpen, setStrategyOpen] = useState(false);
   const [botStrategy, setBotStrategy] = useState<BotStrategy>(() => readBotStrategy());
   // THE CHART THIS DEVICE TRADES. Every analysis, the loop's bar cadence and
-  // the VPS scalper all read this one value; the last choice is remembered.
+  // the VPS scalper read this one value. It is read from the remembered
+  // preference and deliberately has NO selector on the dashboard — the home
+  // screen stays clean and the timeframe keeps working in the background
+  // (it is still changeable from the Analyze card).
   const [timeframe] = useState<TradeTimeframe>(() => readActiveTimeframe());
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
