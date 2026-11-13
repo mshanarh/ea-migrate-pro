@@ -512,6 +512,12 @@ html:not([data-marketing]):not([data-portal]) body {
   color: #ffffff;
 }
 
+/* White theme — home screen background only (interface stays black). */
+html[data-eamp-appearance="white"] .app-fullscreen,
+html[data-eamp-appearance="white"] .if-screen {
+  background-color: #f5f5f5;
+}
+
 /* Legacy layouts draw cards with the shared class but no interface tokens;
    give them the obsidian glass plate + crisp white ink. Styled interfaces
    keep their own tinted definition (this rule deliberately does not apply

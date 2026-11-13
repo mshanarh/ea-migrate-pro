@@ -406,6 +406,7 @@ export function ThemeContent(props: ThemeContentProps) {
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
         videoWhenActive
+        whiteMode={isWhiteMode}
       />
       <ThemeContentInner {...props} />
     </>

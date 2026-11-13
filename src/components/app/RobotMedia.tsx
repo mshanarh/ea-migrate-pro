@@ -67,6 +67,7 @@ export function VideoBackdrop({
   showImageWhenInactive = true,
   videoWhenActive = true,
   mediaDim = true,
+  whiteMode = false,
 }: {
   image: string;
   /** Kept for call-site compatibility — the shared layer reads the app state. */
@@ -79,6 +80,8 @@ export function VideoBackdrop({
   videoWhenActive?: boolean;
   /** The "Background Picture" gate. */
   mediaDim?: boolean | undefined;
+  /** When true, the backdrop background is white instead of black. */
+  whiteMode?: boolean;
 }) {
   const { ready } = useSharedVideo();
   const stopped = useRobotVideoStopped();
@@ -95,7 +98,7 @@ export function VideoBackdrop({
   // THE PICTURE IS THE POINT — full strength: no opacity, no scrim, no blur.
   if (showImageWhenInactive) {
     return (
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden" style={{ backgroundColor: whiteMode ? "#f5f5f5" : "#000000" }}>
         <img src={image} alt="" className="size-full object-cover" />
       </div>
     );
