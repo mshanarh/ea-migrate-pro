@@ -132,10 +132,13 @@ DEFAULT_TIMEFRAME = "15m"
 LAST_BARS = 8                        # the direction lens: 8 completed bars
 # EMA20/EMA50 need a longer series than the 8-bar lens, so the fetch carries
 # this many completed bars and the lens slices its own window from the end.
-TREND_BARS = 60
-# The EMA structure read: price vs EMA20 and the EMA20/EMA50 stack.
+# The EMA structure read: price vs EMA50, the EMA20/EMA50 stack and — when
+# the series is long enough — the EMA50/EMA200 confirmation. The fetch is long
+# enough to measure EMA200, so a 15m trend is read against ~2 days of bars.
+TREND_BARS = 220
 EMA_FAST = 20
 EMA_SLOW = 50
+EMA_MACRO = 200
 # The direction and the stop are read EXACTLY like the app's auto-trader
 # (src/lib/auto-trade.ts): the net move of the last closes decides the side, the
 # live quote only breaks a flat tie, and the stop sits just past the extreme of
@@ -474,53 +477,97 @@ def _ema(closes: list[float], period: int) -> float | None:
     return value
 
 
-def _trend_bias(bars: list[dict], price: float) -> tuple[str | None, str]:
-    """(permitted side, note) from the EMA structure on the completed series.
+def _trend_read(bars: list[dict], price: float) -> dict:
+    """The EMA 20/50/200 trend read on the completed series.
 
-    BULLISH — price above EMA20 with EMA20 at/above EMA50, or an EMA20 that is
-    rising (slope over the last few closes). BEARISH is the mirror. Returning
-    None means the trend is not confirmed either way, so the side is free.
+    CONFIRMED DOWNTREND — price below EMA50 AND EMA20 below EMA50
+                          (or EMA50 below EMA200);
+    CONFIRMED UPTREND   — price above EMA50 AND EMA20 above EMA50
+                          (or EMA50 above EMA200).
+
+    The price side is required in both branches, so a deep dip under EMA50
+    inside a macro uptrend is a pullback, not a trend change. `trend` is None
+    when the EMAs cannot confirm either way — then no side is vetoed.
+
+    `exhaustion` is the retracement-rejection check the entry needs:
+    a bearish bar closing below EMA20 (or a confirmed lower high) in a
+    downtrend, a bullish bar closing above EMA20 (or a higher low) in an
+    uptrend.
     """
     closes = [bar["close"] for bar in bars]
     ema20 = _ema(closes, EMA_FAST)
     ema50 = _ema(closes, EMA_SLOW)
-    if ema20 is None:
-        return None, "trend not measurable — series shorter than EMA20"
+    ema200 = _ema(closes, EMA_MACRO)
+    read = {"trend": None, "bias": None, "ema20": ema20, "ema50": ema50,
+            "ema200": ema200, "exhaustion": False, "note": ""}
+    if ema50 is None:
+        read["note"] = (f"trend not measurable — {len(closes)} completed closes, "
+                        f"EMA50 needs {EMA_SLOW}")
+        return read
 
-    # EMA20 slope: the EMA of the series WITHOUT its last 3 closes vs the full
-    # one. A rising EMA is an uptrend even before the EMA50 is available.
-    slope = None
-    if len(closes) > EMA_FAST + 3:
-        earlier = _ema(closes[:-3], EMA_FAST)
-        if earlier is not None:
-            slope = ema20 - earlier
+    stack_up = ema20 is not None and ema20 > ema50
+    stack_down = ema20 is not None and ema20 < ema50
+    macro_up = ema200 is not None and ema50 > ema200
+    macro_down = ema200 is not None and ema50 < ema200
+    uptrend = price > ema50 and (stack_up or macro_up)
+    downtrend = price < ema50 and (stack_down or macro_down)
+    trend = "UP" if uptrend and not downtrend else "DOWN" if downtrend and not uptrend else None
 
-    bullish = price > ema20 and ((ema50 is not None and ema20 >= ema50) or (slope is not None and slope > 0))
-    bearish = price < ema20 and ((ema50 is not None and ema20 <= ema50) or (slope is not None and slope < 0))
-    stack = f"price {price:.5f} vs EMA20 {ema20:.5f}"
-    if ema50 is not None:
-        stack += f", EMA20 vs EMA50 {ema50:.5f}"
-    if slope is not None:
-        stack += f", EMA20 slope {slope:+.5f}"
-    if bullish and not bearish:
-        return "BUY", f"uptrend ({stack})"
-    if bearish and not bullish:
-        return "SELL", f"downtrend ({stack})"
-    return None, f"no confirmed trend ({stack})"
+    # Swing structure across the last 20 completed bars — it supplies the
+    # lower-high / higher-low half of the exhaustion check, and it never
+    # confirms a trend on its own.
+    window = bars[-20:]
+    half = len(window) // 2
+    lower_highs = higher_lows = False
+    if half >= 2:
+        first, second = window[:half], window[-half:]
+        lower_highs = max(b["high"] for b in second) < max(b["high"] for b in first)
+        higher_lows = min(b["low"] for b in second) > min(b["low"] for b in first)
+
+    newest = bars[-1]
+    bearish_bar = newest["close"] < newest["open"]
+    bullish_bar = newest["close"] > newest["open"]
+    rejection_down = (bearish_bar and (ema20 is None or newest["close"] < ema20)) or lower_highs
+    rejection_up = (bullish_bar and (ema20 is None or newest["close"] > ema20)) or higher_lows
+    exhaustion = rejection_down if trend == "DOWN" else rejection_up if trend == "UP" else False
+
+    parts = [f"price {price:.5f} {'above' if price > ema50 else 'below'} EMA50 {ema50:.5f}"]
+    if ema20 is not None:
+        parts.append(f"EMA20 {ema20:.5f} {'above' if ema20 > ema50 else 'below'} EMA50")
+    if ema200 is not None:
+        parts.append(f"EMA50 {'above' if ema50 > ema200 else 'below'} EMA200 {ema200:.5f}")
+    if trend is not None:
+        parts.append("pullback rejection confirmed" if exhaustion else "pullback not exhausted yet")
+
+    read.update({
+        "trend": trend,
+        "bias": "BUY" if trend == "UP" else "SELL" if trend == "DOWN" else None,
+        "exhaustion": exhaustion,
+        "note": (", ".join(parts) if trend is not None
+                 else f"no confirmed trend ({', '.join(parts)})"),
+    })
+    return read
 
 
 def _direction(
     bars: list[dict], price: float, context: list[dict] | None = None
 ) -> tuple[str | None, str]:
-    """(side, reason) — the net move of the closes decides, the trend VETOES.
+    """(side, reason) — the net move of the closes proposes, the EMA filter
+    VETOES, and only an exhausted retracement may be entered with the trend.
 
     `bars` is OLDEST → NEWEST completed. The live quote only breaks a genuine
     flat tie; when the closes are flat AND the quote points nowhere there is no
     direction to trade, so the side is None (a hard block, never a default).
 
-    `context` is the longer completed series used for the EMA read. A side that
-    contradicts a confirmed trend is refused: no buying the top of a dead-cat
-    bounce in a downtrend, no selling the bottom of a pullback in an uptrend.
+    `context` is the longer completed series used for the EMA 20/50/200 read.
+
+      • a side that contradicts a CONFIRMED trend is refused — no buying the
+        peak of a dead-cat bounce in a downtrend, no selling the bottom of a
+        pullback in an uptrend (a 3–5 bar counter-move is a retracement, not a
+        reversal);
+      • a side that AGREES with the confirmed trend still waits for the
+        retracement to be exhausted (bearish close below EMA20 / lower high to
+        sell, bullish close above EMA20 / higher low to buy).
     """
     if len(bars) <= DIRECTION_LOOKBACK:
         return None, f"only {len(bars)} completed candles — no direction readable"
@@ -538,11 +585,22 @@ def _direction(
                           f"({price:.5f}) point nowhere")
         side, basis = ("BUY" if move_now > 0 else "SELL"), f"flat closes, live quote {move_now:+.5f}"
 
-    trend_side, trend_note = _trend_bias(context or bars, price)
-    if trend_side is not None and trend_side != side:
-        return None, (f"{side} blocked — {trend_note} rejects trading against the trend "
-                      f"({basis})")
-    return side, f"{basis} · {trend_note}"
+    trend = _trend_read(context or bars, price)
+    if trend["trend"] is not None and trend["bias"] != side:
+        direction_word = "DOWNTREND" if trend["trend"] == "DOWN" else "UPTREND"
+        return None, (
+            f"Blocked: Counter-trend retracement against confirmed {direction_word} "
+            f"(Price vs EMA50/200) — {side} refused ({basis}; {trend['note']})"
+        )
+    if trend["trend"] is not None and trend["bias"] == side and not trend["exhaustion"]:
+        direction_word = "DOWNTREND" if trend["trend"] == "DOWN" else "UPTREND"
+        need = ("a bearish close below EMA20, or a confirmed lower high" if side == "SELL"
+                else "a bullish close above EMA20, or a confirmed higher low")
+        return None, (
+            f"Blocked: no retracement exhaustion in the confirmed {direction_word} — "
+            f"{side} needs {need} before entering with the trend ({trend['note']})"
+        )
+    return side, f"{basis} · {trend['note']}"
 
 
 def _sl_for(creds, symbol: str, bars: list[dict], side: str) -> float | None:

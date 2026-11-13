@@ -419,7 +419,10 @@ async function fetchBridgeCandlesResult(
         "Content-Type": "application/json",
         "x-bridge-key": BRIDGE_KEY,
       },
-      body: JSON.stringify({ credentials, symbol, timeframe, count: 120 }),
+      // Enough completed bars for the EMA50 filter AND, on a long series,
+      // the EMA200 confirmation — the trend read is what vetoes counter-trend
+      // entries, so the sample must be long enough to measure it.
+      body: JSON.stringify({ credentials, symbol, timeframe, count: 240 }),
       signal: controller.signal,
     });
     summary.status = response.status;
@@ -949,21 +952,37 @@ function checkDirectionAgainstCandles(
 }
 
 /**
- * Guard for callers that already hold a direction from somewhere else
- * (the scanner's executed plan): re-read the broker's own 1h candles and
- * refuse when the side contradicts the last five bars. Without credentials
- * there is nothing to verify against, so the verdict stays open.
+ * Guard for callers that already hold a direction from somewhere else (the
+ * scanner's executed plan): re-read the broker's own candles and refuse a side
+ * that fights CONFIRMED structure — price vs EMA50 with the EMA20/50 stack (or
+ * the EMA50/200 stack on a long series), the same filter the auto-trader uses.
+ * In an unconfirmed market the older 5-bar agreement check still applies.
+ * Without credentials there is nothing to verify against, so the verdict
+ * stays open.
  */
 export async function verifyDirectionAgainstTrend(
   symbol: string,
   side: "BUY" | "SELL",
   credentials: BridgeCredentials | null,
+  /** Defaults to the 1h higher-timeframe read this guard has always used. */
+  timeframe = "1h",
 ): Promise<DirectionGuardVerdict> {
   if (!credentials) return { ok: true };
-  const candles = await fetchBridgeCandles(credentials, symbol, "1h");
+  const candles = await fetchBridgeCandles(credentials, symbol, timeframe);
   if (!candles || candles.length < 6) {
-    console.warn(`[auto-trade] ${symbol}: direction guard skipped — fewer than 6 closed 1h candles from the bridge`);
+    console.warn(`[auto-trade] ${symbol}: direction guard skipped — fewer than 6 closed ${timeframe} candles from the bridge`);
     return { ok: true };
+  }
+
+  const trend = readTrend(candles, candles[candles.length - 1]!.close);
+  if (trend?.trend && trend.bias && trend.bias !== side) {
+    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
+    return {
+      ok: false,
+      reason:
+        `Blocked: Counter-trend retracement against confirmed ${directionWord} (Price vs EMA50/200) — ` +
+        `${side} on ${timeframe} refused (${trend.summary}).`,
+    };
   }
   return checkDirectionAgainstCandles(side, candles);
 }
@@ -1145,25 +1164,49 @@ function emaOf(closes: ReadonlyArray<number>, period: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
-// ── TREND ALIGNMENT ────────────────────────────────────────────────────────
-// A signal is only allowed to trade WITH the market it lives in:
+// ── TREND ALIGNMENT — THE EMA 20/50/200 FILTER ─────────────────────────────
+// A signal is only allowed to trade WITH the confirmed market structure. The
+// trend is CONFIRMED by the EMA stack, never by the 5-bar net move:
 //
-//   BULLISH — price above the 20 EMA with the 20 EMA at or above the 50 EMA,
-//             or higher highs AND higher lows across the candle window;
-//   BEARISH — price below the 20 EMA with the 20 EMA at or below the 50 EMA,
-//             or lower highs AND lower lows across the candle window.
+//   DOWNTREND — price below EMA50 AND EMA20 below EMA50
+//               (or EMA50 below EMA200 when the longer series is available);
+//   UPTREND   — price above EMA50 AND EMA20 above EMA50
+//               (or EMA50 above EMA200).
 //
-// A BUY in a confirmed downtrend and a SELL in a confirmed uptrend are HARD
-// BLOCKS — the move is a pullback/bounce, not a trend. Neutral structure (no
-// EA stack and no clean swing sequence) leaves the side free.
+// In a confirmed downtrend EVERY BUY is a hard block and in a confirmed
+// uptrend EVERY SELL is a hard block: a 3–5 bar move against such a trend is a
+// retracement/pullback, not a reversal. That is the exact failure this filter
+// exists for — a bounce inside a violent downtrend used to produce a positive
+// 5-bar net move, so the bot bought the peak of the dead-cat bounce.
+//
+// Trading WITH the trend also needs the retracement to be EXHAUSTED:
+//   • downtrend → SELL only on a bearish candle closing below EMA20, or a
+//     confirmed lower high;
+//   • uptrend   → BUY only on a bullish candle closing above EMA20, or a
+//     confirmed higher low.
+// Otherwise the entry is early and the pullback runs it over.
+//
+// Swing structure (HH/HL, LH/LL) is reported as supporting evidence and is
+// what supplies the lower-high / higher-low exhaustion check; it never
+// confirms a trend on its own.
 
 export type TrendRead = {
   ema20: number | null;
   ema50: number | null;
-  /** Swing structure across the window. */
+  /** Only measurable with a long series (≥200 completed closes). */
+  ema200: number | null;
+  /** Swing structure across the window — supporting evidence, not a veto. */
   structure: "bullish" | "bearish" | "neutral";
-  /** The side the trend permits, or null when it is neutral. */
+  /** The CONFIRMED trend from the EMA filter; null when unconfirmed. */
+  trend: "UP" | "DOWN" | null;
+  /** The side the confirmed trend permits, or null when it is unconfirmed. */
   bias: "BUY" | "SELL" | null;
+  /**
+   * Retracement exhaustion is already visible on the newest completed bar
+   * (bearish close below EMA20 or lower high in a downtrend, bullish close
+   * above EMA20 or higher low in an uptrend).
+   */
+  exhaustion: boolean;
   summary: string;
 };
 
@@ -1181,6 +1224,7 @@ export function readTrend(
   if (closes.length < 5) return null;
   const ema20 = emaOf(closes, 20);
   const ema50 = emaOf(closes, 50);
+  const ema200 = emaOf(closes, 200);
   const reference = Number.isFinite(price) ? (price as number) : closes[closes.length - 1]!;
 
   // Swing structure: does the second half of the window print higher highs and
@@ -1204,22 +1248,43 @@ export function readTrend(
     lowerLows = secondLow < firstLow;
   }
 
-  const emaBullish = ema20 !== null && ema50 !== null && reference > ema20 && ema20 >= ema50;
-  const emaBearish = ema20 !== null && ema50 !== null && reference < ema20 && ema20 <= ema50;
   const structureBullish = higherHighs && higherLows;
   const structureBearish = lowerHighs && lowerLows;
+  const structure: TrendRead["structure"] =
+    structureBullish && !structureBearish
+      ? "bullish"
+      : structureBearish && !structureBullish
+        ? "bearish"
+        : "neutral";
 
-  const bullish = emaBullish || structureBullish;
-  const bearish = emaBearish || structureBearish;
-  // Contradicting reads cancel out — the trend is not confirmed either way.
-  const bias: "BUY" | "SELL" | null =
-    bullish && !bearish ? "BUY" : bearish && !bullish ? "SELL" : null;
-  const structure: TrendRead["structure"] = bullish && !bearish ? "bullish" : bearish && !bullish ? "bearish" : "neutral";
+  // CONFIRMED TREND — the EMA50 filter. The price side is required in both
+  // branches, so a deep pullback that merely dips under EMA50 inside a macro
+  // uptrend does not flip the read to "downtrend".
+  const stackUp = ema20 !== null && ema50 !== null && ema20 > ema50;
+  const stackDown = ema20 !== null && ema50 !== null && ema20 < ema50;
+  const macroUp = ema50 !== null && ema200 !== null && ema50 > ema200;
+  const macroDown = ema50 !== null && ema200 !== null && ema50 < ema200;
+  const uptrend = ema50 !== null && reference > ema50 && (stackUp || macroUp);
+  const downtrend = ema50 !== null && reference < ema50 && (stackDown || macroDown);
+  const trend: TrendRead["trend"] =
+    uptrend && !downtrend ? "UP" : downtrend && !uptrend ? "DOWN" : null;
+  const bias: "BUY" | "SELL" | null = trend === "UP" ? "BUY" : trend === "DOWN" ? "SELL" : null;
+
+  // RETRACEMENT EXHAUSTION — the newest COMPLETED bar has to reject the
+  // pullback before an entry with the trend is allowed.
+  const newest = candles[candles.length - 1]!;
+  const bullishBar = newest.close > newest.open;
+  const bearishBar = newest.close < newest.open;
+  const rejectionDown =
+    (bearishBar && (ema20 === null || newest.close < ema20)) || lowerHighs;
+  const rejectionUp = (bullishBar && (ema20 === null || newest.close > ema20)) || higherLows;
+  const exhaustion = trend === "DOWN" ? rejectionDown : trend === "UP" ? rejectionUp : false;
 
   const stack =
-    ema20 !== null && ema50 !== null
-      ? `price ${level(reference)} ${reference > ema20 ? "above" : "below"} 20 EMA ${level(ema20)}, ` +
-        `20 EMA ${ema20 >= ema50 ? "at/above" : "at/below"} 50 EMA ${level(ema50)}`
+    ema50 !== null
+      ? `price ${level(reference)} ${reference > ema50 ? "above" : "below"} EMA50 ${level(ema50)}` +
+        (ema20 !== null ? `, EMA20 ${level(ema20)} ${ema20 > ema50 ? "above" : "below"} EMA50` : "") +
+        (ema200 !== null ? `, EMA50 ${ema50 > ema200 ? "above" : "below"} EMA200 ${level(ema200)}` : "")
       : `EMAs not measurable yet (${closes.length} closes)`;
   const swings = half >= 2
     ? structureBullish
@@ -1228,8 +1293,27 @@ export function readTrend(
         ? "; lower highs and lower lows"
         : "; no clean swing sequence"
     : "";
+  const rejection =
+    trend === "DOWN"
+      ? exhaustion
+        ? "; pullback rejection confirmed"
+        : "; pullback not exhausted yet"
+      : trend === "UP"
+        ? exhaustion
+          ? "; dip rejection confirmed"
+          : "; dip not exhausted yet"
+        : "";
 
-  return { ema20, ema50, structure, bias, summary: `${stack}${swings}` };
+  return {
+    ema20,
+    ema50,
+    ema200,
+    structure,
+    trend,
+    bias,
+    exhaustion,
+    summary: `${stack}${swings}${rejection}`,
+  };
 }
 
 /** What a strategy read: its own side and its own stop/target levels. */
@@ -1634,14 +1718,32 @@ export function evaluateMomentum(input: {
   // measured on the SAME completed series, so the timeframe the trader chose
   // is the timeframe the trend is read on.
   const trend = readTrend(candles, price);
-  if (trend?.bias && trend.bias !== signal) {
+  if (trend?.trend && trend.bias && trend.bias !== signal) {
+    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
     return {
       kind: "no-trade",
       setup,
       price,
       reason:
-        `Trend alignment: ${signal} blocked — the market is ${trend.bias === "BUY" ? "bullish (confirmed uptrend)" : "bearish (confirmed downtrend)"} ` +
-        `on ${timeframe} (${trend.summary}). Trading against trend is not allowed. No order was sent.`,
+        `Blocked: Counter-trend retracement against confirmed ${directionWord} (Price vs EMA50/200). ` +
+        `The ${signal === "BUY" ? "upward" : "downward"} 3–5 bar move on ${timeframe} is a pullback, not a reversal — ` +
+        `${trend.summary}. No order was sent.`,
+    };
+  }
+
+  // TRADING WITH THE TREND STILL NEEDS THE RETRACEMENT TO BE EXHAUSTED.
+  // Entering a confirmed downtrend before the bounce rejects is entering the
+  // pullback, not the trend; the same applies to buying an unconfirmed dip.
+  if (trend?.trend && trend.bias === signal && !trend.exhaustion) {
+    const directionWord = trend.trend === "DOWN" ? "DOWNTREND" : "UPTREND";
+    return {
+      kind: "no-trade",
+      setup,
+      price,
+      reason:
+        `Blocked: no retracement exhaustion in the confirmed ${directionWord} — ${signal} needs ` +
+        `${signal === "SELL" ? "a bearish close below EMA20, or a confirmed lower high" : "a bullish close above EMA20, or a confirmed higher low"} ` +
+        `before entering with the trend (${trend.summary}). No order was sent.`,
     };
   }
 
