@@ -436,51 +436,31 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// APPEARANCE MODE — BLACK (obsidian) / WHITE (light)
+// APPEARANCE MODE — OBSIDIAN BLACK ONLY
 // ══════════════════════════════════════════════════════════════════════════
-// Every screen reads its colour through the `--if-*` tokens, so the mode is a
-// token swap, not a second theme:
+// The app is a black console on every screen and every Main Interface. Light
+// surfaces are retired: publishing `--if-surface: #FFFFFF` / `--if-text:
+// #0F172A` put white plates behind white text and dark ink on dark glass on
+// the layouts that hardcode their colours, which is exactly the washed-out,
+// unreadable state this mode now prevents.
 //
-//   • WHITE publishes light surfaces, deep-slate text and a soft shadow, and
-//     sets `data-appearance="white"` so the light stylesheet rules in
-//     styles.css can lift the hardcoded dark utilities too;
-//   • BLACK writes nothing — the interface definition (or the neutral
-//     defaults) is already the obsidian palette, so the classic console is
-//     preserved exactly as it was.
+// So there is nothing to swap here — the published tokens are ALREADY the
+// obsidian palette (the interface definition, or the neutral defaults for
+// legacy layouts) and this call only guarantees the document stays dark:
+// `data-appearance="black"` + `color-scheme: dark`, which also overrides a
+// native light preference for form controls, scrollbars and the canvas.
 //
-// The interface's signature accents, radii and nav shape are NEVER replaced:
-// light mode changes surfaces and text, not the user's design.
+// The type keeps the historical union so old stored values and callers still
+// type-check, but any non-black value is normalised to black.
 
 export type AppearanceMode = "black" | "white";
 
-export const LIGHT_MODE_TOKENS: Record<string, string> = {
-  "--if-bg": "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
-  "--if-surface": "#FFFFFF",
-  "--if-surface-alt": "#F1F5F9",
-  "--if-well": "#F8FAFC",
-  "--if-border": "rgba(0, 0, 0, 0.08)",
-  "--if-text": "#0F172A",
-  "--if-muted": "#64748B",
-  "--if-shadow": "0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04)",
-  // Chrome that sits ON the page must also be light, or the nav stays a black
-  // slab under a white screen.
-  "--if-texture": "none",
-  "--if-nav-bg": "rgba(255, 255, 255, 0.94)",
-  "--if-nav-border": "rgba(0, 0, 0, 0.08)",
-  "--if-nav-shadow": "0 10px 30px rgba(15, 23, 42, 0.10)",
-  "--if-blur": "blur(18px) saturate(1.2)",
-};
-
-/** Publish the appearance mode to <html>. Idempotent and synchronous. */
-export function applyAppearanceMode(mode: AppearanceMode): void {
+/** Pin the document to the obsidian palette. Idempotent and synchronous. */
+export function applyAppearanceMode(_mode: AppearanceMode = "black"): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
-  root.setAttribute("data-appearance", mode === "white" ? "white" : "black");
-  root.style.colorScheme = mode === "white" ? "light" : "dark";
-  if (mode !== "white") return; // black: the definition's own obsidian tokens
-  for (const [name, value] of Object.entries(LIGHT_MODE_TOKENS)) {
-    root.style.setProperty(name, value);
-  }
+  root.setAttribute("data-appearance", "black");
+  root.style.colorScheme = "dark";
 }
 
 /** The Home hero decoration values for one definition. */

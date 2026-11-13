@@ -7,6 +7,7 @@ import {
   Film,
   LayoutGrid,
   LineChart,
+  Moon,
   Music,
   Palette,
   PanelBottom,
@@ -20,6 +21,7 @@ import {
   accentColorValue,
   fontStack,
   setAccentColor,
+  setAppearanceMode,
   setFontOption,
   setInterfaceTheme,
   useCustomization,
@@ -81,7 +83,7 @@ function PillRow({
           <span className="shrink-0" style={{ color: accent }} aria-hidden>
             {icon}
           </span>
-          <span className="if-text truncate text-base font-bold">{label}</span>
+          <span className="if-text truncate text-base font-bold text-white">{label}</span>
         </span>
         {to ? (
           <ChevronDown
@@ -120,7 +122,7 @@ function PillRow({
 }
 
 export function CustomizationPanel() {
-  const { color, theme, font } = useCustomization();
+  const { color, theme, font, appearanceMode } = useCustomization();
   const accent = accentColorValue(color);
   const bottomNavStyle = useBottomNavStyle();
   const [openSection, setOpenSection] = useState<string | null>(null);
@@ -161,6 +163,38 @@ export function CustomizationPanel() {
               </button>
             ))}
           </div>
+        </PillRow>
+
+        <PillRow
+          icon={<Moon className="size-5" />}
+          label="Theme Mode"
+          accent={accent}
+          open={openSection === "appearance"}
+          onToggle={() => toggle("appearance")}
+        >
+          <button
+            type="button"
+            onClick={() => setAppearanceMode("black")}
+            aria-pressed={appearanceMode === "black"}
+            className="if-control flex w-full items-center justify-between gap-3 rounded-2xl border p-4 text-left transition-transform active:scale-[0.98]"
+            style={{
+              borderColor: accent,
+              backgroundColor: `${accent}14`,
+              boxShadow: `0 0 22px ${accent}33, inset 0 0 12px ${accent}14`,
+            }}
+          >
+            <span className="min-w-0">
+              <span className="block text-sm font-black tracking-wide text-white">Black / Dark</span>
+              <span className="block text-xs text-white/60">
+                Obsidian glass, pure white text, accent glow.
+              </span>
+            </span>
+            <Check className="size-5 shrink-0" style={{ color: accent }} strokeWidth={3} />
+          </button>
+          <p className="mt-2 px-1 text-[11px] font-semibold text-white/50">
+            Light surfaces are retired — every screen stays deep black with high-contrast white
+            text.
+          </p>
         </PillRow>
 
         <PillRow
@@ -306,7 +340,7 @@ export function CustomizationPanel() {
         <p className="text-sm font-black tracking-[0.18em] text-white/70 uppercase">
           Powered by <span style={{ color: accent }}>Ea migrate</span>
         </p>
-        <p className="mt-1 text-[11px] font-semibold tracking-[0.2em] text-white/35 uppercase">
+        <p className="mt-1 text-[11px] font-semibold tracking-[0.2em] text-white/50 uppercase">
           Version 2.0
         </p>
       </div>
@@ -354,8 +388,8 @@ export function CustomizationDrawer({ open, onClose }: DrawerProps) {
             transition={{ type: "spring", damping: isIos ? 34 : 30, stiffness: isIos ? 320 : 300 }}
             className={
               isIos
-                ? "fixed inset-x-0 bottom-0 z-[70] flex h-[92dvh] flex-col rounded-t-[38px] border-t bg-[#0a0a0c]/95 backdrop-blur-xl"
-                : "fixed inset-y-0 left-0 z-[70] flex w-[85%] max-w-sm flex-col border-r bg-[#0a0a0c]/95 backdrop-blur-xl"
+                ? "fixed inset-x-0 bottom-0 z-[70] flex h-[92dvh] flex-col rounded-t-[38px] border-t bg-[#0a0a0c]/98 backdrop-blur-xl"
+                : "fixed inset-y-0 left-0 z-[70] flex w-[85%] max-w-sm flex-col border-r bg-[#0a0a0c]/98 backdrop-blur-xl"
             }
             style={{ borderColor: `${accent}40` }}
           >
@@ -365,7 +399,7 @@ export function CustomizationDrawer({ open, onClose }: DrawerProps) {
             <div className="flex items-center justify-between border-b border-white/10 px-5 py-5">
               <div>
                 <p className="text-xl font-black tracking-[0.08em] text-white">SETTINGS</p>
-                <p className="text-xs text-white/45">Make it yours — applies instantly</p>
+                <p className="text-xs text-white/70">Make it yours — applies instantly</p>
               </div>
               <button
                 type="button"

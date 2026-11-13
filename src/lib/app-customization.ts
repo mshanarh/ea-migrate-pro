@@ -122,8 +122,15 @@ const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
 /**
- * APPEARANCE MODE — the black/white switch, kept separate from every other
- * preference so it never resets a colour, an interface or a font.
+ * APPEARANCE MODE — OBSIDIAN ONLY.
+ *
+ * The app is a black console: deep obsidian surfaces, pure white ink and the
+ * user's accent. The light surfaces that a "white" mode once published washed
+ * the screens out (white plates behind white text, dark ink on dark glass on
+ * every layout that hardcodes its colours), so the preference is normalised to
+ * black on load and the setter clamps to black. The stored key is kept and
+ * REWRITTEN to "black", which restores devices that saved "white" without a
+ * manual cache clear.
  */
 export const APPEARANCE_KEY = "eamp.appearanceMode";
 export const DEFAULT_APPEARANCE_MODE: AppearanceMode = "black";
@@ -137,12 +144,7 @@ export const APPEARANCE_CHOICES: ReadonlyArray<{
   {
     mode: "black",
     title: "Black / Dark",
-    body: "Obsidian surfaces, white text — the classic console.",
-  },
-  {
-    mode: "white",
-    title: "White / Light",
-    body: "Crisp white cards, deep slate text — daylight readable.",
+    body: "Obsidian glass, pure white text, accent glow.",
   },
 ];
 
@@ -222,6 +224,10 @@ function load() {
   const storedTheme = window.localStorage.getItem(THEME_KEY) as InterfaceThemeId | null;
   const storedFont = window.localStorage.getItem(FONT_KEY) as FontOptionId | null;
   const storedAppearance = window.localStorage.getItem(APPEARANCE_KEY);
+  // A saved "white" from an older build is migrated back to obsidian black.
+  if (storedAppearance && storedAppearance !== DEFAULT_APPEARANCE_MODE) {
+    window.localStorage.setItem(APPEARANCE_KEY, DEFAULT_APPEARANCE_MODE);
+  }
   // A font removed from the lineup falls back to the default instead of
   // rendering as an invisible system stack.
   const validFont = FONT_OPTIONS.some((option) => option.id === storedFont);
@@ -229,8 +235,9 @@ function load() {
     color: storedColor ?? DEFAULT_COLOR,
     theme: storedTheme ?? DEFAULT_THEME,
     font: validFont ? (storedFont as FontOptionId) : DEFAULT_FONT,
-    // Unknown/missing mode is the obsidian default — never a broken value.
-    appearanceMode: storedAppearance === "white" ? "white" : DEFAULT_APPEARANCE_MODE,
+    // OBSIDIAN ONLY — every stored value (including a legacy "white") loads
+    // as black, so the very first paint is the deep black interface.
+    appearanceMode: DEFAULT_APPEARANCE_MODE,
   };
 }
 
@@ -302,18 +309,18 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
 }
 
 /**
- * THE BLACK/WHITE SWITCH — the only writer of `appearanceMode`.
+ * THE APPEARANCE SETTER — the only writer of `appearanceMode`.
  *
- * It repaints immediately (no reload): the tokens are published here and the
- * `data-appearance` attribute drives the light-mode stylesheet. Nothing else
- * (colour, interface, font, background) is touched.
+ * It CLAMPS to obsidian black: light surfaces are retired, so a stale caller
+ * (or a restored "white" preference) can never splash a white plate behind
+ * the interface again. It still repaints immediately (no reload) and persists
+ * the normalised value so the next launch starts black too.
  */
-export function setAppearanceMode(mode: AppearanceMode) {
+export function setAppearanceMode(_mode: AppearanceMode = DEFAULT_APPEARANCE_MODE) {
   load();
-  const next: AppearanceMode = mode === "white" ? "white" : "black";
-  state = { ...state, appearanceMode: next };
+  state = { ...state, appearanceMode: DEFAULT_APPEARANCE_MODE };
   persist();
-  applyAppearanceMode(next);
+  applyAppearanceMode(DEFAULT_APPEARANCE_MODE);
 }
 
 export function setFontOption(id: FontOptionId) {

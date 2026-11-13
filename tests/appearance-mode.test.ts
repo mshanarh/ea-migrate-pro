@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   APPEARANCE_KEY,
   getCustomization,
@@ -7,15 +7,17 @@ import {
 import { applyAppearanceMode, interfaceDefinitionFor } from "@/lib/interface-themes";
 
 /**
- * APPEARANCE MODE — the Black/White switch.
+ * APPEARANCE MODE — OBSIDIAN ONLY.
  *
- * Settings writes the mode once (`setAppearanceMode`); `InterfaceThemeSync`
- * then publishes it to <html>. These tests pin the parts that decide what is
- * actually painted:
- *   • the preference is remembered under its own key and defaults to black;
- *   • WHITE sets `data-appearance="white"` and the light surface/text tokens;
- *   • BLACK writes the obsidian attribute and leaves the interface's own
- *     tokens alone, so switching back is a true restore, not a third theme.
+ * The app is a black console on every screen and every Main Interface. Light
+ * surfaces were retired because they rendered white plates behind white text
+ * (and dark ink on dark glass) on the layouts that hardcode their colours.
+ * These tests pin the parts that decide what is painted:
+ *   • the preference loads as black, and a stored legacy "white" is REWRITTEN
+ *     to black so no device stays washed out after the update;
+ *   • the setter clamps to black — nothing can publish light tokens again;
+ *   • the document is always stamped `data-appearance="black"` with the dark
+ *     color-scheme, and the interface's own obsidian tokens are untouched.
  */
 describe("appearance mode", () => {
   beforeEach(() => {
@@ -37,56 +39,47 @@ describe("appearance mode", () => {
     }
   });
 
-  it("defaults to black and remembers a white choice under eamp.appearanceMode", () => {
+  it("defaults to black", () => {
     expect(getCustomization().appearanceMode).toBe("black");
+  });
 
-    setAppearanceMode("white");
-    expect(getCustomization().appearanceMode).toBe("white");
-    expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("white");
-
-    setAppearanceMode("black");
-    expect(getCustomization().appearanceMode).toBe("black");
+  it("migrates a stored legacy white preference to black on launch", async () => {
+    window.localStorage.setItem(APPEARANCE_KEY, "white");
+    // A launch is a fresh module: reload the store and read storage again.
+    vi.resetModules();
+    const fresh = await import("@/lib/app-customization");
+    expect(fresh.getCustomization().appearanceMode).toBe("black");
+    // …and the stale value is rewritten, so the device stays black.
     expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("black");
   });
 
-  it("publishes the light tokens and the white attribute, then restores black", () => {
+  it("clamps any mode to black and keeps the document dark", () => {
     setAppearanceMode("white");
 
     const root = document.documentElement;
-    expect(root.getAttribute("data-appearance")).toBe("white");
-    expect(root.style.colorScheme).toBe("light");
-    expect(root.style.getPropertyValue("--if-surface")).toBe("#FFFFFF");
-    expect(root.style.getPropertyValue("--if-surface-alt")).toBe("#F1F5F9");
-    expect(root.style.getPropertyValue("--if-well")).toBe("#F8FAFC");
-    expect(root.style.getPropertyValue("--if-border")).toBe("rgba(0, 0, 0, 0.08)");
-    expect(root.style.getPropertyValue("--if-text")).toBe("#0F172A");
-    expect(root.style.getPropertyValue("--if-muted")).toBe("#64748B");
-    expect(root.style.getPropertyValue("--if-shadow")).toContain("rgba(0, 0, 0, 0.06)");
-    expect(root.style.getPropertyValue("--if-bg")).toContain("#FFFFFF");
-
-    setAppearanceMode("black");
     expect(root.getAttribute("data-appearance")).toBe("black");
     expect(root.style.colorScheme).toBe("dark");
+    // No light surface tokens may be published.
+    expect(root.style.getPropertyValue("--if-surface")).toBe("");
+    expect(root.style.getPropertyValue("--if-text")).toBe("");
+    expect(root.style.getPropertyValue("--if-bg")).toBe("");
   });
 
-  it("keeps a styled interface's dark tokens when the mode is black", () => {
+  it("leaves a styled interface's obsidian tokens in place", () => {
     const definition = interfaceDefinitionFor("CRIMSON NAVIGATOR");
     expect(definition).not.toBeNull();
 
-    // Black writes NOTHING: the definition published by InterfaceThemeSync is
-    // the obsidian palette, so the classic console is preserved.
     applyAppearanceMode("black");
     expect(document.documentElement.getAttribute("data-appearance")).toBe("black");
     expect(document.documentElement.style.getPropertyValue("--if-surface")).toBe("");
   });
 
-  it("uses a white surface with dark ink — no white-on-white card", () => {
-    setAppearanceMode("white");
+  it("is idempotent — repeated calls never introduce a white surface", () => {
+    applyAppearanceMode("black");
+    applyAppearanceMode("white");
+    applyAppearanceMode("black");
     const root = document.documentElement;
-    const surface = root.style.getPropertyValue("--if-surface").toUpperCase();
-    const ink = root.style.getPropertyValue("--if-text").toUpperCase();
-    expect(surface).toBe("#FFFFFF");
-    expect(ink).toBe("#0F172A");
-    expect(surface).not.toBe(ink);
+    expect(root.getAttribute("data-appearance")).toBe("black");
+    expect(root.style.getPropertyValue("--if-surface")).toBe("");
   });
 });

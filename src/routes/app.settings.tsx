@@ -153,17 +153,18 @@ function PillSection({
 }
 
 /**
- * APPEARANCE / THEME MODE — Black (dark) or White (light).
+ * APPEARANCE / THEME MODE — OBSIDIAN ONLY.
  *
- * Two real previews, not two labels: the card paints the surface and the ink
- * the mode actually produces (obsidian with white text, or pure white with a
- * soft grey border and black text), so the choice is visible before it is
- * taken. The active card carries the checkmark and the accent glow.
+ * The card paints the mode it actually applies (deep black glass, pure white
+ * ink, accent glow). Light surfaces are retired: they put white plates behind
+ * white text and dark ink on dark glass, so there is no second option to pick
+ * and nothing on any screen can wash out. The mode stays persisted, so the
+ * section still reports what the device is running.
  */
 function AppearanceSection({ accent }: { accent: string }) {
   const { appearanceMode } = useCustomization();
   return (
-    <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-3">
       {APPEARANCE_CHOICES.map((option) => {
         const active = appearanceMode === option.mode;
         const dark = option.mode === "black";
@@ -234,6 +235,10 @@ function AppearanceSection({ accent }: { accent: string }) {
           </button>
         );
       })}
+      <p className="if-muted px-1 text-[11px] font-semibold leading-snug">
+        Obsidian black is the only mode — light surfaces are retired, so cards, hero sections and
+        text stay high-contrast white on black on every screen.
+      </p>
     </div>
   );
 }

@@ -489,6 +489,42 @@ html[data-portal] [data-font-sample] {
   min-height: 100dvh;
 }
 
+/* ══════════════════════════════════════════════════════════════════════
+   OBSIDIAN FOUNDATION — THE APP IS BLACK ON EVERY SCREEN
+   ══════════════════════════════════════════════════════════════════════
+   Deep black page, obsidian screen plates, pure white ink. These are the
+   defaults every screen and every Main Interface falls back to, so a layout
+   that hardcodes nothing can never render as a washed-out plate with
+   dark-on-dark text. Interface definitions and background pictures still
+   override the wash (higher specificity / their own background image); the
+   ambient glow layers above them are untouched.
+
+   Scoped to the APP shell only: the marketing site and the mentor portal
+   stamp `data-marketing` / `data-portal` and keep their own brand styling. */
+html:not([data-marketing]):not([data-portal]) body {
+  background-color: #050508;
+  color: #ffffff;
+}
+
+.app-fullscreen,
+.if-screen {
+  background-color: #0a0a0c;
+  color: #ffffff;
+}
+
+/* Legacy layouts draw cards with the shared class but no interface tokens;
+   give them the obsidian glass plate + crisp white ink. Styled interfaces
+   keep their own tinted definition (this rule deliberately does not apply
+   there), so Crimson Navigator stays red-tinted and Quantum Blue ice-tinted. */
+html:not([data-if-styled]) .if-card.if-card {
+  background-color: #0a0a0c;
+  color: #ffffff;
+}
+html:not([data-if-styled]) .if-well.if-well {
+  background-color: #050508;
+  color: #ffffff;
+}
+
 .app-fullscreen .app-scroll-area {
   min-height: 100dvh;
 }
@@ -1320,247 +1356,4 @@ body.eamp-colour-matrix h2 {
   body.eamp-colour-matrix h2 {
     animation: none;
   }
-}
-
-
-
-/* ══════════════════════════════════════════════════════════════════════
-   APPEARANCE MODE — WHITE (LIGHT)
-   ══════════════════════════════════════════════════════════════════════
-   Settings → Theme Mode writes `data-appearance` on <html>
-   (src/lib/interface-themes.ts → applyAppearanceMode). BLACK is the default
-   and changes nothing here, so the obsidian console is preserved exactly.
-
-   WHITE does two things:
-     1. publishes the light `--if-*` tokens (surfaces, text, border, shadow,
-        nav) — with !important, because a styled interface publishes its own
-        dark definition INLINE on <html> and inline styles otherwise win;
-     2. lifts the dark Tailwind utilities this app is built from, so legacy
-        layouts (which never read `--if-*`) also render light: page shells,
-        cards, wells, fields, chips, borders, headings and numbers.
-
-   Signature accents, radii and the user's background picture/video are NOT
-   touched — light mode changes surfaces and ink, not the design. */
-
-html[data-appearance="white"] {
-  color-scheme: light;
-  --if-bg: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%) !important;
-  --if-surface: #ffffff !important;
-  --if-surface-alt: #f1f5f9 !important;
-  --if-well: #f8fafc !important;
-  --if-border: rgba(0, 0, 0, 0.08) !important;
-  --if-text: #0f172a !important;
-  --if-muted: #64748b !important;
-  --if-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04) !important;
-  --if-texture: none !important;
-  --if-nav-bg: rgba(255, 255, 255, 0.94) !important;
-  --if-nav-border: rgba(0, 0, 0, 0.08) !important;
-  --if-nav-shadow: 0 10px 30px rgba(15, 23, 42, 0.1) !important;
-  /* Handy shorthand for bespoke screens that want to match. */
-  --appearance-surface: #ffffff;
-  --appearance-well: #f8fafc;
-}
-
-/* ── Page shells ─────────────────────────────────────────────────────── */
-html[data-appearance="white"] body {
-  background-color: #f8fafc;
-  color: #0f172a;
-}
-
-html[data-appearance="white"] .app-fullscreen,
-html[data-appearance="white"] .if-screen {
-  background-color: #f8fafc !important;
-  color: #0f172a;
-}
-
-/* The interface wash becomes the crisp light gradient (its signature rail,
-   radius and accents stay). */
-html[data-appearance="white"] .if-screen.if-screen {
-  background: var(--if-bg) !important;
-  background-image: none !important;
-}
-
-/* The owner's picture / video / animated background still owns the screen. */
-html[data-appearance="white"] body.eamp-app-bg .if-screen.if-screen,
-html[data-appearance="white"] body.eamp-bg-on .if-screen.if-screen,
-html[data-appearance="white"] body.eamp-app-video .if-screen.if-screen {
-  background: transparent !important;
-  background-image: none !important;
-}
-
-/* ── Shared `.if-*` surfaces on EVERY interface (legacy layouts included) ──
-   No !important on these: these rules are unlayered and therefore already
-   outrank Tailwind's utilities, while a component's own inline accent style
-   (the selected card's tint, the chosen tab's colour) must still win. */
-html[data-appearance="white"] .if-card.if-card {
-  background: var(--if-surface);
-  border: var(--if-border-width, 1px) solid var(--if-border);
-  color: var(--if-text);
-  box-shadow: var(--if-shadow);
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-html[data-appearance="white"] .if-well.if-well,
-html[data-appearance="white"] .if-chip.if-chip {
-  background: var(--if-surface-alt);
-  border: var(--if-border-width, 1px) solid var(--if-border);
-  color: var(--if-text);
-}
-
-html[data-appearance="white"] .if-field.if-field {
-  background: var(--if-well);
-  border: var(--if-border-width, 1px) solid var(--if-border);
-  color: var(--if-text);
-}
-
-html[data-appearance="white"] .if-text.if-text,
-html[data-appearance="white"] .if-header.if-header {
-  color: var(--if-text) !important;
-}
-html[data-appearance="white"] .if-muted.if-muted {
-  color: var(--if-muted) !important;
-}
-html[data-appearance="white"] .if-rule,
-html[data-appearance="white"] .if-header-rule.if-header-rule {
-  border-color: var(--if-border) !important;
-}
-html[data-appearance="white"] .if-num.if-num {
-  color: var(--if-text);
-}
-
-html[data-appearance="white"] .if-nav.if-nav {
-  background: var(--if-nav-bg) !important;
-  border-color: var(--if-nav-border) !important;
-  box-shadow: var(--if-nav-shadow) !important;
-}
-html[data-appearance="white"] .if-nav .if-muted.if-muted {
-  color: var(--if-muted) !important;
-}
-
-/* ── Ink: white text becomes deep slate, muted white becomes medium slate ── */
-html[data-appearance="white"] [class~="text-white"],
-html[data-appearance="white"] [class*="text-white/"],
-html[data-appearance="white"] [class*="hover:text-white"] {
-  color: #0f172a !important;
-}
-
-/* Secondary copy keeps its hierarchy — but on slate, not washed-out white. */
-html[data-appearance="white"] [class*="text-white/2"],
-html[data-appearance="white"] [class*="text-white/3"],
-html[data-appearance="white"] [class*="text-white/4"],
-html[data-appearance="white"] [class*="text-white/5"],
-html[data-appearance="white"] [class*="text-white/6"],
-html[data-appearance="white"] [class*="text-white/7"],
-html[data-appearance="white"] [class*="text-white/8"],
-html[data-appearance="white"] [class*="text-white/9"] {
-  color: #475569 !important;
-}
-
-/* Mid-greys and pale blues that only read on a dark page. */
-html[data-appearance="white"] [class~="text-[#8a9298]"],
-html[data-appearance="white"] [class~="text-[#59646b]"],
-html[data-appearance="white"] [class~="text-[#aab2b7]"],
-html[data-appearance="white"] [class~="text-[#bcd9e8]"],
-html[data-appearance="white"] [class~="text-[#D7E4F5]"],
-html[data-appearance="white"] [class~="text-[#9fdcff]"] {
-  color: #475569 !important;
-}
-html[data-appearance="white"] [class~="text-[#55c7ff]"],
-html[data-appearance="white"] [class~="text-[#38BDF8]"],
-html[data-appearance="white"] [class~="text-[#00a8ff]"] {
-  color: #0369a1 !important;
-}
-html[data-appearance="white"] [class~="text-[#00F5A0]"] {
-  color: #047857 !important;
-}
-
-/* ── Surfaces: the obsidian plates become white cards ─────────────────── */
-html[data-appearance="white"] [class~="bg-black"] {
-  background-color: transparent !important;
-}
-
-html[data-appearance="white"] [class~="bg-black/25"],
-html[data-appearance="white"] [class~="bg-black/30"],
-html[data-appearance="white"] [class~="bg-black/35"],
-html[data-appearance="white"] [class~="bg-black/40"],
-html[data-appearance="white"] [class~="bg-black/45"],
-html[data-appearance="white"] [class~="bg-black/55"],
-html[data-appearance="white"] [class~="bg-black/60"],
-html[data-appearance="white"] [class~="bg-black/65"],
-html[data-appearance="white"] [class~="bg-black/70"],
-html[data-appearance="white"] [class~="bg-black/75"],
-html[data-appearance="white"] [class~="bg-black/80"],
-html[data-appearance="white"] [class~="bg-black/85"],
-html[data-appearance="white"] [class~="bg-black/90"] {
-  background-color: rgba(255, 255, 255, 0.9) !important;
-}
-
-html[data-appearance="white"] [class*="bg-white/"] {
-  background-color: #f1f5f9 !important;
-}
-
-/* The dark card hexes used across the screens (dialogs, sheets, tiles). */
-html[data-appearance="white"] [class~="bg-[#111111]"],
-html[data-appearance="white"] [class~="bg-[#111]"],
-html[data-appearance="white"] [class~="bg-[#141414]"],
-html[data-appearance="white"] [class~="bg-[#121212]"],
-html[data-appearance="white"] [class~="bg-[#0A0A0A]"],
-html[data-appearance="white"] [class~="bg-[#0a0a0a]"],
-html[data-appearance="white"] [class~="bg-[#0a0a0c]"],
-html[data-appearance="white"] [class~="bg-[#0b0b0d]"],
-html[data-appearance="white"] [class~="bg-[#0d0d0d]"],
-html[data-appearance="white"] [class~="bg-[#0d1117]"],
-html[data-appearance="white"] [class~="bg-[#07090B]"],
-html[data-appearance="white"] [class~="bg-[#070d10]"],
-html[data-appearance="white"] [class~="bg-[#04070b]"],
-html[data-appearance="white"] [class~="bg-[#0C1013]"],
-html[data-appearance="white"] [class~="bg-[#10161a]"],
-html[data-appearance="white"] [class~="bg-[#121216]"],
-html[data-appearance="white"] [class~="bg-[#151b23]"],
-html[data-appearance="white"] [class~="bg-[#1A2332]"],
-html[data-appearance="white"] [class~="bg-[#2a2a2a]"],
-html[data-appearance="white"] [class~="bg-[#2A2A2A]"],
-html[data-appearance="white"] [class~="bg-[#3a3a3a]"] {
-  background-color: #ffffff !important;
-}
-
-/* ── Borders: white hairlines become soft grey ───────────────────────── */
-html[data-appearance="white"] [class~="border-white"],
-html[data-appearance="white"] [class*="border-white/"] {
-  border-color: rgba(0, 0, 0, 0.08) !important;
-}
-html[data-appearance="white"] [class~="border-[#202930]"] {
-  border-color: rgba(0, 0, 0, 0.1) !important;
-}
-
-/* Inputs and textareas that carry no `.if-field` still read as fields. */
-html[data-appearance="white"] input,
-html[data-appearance="white"] textarea,
-html[data-appearance="white"] select {
-  color: #0f172a;
-  caret-color: #0f172a;
-}
-html[data-appearance="white"] input::placeholder,
-html[data-appearance="white"] textarea::placeholder {
-  color: #94a3b8;
-}
-
-/* Numbers, prices and tables keep full contrast on white. */
-html[data-appearance="white"] .tabular-nums,
-html[data-appearance="white"] [class*="font-mono"] {
-  color: inherit;
-}
-
-/* Radix portals (dialogs, popovers, toasts) sit OUTSIDE the app subtree but
-   still inside <html>, so the same light treatment reaches them. */
-html[data-appearance="white"] [role="dialog"],
-html[data-appearance="white"] [role="alertdialog"] {
-  color: #0f172a;
-}
-html[data-appearance="white"] [data-sonner-toast] {
-  background: #ffffff !important;
-  border-color: rgba(0, 0, 0, 0.08) !important;
-  color: #0f172a !important;
-  box-shadow: 0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04) !important;
 }

@@ -16,11 +16,11 @@ import {
  * Legacy layouts (NOVA CORE, SNIPPER, PHOENIX, …) resolve to null, which puts
  * the tokens back to neutral and leaves their bespoke styling alone.
  *
- * The APPEARANCE MODE (black / white) is published after the definition: the
- * definition always supplies the obsidian palette, and light mode then lifts
- * the surface/text tokens (and sets `data-appearance="white"`, which drives
- * the light stylesheet). Black mode writes nothing, so the classic console is
- * untouched.
+ * The APPEARANCE MODE is published after the definition and is always the
+ * OBSIDIAN palette: the definition (or the neutral defaults) supplies the
+ * deep black surfaces and white ink, and `applyAppearanceMode` only stamps
+ * `data-appearance="black"` + `color-scheme: dark`. Light surfaces are
+ * retired, so no screen can be repainted pale behind white text.
  *
  * It renders NOTHING. The temporary debug badge that used to sit at the bottom
  * left ("NOVA CORE · #…") is gone: it was a testing aid, it floated over the
