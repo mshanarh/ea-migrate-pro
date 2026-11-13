@@ -58,6 +58,10 @@ export function AccentVarSync() {
   const { color } = useCustomization();
   useEffect(() => {
     applyAccentTokens(accentColorValue(color));
+    // The accent also lands on <html> as data-accent: the WHITE selection turns
+    // the page backdrop white (styles.css) while every piece of chrome — nav,
+    // cards, headers, console — stays black.
+    document.documentElement.setAttribute("data-accent", color);
   }, [color]);
   return null;
 }

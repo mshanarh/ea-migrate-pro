@@ -248,6 +248,11 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     );
 
     if (analysis.direction.type === "NO_TRADE") {
+      // Trend alignment: a confirmed EMA 20/50/200 structure refuses every
+      // counter-trend side, so a 3–5 bar bounce is never traded as a reversal.
+      if (analysis.direction.reason.startsWith("Blocked: Counter-trend")) {
+        log(`${symbol}: ${analysis.direction.reason} — no batch opened, no counter-trend entry`);
+      }
       const kind = classifyNoTrade(analysis.direction.reason);
       fail(`${symbol} NO TRADE (${kind}) — ${analysis.direction.reason}`, {
         symbol,
@@ -282,6 +287,9 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       console.log(`[scalp] ATR floor applied: SL adjusted from ${existingRisk} to ${newRisk} (ATR=${atr}, floor=${atrFloor})`);
     }
     const slRule = adjustedSlPad >= existingRisk ? "ATR floor" : "window extreme";
+    log(
+      `${symbol}: SL rule ${slRule} — SL ${direction.sl} (distance ${adjustedSlPad.toFixed(5)}, ATR ${atr.toFixed(5)}, floor ${atrFloor.toFixed(5)})`,
+    );
 
     // The card shows the analysed plan before the broker confirms anything.
     updateExecutionPlan({

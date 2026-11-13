@@ -58,6 +58,14 @@ export type MarketSetup = {
   stopBars: number;
   /** Open time (seconds) of the newest COMPLETED candle the decision used. */
   candleTime: number | null;
+  /** ATR(14) of the completed candles the stop was measured on. */
+  atr?: number;
+  /** ATR-based minimum stop distance floor (1.5 × ATR). */
+  atrFloor?: number;
+  /** Stop distance actually applied beyond the window extreme. */
+  slPad?: number;
+  /** Which rule set the stop: the window extreme or the ATR floor. */
+  slRule?: string;
 };
 
 export interface AnalysisResult {
@@ -301,7 +309,9 @@ async function fetchBridgeCandlesResult(
         "Content-Type": "application/json",
         "x-bridge-key": BRIDGE_KEY,
       },
-      body: JSON.stringify({ credentials, symbol, timeframe, count: 120 }),
+      // 260 bars so EMA 200 can be measured on COMPLETED data (the forming bar
+      // is dropped after normalisation).
+      body: JSON.stringify({ credentials, symbol, timeframe, count: EMA_CANDLE_COUNT }),
       signal: controller.signal,
     });
     summary.status = response.status;
@@ -868,6 +878,110 @@ export const PULLBACK_BARS = 5;
 /** How far price must have come back off that extreme, in ATR units. */
 export const MIN_PULLBACK_ATR = 0.25;
 
+// EMA TREND ALIGNMENT ------------------------------------------------------
+// Confirmed Downtrend: price < EMA 50 and EMA 20 < EMA 50. EVERY BUY IS HARD
+// BLOCKED - an upward move of 3-5 bars inside that structure is a counter-trend
+// pullback, not a reversal. Confirmed Uptrend: price > EMA 50 and EMA 20 > EMA
+// 50, and every SELL is hard blocked the same way. When the structure is not
+// confirmed the filter stays out of the way.
+const EMA_FAST_PERIOD = 20;
+const EMA_MID_PERIOD = 50;
+const EMA_LOOKBACK = 200; // longest EMA period
+/** Completed M15 bars requested from the bridge — enough for EMA 200. */
+export const EMA_CANDLE_COUNT = 260;
+
+/** Exponential Moving Average - oldest to newest series, seeded with an SMA. */
+function emaOf(candles: ReadonlyArray<BrokerCandle>, period: number): number | null {
+  if (candles.length < period) return null;
+  let sum = 0;
+  for (let i = 0; i < period; i += 1) {
+    sum += candles[i]!.close;
+  }
+  let ema = sum / period;
+  const multiplier = 2 / (period + 1);
+  for (let i = period; i < candles.length; i += 1) {
+    const close = candles[i]!.close;
+    if (Number.isFinite(close)) {
+      ema = (close - ema) * multiplier + ema;
+    }
+  }
+  return Number.isFinite(ema) ? ema : null;
+}
+
+/** Higher-structure trend from a completed candle series. */
+function determineEmaTrend(
+  candles: ReadonlyArray<BrokerCandle>,
+): "uptrend" | "downtrend" | "neutral" {
+  // EMA 50 is the structure line; 60 completed bars is the documented minimum.
+  // The EMA 200 only REFINES the read, so a shorter series still gets a verdict
+  // instead of silently skipping the block.
+  if (candles.length < EMA_MID_PERIOD) return "neutral";
+  const ema20 = emaOf(candles, EMA_FAST_PERIOD);
+  const ema50 = emaOf(candles, EMA_MID_PERIOD);
+  const ema200 = candles.length >= EMA_LOOKBACK ? emaOf(candles, EMA_LOOKBACK) : null;
+  if (ema20 === null || ema50 === null) return "neutral";
+
+  const newestClose = candles[candles.length - 1]!.close;
+  // Long-term confirmation: EMA 50 above/below EMA 200.
+  const longBullish = ema200 !== null && ema50 > ema200;
+  const longBearish = ema200 !== null && ema50 < ema200;
+  // Confirmed uptrend: price above EMA 50 AND (EMA 20 above EMA 50 OR EMA 50 > EMA 200).
+  const uptrend = newestClose > ema50 && (ema20 > ema50 || longBullish);
+  // Confirmed downtrend: price below EMA 50 AND (EMA 20 below EMA 50 OR EMA 50 < EMA 200).
+  const downtrend = newestClose < ema50 && (ema20 < ema50 || longBearish);
+
+  if (uptrend) return "uptrend";
+  if (downtrend) return "downtrend";
+  return "neutral";
+}
+
+/**
+ * EMA TREND VERIFIER — returns the refusal reason when `direction` fights the
+ * confirmed higher-structure trend, or null when the trade may proceed (with
+ * the trend, or with no confirmed trend at all).
+ *
+ * Two refusals live here:
+ *   1. COUNTER-TREND — hard blocked with the exact reason the user sees.
+ *   2. RETRACEMENT NOT EXHAUSTED — the side agrees with the trend but the
+ *      completed candle has not closed back beyond EMA 20 yet, i.e. the bounce
+ *      is still running. Entering then is the pullback peak/trough.
+ *
+ * Every engine (auto-trade start-time evaluation, the bot loop and the VPS
+ * daemon) refuses those entries through this one rule.
+ */
+export function verifyDirectionAgainstTrend(
+  direction: "BUY" | "SELL",
+  candles: ReadonlyArray<BrokerCandle>,
+): string | null {
+  const trend = determineEmaTrend(candles);
+  if (trend === "neutral") return null;
+
+  if (trend === "downtrend" && direction === "BUY") {
+    return "Blocked: Counter-trend retracement against confirmed DOWNTREND (Price vs EMA50/200)";
+  }
+  if (trend === "uptrend" && direction === "SELL") {
+    return "Blocked: Counter-trend retracement against confirmed UPTREND (Price vs EMA50/200)";
+  }
+
+  // WITH the trend — but only after the retracement exhausts. A confirmed
+  // downtrend sells a bounce that has ROLLED OVER (completed close back below
+  // EMA 20); a confirmed uptrend buys a dip that has turned up again
+  // (completed close back above EMA 20). Selling into the bounce or buying
+  // into the dip is the wrong moment even on the right side.
+  const ema20 = emaOf(candles, EMA_FAST_PERIOD);
+  if (ema20 !== null) {
+    const close = candles[candles.length - 1]!.close;
+    if (trend === "downtrend" && close >= ema20) {
+      return `Waiting for retracement exhaustion: SELL needs a completed close back below EMA 20 (${level(ema20)}), newest close ${level(close)}`;
+    }
+    if (trend === "uptrend" && close <= ema20) {
+      return `Waiting for retracement exhaustion: BUY needs a completed close back above EMA 20 (${level(ema20)}), newest close ${level(close)}`;
+    }
+  }
+  return null;
+}
+// EMA TREND ALIGNMENT END --------------------------------------------------
+
 export type EntryGateVerdict =
   | "enter"
   | "too-extended"
@@ -1141,6 +1255,19 @@ export function evaluateMomentum(input: {
     basis = "live quote";
   }
 
+  // ── TREND ALIGNMENT: a confirmed higher-structure trend blocks every
+  // counter-trend side. A 3–5 bar bounce inside a downtrend is a pullback,
+  // never a reversal — it must not become a BUY at the peak of the bounce.
+  const trendBlockReason = verifyDirectionAgainstTrend(signal, candles);
+  if (trendBlockReason) {
+    return {
+      kind: "no-trade",
+      setup: null,
+      price,
+      reason: `${trendBlockReason}. No order was sent.`,
+    };
+  }
+
   const height = high - low;
   const atrResult = atrOf(candles);
   if (!atrResult) return {
@@ -1159,8 +1286,7 @@ export function evaluateMomentum(input: {
   const entry = signal === "BUY" ? input.ask : input.bid;
   const extreme = signal === "BUY" ? low : high;
   const sl = signal === "BUY" ? low - slPad : high + slPad;
-  const risk = Math.abs(entry - sl);
-  const risk = Math.max(risk, atrFloor);
+  const risk = Math.max(Math.abs(entry - sl), atrFloor);
   // TP1 = 1× the (adjusted) SL distance from entry
   const tp1 = signal === "BUY" ? entry + risk : entry - risk;
   // TP2 = 2× the (adjusted) SL distance from entry
@@ -1180,7 +1306,7 @@ export function evaluateMomentum(input: {
   setup.atr = atr;
   setup.atrFloor = atrFloor;
   setup.slPad = slPad;
-  setup.slRule = "ATR floor" + (pad >= atrFloor ? "+window extreme" : "");
+  setup.slRule = pad >= atrFloor ? "window extreme" : "ATR floor";
   // Levels must sit on the correct side of the live entry — a gap that put the
   // price through the stop is a refusal, never a resize.
   const levelsValid =
@@ -1765,6 +1891,31 @@ async function resolveFixtureDirection(
     logForced(via.side);
   }
 
+
+  // ============================================================================
+  // EMA TREND FILTER — counter-trend retracements are HARD BLOCKED.
+  //
+  // `tradingCandles` is the oldest→newest 1h series. A confirmed downtrend
+  // (price < EMA 50 and EMA 20 < EMA 50) refuses EVERY BUY: a 3–5 bar bounce
+  // inside it is a pullback, not a reversal. A confirmed uptrend refuses every
+  // SELL the same way. Trading WITH the structure is never blocked here.
+  // ============================================================================
+  const emaBlockReason =
+    direction.type === "BUY" || direction.type === "SELL"
+      ? verifyDirectionAgainstTrend(direction.type, tradingCandles ?? [])
+      : null;
+
+  if (emaBlockReason) {
+    console.warn(`[auto-trade] ${symbol}: ${emaBlockReason}`);
+    direction = {
+      type: "NO_TRADE",
+      reason: `${emaBlockReason}. No order was sent.`,
+      blocked: true,
+    };
+    strength = "none";
+    reason = direction.reason;
+  }
+
   // ============================================================================
   // FINAL VALIDATION: Check execution readiness
   // ============================================================================
@@ -1816,48 +1967,12 @@ async function resolveFixtureDirection(
   }
 
   // ============================================================================
-  // DIRECTION GUARD — the chosen side must agree with the REAL 1h trend.
+  // DIRECTION GUARD — the chosen side must agree with the 1h higher structure.
   //
-  // `tradingCandles` is oldest→newest, so the newest close is the LAST entry
-  // and the close five candles earlier is the sixth from the end. When the
-  // chosen direction contradicts that move, no order is sent: the verdict
-  // becomes NO TRADE carrying the actual closes, and the popup bus receives
-  // the same numbers so the mismatch is visible instead of silent.
+  // Enforced above by the EMA 20/50/200 trend filter (counter-trend sides are
+  // refused as NO TRADE). The old five-close guard is gone: a 3–5 bar move is
+  // exactly the counter-trend retracement that produced wrong-way entries.
   // ============================================================================
-  const guardCloses = tradingCandles ?? [];
-  const verdict = { ok: true } as DirectionGuardVerdict;
-
-  if (!verdict.ok) {
-    const blockedReason = verdict.reason;
-    direction = {
-      type: "NO_TRADE",
-      reason: blockedReason,
-      blocked: true,
-    };
-    strength = "none";
-    executionReady = false;
-    reason = blockedReason;
-    console.error(`[auto-trade] ${symbol}: ${blockedReason}`);
-    // The same numbers go to the popup surfaces (top toast, floating bot,
-    // Android bubble) so the trader SEES the mismatch instead of a silent
-    // wrong-way entry.
-    if (typeof window !== "undefined") {
-      window.dispatchEvent(
-        new CustomEvent("eamp:execution-result", {
-          detail: {
-            ok: false,
-            status: "blocked",
-            symbol,
-            message: blockedReason,
-            rsi15m: rsi15mValue,
-            rsi1h: rsi1hValue,
-            momentum15m: momentum15mValue,
-            momentum1h: momentum1hValue,
-          },
-        }),
-      );
-    }
-  }
 
   // ── ONE LINE BEFORE THE DECISION LEAVES THIS FUNCTION: the last five
   // candles (timestamp + close), the momentum sign and the final direction.

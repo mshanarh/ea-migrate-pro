@@ -182,19 +182,21 @@ function AppScanner() {
       // The order comment is the CURRENT BOT'S NAME EXACTLY AS CONFIGURED —
       // spaces, version text, plus signs and every other character included
       // ("sniper killer ea v2+" is sent as "sniper killer ea v2+"). Nothing
-      # is stripped, collapsed, truncated or appended, and there is no brand
-      # fallback: "" only when the robot has no name.
+      // is stripped, collapsed, truncated or appended, and there is no brand
+      // fallback: "" only when the robot has no name.
       const orderComment = mt5OrderComment(robot?.name);
-      // SL/TP strategy:
+      // SL/TP strategy — the plan's own levels, never a guessed default.
+      const planEntryValue = Number(entry) || 0;
+      const planStopValue = Number(stopLoss) || 0;
       const planTp = Number(takeProfit) || 0;
-      let stopLossValue = estimated ? 0 : planStop;
+      let stopLossValue = estimated ? 0 : planStopValue;
       let takeProfitValue = estimated ? 0 : planTp;
       // The levels are anchored to the LIVE price before the order goes out.
       setExecutionStage("Setting TP and SL...");
       // The broker's own decimal count for this symbol — used to print the
       // confirmed entry / stop / target exactly as the broker did.
       let brokerDigits: number | null = null;
-      if (planStop > 0 || planTp > 0) {
+      if (planStopValue > 0 || planTp > 0) {
         try {
           const priceResponse = await fetch(`${getBridgeUrl()}/symbol/price`, {
             method: "POST",
@@ -208,10 +210,10 @@ function AppScanner() {
           brokerDigits = digits;
           const point = typeof pricePayload["point"] === "number" && pricePayload["point"] > 0 ? pricePayload["point"] : 10 ** -(digits ?? 2);
           const stopsLevelPoints = typeof pricePayload["stops_level"] === "number" ? pricePayload["stops_level"] : 0;
-          if (pricePayload["success"] === true && bid > 0 && ask > 0 && digits !== null && planEntry > 0) {
+          if (pricePayload["success"] === true && bid > 0 && ask > 0 && digits !== null && planEntryValue > 0) {
             const liveEntry = direction === "BUY" ? ask : bid;
-            const riskPct = planStop > 0 ? Math.abs(planEntry - planStop) / planEntry : 0;
-            const rewardPct = planTp > 0 ? Math.abs(planTp - planEntry) / planEntry : 0;
+            const riskPct = planStopValue > 0 ? Math.abs(planEntryValue - planStopValue) / planEntryValue : 0;
+            const rewardPct = planTp > 0 ? Math.abs(planTp - planEntryValue) / planEntryValue : 0;
             // A broker can report a zero/very small stops level while still
             // rejecting levels that fall inside the spread or move by the
             // time order_send runs. Keep a small live-price safety buffer.

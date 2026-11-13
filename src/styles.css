@@ -259,6 +259,14 @@ html.light-mode .hero-glow {
     background-color: #000;
   }
 
+  /* WHITE ACCENT — the interface stays black: nav, cards, headers, console and
+     every dark surface keep their own background. Only the PAGE backdrop
+     follows the White selection, so the choice is visible behind the chrome
+     instead of painting the whole app white. Any other accent keeps black. */
+  html[data-accent="white"] body {
+    background-color: #ffffff;
+  }
+
   img,
   video {
     max-width: 100%;

@@ -87,7 +87,13 @@ TP2_MULT = 1.6                       # far take profit (only if TP1 unreachable)
 MIN_MARGIN_BUFFER = 0.20             # 20 % free margin below requirement
 MAX_POSITIONS_PER_SYMBOL = 1         # one open ticket per symbol
 LAST_BARS = 8                        # short-term direction lens (8 completed M15)
-FULL_ATR_BARS = 40                       # full series for ATR(14) computation
+FULL_ATR_BARS = 40                   # full series for ATR(14) computation
+# Trend alignment: EMA 20/50/200 on COMPLETED bars. 260 bars requested so the
+# EMA 200 can be measured; the forming bar is dropped.
+EMA_BARS = 260
+EMA_FAST = 20
+EMA_MID = 50
+EMA_SLOW = 200
 BRIDGE_URL = os.getenv("SCALPER_BRIDGE_URL", "http://127.0.0.1:8000")
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
 DAEMON_VERSION = "2.3"
@@ -271,9 +277,12 @@ def _disconnect() -> None:
 
 
 # ── candle analysis ───────────────────────────────────────────────────────────────
-def _average_true_range(symbol: str, bars: list[dict], period: int = 8) -> float:
-    """True Range on the last `period` bars, averaged — the ATR estimate the
-    daemon uses for SL/TP while the bridge's /symbol/candles endpoint does not."""
+def _average_true_range(bars: list[dict], period: int = 14) -> float:
+    """ATR(`period`) — the true range includes the gap from the previous close,
+    so a weekend gap cannot read as a tiny range. Averages the last `period`
+    true ranges only; more history than that is used for the EMAs, not the ATR."""
+    if len(bars) < 2:
+        return 0.0
     highs = [b["high"] for b in bars]
     lows = [b["low"] for b in bars]
     closes = [b["close"] for b in bars]
@@ -281,7 +290,44 @@ def _average_true_range(symbol: str, bars: list[dict], period: int = 8) -> float
     for i in range(1, len(bars)):
         tr = max(highs[i] - lows[i], abs(highs[i] - closes[i - 1]), abs(lows[i] - closes[i - 1]))
         trs.append(tr)
-    return sum(trs) / max(len(trs), 1)
+    window = trs[-period:] if period > 0 else trs
+    return sum(window) / max(len(window), 1)
+
+
+def _ema(closes: list[float], period: int) -> float | None:
+    """Exponential Moving Average seeded with an SMA of the first `period` closes."""
+    if len(closes) < period:
+        return None
+    ema = sum(closes[:period]) / period
+    multiplier = 2.0 / (period + 1.0)
+    for close in closes[period:]:
+        ema = (close - ema) * multiplier + ema
+    return ema
+
+
+def _ema_trend(bars: list[dict]) -> str:
+    """Higher-structure trend from COMPLETED bars: "uptrend", "downtrend" or
+    "neutral". Needs at least EMA_MID bars (50); EMA_SLOW (200) refines it when
+    the series is long enough."""
+    closes = [b["close"] for b in bars]
+    if len(closes) < EMA_MID:
+        return "neutral"
+    ema_fast = _ema(closes, EMA_FAST)
+    ema_mid = _ema(closes, EMA_MID)
+    ema_slow = _ema(closes, EMA_SLOW)
+    if ema_fast is None or ema_mid is None:
+        return "neutral"
+    price = closes[-1]
+    # Long-term confirmation: EMA 50 above/below EMA 200 (needs 200 bars).
+    long_bullish = ema_slow is not None and ema_mid > ema_slow
+    long_bearish = ema_slow is not None and ema_mid < ema_slow
+    # Confirmed uptrend: price above EMA 50 AND (EMA 20 above EMA 50 OR EMA 50 > EMA 200).
+    if price > ema_mid and (ema_fast > ema_mid or long_bullish):
+        return "uptrend"
+    # Confirmed downtrend: price below EMA 50 AND (EMA 20 below EMA 50 OR EMA 50 < EMA 200).
+    if price < ema_mid and (ema_fast < ema_mid or long_bearish):
+        return "downtrend"
+    return "neutral"
 
 
 def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
@@ -296,8 +342,8 @@ def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
         symbol_name = symbol
         if not mt5.symbol_select(symbol_name, True):
             return None
-        # Fetch 40+ completed bars for ATR(14) computation
-        rates = mt5.copy_rates_from_pos(symbol_name, M15, 0, FULL_ATR_BARS + 1)
+        # Fetch enough completed bars for ATR(14) AND EMA 20/50/200.
+        rates = mt5.copy_rates_from_pos(symbol_name, M15, 0, EMA_BARS + 1)
         if rates is None or len(rates) < FULL_ATR_BARS + 1:
             return None
         bars = []
@@ -327,14 +373,58 @@ def _last_8_completed_candles(symbol: str, creds) -> list[dict] | None:
         _disconnect()
 
 
-def _direction(bars: list[dict]) -> str:
+def _direction(bars: list[dict]) -> tuple[str, str]:
+    """Return (side, block_reason).
+
+    The short-term side is still read from the newest closes, but a CONFIRMED
+    higher-structure trend (EMA 20/50/200) hard blocks every counter-trend side:
+    a 3-5 bar bounce inside a downtrend is a pullback, not a reversal, and the
+    daemon must never open a BUY at the peak of that bounce. When the structure
+    is neutral the short-term read stands.
+
+    side is "NO_TRADE" when the trend filter refuses the direction; block_reason
+    is "" unless the filter refused.
+    """
+    if len(bars) < 2:
+        return "NO_TRADE", "not enough completed candles to read direction"
+
     first_range = bars[-1]["close"] - bars[0]["open"]
-    last_range = bars[-1]["close"] - bars[-2]["close"] if len(bars) > 1 else first_range
+    last_range = bars[-1]["close"] - bars[-2]["close"]
     atr = _average_true_range(bars)
     if atr < 1e-9:
-        return "BUY" if first_range > 0 else "SELL"
-    # rising: price made a higher high and the trend is up
-    return "BUY" if last_range > 0 else "SELL"
+        side = "BUY" if first_range > 0 else "SELL"
+    else:
+        side = "BUY" if last_range > 0 else "SELL"
+
+    trend = _ema_trend(bars)
+    if trend == "downtrend" and side == "BUY":
+        return "NO_TRADE", (
+            "Blocked: Counter-trend retracement against confirmed DOWNTREND "
+            "(Price vs EMA50/200)"
+        )
+    if trend == "uptrend" and side == "SELL":
+        return "NO_TRADE", (
+            "Blocked: Counter-trend retracement against confirmed UPTREND "
+            "(Price vs EMA50/200)"
+        )
+
+    # WITH the trend -- but only after the retracement exhausts. A downtrend
+    # sells the bounce that rolled over (completed close back BELOW EMA 20); an
+    # uptrend buys the dip that turned up again (close back ABOVE EMA 20).
+    ema_fast = _ema([b["close"] for b in bars], EMA_FAST)
+    if ema_fast is not None:
+        close = bars[-1]["close"]
+        if trend == "downtrend" and close >= ema_fast:
+            return "NO_TRADE", (
+                f"Waiting for retracement exhaustion: SELL needs a completed close "
+                f"back below EMA 20 ({ema_fast:.5f}), newest close {close:.5f}"
+            )
+        if trend == "uptrend" and close <= ema_fast:
+            return "NO_TRADE", (
+                f"Waiting for retracement exhaustion: BUY needs a completed close "
+                f"back above EMA 20 ({ema_fast:.5f}), newest close {close:.5f}"
+            )
+    return side, ""
 
 
 def _sl_rule_name(sl_dist: float, atr: float, window_sl: float, atr_floor: float) -> str:
@@ -694,9 +784,14 @@ def run() -> None:
                 _log(f"WAITING for candle data on {s}")
                 continue
             atr = _average_true_range(bars)
-            side = _direction(bars)
-            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
-                 f"ATR {atr:.2f}")
+            side, block_reason = _direction(bars)
+            trend = _ema_trend(bars)
+            if side == "NO_TRADE":
+                _log(f"TRADE SKIPPED -- {s}: {block_reason} "
+                     f"(trend {trend}, ATR {atr:.2f}) -- no counter-trend batch opened")
+                continue
+            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, trend {trend}, "
+                 f"direction {side}, ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
             # Determine which rule set the stop
@@ -744,9 +839,14 @@ def run() -> None:
                 _log(f"WAITING for candle data on {s}")
                 continue
             atr = _average_true_range(bars)
-            side = _direction(bars)
-            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, direction {side}, "
-                 f"ATR {atr:.2f}")
+            side, block_reason = _direction(bars)
+            trend = _ema_trend(bars)
+            if side == "NO_TRADE":
+                _log(f"TRADE SKIPPED -- {s}: {block_reason} "
+                     f"(trend {trend}, ATR {atr:.2f}) -- no counter-trend batch opened")
+                continue
+            _log(f"ANALYSED {s}: {len(bars)} completed M15 candles, trend {trend}, "
+                 f"direction {side}, ATR {atr:.2f}")
             # no open ticket on this symbol → open the new trade
             sl, tp1, tp2, spread = _sl_tp_for(s, bars, side)
             # Determine which rule set the stop
