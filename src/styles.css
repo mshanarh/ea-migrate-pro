@@ -259,10 +259,9 @@ html.light-mode .hero-glow {
     background-color: #000;
   }
 
-  /* WHITE ACCENT — the interface stays black: nav, cards, headers, console and
-     every dark surface keep their own background. Only the PAGE backdrop
-     follows the White selection, so the choice is visible behind the chrome
-     instead of painting the whole app white. Any other accent keeps black. */
+  /* WHITE ACCENT — see the full block at the end of this file. Body first:
+     the page backdrop follows the White selection; every other accent keeps
+     black. */
   html[data-accent="white"] body {
     background-color: #ffffff;
   }
@@ -1119,4 +1118,248 @@ body.eamp-colour-matrix h2 {
   }
 }
 
+/* ════════════════════════════════════════════════════════════════════════════
+   WHITE ACCENT — WHITE PAGE, BLACK CHROME
+   ────────────────────────────────────────────────────────────────────────────
+   Selecting White paints the PAGE BACKDROP white. The interface itself stays
+   black: the nav, cards, sheets, headers, console and every dark surface keep
+   the background they already ship with.
 
+   White type that sits directly on the page (page titles, section headings,
+   plain copy) turns to ink so nothing is lost on the light backdrop, and the
+   same type is put BACK to white wherever a dark surface sits underneath it.
+   The re-asserting rules are deliberately more specific than the inverting
+   ones (an extra :is() level), so they win wherever the two overlap.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+/* The screen shells stop covering the page with their own black wash. */
+html[data-accent="white"]:not(.light-mode) body:not(.eamp-app-bg):not(.eamp-bg-on) .if-screen.if-screen,
+html[data-accent="white"]:not(.light-mode) body:not(.eamp-app-bg):not(.eamp-bg-on) [data-eamp-bg-host],
+html[data-accent="white"]:not(.light-mode) body:not(.eamp-app-bg):not(.eamp-bg-on) [class*="min-h-screen"][class*="bg-"],
+html[data-accent="white"]:not(.light-mode) body:not(.eamp-app-bg):not(.eamp-bg-on) [class*="min-h-dvh"][class*="bg-"] {
+  background-color: #ffffff !important;
+  background-image: none !important;
+  color: #0b1220;
+}
+
+/* Dark surfaces keep their own black and pass white type down to their
+   children, so a card that never spells out `text-white` is still readable. */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    [class*="bg-sidebar"],
+    [class*="bg-gradient"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-field,
+    .if-chip,
+    .if-nav
+  ) {
+  color: #ffffff !important;
+}
+
+/* Type on the light page becomes ink. */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is([class*="text-white"], [class*="text-foreground"], .if-text) {
+  color: #0b1220 !important;
+}
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  .if-muted {
+  color: #475467 !important;
+}
+
+/* …and goes back to white inside every dark surface (higher specificity). */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    [class*="bg-sidebar"],
+    [class*="bg-gradient"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-field,
+    .if-chip,
+    .if-nav
+  )
+  :is([class*="text-white"], [class*="text-foreground"], .if-text),
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    [class*="bg-sidebar"],
+    [class*="bg-gradient"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-field,
+    .if-chip,
+    .if-nav
+  ):is([class*="text-white"], [class*="text-foreground"], .if-text) {
+  color: #ffffff !important;
+}
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  .if-card .if-muted,
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="bg-black"] .if-muted,
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="bg-background"] .if-muted,
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="bg-[#"] .if-muted,
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="bg-white/"] .if-muted {
+  color: rgb(255 255 255 / 0.62) !important;
+}
+
+/* White is the accent colour here, so an accent-filled pill/button is WHITE —
+   its type has to be ink. This holds on the page and inside a card, because
+   `--primary` itself is white for this selection. */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is([class*="bg-primary"], [class*="bg-accent"])
+  :is([class*="text-white"], [class*="text-foreground"], [class*="text-primary"], .if-text),
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is([class*="bg-primary"], [class*="bg-accent"])[class*="text-white"] {
+  color: #0b1220 !important;
+}
+
+/* Secondary type keeps its hierarchy: white/NN on the page becomes muted ink
+   instead of flat black, so labels still read as labels. */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="text-white/"] {
+  color: #475467 !important;
+}
+
+/* Accent-coloured type drawn with an INLINE style is white for this accent.
+   On the light page it would vanish, so it turns to ink; inside a dark surface
+   it stays white. (React serialises the colour as rgb(255, 255, 255).) */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [style^="color: rgb(255, 255, 255)"],
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [style^="color: #FFFFFF"] {
+  color: #0b1220 !important;
+}
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    [class*="bg-sidebar"],
+    [class*="bg-gradient"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-field,
+    .if-chip,
+    .if-nav
+  )
+  [style^="color: rgb(255, 255, 255)"],
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    [class*="bg-sidebar"],
+    [class*="bg-gradient"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-field,
+    .if-chip,
+    .if-nav
+  )
+  [style^="color: #FFFFFF"] {
+  color: #ffffff !important;
+}
+
+/* Accent-coloured type would be white-on-white on the light page; inside a dark
+   surface it stays the accent it always was. */
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  [class*="text-primary"] {
+  color: #0b1220 !important;
+}
+html[data-accent="white"]:not(.light-mode)
+  body:not(.eamp-app-bg):not(.eamp-bg-on)
+  :is(.if-screen, [data-eamp-bg-host], [class*="min-h-screen"], [class*="min-h-dvh"])
+  :is(
+    [class*="bg-black"],
+    [class*="bg-background"],
+    [class*="bg-[#"],
+    [class*="bg-white/"],
+    [class*="bg-card"],
+    [class*="bg-secondary"],
+    [class*="bg-popover"],
+    [class*="bg-muted"],
+    .if-card,
+    .if-card-alt,
+    .if-well,
+    .if-nav
+  )
+  [class*="text-primary"] {
+  color: #ffffff !important;
+}
