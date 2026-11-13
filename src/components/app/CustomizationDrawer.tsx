@@ -8,18 +8,22 @@ import {
   LayoutGrid,
   LineChart,
   Music,
+  Moon,
   Palette,
   PanelBottom,
+  Sun,
   Type,
   X,
 } from "lucide-react";
 import {
   ACCENT_COLORS,
+  APPEARANCE_CHOICES,
   FONT_OPTIONS,
   INTERFACE_THEMES,
   accentColorValue,
   fontStack,
   setAccentColor,
+  setAppearanceMode,
   setFontOption,
   setInterfaceTheme,
   useCustomization,
@@ -120,7 +124,7 @@ function PillRow({
 }
 
 export function CustomizationPanel() {
-  const { color, theme, font } = useCustomization();
+  const { color, theme, font, appearanceMode } = useCustomization();
   const accent = accentColorValue(color);
   const bottomNavStyle = useBottomNavStyle();
   const [openSection, setOpenSection] = useState<string | null>(null);
@@ -160,6 +164,71 @@ export function CustomizationPanel() {
                 )}
               </button>
             ))}
+          </div>
+        </PillRow>
+
+        <PillRow
+          icon={appearanceMode === "black" ? <Moon className="size-5" /> : <Sun className="size-5" />}
+          label="Theme Mode"
+          accent={accent}
+          open={openSection === "appearance"}
+          onToggle={() => toggle("appearance")}
+        >
+          <div className="grid grid-cols-2 gap-3">
+            {APPEARANCE_CHOICES.map((option) => {
+              const active = appearanceMode === option.mode;
+              const dark = option.mode === "black";
+              return (
+                <button
+                  key={option.mode}
+                  type="button"
+                  onClick={() => setAppearanceMode(option.mode)}
+                  aria-pressed={active}
+                  className="if-control relative rounded-2xl border p-2.5 text-left transition-transform active:scale-[0.98]"
+                  style={{
+                    borderColor: active ? accent : "rgba(255,255,255,0.12)",
+                    borderWidth: active ? 2 : 1,
+                    boxShadow: active ? `0 0 22px ${accent}55` : undefined,
+                  }}
+                >
+                  <span
+                    className="flex h-[68px] flex-col justify-between rounded-xl border p-2.5"
+                    style={
+                      dark
+                        ? { backgroundColor: "#0A0A0A", borderColor: "rgba(255,255,255,0.16)", color: "#FFFFFF" }
+                        : { backgroundColor: "#FFFFFF", borderColor: "rgba(0,0,0,0.10)", color: "#0A0A0A" }
+                    }
+                  >
+                    <span className="flex items-center gap-1.5">
+                      <span className="size-3.5 rounded-full" style={{ backgroundColor: accent }} aria-hidden />
+                      <span className="text-[11px] font-black tracking-tight">
+                        {dark ? "Black / Dark" : "White / Light"}
+                      </span>
+                    </span>
+                    <span className="flex items-center gap-1" aria-hidden>
+                      <span
+                        className="h-1.5 flex-1 rounded-full"
+                        style={{ backgroundColor: dark ? "rgba(255,255,255,0.24)" : "rgba(0,0,0,0.12)" }}
+                      />
+                      <span
+                        className="h-1.5 w-6 rounded-full"
+                        style={{ backgroundColor: dark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.28)" }}
+                      />
+                    </span>
+                  </span>
+                  <span className="if-muted mt-2 block text-[10px] font-semibold leading-snug">
+                    {option.body}
+                  </span>
+                  {active && (
+                    <Check
+                      className="absolute right-2.5 top-2.5 size-4"
+                      style={{ color: accent }}
+                      strokeWidth={3}
+                    />
+                  )}
+                </button>
+              );
+            })}
           </div>
         </PillRow>
 
