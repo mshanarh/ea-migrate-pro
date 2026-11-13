@@ -1,7 +1,9 @@
 import {
   classifyNoTrade,
   executeAutoTrade,
+  resolveTimeframe,
   resolveTradeDirection,
+  timeframeMs,
   type BridgeCredentials,
 } from "./auto-trade";
 import {
@@ -27,12 +29,13 @@ import {
 /**
  * THE BOT LOOP — both behaviours, one engine.
  *
- * SCALPER — open on the last 8 completed M15 candles, close a winner at TP1 or
- *           at spread + 0.2 ATR of movement, then re-analyse and open again,
- *           non-stop. A stop-out waits for the next completed M15 candle.
+ * SCALPER — open on the last completed candles of the ACTIVE TIMEFRAME (1m…1d),
+ *           close a winner at TP1 or at spread + 0.2 ATR of movement, then
+ *           re-analyse and open again, non-stop. A stop-out waits for the next
+ *           completed candle of that timeframe.
  * NORMAL  — open on the same short-term direction and let the broker's
- *           SL/TP1/TP2 manage the trade. Re-analyses on each NEW completed M15
- *           candle; never force-closes a winner.
+ *           SL/TP1/TP2 manage the trade. Re-analyses on each NEW completed
+ *           candle of the active timeframe; never force-closes a winner.
  *
  * THE VPS BRIDGE MAY NOT HAVE THE POSITION ENDPOINTS YET. `/positions/list`
  * and `/positions/close` are only needed to know what is open and to take a
@@ -60,7 +63,6 @@ function isProfitablePosition(position: BridgePosition): boolean {
 }
 
 const POLL_MS = 6_000;
-const M15_MS = 15 * 60 * 1000;
 
 export type ScalpSymbol = { symbol: string; lotSize: number; maxTrades: number };
 
@@ -79,6 +81,13 @@ export type ScalpLoopOptions = {
    * broker's own SL/TP (breakout, swing, trend).
    */
   strategy?: BotStrategy;
+  /**
+   * THE CHART THE WHOLE RUN READS. Every analysis asks the broker for this
+   * timeframe, and the bar cadence (next completed candle, re-analysis bucket,
+   * post-stop wait) is this candle's own interval — 60s on 1m, 1h on 1h, a day
+   * on 1d. Omitted = the device's active timeframe, then 15m.
+   */
+  timeframe?: string;
   /**
    * ANALYSE FIRST, THEN SEND — the default.
    *
@@ -202,6 +211,10 @@ async function bridgePost<T>(
 export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const { symbols, eaName, credentials, strategy } = options;
   const mode: BotMode = options.mode ?? "scalper";
+  // The timeframe this run reads, and its candle interval — never the old
+  // hardcoded 15 minutes. Everything that waits for "the next bar" uses this.
+  const timeframe = resolveTimeframe(options.timeframe);
+  const candleMs = timeframeMs(timeframe);
   const requireConfirmation = options.requireConfirmation === true;
   /**
    * SCALPER harvests a winner the moment the broker's floating profit turns
@@ -211,7 +224,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
   const swingLike = strategy ? strategy !== "scalper" : mode === "normal";
   const tracks = new Map<string, Track>();
   const waitUntil = new Map<string, number>();
-  /** The M15 bucket each symbol was last analysed in (normal mode gating). */
+  /** The candle bucket each symbol was last analysed in (normal-mode gate). */
   const lastBucket = new Map<string, number>();
   const waitingNotice = new Set<string>();
   let stopped = false;
@@ -280,10 +293,12 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     return held;
   };
 
-  log(`starting ${mode.toUpperCase()} mode for ${symbols.map((entry) => entry.symbol).join(", ") || "no symbols"}`);
+  log(
+    `starting ${mode.toUpperCase()} mode on ${timeframe} for ${symbols.map((entry) => entry.symbol).join(", ") || "no symbols"}`,
+  );
 
-  /** The next completed M15 candle, plus a few seconds of settle time. */
-  const nextM15Boundary = () => Math.ceil((Date.now() + 1) / M15_MS) * M15_MS + 5_000;
+  /** The next completed candle on THIS timeframe, plus settle time. */
+  const nextCandleBoundary = () => Math.ceil((Date.now() + 1) / candleMs) * candleMs + 5_000;
 
   /** Open positions carrying this loop's magic. `null` = endpoint unavailable. */
   const listPositions = async (): Promise<BridgePosition[] | null> => {
@@ -364,6 +379,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     try {
       analysis = await resolveTradeDirection(symbol, {
         credentials,
+        timeframe,
         ...(strategy ? { strategy } : {}),
       });
     } catch (error) {
@@ -468,6 +484,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
         eaName,
         credentials,
         magic: SCALP_MAGIC,
+        timeframe,
         // THE PLAN ON THE CARD IS THE PLAN TRADED. The analysis that produced
         // this side/entry/SL/TP is handed straight in, and the strategy rides
         // along for any re-analysis, so Breakout / Swing / Scalper / Trend is
@@ -590,6 +607,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
     try {
       const fresh = await resolveTradeDirection(symbol, {
         credentials,
+        timeframe,
         ...(strategy ? { strategy } : {}),
       });
       if (fresh.direction.type === "NO_TRADE") {
@@ -727,9 +745,9 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       // ── Flat: the position vanished without this loop closing it → stop loss.
       if (track && monitoring) {
         tracks.delete(symbol);
-        waitUntil.set(symbol, nextM15Boundary());
+        waitUntil.set(symbol, nextCandleBoundary());
         broadcast(
-          `ticket #${track.ticket} closed by the broker (stop loss or take profit) — waiting for the next completed M15 candle before a new ${symbol} trade`,
+          `ticket #${track.ticket} closed by the broker (stop loss or take profit) — waiting for the next completed ${timeframe} candle before a new ${symbol} trade`,
           { symbol, ok: false, status: "stopped-out" },
         );
         // WHICH LEVEL CLOSED IT — read from the live price, and only named when
@@ -751,8 +769,8 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       }
 
       // SWING / BREAKOUT / TREND (and NORMAL) re-analyse once per NEW completed
-      // M15 candle — never on every poll, and never mid-candle.
-      const bucket = Math.floor(Date.now() / M15_MS);
+      // candle on the active timeframe — never on every poll, never mid-candle.
+      const bucket = Math.floor(Date.now() / candleMs);
       if (swingLike && lastBucket.get(symbol) === bucket) continue;
       lastBucket.set(symbol, bucket);
 
@@ -760,7 +778,7 @@ export function startScalpLoop(options: ScalpLoopOptions): ScalpLoopHandle {
       if (Date.now() < holdUntil) {
         if (!waitingNotice.has(symbol)) {
           waitingNotice.add(symbol);
-          broadcast(`${symbol} waiting for the next completed M15 candle after a stop loss`, {
+          broadcast(`${symbol} waiting for the next completed ${timeframe} candle after a stop loss`, {
             symbol,
             status: "waiting",
           });

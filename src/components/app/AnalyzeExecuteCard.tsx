@@ -1,7 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Loader2 } from "lucide-react";
 import { hasNativeBridge, callNative } from "@/lib/native-bridge";
-import { executeAnalysedSignal, readMtCredentials, resolveTradeDirection } from "@/lib/auto-trade";
+import {
+  executeAnalysedSignal,
+  readActiveTimeframe,
+  readMtCredentials,
+  resolveTradeDirection,
+  saveActiveTimeframe,
+  SUPPORTED_TIMEFRAMES,
+  type TradeTimeframe,
+} from "@/lib/auto-trade";
 import { getAppState } from "@/lib/app-store";
 import { sideForCurrency } from "@/lib/event-symbols";
 import { peekPendingSignal } from "@/lib/pending-signal";
@@ -43,6 +51,8 @@ export type AnalyzedSignal = {
   sideSource?: "event" | "candles";
   /** One line naming that source, in the trader's words. */
   sideNote?: string;
+  /** The chart timeframe this analysis was read on (1m…1d). */
+  timeframe?: string;
 };
 
 /** The analysis is only executable for this long after it was produced. */
@@ -153,6 +163,16 @@ export function AnalyzeExecuteCard({
   const [executing, setExecuting] = useState(false);
   const [result, setResult] = useState<FundamentalsOrderResult | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  // THE CHART THIS CARD ANALYSES — the device's active timeframe, changeable
+  // here and remembered for every other screen.
+  const [timeframe, setTimeframe] = useState<TradeTimeframe>(() => readActiveTimeframe());
+  const chooseTimeframe = (next: TradeTimeframe) => {
+    setSignal(null);
+    setAnalyzeError(null);
+    setResult(null);
+    setFormError(null);
+    setTimeframe(saveActiveTimeframe(next));
+  };
 
   /** No MT5 account on this device — the one thing that stops both steps. */
   const NO_ACCOUNT_MESSAGE =
@@ -217,6 +237,7 @@ export function AnalyzeExecuteCard({
         credentials,
         requireExecutionReady: true,
         rejectProxyData: true,
+        timeframe,
       });
       if (analysis.direction.type === "NO_TRADE") {
         setSignal(null);
@@ -288,6 +309,7 @@ export function AnalyzeExecuteCard({
         reason: `${sideNote} ${analysis.reason}`,
         sideSource,
         sideNote,
+        timeframe,
       });
     } catch (error) {
       setSignal(null);
@@ -295,7 +317,7 @@ export function AnalyzeExecuteCard({
     } finally {
       setAnalyzing(false);
     }
-  }, [symbol, userId, eventRead]);
+  }, [symbol, userId, eventRead, timeframe]);
 
   /**
    * EXECUTE FROM THE FLOATING NATIVE CARD.
@@ -408,8 +430,35 @@ export function AnalyzeExecuteCard({
           {signal ? `${signal.direction} · ${signal.symbol}` : "NO SIGNAL"}
         </span>
         <span className="flex-1" />            <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/30">
-              {eventRead ? "event day · live candles" : "live candles"}
+              {eventRead ? "event day · live candles" : `live ${timeframe} candles`}
             </span>
+      </div>
+
+      {/* ── TIMEFRAME — the chart this analysis reads. */}
+      <div
+        role="group"
+        aria-label="Analysis timeframe"
+        className="mt-2 grid grid-cols-7 gap-1 rounded-xl border border-white/10 bg-white/[0.04] p-1"
+      >
+        {SUPPORTED_TIMEFRAMES.map((option) => {
+          const active = option === timeframe;
+          return (
+            <button
+              key={option}
+              type="button"
+              onClick={() => chooseTimeframe(option)}
+              aria-pressed={active}
+              className="rounded-lg py-1 text-[10px] font-black uppercase tracking-wide transition-colors active:scale-[0.97]"
+              style={
+                active
+                  ? { backgroundColor: "rgba(255,255,255,0.92)", color: "#0a0a0a" }
+                  : { color: "rgba(255,255,255,0.5)" }
+              }
+            >
+              {option}
+            </button>
+          );
+        })}
       </div>
 
       {/* ── AI TRADE ANALYSIS card ─────────────────────────────────────── */}
@@ -432,7 +481,9 @@ export function AnalyzeExecuteCard({
               Entry {formatPrice(signal.entry)} · SL {formatPrice(signal.stopLoss)} · TP1{" "}
               {formatPrice(signal.takeProfit1)} · TP2 {formatPrice(signal.takeProfit2)}
             </p>
-            <p className="mt-1 text-[11px] text-white/40">live data · connected terminal</p>
+            <p className="mt-1 text-[11px] text-white/40">
+              live {signal.timeframe ?? timeframe} candles · connected terminal
+            </p>
             <p className="mt-2 text-[11px] leading-snug text-white/45">{signal.reason}</p>
             {!isSignalFresh(signal) && (
               <p className="mt-2 text-[11px] font-bold text-amber-300">
@@ -462,7 +513,7 @@ export function AnalyzeExecuteCard({
       {!signal && !analyzing && !analyzeError && (
         <p className="mt-3 text-[12px] text-white/45">
           {symbol
-            ? `Analyze ${symbol} to read the last completed M15 candles from your broker.`
+            ? `Analyze ${symbol} to read the last completed ${timeframe} candles from your broker.`
             : "Pick a symbol to analyze."}
         </p>
       )}

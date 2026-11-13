@@ -36,6 +36,7 @@ import {
   bridgeUnreachableMessage,
   getBridgeUrl,
 } from "./bridge-client";
+import { resolveTimeframe } from "./auto-trade";
 
 /** One Allowed Quotes entry reduced to what the bridge can carry. */
 export type ScalperQuotePlan = { symbol: string; lot: number; trades: number };
@@ -237,6 +238,8 @@ export async function startScalperOnBridge(
   plans: ScalperQuotePlan[],
   /** The selected robot's name, verbatim — it becomes every order's comment. */
   eaName?: string,
+  /** The chart the daemon reads. Omitted = the device's active timeframe. */
+  timeframe?: string,
 ): Promise<ScalperStartResult> {
   if (plans.length === 0) {
     return {
@@ -254,9 +257,11 @@ export async function startScalperOnBridge(
     // Empty only when the caller truly has no name — the bridge then falls
     // back to "EA Migrate", never to a batch string.
     ea_name: (eaName ?? "").trim(),
+    // The daemon reads its candles (and its post-stop wait) on this chart.
+    timeframe: resolveTimeframe(timeframe),
   };
   console.info(
-    `[scalper] POST /scalper/start → ${symbols.join(", ")} · lot ${body.lot} · trades ${body.trade_count} · ea ${body.ea_name || "(unnamed)"}`,
+    `[scalper] POST /scalper/start → ${symbols.join(", ")} · lot ${body.lot} · trades ${body.trade_count} · tf ${body.timeframe} · ea ${body.ea_name || "(unnamed)"}`,
   );
   const reply = await callBridge(
     "/scalper/start",

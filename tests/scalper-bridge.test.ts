@@ -78,6 +78,9 @@ describe("scalper start", () => {
       // THE ROBOT'S EXACT NAME rides with the plan: the daemon stamps it on
       // every order, so a missing field would mean a generic comment.
       ea_name: "Apex Sniper Pro V6+",
+      // THE CHART rides with the plan too: the daemon reads its candles, its
+      // staleness window and its post-stop wait on this timeframe.
+      timeframe: "15m",
     });
     expect(calls[0]?.headers["x-bridge-key"]).toBeTruthy();
     // NOTHING may execute a trade from the app in scalper mode.

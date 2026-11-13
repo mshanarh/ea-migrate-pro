@@ -23,7 +23,17 @@ import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { usePlatform } from "@/lib/platform";
 import { speakBot, stopBotVoice, unlockBotVoice } from "@/lib/bot-voice";
 import { setExecutionStage, startExecution, stopExecution, updateExecutionPlan, type BotStrategy } from "@/lib/execution-state";
-import { classifyNoTrade, executeAutoTrade, readMtCredentials, resolveTradeDirection, safeTradeCount, type TradeDecision } from "@/lib/auto-trade";
+import {
+  classifyNoTrade,
+  executeAutoTrade,
+  readActiveTimeframe,
+  readMtCredentials,
+  resolveTradeDirection,
+  safeTradeCount,
+  saveActiveTimeframe,
+  SUPPORTED_TIMEFRAMES,
+  type TradeTimeframe,
+} from "@/lib/auto-trade";
 import { startScalpLoop, type BotMode, type ScalpLoopHandle } from "@/lib/scalp-loop";
 import { beginBotSession, notifyBotStarted, notifyBotStopped, STRATEGY_LABELS } from "@/lib/bot-notify";
 import { stopScalperOnBridge } from "@/lib/scalper-bridge";
@@ -361,6 +371,12 @@ function AppHome() {
   // default and is highlighted when the chooser opens again.
   const [strategyOpen, setStrategyOpen] = useState(false);
   const [botStrategy, setBotStrategy] = useState<BotStrategy>(() => readBotStrategy());
+  // THE CHART THIS DEVICE TRADES. Every analysis, the loop's bar cadence and
+  // the VPS scalper all read this one value; the last choice is remembered.
+  const [timeframe, setTimeframe] = useState<TradeTimeframe>(() => readActiveTimeframe());
+  const chooseTimeframe = (next: TradeTimeframe) => {
+    setTimeframe(saveActiveTimeframe(next));
+  };
   const scalpRef = useRef<ScalpLoopHandle | null>(null);
   const [scalperBusy, setScalperBusy] = useState(false);
   // A per-key video lookup is in flight — the play button must not fire twice.
@@ -582,7 +598,11 @@ function AppHome() {
         // The active strategy is read too, so the plan the card shows is the
         // plan the batch trades — and executeAutoTrade gets the SAME analysis
         // below instead of re-reading a strategy-less momentum side.
-        const analysis = await resolveTradeDirection(symbol, { credentials, strategy: botStrategy });
+        const analysis = await resolveTradeDirection(symbol, {
+          credentials,
+          strategy: botStrategy,
+          timeframe,
+        });
 
         // ENTRY CONTEXT, ON THE CARD. The direction derivation is unchanged;
         // this only shows what was measured (trend, extension in ATR). It is
@@ -644,8 +664,10 @@ function AppHome() {
           eaName: target.name,
           // LIVE orders on the trader's own account through the VPS bridge.
           credentials,
-          // THE ANALYSED PLAN IS THE PLAN SENT, with the strategy carried along.
+          // THE ANALYSED PLAN IS THE PLAN SENT, with the strategy and the
+          // timeframe carried along.
           strategy: botStrategy,
+          timeframe,
           precomputedAnalysis: analysis,
           onTradeExecute: (trade, index, total) => {
             tradeNumber += 1;
@@ -855,6 +877,7 @@ function AppHome() {
       credentials,
       mode,
       strategy,
+      timeframe,
       // START TRADES THIS RUN BY ITSELF, exactly as it did before: the loop
       // analyses the Allowed Quotes first and opens a batch the moment a valid
       // signal forms. It does NOT hand the decision back to the trader and it
@@ -961,6 +984,40 @@ function AppHome() {
               <span />
             )}
             <ScalperStatusPill status={daemonStatus} error={daemonError} />
+          </div>
+          {/* ── TIMEFRAME — the chart every analysis this device makes runs on. */}
+          <div className="px-3">
+            <div className="mb-1.5 flex items-center justify-between">
+              <span className="text-[10px] font-black tracking-[0.18em] text-white/40">TIMEFRAME</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.14em] text-white/30">
+                {timeframe} candles
+              </span>
+            </div>
+            <div
+              role="group"
+              aria-label="Chart timeframe"
+              className="grid grid-cols-7 gap-1 rounded-2xl border border-white/10 bg-white/[0.04] p-1"
+            >
+              {SUPPORTED_TIMEFRAMES.map((option) => {
+                const active = option === timeframe;
+                return (
+                  <button
+                    key={option}
+                    type="button"
+                    onClick={() => chooseTimeframe(option)}
+                    aria-pressed={active}
+                    className="rounded-xl py-1.5 text-[11px] font-black uppercase tracking-wide transition-colors active:scale-[0.97]"
+                    style={
+                      active
+                        ? { backgroundColor: accent, color: "#04120c" }
+                        : { color: "rgba(255,255,255,0.55)" }
+                    }
+                  >
+                    {option}
+                  </button>
+                );
+              })}
+            </div>
           </div>
           <ThemeContent
             robot={robot}

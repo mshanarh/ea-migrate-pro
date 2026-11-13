@@ -14,8 +14,9 @@ the double-click script never edits this file — the bridge writes it.
 
 THE CYCLE (one batch per symbol, independently, forever)
 -------------------------------------------------------
-1. CYCLE START — analyse fresh broker candles (the last 8 COMPLETED M15 bars,
-   nothing hardcoded) to read the direction, then open the WHOLE BATCH at once:
+1. CYCLE START — analyse fresh broker candles (the last 8 COMPLETED bars of the
+   configured timeframe — 1m, 5m, 15m, 30m, 1h, 4h or 1d — nothing hardcoded)
+   to read the direction against the EMA trend, then open the WHOLE BATCH at once:
    that symbol's configured Number of Trades positions at its configured lot
    size, all in the analysed direction. BTCUSDm set to 4 trades × 0.01 opens
    4 × 0.01; XAUUSDm set to 10 × 0.01 opens 10 × 0.01.
@@ -33,8 +34,8 @@ THE CYCLE (one batch per symbol, independently, forever)
    on the next pass. The combined result is banked, then the daemon
    immediately re-analyses fresh candles and opens the next batch for that
    symbol. Repeat until stopped.
-4. AFTER A STOP LOSS — the symbol waits for the next COMPLETED M15 candle
-   before a new cycle starts. No revenge stacking.
+4. AFTER A STOP LOSS — the symbol waits for the next COMPLETED candle of the
+   configured timeframe before a new cycle starts. No revenge stacking.
 5. SAFETY — hard blocks only: fresh candle data, executable levels, the 20 %
    free-margin buffer, and the per-symbol trade-count cap (a cycle can never
    exceed the configured Number of Trades). Nothing is ever reported as filled
@@ -80,7 +81,8 @@ State file (scalper.state.json) — written by the bridge, updated by the daemon
   "trade_count": 4,                # fallback trades when no per-symbol block
   "next_trade_number": 1,          # per-session batch numbering
   "started_at"/"stopped_at": ISO8601,
-  "wait_until": {"BTCUSDm": epoch},# next-M15 wait after a stop loss
+  "timeframe": "15m",             # 1m | 5m | 15m | 30m | 1h | 4h | 1d
+  "wait_until": {"BTCUSDm": epoch},# next-candle wait after a stop loss
   "batches": {"BTCUSDm": {...}},   # the live batch per symbol
   "positions": {ticket: {...}}     # metadata for the status view
 }
@@ -105,9 +107,35 @@ STATE_FILE = Path(os.getenv("SCALPER_STATE_FILE", Path(__file__).resolve().paren
 SYMBOLS_FILE = Path(os.getenv("SCALPER_SYMBOLS_FILE", Path(__file__).resolve().parent / "scalper.symbols.json"))
 EVENT_LOG = Path(os.getenv("SCALPER_EVENT_LOG", Path(__file__).resolve().parent / "scalper-events.log"))
 MAGIC = 98765                        # only this EA's orders are ever touched
-M15 = mt5.TIMEFRAME_M15
-M15_SECONDS = 15 * 60
-LAST_BARS = 8                        # the direction lens: 8 completed M15 bars
+
+# ── TIMEFRAMES ──────────────────────────────────────────────────────────────
+# The app writes its selected chart into the state file. Every candle fetch,
+# the staleness window and the "wait for the next bar" boundary follow it, so a
+# 1m run really reads 1m bars and a 1h run really waits an hour between cycles.
+TIMEFRAMES = {
+    "1m": (mt5.TIMEFRAME_M1, 60),
+    "m1": (mt5.TIMEFRAME_M1, 60),
+    "5m": (mt5.TIMEFRAME_M5, 5 * 60),
+    "m5": (mt5.TIMEFRAME_M5, 5 * 60),
+    "15m": (mt5.TIMEFRAME_M15, 15 * 60),
+    "m15": (mt5.TIMEFRAME_M15, 15 * 60),
+    "30m": (mt5.TIMEFRAME_M30, 30 * 60),
+    "m30": (mt5.TIMEFRAME_M30, 30 * 60),
+    "1h": (mt5.TIMEFRAME_H1, 60 * 60),
+    "h1": (mt5.TIMEFRAME_H1, 60 * 60),
+    "4h": (mt5.TIMEFRAME_H4, 4 * 60 * 60),
+    "h4": (mt5.TIMEFRAME_H4, 4 * 60 * 60),
+    "1d": (mt5.TIMEFRAME_D1, 24 * 60 * 60),
+    "d1": (mt5.TIMEFRAME_D1, 24 * 60 * 60),
+}
+DEFAULT_TIMEFRAME = "15m"
+LAST_BARS = 8                        # the direction lens: 8 completed bars
+# EMA20/EMA50 need a longer series than the 8-bar lens, so the fetch carries
+# this many completed bars and the lens slices its own window from the end.
+TREND_BARS = 60
+# The EMA structure read: price vs EMA20 and the EMA20/EMA50 stack.
+EMA_FAST = 20
+EMA_SLOW = 50
 # The direction and the stop are read EXACTLY like the app's auto-trader
 # (src/lib/auto-trade.ts): the net move of the last closes decides the side, the
 # live quote only breaks a flat tie, and the stop sits just past the extreme of
@@ -125,8 +153,9 @@ SWEEP_PAUSE_SECONDS = 1.0
 CLOSE_CONFIRM_TRIES = 3
 CLOSE_CONFIRM_PAUSE = 0.4
 # The newest COMPLETED bar must be the current one: catch a dead or behind feed
-# without pretending a bar that legitimately closed 14 minutes ago is stale.
-MAX_CANDLE_LAG_SECONDS = M15_SECONDS + 60
+# without pretending a bar that legitimately closed moments ago is stale.
+# Measured against the ACTIVE timeframe's own length plus a minute.
+CANDLE_LAG_SLACK_SECONDS = 60
 # A sanity ceiling on the configured Number of Trades. It is NOT a strategy
 # setting: it exists so a typo in the settings cannot fire a thousand orders.
 TRADE_COUNT_CEILING = 200
@@ -374,13 +403,29 @@ def _disconnect() -> None:
 
 # ── candles + direction ──────────────────────────────────────────────────────
 
-def _last_8_completed_candles(creds, symbol: str) -> list[dict] | None:
-    """The last 8 COMPLETED M15 bars, OLDEST → NEWEST (the forming bar dropped).
+def _timeframe(state: dict) -> tuple[str, int, int]:
+    """(name, MT5 constant, seconds) for the state file's configured timeframe.
+
+    Unset or unknown → 15m, so an older state file keeps working unchanged.
+    """
+    requested = str(state.get("timeframe") or "").strip().lower()
+    mt5_tf, seconds = TIMEFRAMES.get(requested, (mt5.TIMEFRAME_M15, 15 * 60))
+    name = requested if requested in TIMEFRAMES else DEFAULT_TIMEFRAME
+    if name.startswith("m") and name != "m1" and name != "m5":
+        name = name[1:] + "m"          # "m15" → "15m" for the log lines
+    return name, mt5_tf, seconds
+
+
+def _completed_candles(creds, symbol: str, timeframe_name: str, mt5_tf, tf_seconds: int) -> list[dict] | None:
+    """COMPLETED bars on the active timeframe, OLDEST → NEWEST.
 
     The broker's ordering is ASSERTED rather than assumed (the same lesson the
     app's candle helper learned): the rows are sorted by time, then the newest
     entry — the still-forming bar — is dropped. Returns None — a hard block —
     when the data is missing or the feed is behind.
+
+    The series is deliberately longer than the 8-bar direction lens: the trend
+    guard needs EMA20/EMA50, which an 8-bar window cannot produce.
     """
     account, error = _connect(creds)
     if account is None:
@@ -390,9 +435,9 @@ def _last_8_completed_candles(creds, symbol: str) -> list[dict] | None:
         if not mt5.symbol_select(symbol, True):
             _log(f"BLOCK {symbol}: symbol not selectable in Market Watch")
             return None
-        rates = mt5.copy_rates_from_pos(symbol, M15, 0, LAST_BARS + 1)
+        rates = mt5.copy_rates_from_pos(symbol, mt5_tf, 0, max(TREND_BARS, LAST_BARS) + 1)
         if rates is None or len(rates) < 3:
-            _log(f"BLOCK {symbol}: no M15 candles returned")
+            _log(f"BLOCK {symbol}: no {timeframe_name} candles returned")
             return None
         ascending = sorted(
             (
@@ -404,26 +449,78 @@ def _last_8_completed_candles(creds, symbol: str) -> list[dict] | None:
         )
         bars = ascending[:-1]            # drop the forming bar (newest)
         if len(bars) < LAST_BARS:
-            _log(f"BLOCK {symbol}: only {len(bars)} completed M15 candles "
+            _log(f"BLOCK {symbol}: only {len(bars)} completed {timeframe_name} candles "
                  f"(need {LAST_BARS})")
             return None
-        bars = bars[-LAST_BARS:]
-        lag = time.time() - (bars[-1]["time"] + M15_SECONDS)
-        if lag > MAX_CANDLE_LAG_SECONDS:
-            _log(f"BLOCK {symbol}: the newest completed M15 candle closed {lag:.0f}s "
-                 f"ago (> {MAX_CANDLE_LAG_SECONDS}s) — the feed is behind")
+        max_lag = tf_seconds + CANDLE_LAG_SLACK_SECONDS
+        lag = time.time() - (bars[-1]["time"] + tf_seconds)
+        if lag > max_lag:
+            _log(f"BLOCK {symbol}: the newest completed {timeframe_name} candle closed {lag:.0f}s "
+                 f"ago (> {max_lag}s) — the feed is behind")
             return None
         return bars
     finally:
         _disconnect()
 
 
-def _direction(bars: list[dict], price: float) -> tuple[str | None, str]:
-    """(side, reason) — the app's rule: the net move of the closes decides.
+def _ema(closes: list[float], period: int) -> float | None:
+    """EMA of a close series, or None when the series is shorter than the period."""
+    if len(closes) < period:
+        return None
+    k = 2 / (period + 1)
+    value = closes[0]
+    for close in closes[1:]:
+        value = close * k + value * (1 - k)
+    return value
+
+
+def _trend_bias(bars: list[dict], price: float) -> tuple[str | None, str]:
+    """(permitted side, note) from the EMA structure on the completed series.
+
+    BULLISH — price above EMA20 with EMA20 at/above EMA50, or an EMA20 that is
+    rising (slope over the last few closes). BEARISH is the mirror. Returning
+    None means the trend is not confirmed either way, so the side is free.
+    """
+    closes = [bar["close"] for bar in bars]
+    ema20 = _ema(closes, EMA_FAST)
+    ema50 = _ema(closes, EMA_SLOW)
+    if ema20 is None:
+        return None, "trend not measurable — series shorter than EMA20"
+
+    # EMA20 slope: the EMA of the series WITHOUT its last 3 closes vs the full
+    # one. A rising EMA is an uptrend even before the EMA50 is available.
+    slope = None
+    if len(closes) > EMA_FAST + 3:
+        earlier = _ema(closes[:-3], EMA_FAST)
+        if earlier is not None:
+            slope = ema20 - earlier
+
+    bullish = price > ema20 and ((ema50 is not None and ema20 >= ema50) or (slope is not None and slope > 0))
+    bearish = price < ema20 and ((ema50 is not None and ema20 <= ema50) or (slope is not None and slope < 0))
+    stack = f"price {price:.5f} vs EMA20 {ema20:.5f}"
+    if ema50 is not None:
+        stack += f", EMA20 vs EMA50 {ema50:.5f}"
+    if slope is not None:
+        stack += f", EMA20 slope {slope:+.5f}"
+    if bullish and not bearish:
+        return "BUY", f"uptrend ({stack})"
+    if bearish and not bullish:
+        return "SELL", f"downtrend ({stack})"
+    return None, f"no confirmed trend ({stack})"
+
+
+def _direction(
+    bars: list[dict], price: float, context: list[dict] | None = None
+) -> tuple[str | None, str]:
+    """(side, reason) — the net move of the closes decides, the trend VETOES.
 
     `bars` is OLDEST → NEWEST completed. The live quote only breaks a genuine
     flat tie; when the closes are flat AND the quote points nowhere there is no
     direction to trade, so the side is None (a hard block, never a default).
+
+    `context` is the longer completed series used for the EMA read. A side that
+    contradicts a confirmed trend is refused: no buying the top of a dead-cat
+    bounce in a downtrend, no selling the bottom of a pullback in an uptrend.
     """
     if len(bars) <= DIRECTION_LOOKBACK:
         return None, f"only {len(bars)} completed candles — no direction readable"
@@ -431,14 +528,21 @@ def _direction(bars: list[dict], price: float) -> tuple[str | None, str]:
     reference = bars[-1 - DIRECTION_LOOKBACK]
     net_move = newest["close"] - reference["close"]
     if net_move > 0:
-        return "BUY", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
-    if net_move < 0:
-        return "SELL", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
-    move_now = price - newest["close"]
-    if move_now == 0:
-        return None, (f"flat closes ({newest['close']:.5f}) and a flat live quote "
-                      f"({price:.5f}) point nowhere")
-    return ("BUY" if move_now > 0 else "SELL"), f"flat closes, live quote {move_now:+.5f}"
+        side, basis = "BUY", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
+    elif net_move < 0:
+        side, basis = "SELL", f"net move {net_move:+.5f} over the last {DIRECTION_LOOKBACK + 1} closes"
+    else:
+        move_now = price - newest["close"]
+        if move_now == 0:
+            return None, (f"flat closes ({newest['close']:.5f}) and a flat live quote "
+                          f"({price:.5f}) point nowhere")
+        side, basis = ("BUY" if move_now > 0 else "SELL"), f"flat closes, live quote {move_now:+.5f}"
+
+    trend_side, trend_note = _trend_bias(context or bars, price)
+    if trend_side is not None and trend_side != side:
+        return None, (f"{side} blocked — {trend_note} rejects trading against the trend "
+                      f"({basis})")
+    return side, f"{basis} · {trend_note}"
 
 
 def _sl_for(creds, symbol: str, bars: list[dict], side: str) -> float | None:
@@ -666,10 +770,10 @@ def _session_batch_number(state: dict) -> int:
     return _as_int(state.get("next_trade_number"), 1)
 
 
-def _next_m15_boundary() -> float:
-    """The moment the next M15 candle completes (plus a few seconds to settle)."""
+def _next_candle_boundary(tf_seconds: int) -> float:
+    """The moment the next candle of THIS timeframe completes (+ settle)."""
     now = time.time()
-    return (int(now // (15 * 60)) + 1) * 15 * 60 + 5
+    return (int(now // tf_seconds) + 1) * tf_seconds + 5
 
 
 def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
@@ -678,10 +782,12 @@ def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
     Returns the batch record when at least one order was confirmed, else None
     (the reason is already in the log).
     """
-    bars = _last_8_completed_candles(creds, symbol)
-    if bars is None:
-        _log(f"BATCH SKIPPED — {symbol}: no usable fresh candle data")
+    timeframe_name, mt5_tf, tf_seconds = _timeframe(state)
+    context = _completed_candles(creds, symbol, timeframe_name, mt5_tf, tf_seconds)
+    if context is None:
+        _log(f"BATCH SKIPPED — {symbol}: no usable fresh {timeframe_name} candle data")
         return None
+    bars = context[-LAST_BARS:]
 
     account, error = _connect(creds)
     tick = mt5.symbol_info_tick(symbol) if account is not None else None
@@ -690,11 +796,11 @@ def _open_batch(creds, symbol: str, plan: dict, state: dict) -> dict | None:
         return None
     price = (tick.ask + tick.bid) / 2
 
-    side, basis = _direction(bars, price)
+    side, basis = _direction(bars, price, context)
     if side is None:
         _log(f"BATCH SKIPPED — {symbol}: {basis} — nothing to trade")
         return None
-    _log(f"ANALYSED {symbol}: {len(bars)} completed M15 candles ({bars[0]['time']} → "
+    _log(f"ANALYSED {symbol}: {len(bars)} completed {timeframe_name} candles ({bars[0]['time']} → "
          f"{bars[-1]['time']}) → direction {side} ({basis}, newest close "
          f"{bars[-1]['close']:.5f}, live {price:.5f})")
 
@@ -1037,6 +1143,9 @@ def run() -> None:
             f"{plan['symbol']} {plan['trades']} × {plan['lots']}" for plan in plans))
     else:
         _log("SETTINGS: no enabled symbol in the state file — waiting for /scalper/start")
+    tf_name, _, tf_seconds = _timeframe(state)
+    _log(f"TIMEFRAME: {tf_name} — candles, staleness window and post-stop wait all "
+         f"follow {tf_seconds}s bars")
 
     state["started_at"] = _time_now()
     state["daemon_version"] = DAEMON_VERSION
@@ -1117,12 +1226,13 @@ def run() -> None:
                     if not positions:
                         # every leg is gone: stop loss, or a close we did not
                         # make. Either way the cycle is over and the symbol
-                        # waits for the next completed M15 candle.
-                        waiting[symbol] = _next_m15_boundary()
+                        # waits for the next completed candle.
+                        active_tf_name, _, active_tf_seconds = _timeframe(step_state)
+                        waiting[symbol] = _next_candle_boundary(active_tf_seconds)
                         batches.pop(symbol, None)
                         _log(f"BATCH {batch['cycle']} {symbol} GONE — every position was "
                              f"closed by the broker (stop loss or manual). Waiting for the "
-                             f"next completed M15 candle before a new cycle")
+                             f"next completed {active_tf_name} candle before a new cycle")
                         continue
 
                     combined = sum(pos["profit"] for pos in positions)
@@ -1150,7 +1260,7 @@ def run() -> None:
                             if nxt is not None:
                                 batches[symbol] = nxt
                             else:
-                                waiting[symbol] = _next_m15_boundary()
+                                waiting[symbol] = _next_candle_boundary(_timeframe(step_state)[2])
                         else:
                             left_state = ("unreadable book" if left is None
                                           else f"{len(left)} position(s) still open")
@@ -1187,7 +1297,7 @@ def run() -> None:
                 if batch is not None:
                     batches[symbol] = batch
                 else:
-                    waiting[symbol] = _next_m15_boundary()
+                    waiting[symbol] = _next_candle_boundary(_timeframe(step_state)[2])
 
             _settle_state(step_state, batches, waiting, shown or live)
         except Exception as exc:  # a thrown pass must never kill a 24/7 loop

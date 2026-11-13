@@ -307,7 +307,7 @@ def symbol_price(req: _PriceRequest, x_bridge_key: Optional[str] = Header(None))
 class _CandlesRequest(BaseModel):
     credentials: Credentials
     symbol: str
-    timeframe: str  # "15m", "1h", "m30"
+    timeframe: str  # 1m | 5m | 15m | 30m | 1h | 4h | 1d (MT5 spellings too)
     count: int = 100
 
 
@@ -380,12 +380,24 @@ def symbol_candles(req: _CandlesRequest, x_bridge_key: Optional[str] = Header(No
             trade_symbol, select_error = _select_broker_symbol(req.symbol)
             if trade_symbol is None:
                 return {"success": False, "message": select_error}
+            # Every timeframe spelling the app can send (1m…1d).
             timeframe_map = {
+                "1m": mt5.TIMEFRAME_M1,
+                "m1": mt5.TIMEFRAME_M1,
+                "5m": mt5.TIMEFRAME_M5,
+                "m5": mt5.TIMEFRAME_M5,
                 "15m": mt5.TIMEFRAME_M15,
-                "1h": mt5.TIMEFRAME_H1,
+                "m15": mt5.TIMEFRAME_M15,
+                "30m": mt5.TIMEFRAME_M30,
                 "m30": mt5.TIMEFRAME_M30,
+                "1h": mt5.TIMEFRAME_H1,
+                "h1": mt5.TIMEFRAME_H1,
+                "4h": mt5.TIMEFRAME_H4,
+                "h4": mt5.TIMEFRAME_H4,
+                "1d": mt5.TIMEFRAME_D1,
+                "d1": mt5.TIMEFRAME_D1,
             }
-            mt5_tf = timeframe_map.get(req.timeframe)
+            mt5_tf = timeframe_map.get(str(req.timeframe or "").strip().lower())
             if mt5_tf is None:
                 return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
             rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
@@ -653,6 +665,8 @@ class _ScalperStartRequest(BaseModel):
     # The selected robot's exact name — written straight into the daemon's
     # state file, where scalper_daemon.py reads it for every order comment.
     ea_name: Optional[str] = None
+    # The chart the daemon reads: 1m | 5m | 15m | 30m | 1h | 4h | 1d.
+    timeframe: Optional[str] = None
 
 
 @app.post("/scalper/start")
@@ -667,6 +681,9 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
     # THE ROBOT'S NAME IS PART OF THE RUN STATE. The daemon reads it from
     # here; without it every order fell back to a generic comment.
     ea_name = (req.ea_name or "").strip() or state.get("ea_name") or "EA Migrate"
+    # THE DAEMON READS THIS TIMEFRAME for every candle fetch and every
+    # "wait for the next bar" boundary.
+    timeframe = (req.timeframe or "").strip().lower() or state.get("timeframe") or "15m"
     if state.get("running"):
         state["next_trade_number"] = int(state.get("next_trade_number", 1)) + 1
         state["started_at"] = datetime.now(timezone.utc).isoformat()
@@ -674,9 +691,11 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         state["lot"] = req.lot
         state["trade_count"] = req.trade_count
         state["ea_name"] = ea_name
+        state["timeframe"] = timeframe
         _write_state(state)
         _append_log(f"POST /scalper/start -> daemon RESTARTED "
-                    f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, ea={ea_name})")
+                    f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, "
+                    f"timeframe={timeframe}, ea={ea_name})")
         return {"ok": True, "running": True,
                 "message": "Scalper daemon restarted — open positions kept and "
                            "re-analysed on the next event tick"}
@@ -691,6 +710,7 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         "lot": req.lot,
         "trade_count": req.trade_count,
         "ea_name": ea_name,
+        "timeframe": timeframe,
         "next_trade_number": 1,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "stopped_at": None,

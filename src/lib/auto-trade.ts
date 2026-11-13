@@ -111,11 +111,119 @@ interface BrokerCandlesResponse {
   candles: BrokerCandle[];
 }
 
-// Map timeframe strings to MT5 timeframes used by the bridge
-const TIMEFRAME_MAP: Record<string, string> = {
+// ── TIMEFRAMES ─────────────────────────────────────────────────────────────
+// One vocabulary for the whole app, the in-browser loop and the VPS bridge.
+// The trader picks a timeframe; every candle read (analysis, re-analysis, the
+// scalper loop's bar cadence) is requested on THAT timeframe.
+
+export const SUPPORTED_TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"] as const;
+export type TradeTimeframe = (typeof SUPPORTED_TIMEFRAMES)[number];
+
+/** The default when nothing was ever chosen on this device. */
+export const DEFAULT_TIMEFRAME: TradeTimeframe = "15m";
+
+/** Where the trader's choice is remembered. */
+export const ACTIVE_TIMEFRAME_KEY = "eamp.activeTimeframe";
+
+/** One completed candle on each timeframe, in milliseconds. */
+export const TIMEFRAME_MS: Record<TradeTimeframe, number> = {
+  "1m": 60_000,
+  "5m": 300_000,
+  "15m": 900_000,
+  "30m": 1_800_000,
+  "1h": 3_600_000,
+  "4h": 14_400_000,
+  "1d": 86_400_000,
+};
+
+/** Human label for the selector and the logs. */
+export function timeframeLabel(timeframe: string): string {
+  return normalizeTimeframe(timeframe) ?? DEFAULT_TIMEFRAME;
+}
+
+/** Map every accepted spelling (MT5-style `m15`, app-style `15m`) to one name. */
+export function normalizeTimeframe(value: unknown): TradeTimeframe | null {
+  if (typeof value !== "string") return null;
+  const key = value.trim().toLowerCase().replace(/\s+/g, "");
+  switch (key) {
+    case "1m":
+    case "m1":
+      return "1m";
+    case "5m":
+    case "m5":
+      return "5m";
+    case "15m":
+    case "m15":
+      return "15m";
+    case "30m":
+    case "m30":
+      return "30m";
+    case "1h":
+    case "h1":
+      return "1h";
+    case "4h":
+    case "h4":
+      return "4h";
+    case "1d":
+    case "d1":
+      return "1d";
+    default:
+      return null;
+  }
+}
+
+/** The timeframe last chosen on this device, or the 15m default. */
+export function readActiveTimeframe(): TradeTimeframe {
+  try {
+    const saved = window.localStorage.getItem(ACTIVE_TIMEFRAME_KEY);
+    const normalized = normalizeTimeframe(saved);
+    if (normalized) return normalized;
+  } catch {
+    /* storage blocked — the default below still trades */
+  }
+  return DEFAULT_TIMEFRAME;
+}
+
+/** Remember the trader's timeframe choice for every later decision. */
+export function saveActiveTimeframe(value: string): TradeTimeframe {
+  const timeframe = normalizeTimeframe(value) ?? DEFAULT_TIMEFRAME;
+  try {
+    window.localStorage.setItem(ACTIVE_TIMEFRAME_KEY, timeframe);
+  } catch {
+    /* storage blocked — this session still uses the choice */
+  }
+  return timeframe;
+}
+
+/**
+ * The timeframe a decision runs on: an explicit argument wins, then the
+ * device's remembered choice, then 15m — never a silent unknown string.
+ */
+export function resolveTimeframe(explicit?: string | null): TradeTimeframe {
+  return normalizeTimeframe(explicit) ?? readActiveTimeframe();
+}
+
+/** Candle interval in milliseconds for a timeframe (unknown → 15m). */
+export function timeframeMs(value?: string | null): number {
+  return TIMEFRAME_MS[normalizeTimeframe(value) ?? DEFAULT_TIMEFRAME];
+}
+
+/** Every accepted spelling → the name the bridge's timeframe_map expects. */
+export const TIMEFRAME_MAP: Record<string, TradeTimeframe> = {
+  "1m": "1m",
+  m1: "1m",
+  "5m": "5m",
+  m5: "5m",
   "15m": "15m",
+  m15: "15m",
+  "30m": "30m",
+  m30: "30m",
   "1h": "1h",
-  "m30": "m30",
+  h1: "1h",
+  "4h": "4h",
+  h4: "4h",
+  "1d": "1d",
+  d1: "1d",
 };
 
 /**
@@ -892,7 +1000,8 @@ export async function verifyDirectionAgainstTrend(
 // credentials, so it always uses this engine.
 // ============================================================================
 
-export const TRADE_TIMEFRAME = "15m";
+/** The historical default — kept for callers that predate the selector. */
+export const TRADE_TIMEFRAME: TradeTimeframe = DEFAULT_TIMEFRAME;
 /** Closes compared: the newest close against the close five bars earlier. */
 export const MOMENTUM_LOOKBACK = 5;
 /** Completed bars measured for the stop (lowest low / highest high). */
@@ -1036,6 +1145,93 @@ function emaOf(closes: ReadonlyArray<number>, period: number): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+// ── TREND ALIGNMENT ────────────────────────────────────────────────────────
+// A signal is only allowed to trade WITH the market it lives in:
+//
+//   BULLISH — price above the 20 EMA with the 20 EMA at or above the 50 EMA,
+//             or higher highs AND higher lows across the candle window;
+//   BEARISH — price below the 20 EMA with the 20 EMA at or below the 50 EMA,
+//             or lower highs AND lower lows across the candle window.
+//
+// A BUY in a confirmed downtrend and a SELL in a confirmed uptrend are HARD
+// BLOCKS — the move is a pullback/bounce, not a trend. Neutral structure (no
+// EA stack and no clean swing sequence) leaves the side free.
+
+export type TrendRead = {
+  ema20: number | null;
+  ema50: number | null;
+  /** Swing structure across the window. */
+  structure: "bullish" | "bearish" | "neutral";
+  /** The side the trend permits, or null when it is neutral. */
+  bias: "BUY" | "SELL" | null;
+  summary: string;
+};
+
+/**
+ * Read the trend from the completed series. `price` is the live quote — the
+ * level the entry would actually pay — because EMA position is what decides
+ * whether a side is with or against the market.
+ */
+export function readTrend(
+  candles: ReadonlyArray<BrokerCandle>,
+  price?: number,
+): TrendRead | null {
+  if (!Array.isArray(candles) || candles.length < 5) return null;
+  const closes = candles.map((candle) => candle.close).filter((close) => Number.isFinite(close));
+  if (closes.length < 5) return null;
+  const ema20 = emaOf(closes, 20);
+  const ema50 = emaOf(closes, 50);
+  const reference = Number.isFinite(price) ? (price as number) : closes[closes.length - 1]!;
+
+  // Swing structure: does the second half of the window print higher highs and
+  // higher lows (up), or lower highs and lower lows (down)?
+  const window = candles.slice(-20);
+  const half = Math.floor(window.length / 2);
+  let higherHighs = false;
+  let higherLows = false;
+  let lowerHighs = false;
+  let lowerLows = false;
+  if (half >= 2) {
+    const first = window.slice(0, half);
+    const second = window.slice(-half);
+    const firstHigh = Math.max(...first.map((candle) => candle.high));
+    const secondHigh = Math.max(...second.map((candle) => candle.high));
+    const firstLow = Math.min(...first.map((candle) => candle.low));
+    const secondLow = Math.min(...second.map((candle) => candle.low));
+    higherHighs = secondHigh > firstHigh;
+    higherLows = secondLow > firstLow;
+    lowerHighs = secondHigh < firstHigh;
+    lowerLows = secondLow < firstLow;
+  }
+
+  const emaBullish = ema20 !== null && ema50 !== null && reference > ema20 && ema20 >= ema50;
+  const emaBearish = ema20 !== null && ema50 !== null && reference < ema20 && ema20 <= ema50;
+  const structureBullish = higherHighs && higherLows;
+  const structureBearish = lowerHighs && lowerLows;
+
+  const bullish = emaBullish || structureBullish;
+  const bearish = emaBearish || structureBearish;
+  // Contradicting reads cancel out — the trend is not confirmed either way.
+  const bias: "BUY" | "SELL" | null =
+    bullish && !bearish ? "BUY" : bearish && !bullish ? "SELL" : null;
+  const structure: TrendRead["structure"] = bullish && !bearish ? "bullish" : bearish && !bullish ? "bearish" : "neutral";
+
+  const stack =
+    ema20 !== null && ema50 !== null
+      ? `price ${level(reference)} ${reference > ema20 ? "above" : "below"} 20 EMA ${level(ema20)}, ` +
+        `20 EMA ${ema20 >= ema50 ? "at/above" : "at/below"} 50 EMA ${level(ema50)}`
+      : `EMAs not measurable yet (${closes.length} closes)`;
+  const swings = half >= 2
+    ? structureBullish
+      ? "; higher highs and higher lows"
+      : structureBearish
+        ? "; lower highs and lower lows"
+        : "; no clean swing sequence"
+    : "";
+
+  return { ema20, ema50, structure, bias, summary: `${stack}${swings}` };
+}
+
 /** What a strategy read: its own side and its own stop/target levels. */
 export type StrategyLevels = {
   signal: "BUY" | "SELL";
@@ -1088,25 +1284,27 @@ export function strategyLevels(input: {
     if (!Number.isFinite(height) || !(height > 0)) return null;
     const mid = (rangeHigh + rangeLow) / 2;
 
-    // Above the high is a break up, below the low a break down. Inside, the
-    // nearer boundary is the one momentum is testing.
+    // A BREAKOUT IS ONLY A BREAKOUT OUTSIDE THE RANGE, CONFIRMED BY THE LAST
+    // COMPLETED CANDLE. Price inside the range is nobody's breakout: the read
+    // returns null and the caller keeps the plain momentum side instead. The
+    // old code inverted the signal toward the nearer edge, which is exactly
+    // how a bot ends up selling support and buying resistance.
+    const lastBar = candles[candles.length - 1]!;
+    const bullishBar = lastBar.close > lastBar.open;
+    const bearishBar = lastBar.close < lastBar.open;
     const breaking: "BUY" | "SELL" | null =
-      price > rangeHigh ? "BUY" : price < rangeLow ? "SELL" : null;
-    const signal: "BUY" | "SELL" =
-      breaking ?? (rangeHigh - price <= price - rangeLow ? "BUY" : "SELL");
+      price > rangeHigh && bullishBar ? "BUY" : price < rangeLow && bearishBar ? "SELL" : null;
+    if (breaking === null) return null;
+    const signal: "BUY" | "SELL" = breaking;
     const entry = signal === "BUY" ? ask : bid;
     const sl =
-      breaking === null
-        ? signal === "BUY"
-          ? rangeLow
-          : rangeHigh
-        : signal === "BUY"
-          ? mid < entry
-            ? mid
-            : entry - SCALP_STOP_ATR * atr
-          : mid > entry
-            ? mid
-            : entry + SCALP_STOP_ATR * atr;
+      signal === "BUY"
+        ? mid < entry
+          ? mid
+          : entry - SCALP_STOP_ATR * atr
+        : mid > entry
+          ? mid
+          : entry + SCALP_STOP_ATR * atr;
     const tp1 = signal === "BUY" ? entry + height * 1.5 : entry - height * 1.5;
     const tp2 = signal === "BUY" ? entry + height * 2 : entry - height * 2;
     return {
@@ -1115,7 +1313,7 @@ export function strategyLevels(input: {
       sl,
       tp1,
       tp2,
-      reason: `Breakout ${signal}: price testing/breaking 20-candle range`,
+      reason: `Breakout ${signal}: price ${signal === "BUY" ? "above the 20-candle range high" : "below the 20-candle range low"} with a completed ${signal === "BUY" ? "bullish" : "bearish"} candle`,
     };
   }
 
@@ -1282,7 +1480,8 @@ export function evaluateMomentum(input: {
 }): MarketEvaluation {
   const lookback = input.lookback ?? MOMENTUM_LOOKBACK;
   const stopBars = input.stopBars ?? STOP_LOOKBACK;
-  const timeframe = input.timeframe ?? TRADE_TIMEFRAME;
+  // Explicit argument → the device's remembered choice → 15m.
+  const timeframe = resolveTimeframe(input.timeframe);
   const candles = input.candles;
   const price = (input.ask + input.bid) / 2;
 
@@ -1428,6 +1627,24 @@ export function evaluateMomentum(input: {
     candleTime: newest.time,
   };
 
+  // ── TREND ALIGNMENT — THE HARD BLOCK.
+  // A side that contradicts a confirmed trend is a pullback/bounce entry, and
+  // those are exactly the trades that lose: the bot would buy the top of a
+  // dead-cat bounce or sell the bottom of a trend pullback. The trend read is
+  // measured on the SAME completed series, so the timeframe the trader chose
+  // is the timeframe the trend is read on.
+  const trend = readTrend(candles, price);
+  if (trend?.bias && trend.bias !== signal) {
+    return {
+      kind: "no-trade",
+      setup,
+      price,
+      reason:
+        `Trend alignment: ${signal} blocked — the market is ${trend.bias === "BUY" ? "bullish (confirmed uptrend)" : "bearish (confirmed downtrend)"} ` +
+        `on ${timeframe} (${trend.summary}). Trading against trend is not allowed. No order was sent.`,
+    };
+  }
+
   // Levels must sit on the correct side of the live entry — a gap that put the
   // price through the stop is a refusal, never a resize.
   const levelsValid =
@@ -1460,8 +1677,14 @@ export function evaluateMomentum(input: {
       `Entry ${level(entry)}, SL ${level(sl)} (${signal === "BUY" ? "below the lowest low of the last 10 bars" : "above the highest high of the last 10 bars"}), ` +
       `TP1 ${level(tp1)} (1× SL distance), TP2 ${level(tp2)} (2× SL distance). ` +
       `${gate ? `Entry context: ${gate.summary}.` : ""}`;
+  const trendLine = trend
+    ? ` Trend alignment: ${trend.bias ?? "neutral"} (${trend.summary}).`
+    : " Trend alignment: not measurable on this series.";
 
-  return { kind: "signal", plan: { signal, setup, gate, entry, sl, tp1, tp2, reason } };
+  return {
+    kind: "signal",
+    plan: { signal, setup, gate, entry, sl, tp1, tp2, reason: `${reason}${trendLine}` },
+  };
 }
 
 /**
@@ -1477,20 +1700,23 @@ async function resolveMomentumDirection(
     credentials?: BridgeCredentials | null;
     /** Strategy chosen at start time — decides the side and the levels. */
     strategy?: BotStrategy;
+    /** Chart timeframe the whole read runs on (default 15m). */
+    timeframe?: string;
   },
 ): Promise<AnalysisResult> {
   const { requireExecutionReady = true, rejectProxyData = true, credentials } = options;
+  const timeframe = resolveTimeframe(options.timeframe);
   const timestamp = Date.now();
 
   const [firstCandleFetch, quoteResult] = await Promise.all([
     credentials
-      ? fetchBridgeCandlesResult(credentials, symbol, TRADE_TIMEFRAME)
+      ? fetchBridgeCandlesResult(credentials, symbol, timeframe)
       : Promise.resolve<CandleFetch>({
           failure: "unavailable",
           detail: "no MT5 credentials for this analysis",
           summary: {
             sentSymbol: symbol,
-            timeframe: TRADE_TIMEFRAME,
+            timeframe,
             status: "network",
             rawCount: 0,
             usableCount: 0,
@@ -1516,7 +1742,7 @@ async function resolveMomentumDirection(
       `[auto-trade] ${symbol}: no candles on attempt 1 (${candleFetch.detail}) — retrying once in ${CANDLE_RETRY_DELAY_MS}ms as "${retrySymbol}"`,
     );
     await new Promise((resolve) => setTimeout(resolve, CANDLE_RETRY_DELAY_MS));
-    candleFetch = await fetchBridgeCandlesResult(credentials, retrySymbol, TRADE_TIMEFRAME, 2);
+    candleFetch = await fetchBridgeCandlesResult(credentials, retrySymbol, timeframe, 2);
     candleSymbol = retrySymbol;
   }
 
@@ -1542,7 +1768,7 @@ async function resolveMomentumDirection(
       momentum15m: null,
       momentum1h: null,
       source: extra.source ?? "unavailable",
-      timeframe: TRADE_TIMEFRAME,
+      timeframe,
       candleTimestamp: newestTime,
       strength: extra.strength ?? "none",
       executionReady: false,
@@ -1572,7 +1798,7 @@ async function resolveMomentumDirection(
     // candles reads as "bridge returned 0 candles", never as "HTTP 200".
     const sentAs = candleSymbol !== symbol ? ` (sent as "${candleSymbol}")` : "";
     return noTrade(
-      `Missing or unavailable broker data: ${TRADE_TIMEFRAME} candles for ${symbol}${sentAs} — attempt ${candleFetch.summary.attempt}: ${candleFetch.detail}. Cannot read the market.`,
+      `Missing or unavailable broker data: ${timeframe} candles for ${symbol}${sentAs} — attempt ${candleFetch.summary.attempt}: ${candleFetch.detail}. Cannot read the market.`,
     );
   }
   const candles = candleFetch.candles;
@@ -1596,6 +1822,7 @@ async function resolveMomentumDirection(
     candles,
     ask: quote.ask,
     bid: quote.bid,
+    timeframe,
     ...(options.strategy ? { strategy: options.strategy } : {}),
   });
 
@@ -1605,7 +1832,7 @@ async function resolveMomentumDirection(
   const priceForLog = evaluation.kind === "signal" ? evaluation.plan.entry : evaluation.price;
   const gateForLog = evaluation.kind === "signal" ? evaluation.plan.gate : (evaluation.gate ?? null);
   console.log(
-    `[auto-trade] ${symbol} START ${TRADE_TIMEFRAME}: closes ${setupForLog ? `${level(setupForLog.referenceClose)} → ${level(setupForLog.lastClose)}` : "—"} | ` +
+    `[auto-trade] ${symbol} START ${timeframe}: closes ${setupForLog ? `${level(setupForLog.referenceClose)} → ${level(setupForLog.lastClose)}` : "—"} | ` +
       `net move ${setupForLog ? `${setupForLog.netMove >= 0 ? "+" : ""}${level(setupForLog.netMove)}` : "—"} | ` +
       `stop extreme ${setupForLog ? level(setupForLog.stopExtreme) : "—"} | ` +
       `price ${level(priceForLog)} | ` +
@@ -1647,7 +1874,7 @@ async function resolveMomentumDirection(
     momentum15m: null,
     momentum1h: null,
     source: "mt5_broker",
-    timeframe: TRADE_TIMEFRAME,
+    timeframe,
     candleTimestamp: plan.setup.candleTime,
     // The side came straight from the broker's own series — never a guess.
     strength: "strong",
@@ -1666,17 +1893,24 @@ export async function resolveTradeDirection(
     rejectProxyData?: boolean;
     /**
      * The caller's OWN MT5 account. When present, the auto-trading decision is
-     * read LIVE from the broker's own 15m candles at start time; without it
-     * there is no broker series to read, so the fixture engine (public scanner
-     * / paper previews) answers.
+     * read LIVE from the broker's own candles at start time; without it there
+     * is no broker series to read, so the fixture engine (public scanner /
+     * paper previews) answers.
      */
     credentials?: BridgeCredentials | null;
     /** Strategy chosen at start time — decides the side and the levels. */
     strategy?: BotStrategy;
+    /**
+     * Chart timeframe the read runs on (1m…1d). Omitted = the device's active
+     * timeframe, then 15m. Every candle request, the EMA/structure read and the
+     * scalper's bar cadence use this one value.
+     */
+    timeframe?: string;
   } = {},
 ): Promise<AnalysisResult> {
-  // LIVE trading path — the market as it is on the broker's own 15m candles.
-  // Nothing from the indicator-vote engine below is consulted here.
+  // LIVE trading path — the market as it is on the broker's own candles for
+  // the chosen timeframe. Nothing from the indicator-vote engine below is
+  // consulted here.
   if (options.credentials) return resolveMomentumDirection(symbol, options);
   return resolveFixtureDirection(symbol, options);
 }
@@ -1694,6 +1928,8 @@ async function resolveFixtureDirection(
     credentials?: BridgeCredentials | null;
     /** Accepted for signature parity; the fixture engine has no broker series. */
     strategy?: BotStrategy;
+    /** Accepted for signature parity; the fixture series is fixed at 15m/1h. */
+    timeframe?: string;
   } = {},
 ): Promise<AnalysisResult> {
   const { requireExecutionReady = true, rejectProxyData = true, credentials = null } = options;
@@ -2421,6 +2657,11 @@ export interface AutoTradeOptions {
    */
   strategy?: BotStrategy;
   /**
+   * Chart timeframe every re-analysis in this batch runs on (1m…1d). Omitted =
+   * the device's active timeframe, then 15m.
+   */
+  timeframe?: string;
+  /**
    * The analysis the caller ALREADY ran (the plan the card shows). When it is
    * for this symbol it is used as-is instead of firing a second, strategy-less
    * momentum read that could flip the side between the card and the order.
@@ -2433,6 +2674,9 @@ export async function executeAutoTrade(
 ): Promise<ExecutedTrade[]> {
   const { symbol, lotSize, maxTrades, eaName, onTradeExecute, emitEvent, paperTrading = false } = options;
   const strategy = options.strategy;
+  // ONE TIMEFRAME FOR THE WHOLE BATCH — the same one the plan was read on, so
+  // a re-analysis inside the batch can never quietly change the chart.
+  const timeframe = resolveTimeframe(options.timeframe);
   const magic = options.magic ?? 0;
   const credentials = options.credentials && options.credentials.password ? options.credentials : null;
   const results: ExecutedTrade[] = [];
@@ -2535,6 +2779,7 @@ export async function executeAutoTrade(
           requireExecutionReady: true,
           rejectProxyData: true,
           credentials,
+          timeframe,
           ...(strategy ? { strategy } : {}),
         }));
 

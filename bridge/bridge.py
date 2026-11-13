@@ -206,7 +206,7 @@ def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
 class CandlesRequest(BaseModel):
     credentials: Credentials
     symbol: str
-    timeframe: str  # "15m", "1h", "m30"
+    timeframe: str  # 1m | 5m | 15m | 30m | 1h | 4h | 1d (MT5 spellings too)
     count: int = 100  # number of candles to retrieve
 
 
@@ -222,13 +222,24 @@ def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(Non
         trade_symbol, select_error = select_broker_symbol(req.symbol)
         if trade_symbol is None:
             return {"success": False, "message": select_error}
-        # Map timeframe strings to MT5 timeframes
+        # Map every timeframe spelling the app can send to its MT5 constant.
         timeframe_map = {
+            "1m": mt5.TIMEFRAME_M1,
+            "m1": mt5.TIMEFRAME_M1,
+            "5m": mt5.TIMEFRAME_M5,
+            "m5": mt5.TIMEFRAME_M5,
             "15m": mt5.TIMEFRAME_M15,
-            "1h": mt5.TIMEFRAME_H1,
+            "m15": mt5.TIMEFRAME_M15,
+            "30m": mt5.TIMEFRAME_M30,
             "m30": mt5.TIMEFRAME_M30,
+            "1h": mt5.TIMEFRAME_H1,
+            "h1": mt5.TIMEFRAME_H1,
+            "4h": mt5.TIMEFRAME_H4,
+            "h4": mt5.TIMEFRAME_H4,
+            "1d": mt5.TIMEFRAME_D1,
+            "d1": mt5.TIMEFRAME_D1,
         }
-        mt5_tf = timeframe_map.get(req.timeframe)
+        mt5_tf = timeframe_map.get(str(req.timeframe or "").strip().lower())
         if mt5_tf is None:
             disconnect()
             return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
@@ -312,6 +323,8 @@ class ScalperStartRequest(BaseModel):
     direction: str = ""
     # Comma-separated symbol list, e.g. "BTCUSDm,ETHUSDm"
     symbols: str = "BTCUSDm"
+    # Chart the daemon reads: 1m | 5m | 15m | 30m | 1h | 4h | 1d.
+    timeframe: str = ""
 
 
 class ScalperStopRequest(BaseModel):
@@ -421,6 +434,7 @@ def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header
             "trade_count": req.trade_count,
             "ea_name": req.ea_name,
             "symbols": req.symbols,
+            "timeframe": (req.timeframe or "").strip().lower() or "15m",
             "started_at": datetime.now(timezone.utc).isoformat(),
             "positions": {},
         }
@@ -438,7 +452,7 @@ def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header
                 "tp1": None,  # will be filled by the daemon's first trade
                 "lot": req.lot,
                 "trade_count": req.trade_count,
-                "timeframe": "M15",
+                "timeframe": state["timeframe"].upper(),
                 "status": "Analyzing…",
             },
             "comment": comment,
