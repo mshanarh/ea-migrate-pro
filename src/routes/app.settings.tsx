@@ -17,11 +17,13 @@ import { clearCustomLogo, setCustomLogo, useBrand } from "@/lib/brand-store";
 import { saveImageBlob } from "@/lib/media-store";
 import {
   ACCENT_COLORS,
+  APPEARANCE_CHOICES,
   FONT_OPTIONS,
   INTERFACE_THEMES,
   accentColorValue,
   fontStack,
   setAccentColor,
+  setAppearanceMode,
   setFontOption,
   setInterfaceTheme,
   useCustomization,
@@ -147,6 +149,92 @@ function PillSection({
         )}
       </AnimatePresence>
     </section>
+  );
+}
+
+/**
+ * APPEARANCE / THEME MODE — Black (dark) or White (light).
+ *
+ * Two real previews, not two labels: the card paints the surface and the ink
+ * the mode actually produces (obsidian with white text, or pure white with a
+ * soft grey border and black text), so the choice is visible before it is
+ * taken. The active card carries the checkmark and the accent glow.
+ */
+function AppearanceSection({ accent }: { accent: string }) {
+  const { appearanceMode } = useCustomization();
+  return (
+    <div className="grid grid-cols-2 gap-3">
+      {APPEARANCE_CHOICES.map((option) => {
+        const active = appearanceMode === option.mode;
+        const dark = option.mode === "black";
+        return (
+          <button
+            key={option.mode}
+            type="button"
+            onClick={() => setAppearanceMode(option.mode)}
+            aria-pressed={active}
+            className="if-control relative rounded-2xl border p-2.5 text-left transition-transform active:scale-[0.98]"
+            style={{
+              borderColor: active ? accent : "rgba(255,255,255,0.12)",
+              borderWidth: active ? 2 : 1,
+              boxShadow: active ? `0 0 22px ${accent}55` : undefined,
+            }}
+          >
+            {/* THE PREVIEW IS THE MODE ITSELF: surface, border and text. */}
+            <span
+              className="flex h-[68px] flex-col justify-between rounded-xl border p-2.5"
+              style={
+                dark
+                  ? {
+                      backgroundColor: "#0A0A0A",
+                      borderColor: "rgba(255,255,255,0.16)",
+                      color: "#FFFFFF",
+                    }
+                  : {
+                      backgroundColor: "#FFFFFF",
+                      borderColor: "rgba(0,0,0,0.10)",
+                      color: "#0A0A0A",
+                    }
+              }
+            >
+              <span className="flex items-center gap-1.5">
+                <span
+                  className="size-3.5 rounded-full"
+                  style={{ backgroundColor: accent }}
+                  aria-hidden
+                />
+                <span className="text-[11px] font-black tracking-tight">
+                  {dark ? "Black / Dark" : "White / Light"}
+                </span>
+              </span>
+              <span className="flex items-center gap-1" aria-hidden>
+                <span
+                  className="h-1.5 flex-1 rounded-full"
+                  style={{ backgroundColor: dark ? "rgba(255,255,255,0.24)" : "rgba(0,0,0,0.12)" }}
+                />
+                <span
+                  className="h-1.5 w-6 rounded-full"
+                  style={{ backgroundColor: dark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.28)" }}
+                />
+              </span>
+            </span>
+
+            <span className="if-muted mt-2 block text-[10px] font-semibold leading-snug">
+              {option.body}
+            </span>
+
+            {active && (
+              <span
+                className="absolute right-2 top-2 flex size-5 items-center justify-center rounded-full"
+                style={{ backgroundColor: accent, boxShadow: `0 0 12px ${accent}88` }}
+              >
+                <Check className="size-3.5 text-black" strokeWidth={3.5} />
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
   );
 }
 
@@ -288,6 +376,15 @@ function AppSettings() {
               onToggle={() => toggleSection("accent")}
             >
               <AccentSection accent={accent} />
+            </PillSection>
+
+            <PillSection
+              icon="🌓"
+              label="Theme Mode"
+              open={!!openSections["appearance"]}
+              onToggle={() => toggleSection("appearance")}
+            >
+              <AppearanceSection accent={accent} />
             </PillSection>
 
             <PillSection

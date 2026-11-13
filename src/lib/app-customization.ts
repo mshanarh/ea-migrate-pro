@@ -1,7 +1,12 @@
 import { useSyncExternalStore } from "react";
 import { colourCycleAccentId, subscribeColourCycle } from "@/lib/color-cycle";
 import { setBottomNavStyle } from "@/lib/bottom-nav-style";
-import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interface-themes";
+import {
+  applyAppearanceMode,
+  applyInterfaceDefinition,
+  interfaceDefinitionFor,
+  type AppearanceMode,
+} from "@/lib/interface-themes";
 
 export const ACCENT_COLORS = [
   { id: "inferno-red", name: "Inferno Red", value: "#FF2D2D" },
@@ -116,6 +121,31 @@ const COLOR_KEY = "ea_migrate_color";
 const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
+/**
+ * APPEARANCE MODE — the black/white switch, kept separate from every other
+ * preference so it never resets a colour, an interface or a font.
+ */
+export const APPEARANCE_KEY = "eamp.appearanceMode";
+export const DEFAULT_APPEARANCE_MODE: AppearanceMode = "black";
+
+/** One entry per card the Settings "Theme Mode" section draws. */
+export const APPEARANCE_CHOICES: ReadonlyArray<{
+  mode: AppearanceMode;
+  title: string;
+  body: string;
+}> = [
+  {
+    mode: "black",
+    title: "Black / Dark",
+    body: "Obsidian surfaces, white text — the classic console.",
+  },
+  {
+    mode: "white",
+    title: "White / Light",
+    body: "Crisp white cards, deep slate text — daylight readable.",
+  },
+];
+
 export function accentColorValue(id: string): string {
   // A raw custom HEX is a first-class choice: every surface reads its colour
   // through this function, so the ambient light, borders, buttons and icons
@@ -164,16 +194,21 @@ export function applyFontStack(id: string): string {
   return stack;
 }
 
-type Customization = {
+export type AppCustomizationState = {
   color: AccentColorId;
   theme: InterfaceThemeId;
   font: FontOptionId;
+  /** Black (obsidian) or White (light) — every screen follows it. */
+  appearanceMode: AppearanceMode;
 };
+
+type Customization = AppCustomizationState;
 
 const defaults: Customization = {
   color: DEFAULT_COLOR,
   theme: DEFAULT_THEME,
   font: DEFAULT_FONT,
+  appearanceMode: DEFAULT_APPEARANCE_MODE,
 };
 
 let state: Customization = { ...defaults };
@@ -186,6 +221,7 @@ function load() {
   const storedColor = window.localStorage.getItem(COLOR_KEY) as AccentColorId | null;
   const storedTheme = window.localStorage.getItem(THEME_KEY) as InterfaceThemeId | null;
   const storedFont = window.localStorage.getItem(FONT_KEY) as FontOptionId | null;
+  const storedAppearance = window.localStorage.getItem(APPEARANCE_KEY);
   // A font removed from the lineup falls back to the default instead of
   // rendering as an invisible system stack.
   const validFont = FONT_OPTIONS.some((option) => option.id === storedFont);
@@ -193,6 +229,8 @@ function load() {
     color: storedColor ?? DEFAULT_COLOR,
     theme: storedTheme ?? DEFAULT_THEME,
     font: validFont ? (storedFont as FontOptionId) : DEFAULT_FONT,
+    // Unknown/missing mode is the obsidian default — never a broken value.
+    appearanceMode: storedAppearance === "white" ? "white" : DEFAULT_APPEARANCE_MODE,
   };
 }
 
@@ -201,6 +239,7 @@ function persist() {
     window.localStorage.setItem(COLOR_KEY, state.color);
     window.localStorage.setItem(THEME_KEY, state.theme);
     window.localStorage.setItem(FONT_KEY, state.font);
+    window.localStorage.setItem(APPEARANCE_KEY, state.appearanceMode);
   }
   listeners.forEach((listener) => listener());
 }
@@ -257,6 +296,24 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
   } else {
     applyInterfaceDefinition(null);
   }
+  // The definition publishes its OWN obsidian tokens; in light mode the
+  // appearance pass must run again so the white surfaces stay on top.
+  applyAppearanceMode(state.appearanceMode);
+}
+
+/**
+ * THE BLACK/WHITE SWITCH — the only writer of `appearanceMode`.
+ *
+ * It repaints immediately (no reload): the tokens are published here and the
+ * `data-appearance` attribute drives the light-mode stylesheet. Nothing else
+ * (colour, interface, font, background) is touched.
+ */
+export function setAppearanceMode(mode: AppearanceMode) {
+  load();
+  const next: AppearanceMode = mode === "white" ? "white" : "black";
+  state = { ...state, appearanceMode: next };
+  persist();
+  applyAppearanceMode(next);
 }
 
 export function setFontOption(id: FontOptionId) {

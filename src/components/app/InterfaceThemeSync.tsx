@@ -1,6 +1,10 @@
 import { useEffect } from "react";
 import { applyFontStack, useCustomization } from "@/lib/app-customization";
-import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interface-themes";
+import {
+  applyAppearanceMode,
+  applyInterfaceDefinition,
+  interfaceDefinitionFor,
+} from "@/lib/interface-themes";
 
 /**
  * Publishes the selected Main Interface definition to <html> — colours,
@@ -12,25 +16,36 @@ import { applyInterfaceDefinition, interfaceDefinitionFor } from "@/lib/interfac
  * Legacy layouts (NOVA CORE, SNIPPER, PHOENIX, …) resolve to null, which puts
  * the tokens back to neutral and leaves their bespoke styling alone.
  *
+ * The APPEARANCE MODE (black / white) is published after the definition: the
+ * definition always supplies the obsidian palette, and light mode then lifts
+ * the surface/text tokens (and sets `data-appearance="white"`, which drives
+ * the light stylesheet). Black mode writes nothing, so the classic console is
+ * untouched.
+ *
  * It renders NOTHING. The temporary debug badge that used to sit at the bottom
  * left ("NOVA CORE · #…") is gone: it was a testing aid, it floated over the
  * public landing page as well, and it is not part of the design.
  */
 export function InterfaceThemeSync() {
-  const { theme, font } = useCustomization();
+  const { theme, font, appearanceMode } = useCustomization();
   const definition = interfaceDefinitionFor(theme);
 
-  // THE INTERFACE GOES ON FIRST, THEN THE FONT — ALWAYS.
+  // THE INTERFACE GOES ON FIRST, THEN THE APPEARANCE, THEN THE FONT — ALWAYS.
   //
   // One effect, in this order, so the user's face is applied ON TOP of whatever
   // tokens the style publishes: switching CRIMSON NAVIGATOR → ULTRON MEGA can
   // repaint colours, radii and nav, but cannot reset the font. `font` is a
   // separate preference (ea_migrate_font) written only by the font picker, so
   // this effect re-publishes the SAME face when only the style changed.
+  //
+  // Appearance sits in the middle because a styled definition publishes DARK
+  // surfaces: light mode has to overwrite them after they land, and a mode
+  // switch has to re-apply the definition's tokens before the light ones.
   useEffect(() => {
     applyInterfaceDefinition(definition);
+    applyAppearanceMode(appearanceMode);
     applyFontStack(font);
-  }, [definition, font]);
+  }, [definition, appearanceMode, font]);
 
   return null;
 }

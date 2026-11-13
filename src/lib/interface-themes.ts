@@ -435,6 +435,54 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// APPEARANCE MODE — BLACK (obsidian) / WHITE (light)
+// ══════════════════════════════════════════════════════════════════════════
+// Every screen reads its colour through the `--if-*` tokens, so the mode is a
+// token swap, not a second theme:
+//
+//   • WHITE publishes light surfaces, deep-slate text and a soft shadow, and
+//     sets `data-appearance="white"` so the light stylesheet rules in
+//     styles.css can lift the hardcoded dark utilities too;
+//   • BLACK writes nothing — the interface definition (or the neutral
+//     defaults) is already the obsidian palette, so the classic console is
+//     preserved exactly as it was.
+//
+// The interface's signature accents, radii and nav shape are NEVER replaced:
+// light mode changes surfaces and text, not the user's design.
+
+export type AppearanceMode = "black" | "white";
+
+export const LIGHT_MODE_TOKENS: Record<string, string> = {
+  "--if-bg": "linear-gradient(180deg, #FFFFFF 0%, #F8FAFC 100%)",
+  "--if-surface": "#FFFFFF",
+  "--if-surface-alt": "#F1F5F9",
+  "--if-well": "#F8FAFC",
+  "--if-border": "rgba(0, 0, 0, 0.08)",
+  "--if-text": "#0F172A",
+  "--if-muted": "#64748B",
+  "--if-shadow": "0 4px 20px -2px rgba(0, 0, 0, 0.06), 0 2px 6px -1px rgba(0, 0, 0, 0.04)",
+  // Chrome that sits ON the page must also be light, or the nav stays a black
+  // slab under a white screen.
+  "--if-texture": "none",
+  "--if-nav-bg": "rgba(255, 255, 255, 0.94)",
+  "--if-nav-border": "rgba(0, 0, 0, 0.08)",
+  "--if-nav-shadow": "0 10px 30px rgba(15, 23, 42, 0.10)",
+  "--if-blur": "blur(18px) saturate(1.2)",
+};
+
+/** Publish the appearance mode to <html>. Idempotent and synchronous. */
+export function applyAppearanceMode(mode: AppearanceMode): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  root.setAttribute("data-appearance", mode === "white" ? "white" : "black");
+  root.style.colorScheme = mode === "white" ? "light" : "dark";
+  if (mode !== "white") return; // black: the definition's own obsidian tokens
+  for (const [name, value] of Object.entries(LIGHT_MODE_TOKENS)) {
+    root.style.setProperty(name, value);
+  }
+}
+
 /** The Home hero decoration values for one definition. */
 export function heroDecoration(definition: InterfaceDefinition): {
   /** Full-bleed wash inside the hero card. */
