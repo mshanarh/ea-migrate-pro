@@ -513,115 +513,115 @@ html:not([data-marketing]):not([data-portal]) body {
 }
 
 /* White theme — home screen background light, interface stays dark. */
-html[data-eamp-appearance="white"] .app-fullscreen,
-html[data-eamp-appearance="white"] .if-screen {
+html[data-appearance="white"] .app-fullscreen,
+html[data-appearance="white"] .if-screen {
   background-color: #f0f0f0;
 }
 
 /* White theme — cards and UI components stay dark charcoal. */
-html[data-eamp-appearance="white"] .if-card,
-html[data-eamp-appearance="white"] .if-control,
-html[data-eamp-appearance="white"] .if-well {
+html[data-appearance="white"] .if-card,
+html[data-appearance="white"] .if-control,
+html[data-appearance="white"] .if-well {
   background-color: #2b2b31 !important;
   color: #ffffff !important;
 }
-html[data-eamp-appearance="white"] .if-card.if-card,
-html[data-eamp-appearance="white"] .if-control.if-control,
-html[data-eamp-appearance="white"] .if-well.if-well {
+html[data-appearance="white"] .if-card.if-card,
+html[data-appearance="white"] .if-control.if-control,
+html[data-appearance="white"] .if-well.if-well {
   background-color: #2b2b31 !important;
   color: #ffffff !important;
 }
 
 /* White theme — buttons and pills stay dark. */
-html[data-eamp-appearance="white"] button.if-control,
-html[data-eamp-appearance="white"] .if-pill {
+html[data-appearance="white"] button.if-control,
+html[data-appearance="white"] .if-pill {
   background-color: #2b2b31 !important;
   color: #ffffff !important;
 }
 
 /* White theme — text colors: white text on dark surfaces. */
-html[data-eamp-appearance="white"] .text-white,
-html[data-eamp-appearance="white"] .text-white\/50,
-html[data-eamp-appearance="white"] .text-white\/55,
-html[data-eamp-appearance="white"] .text-white\/60,
-html[data-eamp-appearance="white"] .text-white\/70,
-html[data-eamp-appearance="white"] .text-white\/80,
-html[data-eamp-appearance="white"] .text-white\/85,
-html[data-eamp-appearance="white"] .text-white\/90,
-html[data-eamp-appearance="white"] .text-white\/30,
-html[data-eamp-appearance="white"] .text-white\/35,
-html[data-eamp-appearance="white"] .text-white\/40,
-html[data-eamp-appearance="white"] .text-white\/45 {
+html[data-appearance="white"] .text-white,
+html[data-appearance="white"] .text-white\/50,
+html[data-appearance="white"] .text-white\/55,
+html[data-appearance="white"] .text-white\/60,
+html[data-appearance="white"] .text-white\/70,
+html[data-appearance="white"] .text-white\/80,
+html[data-appearance="white"] .text-white\/85,
+html[data-appearance="white"] .text-white\/90,
+html[data-appearance="white"] .text-white\/30,
+html[data-appearance="white"] .text-white\/35,
+html[data-appearance="white"] .text-white\/40,
+html[data-appearance="white"] .text-white\/45 {
   color: #ffffff !important;
 }
-html[data-eamp-appearance="white"] .text-black {
+html[data-appearance="white"] .text-black {
   color: #000000 !important;
 }
 
 /* White theme — override inline bg-black/opaque backgrounds to dark charcoal. */
-html[data-eamp-appearance="white"] .bg-black {
+html[data-appearance="white"] .bg-black {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-black\/5,
-html[data-eamp-appearance="white"] .bg-black\/10,
-html[data-eamp-appearance="white"] .bg-black\/15,
-html[data-eamp-appearance="white"] .bg-black\/20,
-html[data-eamp-appearance="white"] .bg-black\/25,
-html[data-eamp-appearance="white"] .bg-black\/30,
-html[data-eamp-appearance="white"] .bg-black\/35,
-html[data-eamp-appearance="white"] .bg-black\/40,
-html[data-eamp-appearance="white"] .bg-black\/45,
-html[data-eamp-appearance="white"] .bg-black\/50,
-html[data-eamp-appearance="white"] .bg-black\/55,
-html[data-eamp-appearance="white"] .bg-black\/60,
-html[data-eamp-appearance="white"] .bg-black\/65,
-html[data-eamp-appearance="white"] .bg-black\/70,
-html[data-eamp-appearance="white"] .bg-black\/75,
-html[data-eamp-appearance="white"] .bg-black\/80,
-html[data-eamp-appearance="white"] .bg-black\/85,
-html[data-eamp-appearance="white"] .bg-black\/90,
-html[data-eamp-appearance="white"] .bg-black\/95 {
+html[data-appearance="white"] .bg-black\/5,
+html[data-appearance="white"] .bg-black\/10,
+html[data-appearance="white"] .bg-black\/15,
+html[data-appearance="white"] .bg-black\/20,
+html[data-appearance="white"] .bg-black\/25,
+html[data-appearance="white"] .bg-black\/30,
+html[data-appearance="white"] .bg-black\/35,
+html[data-appearance="white"] .bg-black\/40,
+html[data-appearance="white"] .bg-black\/45,
+html[data-appearance="white"] .bg-black\/50,
+html[data-appearance="white"] .bg-black\/55,
+html[data-appearance="white"] .bg-black\/60,
+html[data-appearance="white"] .bg-black\/65,
+html[data-appearance="white"] .bg-black\/70,
+html[data-appearance="white"] .bg-black\/75,
+html[data-appearance="white"] .bg-black\/80,
+html[data-appearance="white"] .bg-black\/85,
+html[data-appearance="white"] .bg-black\/90,
+html[data-appearance="white"] .bg-black\/95 {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#0b0b0d\] {
+html[data-appearance="white"] .bg-\[\#0b0b0d\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#0d0d0d\] {
+html[data-appearance="white"] .bg-\[\#0d0d0d\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#000000\] {
+html[data-appearance="white"] .bg-\[\#000000\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#0A0A0A\] {
+html[data-appearance="white"] .bg-\[\#0A0A0A\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#0A0F1E\] {
+html[data-appearance="white"] .bg-\[\#0A0F1E\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#0F2E1A\] {
+html[data-appearance="white"] .bg-\[\#0F2E1A\] {
   background-color: #2b2b31 !important;
 }
-html[data-eamp-appearance="white"] .bg-\[\#2A2A2A\] {
+html[data-appearance="white"] .bg-\[\#2A2A2A\] {
   background-color: #2b2b31 !important;
 }
 
 /* White theme — dialog/content backgrounds stay dark. */
-html[data-eamp-appearance="white"] .bg-[#0b0b0d],
-html[data-eamp-appearance="white"] .bg-[#0d0d0d],
-html[data-eamp-appearance="white"] .bg-black,
-html[data-eamp-appearance="white"] .bg-black/5,
-html[data-eamp-appearance="white"] .bg-black/10,
-html[data-eamp-appearance="white"] .bg-black/20,
-html[data-eamp-appearance="white"] .bg-black/30,
-html[data-eamp-appearance="white"] .bg-black/40,
-html[data-eamp-appearance="white"] .bg-black/50,
-html[data-eamp-appearance="white"] .bg-black/60,
-html[data-eamp-appearance="white"] .bg-black/70,
-html[data-eamp-appearance="white"] .bg-black/80,
-html[data-eamp-appearance="white"] .bg-black/85,
-html[data-eamp-appearance="white"] .bg-black/90,
-html[data-eamp-appearance="white"] .bg-black/95,
-html[data-eamp-appearance="white"] .bg-[#000000] {
+html[data-appearance="white"] .bg-[#0b0b0d],
+html[data-appearance="white"] .bg-[#0d0d0d],
+html[data-appearance="white"] .bg-black,
+html[data-appearance="white"] .bg-black/5,
+html[data-appearance="white"] .bg-black/10,
+html[data-appearance="white"] .bg-black/20,
+html[data-appearance="white"] .bg-black/30,
+html[data-appearance="white"] .bg-black/40,
+html[data-appearance="white"] .bg-black/50,
+html[data-appearance="white"] .bg-black/60,
+html[data-appearance="white"] .bg-black/70,
+html[data-appearance="white"] .bg-black/80,
+html[data-appearance="white"] .bg-black/85,
+html[data-appearance="white"] .bg-black/90,
+html[data-appearance="white"] .bg-black/95,
+html[data-appearance="white"] .bg-[#000000] {
   background-color: #2b2b31 !important;
 }
 
