@@ -163,14 +163,14 @@ const PLANS: Record<
     title: "Monthly Subscription",
     badge: "Recurring — Per Month",
     subtitle: "Billed monthly. Cancel anytime.",
-    note: "(Recurring) – ZAR '" + str(350) + "'",
+    note: "(Recurring) – ZAR '" + 350 + "'",
     priceZar: 350,
   },
   lifetime: {
     title: "Lifetime Access",
     badge: "Lifetime Access",
     subtitle: "Pay once, keep access forever. No recurring fees.",
-    note: "(One-Time) – ZAR '" + str(500) + "'",
+    note: "(One-Time) – ZAR '" + 500 + "'",
     priceZar: 500,
   },
 };
@@ -2161,7 +2161,7 @@ function PlanSelection({
               </span>
               <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
               <p className="mt-2 text-xs leading-none text-[#cbd5e0]">
-                ZAR {plan.priceZar} / month
+                ZAR {PLANS[selectedPlan].priceZar} / month
               </p>
               <p className="mt-1 text-[10px] text-[#64748b] line-through">{plan.note}</p>
             </button>
@@ -2181,7 +2181,7 @@ function PlanSelection({
           </p>
           <p className="mt-3 text-xs leading-5 text-[#64748b]">
             Pay via bank transfer (Standard Bank, branch 927) using the details below,
-            then message support at {SUPPORT_PAYMENT_EMAIL} with your email and proof of payment.
+            then message support at {"eamigratepro@gmail.com"} with your email and proof of payment.
           </p>
           <button
             type="button"
@@ -2197,7 +2197,7 @@ function PlanSelection({
             Email me the details
           </a>
           <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\nPrice: ZAR {plan.priceZar}\n\nMessage support with your email and proof of payment.
+            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\nPrice: ZAR {PLANS[selectedPlan].priceZar}\n\nMessage support with your email and proof of payment.
           </p>
         </div>
       ) : (
