@@ -666,7 +666,9 @@ function AppAccess() {
         return;
       }
       if (access.action === "pay") {
-        leaveForCheckout();
+        // Do NOT call leaveForCheckout() - that redirects to Whop checkout URL.
+        // Instead, show the payment plan screen with bank transfer details.
+        // The bank details are already visible thanks to the {true ?} fix above.
         setCloudStatus("unpaid");
         setChoosePlan(true);
         setResuming(false);
