@@ -72,8 +72,8 @@ export const Route = createFileRoute("/")({
   component: Home,
 });
 
-const MONTHLY_CHECKOUT = "https://whop.com/checkout/plan_wgIWJdSwjlMGS";
-const LIFETIME_CHECKOUT = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+const MONTHLY_CHECKOUT = "bank-transfer";
+const LIFETIME_CHECKOUT = "bank-transfer";
 const WHATSAPP_URL = "https://wa.me/27704950612";
 
 const why = [
@@ -118,7 +118,7 @@ const plans = [
   {
     name: "Monthly Subscription",
     badge: "Per Month / PM",
-    price: "$39",
+    price: "ZAR 350",
     priceNote: "/ month",
     subtitle: "One recurring payment, 1 month of access. Cancel anytime.",
     features: [
@@ -129,13 +129,13 @@ const plans = [
       "24/7 Support",
     ],
     cta: "Get Started — Monthly",
-    href: MONTHLY_CHECKOUT,
+    href: "bank-transfer",
     highlight: false,
   },
   {
     name: "Lifetime Access",
     badge: "Most Popular / Best Value",
-    price: "Lifetime",
+    price: "ZAR 500",
     priceNote: "one-time",
     subtitle: "One-time payment, lifetime access. No recurring fees ever.",
     features: [
@@ -148,7 +148,7 @@ const plans = [
       "Free Future Updates",
     ],
     cta: "Get Started — Lifetime",
-    href: LIFETIME_CHECKOUT,
+    href: "bank-transfer",
     highlight: true,
   },
 ];
