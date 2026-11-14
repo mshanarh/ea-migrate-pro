@@ -892,6 +892,40 @@ html[data-if-styled] body.eamp-bg-on:not(.eamp-app-bg, .eamp-app-video) .if-scre
   background-image: var(--if-texture) !important;
 }
 
+/* ── WHITE / LIGHT MODE (HOME) ────────────────────────────────────────────
+   THE one authoritative fill for White mode.
+
+   Two layers force this screen transparent with `!important` — the ambient
+   glow (`body.eamp-ambient-theme .if-screen.if-screen`) and the owner's
+   background animation (`body.eamp-bg-on .if-screen.if-screen`) — so Home's
+   inline `backgroundColor` lost and the black `#050508` body showed through.
+   This block outranks both, which is why the canvas actually turns white.
+
+   `body` is in the selector on purpose: the styled-interface tint rule just
+   above has the same class count, and matching its element count makes this
+   block win on source order alone.
+
+   ONLY the canvas and its scroller are repainted. No card, action button,
+   avatar ring, accent border or bottom-dock token is touched — the neon stays
+   exactly as it is in Black mode. */
+html[data-appearance="white"] body .if-screen[data-eamp-appearance="white"].if-screen,
+html[data-appearance="white"] body [data-eamp-appearance="white"] .app-scroll-area {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+  color: #000000 !important;
+}
+
+/* White mode turns the interface ink black instead of crisp white. */
+html[data-appearance="white"] [data-eamp-appearance="white"] h1,
+html[data-appearance="white"] [data-eamp-appearance="white"] h2,
+html[data-appearance="white"] [data-eamp-appearance="white"] p,
+html[data-appearance="white"] [data-eamp-appearance="white"] .text-white,
+html[data-appearance="white"] [data-eamp-appearance="white"] .text-white\/65,
+html[data-appearance="white"] [data-eamp-appearance="white"] .text-white\/80 {
+  color: #000000 !important;
+  text-shadow: none !important;
+}
+
 /* Cards, sheets and the popup shells. */
 html[data-if-styled] .if-card.if-card {
   background: var(--if-surface) !important;

@@ -958,14 +958,16 @@ function AppHome() {
     toast.success(`${robot.name} removed`);
   };
 
-  // WHITE MODE REPAINTS THE CANVAS ONLY: the clean light page sits BEHIND the
-  // obsidian glass cards, whose neon accents, colours and crisp white ink are
-  // untouched. Every other screen keeps its own dark background.
+  // WHITE MODE = WHITE CANVAS + BLACK INK. The class pair and the inline fill
+  // agree, and styles.css carries an authoritative `!important` rule that beats
+  // the transparent-screen layers, so the canvas really is white (the inline
+  // style alone lost to them). Neon accents, avatar glow rings and the bottom
+  // dock are untouched — only the page and its text colour change.
   return (
     <div
-      className="app-fullscreen if-screen flex w-full flex-col text-white"
+      className={`app-fullscreen if-screen flex w-full flex-col ${isWhiteMode ? "bg-white text-black" : "bg-black text-white"}`}
       data-eamp-appearance={appearanceMode}
-      style={{ backgroundColor: isWhiteMode ? "#f8f9fc" : "#000000" }}
+      style={{ backgroundColor: isWhiteMode ? "#ffffff" : "#000000" }}
       onTouchStart={onTouchStart}
       onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {
