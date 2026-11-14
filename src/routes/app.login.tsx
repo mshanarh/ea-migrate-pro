@@ -2172,7 +2172,7 @@ function PlanSelection({
       {/* CONTINUE TO PAYMENT — opens the SELECTED plan. On Android the native
         bridge hands the URL to the system browser; elsewhere a plain
         navigation (and, on iOS standalone, the copy/email fallbacks). */}
-      {standalone ? (
+      {true ? (
         <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
           <p className="text-sm font-semibold text-white">Finish in Safari</p>
           <p className="mt-2 text-sm leading-6 text-[#8a9298]">
