@@ -143,16 +143,9 @@ export const Route = createFileRoute("/app/login")({
  * and proof of payment so the account can be marked paid.
  */
 
-BANK_NAME = "Standard Bank"
-BRANCH_CODE = "927"
-ACCOUNT_HOLDER = "Ea migrate"
-ACCOUNT_NUMBER = "10 23 913 954 0"
-ACCOUNT_TYPE = "CURRENT"
-SUPPORT_PAYMENT_EMAIL = "eamigratepro@gmail.com"
+
 
 /* Price information shown alongside the bank details. */
-MONTHLY_PRICE_ZAR = 150
-LIFETIME_PRICE_ZAR = 1500
 
 /** Which plan the customer picked. Monthly is the default. */
 export type PlanId = "monthly" | "lifetime";
@@ -2187,7 +2180,7 @@ function PlanSelection({
             directly.
           </p>
           <p className="mt-3 text-xs leading-5 text-[#64748b]">
-            Pay via bank transfer (Standard Bank, branch {BRANCH_CODE}) using the details below,
+            Pay via bank transfer (Standard Bank, branch 927) using the details below,
             then message support at {SUPPORT_PAYMENT_EMAIL} with your email and proof of payment.
           </p>
           <button
@@ -2198,13 +2191,13 @@ function PlanSelection({
             {copiedUrl === "bank-transfer" ? "Details copied" : "Copy bank details"}
           </button>
           <a
-            href={`mailto:?subject={encodeURIComponent("EA Migrate payment")}&body={encodeURIComponent("Standard Bank, branch " + BRANCH_CODE + "\nAccount: " + ACCOUNT_NUMBER + "\nAccount holder: " + ACCOUNT_HOLDER + "\nType: " + ACCOUNT_TYPE)`}
+            href={`mailto:?subject={encodeURIComponent("EA Migrate payment")}&body={encodeURIComponent("Standard Bank, branch " + 927 + "\nAccount: " + "10 23 913 954 0" + "\nAccount holder: " + "Ea migrate" + "\nType: " + "CURRENT")`}
             className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
           >
             Email me the details
           </a>
           <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            Standard Bank\nBranch: {BRANCH_CODE}\nAccount: {ACCOUNT_NUMBER}\nAccount holder: {ACCOUNT_HOLDER}\nType: {ACCOUNT_TYPE}\n\nPrice: ZAR {plan.priceZar}\n\nMessage support with your email and proof of payment.
+            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\nPrice: ZAR {plan.priceZar}\n\nMessage support with your email and proof of payment.
           </p>
         </div>
       ) : (
