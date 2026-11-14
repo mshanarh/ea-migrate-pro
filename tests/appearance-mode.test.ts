@@ -4,23 +4,13 @@ import {
   getCustomization,
   setAppearanceMode,
 } from "@/lib/app-customization";
-import { applyAppearanceMode, interfaceDefinitionFor } from "@/lib/interface-themes";
+import {
+  applyAppearanceMode,
+  applyInterfaceDefinition,
+  interfaceDefinitionFor,
+} from "@/lib/interface-themes";
 
-/**
- * APPEARANCE MODE — BLACK (obsidian) or WHITE (light, home-screen-only).
- *
- * BLACK: deep obsidian surfaces, pure white ink and the user's accent across
- * every screen.
- *
- * WHITE: the HOME SCREEN background switches to a light/white surface while
- * the interface (cards, controls, text, nav) stays black — the white theme
- * only affects the home screen background, not the whole UI.
- * These tests pin the parts that decide what is painted:
- *   • the preference loads as black by default;
- *   • the setter accepts "black" or "white" and stamps the document accordingly;
- *   • the document is stamped `data-appearance="black"` or `data-appearance="white"`
- *     with the matching color-scheme.
- */
+/** Black/White selects the Home background without changing its interface. */
 describe("appearance mode", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -47,45 +37,55 @@ describe("appearance mode", () => {
 
   it("accepts stored white preference and keeps it", async () => {
     window.localStorage.setItem(APPEARANCE_KEY, "white");
-    // A launch is a fresh module: reload the store and read storage again.
     vi.resetModules();
     const fresh = await import("@/lib/app-customization");
     expect(fresh.getCustomization().appearanceMode).toBe("white");
-    // …and the value is preserved, so the device respects the choice.
     expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("white");
   });
 
-  it("sets white mode and keeps the document light", () => {
+  it("sets white mode without changing interface styling or native control colors", () => {
     setAppearanceMode("white");
 
     const root = document.documentElement;
     expect(root.getAttribute("data-appearance")).toBe("white");
-    expect(root.style.colorScheme).toBe("light");
-    // No interface surface tokens are published by the appearance mode.
+    expect(root.style.colorScheme).toBe("dark");
     expect(root.style.getPropertyValue("--if-surface")).toBe("");
     expect(root.style.getPropertyValue("--if-text")).toBe("");
     expect(root.style.getPropertyValue("--if-bg")).toBe("");
   });
 
-  it("sets black mode and keeps the document dark", () => {
+  it("sets black mode and keeps native controls dark", () => {
     setAppearanceMode("black");
 
     const root = document.documentElement;
     expect(root.getAttribute("data-appearance")).toBe("black");
     expect(root.style.colorScheme).toBe("dark");
-    // No interface surface tokens are published by the appearance mode.
     expect(root.style.getPropertyValue("--if-surface")).toBe("");
     expect(root.style.getPropertyValue("--if-text")).toBe("");
     expect(root.style.getPropertyValue("--if-bg")).toBe("");
   });
 
-  it("leaves a styled interface's obsidian tokens in place", () => {
+  it("keeps the selected interface unchanged in both background modes", () => {
     const definition = interfaceDefinitionFor("CRIMSON NAVIGATOR");
-    expect(definition).not.toBeNull();
+    if (!definition) throw new Error("Crimson Navigator interface definition is missing");
+    applyInterfaceDefinition(definition);
 
-    applyAppearanceMode("black");
-    expect(document.documentElement.getAttribute("data-appearance")).toBe("black");
-    expect(document.documentElement.style.getPropertyValue("--if-surface")).toBe("");
+    const root = document.documentElement;
+    const original = {
+      surface: root.style.getPropertyValue("--if-surface"),
+      text: root.style.getPropertyValue("--if-text"),
+      background: root.style.getPropertyValue("--if-bg"),
+    };
+
+    setAppearanceMode("white");
+    expect(root.style.getPropertyValue("--if-surface")).toBe(original.surface);
+    expect(root.style.getPropertyValue("--if-text")).toBe(original.text);
+    expect(root.style.getPropertyValue("--if-bg")).toBe(original.background);
+
+    setAppearanceMode("black");
+    expect(root.style.getPropertyValue("--if-surface")).toBe(original.surface);
+    expect(root.style.getPropertyValue("--if-text")).toBe(original.text);
+    expect(root.style.getPropertyValue("--if-bg")).toBe(original.background);
   });
 
   it("is idempotent — repeated calls keep the chosen appearance", () => {
@@ -95,6 +95,6 @@ describe("appearance mode", () => {
     expect(document.documentElement.getAttribute("data-appearance")).toBe("white");
     applyAppearanceMode("black");
     expect(document.documentElement.getAttribute("data-appearance")).toBe("black");
-    expect(document.documentElement.style.getPropertyValue("--if-surface")).toBe("");
+    expect(document.documentElement.style.colorScheme).toBe("dark");
   });
 });

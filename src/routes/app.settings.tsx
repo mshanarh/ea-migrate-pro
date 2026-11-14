@@ -236,8 +236,7 @@ function AppearanceSection({ accent }: { accent: string }) {
         );
       })}
       <p className="if-muted px-1 text-[11px] font-semibold leading-snug">
-        Obsidian black is the only mode — light surfaces are retired, so cards, hero sections and
-        text stay high-contrast white on black on every screen.
+        Black or White changes only the Home background; your selected interface stays unchanged.
       </p>
     </div>
   );

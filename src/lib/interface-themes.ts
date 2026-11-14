@@ -436,41 +436,27 @@ export function applyInterfaceDefinition(definition: InterfaceDefinition | null)
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// APPEARANCE MODE — OBSIDIAN BLACK ONLY
+// APPEARANCE MODE — HOME CANVAS ONLY
 // ══════════════════════════════════════════════════════════════════════════
-// The app is a black console on every screen and every Main Interface. Light
-// surfaces are retired: publishing `--if-surface: #FFFFFF` / `--if-text:
-// #0F172A` put white plates behind white text and dark ink on dark glass on
-// the layouts that hardcode their colours, which is exactly the washed-out,
-// unreadable state this mode now prevents.
-//
-// So there is nothing to swap here — the published tokens are ALREADY the
-// obsidian palette (the interface definition, or the neutral defaults for
-// legacy layouts) and this call only guarantees the document stays dark:
-// `data-appearance="black"` + `color-scheme: dark`, which also overrides a
-// native light preference for form controls, scrollbars and the canvas.
-//
-// The type keeps the historical union so old stored values and callers still
-// type-check, but any non-black value is normalised to black.
+// Appearance mode only chooses the Home page's outer canvas color. Interface
+// definitions, cards, controls, text, navigation, and native control styling
+// are independent and must not change when the canvas is switched.
 
 export type AppearanceMode = "black" | "white";
 
 /**
  * Apply the appearance mode to the document.
  *
- * BLACK: stamps `data-appearance="black"` + `color-scheme: dark` — the
- * obsidian palette everywhere.
+ * BLACK: stamps `data-appearance="black"`.
  *
- * WHITE: stamps `data-appearance="white"` + `color-scheme: light` so the
- * home screen background switch (which reads `[data-appearance="white"]`)
- * can apply a light page background. The interface itself stays black via the
- * interface definition tokens — only the home screen background changes.
+ * WHITE: stamps `data-appearance="white"`; Home reads this preference for its
+ * background only. The rest of the app keeps its selected interface styling.
  */
 export function applyAppearanceMode(mode: AppearanceMode = "black"): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
   root.setAttribute("data-appearance", mode);
-  root.style.colorScheme = mode === "white" ? "light" : "dark";
+  root.style.colorScheme = "dark";
 }
 
 /** The Home hero decoration values for one definition. */

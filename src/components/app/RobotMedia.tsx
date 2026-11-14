@@ -98,7 +98,7 @@ export function VideoBackdrop({
   // THE PICTURE IS THE POINT — full strength: no opacity, no scrim, no blur.
   if (showImageWhenInactive) {
     return (
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden" style={{ backgroundColor: whiteMode ? "#f5f5f5" : "#000000" }}>
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden" style={{ backgroundColor: whiteMode ? "#ffffff" : "#000000" }}>
         <img src={image} alt="" className="size-full object-cover" />
       </div>
     );

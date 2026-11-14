@@ -122,14 +122,12 @@ const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
 /**
- * APPEARANCE MODE — BLACK (obsidian) or WHITE (light, home-screen-only).
+ * APPEARANCE MODE — BLACK or WHITE Home canvas; selected interface unchanged.
  *
- * BLACK: deep obsidian surfaces, pure white ink and the user's accent across
- * every screen.
+ * BLACK: black Home background.
  *
- * WHITE: the HOME SCREEN background switches to a light/white surface while
- * the interface (cards, controls, text, nav) stays black — the white theme
- * only affects the home screen background, not the whole UI.
+ * WHITE: white Home background. The selected interface's layout, colors,
+ * cards, controls, text and navigation remain exactly as chosen.
  */
 export const APPEARANCE_KEY = "eamp.appearanceMode";
 export const DEFAULT_APPEARANCE_MODE: AppearanceMode = "black";
@@ -148,7 +146,7 @@ export const APPEARANCE_CHOICES: ReadonlyArray<{
   {
     mode: "white",
     title: "White / Light",
-    body: "Home screen background turns white — interface stays black.",
+    body: "Changes only the Home background; your selected interface stays unchanged.",
   },
 ];
 
@@ -204,7 +202,7 @@ export type AppCustomizationState = {
   color: AccentColorId;
   theme: InterfaceThemeId;
   font: FontOptionId;
-  /** Black (obsidian) or White (light) — every screen follows it. */
+  /** Home canvas color; does not change the selected interface style. */
   appearanceMode: AppearanceMode;
 };
 
@@ -314,9 +312,9 @@ export function setInterfaceTheme(id: InterfaceThemeId) {
 /**
  * THE APPEARANCE SETTER — the only writer of `appearanceMode`.
  *
- * Accepts "black" or "white". White mode switches the HOME SCREEN background
- * to a light surface while the interface (cards, controls, text, nav) stays
- * black. It repaints immediately (no reload) and persists the value.
+ * Accepts "black" or "white". This changes only the Home canvas background;
+ * the selected interface's layout, colors and controls stay unchanged.
+ * It repaints immediately (no reload) and persists the value.
  */
 export function setAppearanceMode(mode: AppearanceMode = DEFAULT_APPEARANCE_MODE) {
   load();

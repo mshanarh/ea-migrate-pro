@@ -278,7 +278,7 @@ function WelcomeMaster() {
         aria-label="Welcome"
         className="fixed inset-0 z-[10000] flex flex-col items-center justify-center"
         style={{
-          backgroundColor: isWhiteMode ? "rgba(255,255,255,0.95)" : "#000000",
+          backgroundColor: isWhiteMode ? "#ffffff" : "#000000",
           animation: "welcomeIn 0.25s ease-out both",
         }}
       >
@@ -292,7 +292,7 @@ function WelcomeMaster() {
         alt=""
         className="relative size-24 rounded-[24px] object-contain p-1"
         style={{
-          backgroundColor: isWhiteMode ? "rgba(0,0,0,0.05)" : "rgba(255,255,255,0.05)",
+          backgroundColor: "rgba(255,255,255,0.05)",
           boxShadow: `0 0 44px ${accent}66`,
           border: `2px solid ${accent}55`,
           animation: "welcomePop 0.45s cubic-bezier(0.22,1,0.36,1) both",
@@ -301,8 +301,8 @@ function WelcomeMaster() {
       <h1
         className="relative mt-6 text-3xl font-black tracking-tight"
         style={{
-          color: isWhiteMode ? "#000000" : "#ffffff",
-          textShadow: isWhiteMode ? "none" : `0 0 32px ${accent}88`,
+          color: "#ffffff",
+          textShadow: `0 0 32px ${accent}88`,
           animation: "welcomeUp 0.35s ease-out 0.15s both",
         }}
       >
@@ -311,7 +311,7 @@ function WelcomeMaster() {
       <p
         className="relative mt-2 text-sm font-semibold tracking-wide"
         style={{
-          color: isWhiteMode ? "rgba(0,0,0,0.70)" : "rgba(255,255,255,0.70)",
+          color: "rgba(255,255,255,0.70)",
           animation: "welcomeUp 0.3s ease-out 0.3s both",
           paddingBottom: "var(--sa-bottom)",
         }}
@@ -962,7 +962,7 @@ function AppHome() {
     <div
       className="app-fullscreen if-screen flex w-full flex-col text-white"
       data-eamp-appearance={appearanceMode}
-      style={{ backgroundColor: isWhiteMode ? "#f5f5f5" : "#000000" }}
+      style={{ backgroundColor: isWhiteMode ? "#ffffff" : "#000000" }}
       onTouchStart={onTouchStart}
       onTouchMove={pull.handlers.onTouchMove}
       onTouchEnd={(event) => {

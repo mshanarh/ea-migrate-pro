@@ -208,7 +208,7 @@ export function CustomizationPanel() {
               <span className="min-w-0">
                 <span className="block text-sm font-black tracking-wide text-white">White / Light</span>
                 <span className="block text-xs text-white/60">
-                  Home screen background turns white — interface stays black.
+                  Changes only the Home background; your selected interface stays unchanged.
                 </span>
               </span>
               {appearanceMode === "white" && (

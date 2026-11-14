@@ -414,10 +414,11 @@ export function ThemeContent(props: ThemeContentProps) {
 }
 
 function ThemeContentInner(props: ThemeContentProps) {
-  const { theme, color, font, appearanceMode } = useCustomization();
+  const { theme, color, font } = useCustomization();
   const accent = accentColorValue(color);
   const actions = useActions(props);
-  const whiteMode = appearanceMode === "white";
+  // Appearance mode changes only the Home canvas, never a chosen interface.
+  const whiteMode = false;
 
   // The eight real Main Interfaces (Crimson Navigator … Ultron Mega) render
   // the definition-driven console: same live robot/broker data, the
