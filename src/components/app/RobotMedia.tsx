@@ -92,13 +92,19 @@ export function VideoBackdrop({
   // is the background instead of an empty black screen.
   if (ready && !stopped) return null;
 
+  // WHITE CANVAS → this layer paints NOTHING. Home's light canvas is the whole
+  // point of White mode, and a viewport-covering robot picture (or a plate of
+  // its own) would hide it behind an opaque full-bleed image. The glass cards
+  // and their neon accents stay exactly as they are on top of the canvas.
+  if (whiteMode) return null;
+
   // BACKGROUND PICTURE OFF → no media at all, just the clean black behind it.
   if (!mediaDim) return null;
 
   // THE PICTURE IS THE POINT — full strength: no opacity, no scrim, no blur.
   if (showImageWhenInactive) {
     return (
-      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden" style={{ backgroundColor: whiteMode ? "#ffffff" : "#000000" }}>
+      <div aria-hidden className="pointer-events-none fixed inset-0 z-0 overflow-hidden bg-black">
         <img src={image} alt="" className="size-full object-cover" />
       </div>
     );

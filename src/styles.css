@@ -512,6 +512,16 @@ html:not([data-marketing]):not([data-portal]) body {
   color: #ffffff;
 }
 
+/* WHITE MODE IS CANVAS-ONLY.
+
+   Home paints its own light canvas (inline style in app.home.tsx) and that is
+   the ONLY thing White mode changes. Nothing here repaints cards, controls,
+   wells, pills or text: cards, dialogs, drawers and pills are ALWAYS obsidian
+   glass with crisp white ink and their neon accent borders, in BOTH modes, so
+   switching appearance can never flatten the glow or force dark text onto a
+   dark plate. This section deliberately holds no `[data-appearance="white"]`
+   rules — an override here is what stripped the vibrancy before. */
+
 /* Legacy layouts draw cards with the shared class but no interface tokens;
    give them the obsidian glass plate + crisp white ink. Styled interfaces
    keep their own tinted definition (this rule deliberately does not apply
