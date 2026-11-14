@@ -424,7 +424,8 @@ function AppAccess() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    setPayPrompt(params.get("pay") === "1");
+    const pay = params.get("pay") === "1";
+    setPayPrompt(pay);
     setDeactivated(params.get("deactivated") === "1");
     setVerifyNotice(params.get("verify") === "1" ? VERIFY_RETRY_MESSAGE : "");
     // Re-read the owed-key flag every render: a deep link from /app/home or
@@ -434,7 +435,16 @@ function AppAccess() {
     // now, the flag is stale — the licence form is for an account that owes a
     // key, and showing it to somebody who signed in afresh would skip their
     // email step entirely. `hasPendingLicense` is the comparison.
+    //
+    // CRITICAL: If the user is on the pay screen (?pay=1), they must NOT see
+    // the licence key form, even if they have a pending license key.
     const session = getAppState().email;
+    if (session && pay && hasPendingLicense(session)) {
+      // User is unpaid but on the pay screen — force licensePending = false
+      clearPendingLicense();
+      setLicensePending(false);
+      return;
+    }
     if (session && !hasPendingLicense(session)) {
       clearPendingLicense();
       setLicensePending(false);
