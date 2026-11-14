@@ -2180,7 +2180,7 @@ function PlanSelection({
             directly.
           </p>
           <p className="mt-3 text-xs leading-5 text-[#64748b]">
-            Pay via bank transfer (Standard Bank, branch 927) using the details below,
+            Pay via bank transfer 🏦 (Standard Bank, branch 927) using the details below,
             then message support at {"eamigratepro@gmail.com"} with your email and proof of payment.
           </p>
           <button
@@ -2197,7 +2197,7 @@ function PlanSelection({
             Email me the details
           </a>
           <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\nPrice: ZAR {PLANS[selectedPlan].priceZar}\n\nMessage support with your email and proof of payment.
+            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\n💰 Price: ZAR {PLANS[selectedPlan].priceZar}\n\n📧 Message support with your email and proof of payment.
           </p>
         </div>
       ) : (
