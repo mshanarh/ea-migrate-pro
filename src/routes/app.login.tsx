@@ -137,10 +137,22 @@ export const Route = createFileRoute("/app/login")({
 
 /**
  * THE TWO CHECKOUT TARGETS. Declared at the top of the file so the exact Whop
- * URLs live in exactly one place and the plan cards cannot drift from them.
+ * PAYMENT DETAILS — bank transfer instead of Whop checkout.
+ * Customers may pay by bank transfer (Standard Bank). Use the details below.
+ * After payment, message support (eamigratepro@gmail.com) with your email
+ * and proof of payment so the account can be marked paid.
  */
-export const WHOP_LIFETIME_URL = "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
-export const WHOP_MONTHLY_URL = "https://whop.com/checkout/plan_wgIWJdSwjlMGS";
+
+BANK_NAME = "Standard Bank"
+BRANCH_CODE = "927"
+ACCOUNT_HOLDER = "Ea migrate"
+ACCOUNT_NUMBER = "10 23 913 954 0"
+ACCOUNT_TYPE = "CURRENT"
+SUPPORT_PAYMENT_EMAIL = "eamigratepro@gmail.com"
+
+/* Price information shown alongside the bank details. */
+MONTHLY_PRICE_ZAR = 150
+LIFETIME_PRICE_ZAR = 1500
 
 /** Which plan the customer picked. Monthly is the default. */
 export type PlanId = "monthly" | "lifetime";
@@ -152,21 +164,21 @@ export type PlanId = "monthly" | "lifetime";
  */
 const PLANS: Record<
   PlanId,
-  { url: string; title: string; badge: string; subtitle: string; note: string }
+  { title: string; badge: string; subtitle: string; note: string; priceZar: number }
 > = {
   monthly: {
-    url: WHOP_MONTHLY_URL,
     title: "Monthly Subscription",
     badge: "Recurring — Per Month",
     subtitle: "Billed monthly. Cancel anytime.",
-    note: "(Recurring)",
+    note: "(Recurring) – ZAR '" + str(150) + "'",
+    priceZar: 150,
   },
   lifetime: {
-    url: WHOP_LIFETIME_URL,
     title: "Lifetime Access",
     badge: "Lifetime Access",
     subtitle: "Pay once, keep access forever. No recurring fees.",
-    note: "(One-Time)",
+    note: "(One-Time) – ZAR '" + str(1500) + "'",
+    priceZar: 1500,
   },
 };
 
@@ -890,46 +902,26 @@ function AppAccess() {
     if (isPaymentExemptEmail(clean)) {
       console.info(`[app-login] ${clean} is the sole admin — signing in without a subscription check`);
       /**
-       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — AND NOTHING ELSE.
+       * THE ADMIN SKIPS THE SUBSCRIPTION CHECK — NOT THE DEVICE RULE.
        *
-       * This branch has been carved down twice. It first signed the owner in
-       * with no device rule at all, so the address that had just been bound on
-       * the web opened on a phone without a word about reactivation. It was
-       * then given a READ of the binding, which still left two holes:
-       *
-       *   • an email that was NOT YET bound was let in without ever recording
-       *     the binding, so the one-device rule only bit on some later
-       *     navigation (and never at all if that write failed quietly);
-       *   • an unreadable/timed-out binding read failed OPEN — "never lock the
-       *     admin out" — while every other account still has to be bound.
-       *
-       * It now makes the SAME call every other sign-in makes (see
-       * `finishSignIn`): `bindDeviceToEmail` WRITES the binding, refuses when
-       * the email is held by another device ("Account already used — Contact
-       * admin for reactivation"), and claims an unbound address for this
-       * device. Admin status exempts payment. It does not exempt the device.
+       * This branch used to sign in immediately, so the admin address that had
+       * just been bound on the web opened on a phone without a word about
+       * reactivation. "One email, one device" applies to every email, admins
+       * included; only PAYMENT is bypassed here.
        */
       try {
-        const adminBind = await withDeadline(bindDeviceToEmail(clean, getDeviceId()), 12_000, {
-          ok: false,
-          error: "Device binding timed out",
+        const adminBinding = await withDeadline(checkDeviceBinding(clean, getDeviceId()), 12_000, {
+          boundToOtherDevice: false,
         });
-        if (!adminBind.ok) {
-          const otherDevice =
-            adminBind.boundToOtherDevice === true ||
-            /already used|another device/i.test(adminBind.error ?? "");
-          if (otherDevice) {
-            console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
-            appSignOut();
-            setBlockedEmail(clean);
-            setBusy(false);
-            setRedirecting(false);
-            return;
-          }
-          console.warn("[app-login] admin device bind:", adminBind.error ?? "unknown failure");
+        if (adminBinding.boundToOtherDevice) {
+          console.warn(`[app-login] ${clean} is bound to another device — reactivation required`);
+          setBlockedEmail(clean);
+          setBusy(false);
+          setRedirecting(false);
+          return;
         }
-      } catch (error) {
-        console.warn("[app-login] admin device bind threw:", error);
+      } catch {
+        /* an unreadable binding must never lock the admin out */
       }
       const adminSignIn = appSignIn(clean);
       if (adminSignIn.error) {
@@ -2175,6 +2167,10 @@ function PlanSelection({
                 {plan.badge}
               </span>
               <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
+              <p className="mt-2 text-xs leading-none text-[#cbd5e0]">
+                ZAR {plan.priceZar} / month
+              </p>
+              <p className="mt-1 text-[10px] text-[#64748b] line-through">{plan.note}</p>
             </button>
           );
         })}
@@ -2190,30 +2186,34 @@ function PlanSelection({
             Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
             directly.
           </p>
+          <p className="mt-3 text-xs leading-5 text-[#64748b]">
+            Pay via bank transfer (Standard Bank, branch {BRANCH_CODE}) using the details below,
+            then message support at {SUPPORT_PAYMENT_EMAIL} with your email and proof of payment.
+          </p>
           <button
             type="button"
-            onClick={() => void copy(PLANS[selectedPlan].url)}
+            onClick={() => void copy("bank-transfer")}
             className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
           >
-            {copiedUrl === PLANS[selectedPlan].url ? "Link copied" : "Copy checkout link"}
+            {copiedUrl === "bank-transfer" ? "Details copied" : "Copy bank details"}
           </button>
           <a
-            href={`mailto:?subject=${encodeURIComponent("EA Migrate checkout")}&body=${encodeURIComponent(PLANS[selectedPlan].url)}`}
+            href={`mailto:?subject={encodeURIComponent("EA Migrate payment")}&body={encodeURIComponent("Standard Bank, branch " + BRANCH_CODE + "\nAccount: " + ACCOUNT_NUMBER + "\nAccount holder: " + ACCOUNT_HOLDER + "\nType: " + ACCOUNT_TYPE)`}
             className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
           >
-            Email me the link
+            Email me the details
           </a>
           <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            {PLANS[selectedPlan].url}
+            Standard Bank\nBranch: {BRANCH_CODE}\nAccount: {ACCOUNT_NUMBER}\nAccount holder: {ACCOUNT_HOLDER}\nType: {ACCOUNT_TYPE}\n\nPrice: ZAR {plan.priceZar}\n\nMessage support with your email and proof of payment.
           </p>
         </div>
       ) : (
         <button
           type="button"
-          onClick={() => openCheckout(PLANS[selectedPlan].url)}
+          onClick={() => openCheckout("bank-transfer")}
           className="mt-6 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
         >
-          Continue to Payment <ArrowRight className="size-6" />
+          Pay by Bank Transfer <ArrowRight className="size-6" />
         </button>
       )}
 
