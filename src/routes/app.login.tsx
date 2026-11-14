@@ -163,15 +163,15 @@ const PLANS: Record<
     title: "Monthly Subscription",
     badge: "Recurring — Per Month",
     subtitle: "Billed monthly. Cancel anytime.",
-    note: "(Recurring) – ZAR '" + str(150) + "'",
-    priceZar: 150,
+    note: "(Recurring) – ZAR '" + str(350) + "'",
+    priceZar: 350,
   },
   lifetime: {
     title: "Lifetime Access",
     badge: "Lifetime Access",
     subtitle: "Pay once, keep access forever. No recurring fees.",
-    note: "(One-Time) – ZAR '" + str(1500) + "'",
-    priceZar: 1500,
+    note: "(One-Time) – ZAR '" + str(500) + "'",
+    priceZar: 500,
   },
 };
 
