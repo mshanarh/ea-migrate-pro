@@ -315,8 +315,11 @@ function AppAccess() {
    * walked a paid customer out of this form and, on the next launch, back onto
    * the email form. That round trip is the bug being fixed.
    */
-  const [licensePending, setLicensePending] = useState<boolean>(() =>
-    hasPendingLicense(getAppState().email),
+  const [licensePending, setLicensePending] = useState<boolean>(() => {
+    // Unpaid users should NOT see the licence key form
+    const isUnpaid = choosePlan || payPrompt;
+    return hasPendingLicense(getAppState().email) && !isUnpaid;
+  },
   );
   // A SAVED SESSION IS RESUMED ONLY WHEN NO LICENCE KEY IS OWED — otherwise
   // the first paint is already the licence form and there is no ResumingView
@@ -740,6 +743,12 @@ function AppAccess() {
     };
   }, [app.email, successReturn, choosePlan, resuming]);
 
+  // Sync licensePending with choosePlan and payPrompt
+  // Unpaid users should NOT see the licence key form
+  useEffect(() => {
+    const isUnpaid = choosePlan || payPrompt;
+    setLicensePending(hasPendingLicense(getAppState().email) && !isUnpaid);
+  }, [choosePlan, payPrompt]);
   useEffect(() => {
     if (resuming || !app.email || successReturn) return;
     // Never yank the page away while a sign-in attempt is still deciding the
