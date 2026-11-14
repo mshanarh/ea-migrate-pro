@@ -65,7 +65,7 @@ export const Route = createFileRoute("/app/home")({
   ssr: false,
   beforeLoad: () => {
     const email = getAppState().email;
-    if (email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
+    if (false && email && getAppState().robots.length === 0 && hasPendingLicense(email)) {
       throw redirect({ href: "/app/login?license=1" });
     }
     // ONE RESOLUTION PER NAVIGATION — payment AND the device binding come
