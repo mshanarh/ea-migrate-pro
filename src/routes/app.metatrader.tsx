@@ -7,6 +7,7 @@ import { FixedBottomNav } from "@/components/app/FixedBottomNav";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { EaConfigNote } from "@/components/app/EaConfigNote";
 import { ScalperStatusStrip } from "@/components/app/ScalperStatusStrip";
+import { Mt5Card, Mt5OpenOrders } from "@/components/app/Mt5Card";
 import { useScalperDaemonStatus } from "@/lib/use-scalper-status";
 import { connectMt, disconnectMt, getAppState, leaveForCheckout, useAppState, type MtAccount } from "@/lib/app-store";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
@@ -386,6 +387,13 @@ function AppMetatrader() {
   const platform = usePlatform();
   const isIos = platform === "ios";
   const mt = app.mt;
+  /** The portrait the VIP card carries — the active robot's, exactly like Home. */
+  const activeRobot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
+  /**
+   * CONNECT ACCOUNT ⇄ ORDERS. A saved account opens on ORDERS — a linked
+   * trader wants the live view — while a fresh device opens on the form.
+   */
+  const [tab, setTab] = useState<"connect" | "orders">(() => (app.mt ? "orders" : "connect"));
   const navigate = useNavigate();
   // The full scalper-daemon detail lives HERE now (the home screen keeps only a
   // tiny pill): the same GET /scalper/status poll, the STATUS button and the
@@ -815,6 +823,64 @@ function AppMetatrader() {
             </span>
           </motion.header>
 
+          {/* ONE ACCOUNT, NO SWITCHER. The pill and the VIP card are the only
+              account chrome here — there is deliberately no Account 2 tab. */}
+          {mt && (
+            <>
+              <div
+                data-testid="mt5-account-pill"
+                className="flex items-center gap-2 self-start rounded-full border border-white/10 bg-white/5 px-4 py-1.5 text-xs font-bold tracking-wider text-white/80"
+              >
+                <span className="size-2 rounded-full animate-pulse bg-emerald-400" />
+                <span>ACCOUNT 1 • {mt.loginId}</span>
+              </div>
+              <div className="flex justify-center">
+                <Mt5Card
+                  accent={accent}
+                  robot={activeRobot}
+                  loginId={mt.loginId}
+                  server={mt.server}
+                  onOpenSettings={() => setTab("connect")}
+                />
+              </div>
+            </>
+          )}
+
+          {/* CONNECT ACCOUNT ⇄ ORDERS — the active pill uses the chosen accent,
+              so the toggle follows Settings → Colour like everything else. */}
+          <div className="flex w-full rounded-full border border-white/10 bg-white/5 p-1">
+            <button
+              type="button"
+              onClick={() => setTab("connect")}
+              aria-pressed={tab === "connect"}
+              data-testid="tab-connect-account"
+              className="flex-1 rounded-full px-4 py-2.5 text-[11px] font-black tracking-[0.18em] transition-all duration-200"
+              style={
+                tab === "connect"
+                  ? { border: `1px solid ${accent}`, color: "#ffffff", background: `${accent}1f`, boxShadow: `0 0 18px ${accent}33` }
+                  : { border: "1px solid transparent", color: "rgba(255,255,255,0.5)" }
+              }
+            >
+              CONNECT ACCOUNT
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("orders")}
+              aria-pressed={tab === "orders"}
+              data-testid="tab-orders"
+              className="flex-1 rounded-full px-4 py-2.5 text-[11px] font-black tracking-[0.18em] transition-all duration-200"
+              style={
+                tab === "orders"
+                  ? { border: `1px solid ${accent}`, color: "#ffffff", background: `${accent}1f`, boxShadow: `0 0 18px ${accent}33` }
+                  : { border: "1px solid transparent", color: "rgba(255,255,255,0.5)" }
+              }
+            >
+              ORDERS
+            </button>
+          </div>
+
+          {tab === "connect" ? (
+            <>
           {/* THE SCALPER DAEMON — moved off the home screen: its symbols strip,
               STATUS button and last log line live here, unchanged. */}
           <motion.section custom={0} variants={stagger} initial="hidden" animate="show" className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-4">
@@ -890,10 +956,29 @@ function AppMetatrader() {
             </p>
             <button type="submit" disabled={saving} className="if-control flex h-16 w-full items-center justify-between rounded-full border px-6 font-black tracking-[0.25em] transition-transform active:scale-[0.98] disabled:opacity-60" style={{ borderColor: `${accent}66`, background: `linear-gradient(180deg, ${accent}33, ${accent}14)`, boxShadow: `0 0 30px ${accent}33` }}>
               <Fingerprint className="size-7" style={{ color: accent }} />
-              <span>{saving ? "CONNECTING..." : "CONNECT ACCOUNT"}</span>
+              <span>{saving ? "LINKING..." : "LINK MT5 ACCOUNT"}</span>
               <ChevronsRight className="size-6" style={{ color: accent }} />
             </button>
           </motion.form>
+            </>
+          ) : (
+            <motion.section
+              custom={0}
+              variants={stagger}
+              initial="hidden"
+              animate="show"
+              className="if-card rounded-[32px] border border-white/10 bg-white/[0.03] p-5"
+              style={{ boxShadow: `0 0 40px ${accent}14` }}
+            >
+              {/* LIVE POSITIONS — polled only while this tab is mounted. */}
+              <Mt5OpenOrders
+                accent={accent}
+                connected={Boolean(mt)}
+                loginId={mt?.loginId ?? ""}
+                server={mt?.server ?? ""}
+              />
+            </motion.section>
+          )}
         </main>
       </div>
       <FixedBottomNav />
