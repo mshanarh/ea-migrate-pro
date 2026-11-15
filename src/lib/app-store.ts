@@ -7,28 +7,32 @@ import { ALREADY_IN_USE, claimKeyWithoutServer } from "@/lib/license-lock";
 import { claimLicenseKeyFor } from "@/lib/activation-client";
 import { lookupLicenseInKv } from "@/lib/license-cloud";
 
-/** Same checkout the app login redirects unpaid users to. */
-export const WHOP_CHECKOUT_URL =
-  (import.meta.env["VITE_WHOP_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+/**
+ * WHERE "GO PAY" LANDS — the app's own pay screen, not an external checkout.
+ *
+ * Payment is a Standard Bank transfer now, and the plan chooser on
+ * /app/login?pay=1 is where the account details and both prices live. Keeping
+ * this as an in-app path also means no provider URL can go stale or be
+ * replaced by hand.
+ */
+export const PAY_SCREEN_URL = "/app/login?pay=1";
 
 /**
- * LEAVE FOR CHECKOUT — a plain document navigation, deliberately NOT a
+ * LEAVE FOR THE PAY SCREEN — a plain document navigation, deliberately NOT a
  * router redirect.
  *
- * `throw redirect({ href: "https://whop.com/…" })` was the original bug and
- * it failed silently for weeks: TanStack resolves `href` as an APP path, so
- * an external URL never resolved and an unpaid user simply stayed where they
- * were. Every "you must pay" decision in the app now goes through here, and
- * `location.replace` is honoured by every container that allows leaving at
- * all — browser tab, Android WebView, PWA.
+ * `location.replace` is honoured by every container that allows navigating at
+ * all (browser tab, Android WebView, PWA), and it replaces the current entry
+ * so an unpaid visitor cannot tap Back into a screen they were just ejected
+ * from.
  */
 export function leaveForCheckout(): void {
   if (typeof window === "undefined") return;
   try {
-    window.location.replace(WHOP_CHECKOUT_URL);
+    window.location.replace(PAY_SCREEN_URL);
   } catch {
-    // A container that refuses to leave (an iOS home-screen app) keeps the
-    // caller on a checkout card that hands the link over by hand instead.
+    // A container that refuses to navigate keeps the caller where they are;
+    // the route guard ejects them on the next navigation anyway.
   }
 }
 

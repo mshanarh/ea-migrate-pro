@@ -472,10 +472,24 @@ async function readUsersStore(email: string, deviceId: string | null): Promise<S
     const flag = row.is_paid === true;
     const key = typeof row.license_key === "string" ? row.license_key.trim() : "";
     const mismatch = Boolean(key && row.device_id && deviceId && row.device_id !== deviceId);
+    /**
+     * A LICENCE KEY IS NOT A RECEIPT — AND NEITHER IS `is_paid` ALONE.
+     *
+     * This store used to answer paid for `flag || key-held`, so a row that
+     * merely existed with a key attached (every activated account, every
+     * mentor-issued key) opened the app without a paid record anywhere. The
+     * only authoritative payment is the paid ledger / KV paid record / Whop
+     * verification, so this store now reports what it actually knows and lets
+     * those stores decide.
+     *
+     * `deviceId` is still read: the detail line names a key bound elsewhere so
+     * a support report explains itself.
+     */
+    void deviceId;
     return {
-      paid: flag || Boolean(key) && !mismatch,
+      paid: false,
       readable: true,
-      detail: `${flag ? "paid flag" : "not paid"}${key ? (mismatch ? ", key bound to another device" : ", key held") : ""}${row.is_admin ? ", admin flag" : ""}`,
+      detail: `${flag ? "is_paid flag (not a paid record)" : "not paid, no paid record"}${key ? (mismatch ? ", key bound to another device" : ", key held (not proof of payment)") : ""}${row.is_admin ? ", admin flag (not proof of payment)" : ""}`,
     };
   } catch (error) {
     return databaseStoreFailure("users table", error);
@@ -562,7 +576,16 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
     }
   }
 
-  return { paid, readable, detail: details.join(" · ") };
+  /**
+   * LICENCE KEYS NEVER GRANT PAID ACCESS.
+   *
+   * A key proves the mentor issued something to this address; it is not money
+   * received. Counting it here is what let an unpaid email (a key handed out
+   * or claimed during onboarding) walk straight past the paywall. The reads
+   * above stay purely for the diagnostic line — the verdict is always "no".
+   */
+  void paid;
+  return { paid: false, readable, detail: `${details.join(" · ")} — licence keys are not proof of payment` };
 }
 
 /**

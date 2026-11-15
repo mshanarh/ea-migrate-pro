@@ -72,8 +72,6 @@ export const Route = createFileRoute("/")({
   component: Home,
 });
 
-const MONTHLY_CHECKOUT = "bank-transfer";
-const LIFETIME_CHECKOUT = "bank-transfer";
 const WHATSAPP_URL = "https://wa.me/27704950612";
 
 const why = [
@@ -129,7 +127,6 @@ const plans = [
       "24/7 Support",
     ],
     cta: "Get Started — Monthly",
-    href: "bank-transfer",
     highlight: false,
   },
   {
@@ -148,7 +145,6 @@ const plans = [
       "Free Future Updates",
     ],
     cta: "Get Started — Lifetime",
-    href: "bank-transfer",
     highlight: true,
   },
 ];
@@ -272,7 +268,7 @@ function LandingChatbot() {
       text.includes("refund") ||
       text.includes("plan")
     ) {
-      return "Two access plans:\n• Monthly — $39 per month for up to 3 EAs, cancel anytime.\n• Lifetime — one payment for unlimited EAs, every strategy mode, priority support and free future updates.\nBoth include Android & iOS access, 24/7 cloud VPS and MT4/MT5. Pick one from the Access Fee Plan section, then your mentor issues your licence key. Questions about a specific plan or a refund? eamigratepro@gmail.com.";
+      return "Two access plans — both pay into the same Standard Bank account, then your mentor marks your account paid and you get your licence key.\n\n• Monthly — ZAR 350 per month for up to 3 EAs, cancel anytime.\n• Lifetime — ZAR 500 once, unlimited EAs, every strategy mode, priority support and free future updates.\n\nBank account details (pay here):\n• Bank name: Standard Bank\n• Branch code: 927\n• Account holder: Ea migrate\n• Account number: 10 23 913 954 0\n• Account type: Current\n\nWhen you pay, pay here. Send proof of payment to eamigratepro@gmail.com with your account email and which plan you chose (Monthly or Lifetime). The mentor marks your account paid, then the app opens the next time you sign in with that email.";
     }
 
     // ── Trading account safety ──────────────────────────────────
@@ -800,14 +796,14 @@ function Home() {
                     ))}
                   </ul>
 
-                  <a
-                    href={plan.href}
-                    target="_blank"
-                    rel="noreferrer sponsored"
-                    className="mt-7 flex h-12 items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-sm font-bold text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.35)] transition hover:brightness-110"
-                  >
-                    {plan.cta} <ArrowRight className="size-4" />
-                  </a>
+                  <div className="mt-7">
+                    <a
+                      href="#pay"
+                      className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-sm font-bold text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.35)] transition hover:brightness-110"
+                    >
+                      Pay here &amp; start trading <ArrowRight className="size-4" />
+                    </a>
+                  </div>
                 </motion.div>
               ))}
             </div>
@@ -816,10 +812,110 @@ function Home() {
               Already have a key?{" "}
               <Link to="/app/activate" className="font-semibold text-primary hover:underline">
                 Activate it here
-              </Link>{" "}
-              or{" "}
-              <Link to="/signup" className="font-semibold text-primary hover:underline">
-                create your portal
+              </Link>
+              .
+            </p>
+
+            {/* ── PAY HERE — BANK DETAILS ────────────────────────────────
+              Tell the customer exactly where to pay. Both plans pay into the
+              same Standard Bank account, then the mentor manually marks the
+              email paid in the console. */}
+            <section
+              id="pay"
+              className="border-t border-border/60 bg-[linear-gradient(180deg,rgba(0,245,160,.05),transparent_70%)]"
+            >
+              <div className="mx-auto max-w-2xl px-5 py-12">
+                <h2 className="text-center text-2xl font-black tracking-tight text-white sm:text-3xl">
+                  Pay here
+                </h2>
+                <p className="mx-auto mt-2 max-w-lg text-center text-xs text-muted-foreground">
+                  Transfer the fee to the Standard Bank account below.
+                </p>
+
+                {/* PLAN PRICES */}
+                <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                  {[
+                    {
+                      plan: "Monthly",
+                      price: "ZAR 350 / month",
+                      note: "Recurring — billed every month. Cancel anytime.",
+                    },
+                    {
+                      plan: "Lifetime",
+                      price: "ZAR 500 once",
+                      note: "One payment, lifetime access. No recurring fees.",
+                    },
+                  ].map(({ plan, price, note }) => (
+                    <div
+                      key={plan}
+                      className="panel rounded-2xl border border-border/60 p-5"
+                    >
+                      <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">
+                        {plan} plan
+                      </p>
+                      <p className="mt-2 text-3xl font-black tracking-tight text-white">
+                        {price}
+                      </p>
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                        {note}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* BANK ACCOUNT DETAILS */}
+                <div className="mt-6 rounded-2xl border border-border/60 bg-black/40 px-5 py-5">
+                  <h3 className="text-sm font-semibold tracking-wider text-muted-foreground uppercase">
+                    Bank account details
+                  </h3>
+                  <dl className="mt-4 grid gap-x-5 gap-y-3 text-sm">
+                    <div>
+                      <dt className="text-muted-foreground">Bank name</dt>
+                      <dd className="font-semibold text-white">Standard Bank</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Branch code</dt>
+                      <dd className="font-semibold text-white">927</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Account holder</dt>
+                      <dd className="font-semibold text-white">Ea migrate</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Account number</dt>
+                      <dd className="font-semibold text-white">10 23 913 954 0</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">Account type</dt>
+                      <dd className="font-semibold text-white">Current</dd>
+                    </div>
+                  </dl>
+                </div>
+
+                <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
+                  When you pay, pay here. Send the proof of payment to{" "}
+                  <a
+                    href="mailto:eamigratepro@gmail.com"
+                    className="font-semibold text-primary underline"
+                  >
+                    eamigratepro@gmail.com
+                  </a>
+                  {
+                    " "
+                  }
+                  with your account email and chosen plan (Monthly or Lifetime).
+                  The mentor marks your account paid, and the app opens the next
+                  time you sign in with that email. Both the monthly subscription
+                  and the lifetime access pay into the same Standard Bank account
+                  — then your mentor activates whichever plan you chose.
+                </p>
+              </div>
+            </section>
+
+            <p className="mt-6 text-center text-xs text-muted-foreground">
+              Need help?{" "}
+              <Link to="/support" className="font-semibold text-primary hover:underline">
+                talk to support
               </Link>
               .
             </p>

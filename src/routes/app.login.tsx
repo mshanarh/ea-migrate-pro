@@ -31,6 +31,7 @@ import {
   formatAccessDiagnostic,
   verifyPaymentReturn,
   invalidateAccessCache,
+  peekAccessVerdict,
   resolveCloudAccess,
   requireVerifiedAccess,
   type AppAccessCheck,
@@ -124,7 +125,20 @@ export const Route = createFileRoute("/app/login")({
     for (const flag of RESUME_EXEMPT_FLAGS) {
       if (params.get(flag) === "1" || params.get(flag) === "true") return;
     }
-    if (getAppState().email) throw redirect({ href: "/app/home" });
+    /**
+     * A SESSION ALONE NEVER SKIPS THE DOOR.
+     *
+     * This used to bounce any stored email straight back to /app/home. With
+     * the local-storage fallbacks gone that is only safe when the gate already
+     * holds a PASS for this email; anything else — no verdict yet, unpaid,
+     * revoked, undecided — must stay here so the plan chooser (or the retry
+     * line) can render. Otherwise an unpaid device ping-pongs between the two
+     * routes and the person never sees the plans.
+     */
+    const stored = getAppState().email;
+    if (!stored) return;
+    const peeked = peekAccessVerdict(stored);
+    if (peeked?.action === "pass") throw redirect({ href: "/app/home" });
   },
   head: () => ({
     meta: [
@@ -136,41 +150,49 @@ export const Route = createFileRoute("/app/login")({
 });
 
 /**
- * THE TWO CHECKOUT TARGETS. Declared at the top of the file so the exact Whop
- * PAYMENT DETAILS — bank transfer instead of Whop checkout.
- * Customers may pay by bank transfer (Standard Bank). Use the details below.
- * After payment, message support (eamigratepro@gmail.com) with your email
- * and proof of payment so the account can be marked paid.
+ * PAYMENT IS A BANK TRANSFER — there is no checkout provider.
+ *
+ * Both plans pay into the same Standard Bank account; the customer sends
+ * proof of payment to the mentor address and the owner marks the account paid
+ * in the console, which is what finally satisfies /api/check-access.
  */
+export const PAY_BANK = {
+  bankName: "Standard Bank",
+  branchCode: "927",
+  holder: "Ea migrate",
+  accountNumber: "10 23 913 954 0",
+  accountType: "CURRENT",
+} as const;
 
-
-
-/* Price information shown alongside the bank details. */
+/** Where proof of payment goes. */
+export const PAY_PROOF_EMAIL = "eamigratepro@gmail.com";
 
 /** Which plan the customer picked. Monthly is the default. */
 export type PlanId = "monthly" | "lifetime";
 
 /**
  * THE PLANS. An unpaid account stops on the Plan Selection screen and picks
- * one; nothing hops automatically, because there are two destinations and
- * guessing would send somebody to the wrong product.
+ * one; nothing hops automatically, because there are two prices and guessing
+ * would charge the wrong one.
  */
 const PLANS: Record<
   PlanId,
-  { title: string; badge: string; subtitle: string; note: string; priceZar: number }
+  { title: string; badge: string; subtitle: string; note: string; price: string; priceZar: number }
 > = {
   monthly: {
     title: "Monthly Subscription",
     badge: "Recurring — Per Month",
     subtitle: "Billed monthly. Cancel anytime.",
-    note: "(Recurring) – ZAR '" + 350 + "'",
+    note: "(Recurring)",
+    price: "ZAR 350 / month",
     priceZar: 350,
   },
   lifetime: {
     title: "Lifetime Access",
     badge: "Lifetime Access",
     subtitle: "Pay once, keep access forever. No recurring fees.",
-    note: "(One-Time) – ZAR '" + 500 + "'",
+    note: "(One-Time)",
+    price: "ZAR 500 once",
     priceZar: 500,
   },
 };
@@ -1427,9 +1449,16 @@ function AppAccess() {
     // before the owner pressed Mark paid could send them back to Whop on
     // the very next navigation.
     invalidateAccessCache(clean);
-    // Mirror the verdict locally so the in-app UI agrees with the database
-    // immediately rather than waiting for the next render's cloud read.
-    markEmailPaid(clean);
+    /**
+     * SIGNING IN IS NOT PAYING.
+     *
+     * This used to call `markEmailPaid(clean)` — writing a local PAID record
+     * from the act of typing a correct six-digit code. OTP proves an inbox;
+     * it proves nothing about money, and that record was one of the bypasses
+     * (a claimed key + a sign-in produced a device that told the gate it had
+     * paid). Entitlement is only ever re-read from /api/check-access here, so
+     * no local flag is written.
+     */
 
     // The auto-redirect effect above walks an entitled session into
     // /app/home, which re-checks the cloud before a single pixel renders.
@@ -2076,28 +2105,7 @@ function PlanSelection({
   /** Re-ask every store from this screen. */
   onRetry?: () => void;
 }) {
-  const standalone = useIsStandalone();
   const [copiedUrl, setCopiedUrl] = useState<string | null>(null);
-
-  /**
-   * OPEN THE CHOSEN CHECKOUT.
-   *
-   * INSIDE THE ANDROID APP the page must NOT navigate itself to an external
-   * site: `callNative("openUrl")` asks the wrapper to launch the system
-   * browser, which is the only route iOS-style WebViews reliably honour and
-   * the one that keeps the payment page in a real browser where the customer
-   * can actually pay. Everywhere else a plain location assignment is what the
-   * container follows.
-   */
-  const openCheckout = (url: string) => {
-    if (typeof window === "undefined") return;
-    if (callNative("openUrl", url)) return;
-    try {
-      window.location.href = url;
-    } catch {
-      // A container that refuses to leave keeps the tappable link on screen.
-    }
-  };
 
   const copy = async (url: string) => {
     try {
@@ -2180,61 +2188,71 @@ function PlanSelection({
               >
                 {plan.badge}
               </span>
-              <p className="mt-2 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
-              <p className="mt-2 text-xs leading-none text-[#cbd5e0]">
-                ZAR {PLANS[selectedPlan].priceZar} / month
-              </p>
-              <p className="mt-1 text-[10px] text-[#64748b] line-through">{plan.note}</p>
+              <p className="mt-2 text-2xl font-black tracking-tight text-white">{plan.price}</p>
+              <p className="mt-1 text-sm leading-6 text-[#8a9298]">{plan.subtitle}</p>
             </button>
           );
         })}
       </div>
 
-      {/* CONTINUE TO PAYMENT — opens the SELECTED plan. On Android the native
-        bridge hands the URL to the system browser; elsewhere a plain
-        navigation (and, on iOS standalone, the copy/email fallbacks). */}
-      {true ? (
-        <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
-          <p className="text-sm font-semibold text-white">Finish in Safari</p>
-          <p className="mt-2 text-sm leading-6 text-[#8a9298]">
-            Tap copy, then open Safari and paste the link. iPhone apps cannot open payment pages
-            directly.
-          </p>
-          <p className="mt-3 text-xs leading-5 text-[#64748b]">
-            Pay via bank transfer 🏦 (Standard Bank, branch 927) using the details below,
-            then message support at {"eamigratepro@gmail.com"} with your email and proof of payment.
-          </p>
-          <button
-            type="button"
-            onClick={() => void copy("bank-transfer")}
-            className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
-          >
-            {copiedUrl === "bank-transfer" ? "Details copied" : "Copy bank details"}
-          </button>
-          <a
-            href={`mailto:?subject={encodeURIComponent("EA Migrate payment")}&body={encodeURIComponent("Standard Bank, branch " + 927 + "\nAccount: " + "10 23 913 954 0" + "\nAccount holder: " + "Ea migrate" + "\nType: " + "CURRENT")`}
-            className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
-          >
-            Email me the details
-          </a>
-          <p className="mt-3 break-all rounded-xl bg-black/40 p-3 font-mono text-xs text-[#55c7ff] select-all">
-            Standard Bank\nBranch: 927\nAccount: 10 23 913 954 0\nAccount holder: Ea migrate\nType: CURRENT\n\n💰 Price: ZAR {PLANS[selectedPlan].priceZar}\n\n📧 Message support with your email and proof of payment.
+      {/* PAY HERE — BANK TRANSFER, NOT A CHECKOUT LINK.
+        Both plans pay into the same Standard Bank account. The customer sends
+        proof of payment to the mentor address; the owner marks the account paid
+        in the console, and /api/check-access is what finally opens the app —
+        so nothing here claims access has been granted. */}
+      <div className="mt-6 rounded-2xl border border-[#202930] bg-[#10161a] p-5 text-left">
+        <p className="text-sm font-semibold text-white">Pay here — bank transfer</p>
+        <p className="mt-2 text-sm leading-6 text-[#8a9298]">
+          Transfer the amount for the plan you picked
+          {PLANS[selectedPlan].price ? ` (${PLANS[selectedPlan].price})` : ""} to the account below,
+          then send the proof of payment so your access can be switched on.
+        </p>
+
+        <dl className="mt-4 space-y-2 rounded-xl bg-black/40 p-3 text-sm">
+          {[
+            ["Bank name", PAY_BANK.bankName],
+            ["Branch code", PAY_BANK.branchCode],
+            ["Account holder", PAY_BANK.holder],
+            ["Account number", PAY_BANK.accountNumber],
+            ["Account type", PAY_BANK.accountType],
+          ].map(([label, value]) => (
+            <div key={label} className="flex items-center justify-between gap-3">
+              <dt className="text-[#8a9298]">{label}</dt>
+              <dd className="font-mono font-semibold text-white select-all">{value}</dd>
+            </div>
+          ))}
+        </dl>
+
+        <div className="mt-3 rounded-xl bg-black/40 p-3">
+          <p className="text-xs text-[#8a9298]">Send proof of payment to</p>
+          <p className="mt-1 break-all font-mono text-sm text-[#55c7ff] select-all">
+            {PAY_PROOF_EMAIL}
           </p>
         </div>
-      ) : (
+
         <button
           type="button"
-          onClick={() => openCheckout("bank-transfer")}
-          className="mt-6 flex h-16 w-full items-center justify-center gap-3 rounded-full bg-[#08a8ef] text-lg font-bold text-[#061018] shadow-[0_0_30px_rgba(8,168,239,.34)] active:scale-[.98]"
+          onClick={() => void copy(PAY_PROOF_EMAIL)}
+          className="mt-4 flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#08a8ef] text-base font-bold text-[#061018] shadow-[0_0_26px_rgba(8,168,239,.28)] active:scale-[.98]"
         >
-          Pay by Bank Transfer <ArrowRight className="size-6" />
+          {copiedUrl === PAY_PROOF_EMAIL ? "Email copied" : "Copy mentor email"}
         </button>
-      )}
+        <a
+          href={`mailto:${PAY_PROOF_EMAIL}?subject=${encodeURIComponent("EA Migrate — proof of payment")}&body=${encodeURIComponent(`Hi, I paid for EA Migrate.\n\nAccount email: ${email}\nPlan: ${PLANS[selectedPlan].title} (${PLANS[selectedPlan].price})\n\nProof of payment attached.`)}`}
+          className="mt-3 flex h-12 w-full items-center justify-center rounded-full border border-white/15 bg-white/5 text-sm font-semibold text-white/80"
+        >
+          Email my proof of payment
+        </a>
+
+        <p className="mt-3 text-xs leading-5 text-[#59646b]">
+          Use the email you signed in with ({email || "your account email"}) in the proof so it can
+          be matched. Access opens after the payment is confirmed — usually within a few hours.
+        </p>
+      </div>
 
       <p className="mt-6 text-xs leading-5 text-[#59646b]">
-        {standalone
-          ? "Tap copy, then open Safari and paste the link — iPhone apps cannot open payment pages directly."
-          : "Already subscribed? Use the exact email you paid with."}
+        Already paid? Send the proof and it will be marked paid for this email. Use the exact email
+        you paid with.
       </p>
       {/* ESCAPE HATCH — an account on a slow connection can reach this screen
         without owing anything, and being stuck on a payment page with no way

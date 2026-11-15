@@ -459,14 +459,19 @@ export function peekAccessVerdict(email: string | null | undefined): AppAccessCh
    */
   if (age >= ttl || !cached.bindingKnown) revalidateInBackground(clean);
 
-  // The dashboard may have just marked this email paid from another device; a
-  // cached refusal must not hide that. Same upgrade `readBundle` performs.
-  let status: CloudAccess = cached.status;
-  if (status !== "paid" && status !== "admin") {
-    const local = paymentStatusForEmail(clean);
-    if (local === "paid") status = "paid";
-    else if (local === "admin") status = "admin";
-  }
+  /**
+   * LOCAL STORAGE NEVER OPENSTHE APP.
+   *
+   * This used to upgrade a cached unpaid/revoked cloud verdict to paid from
+   * `paymentStatusForEmail` — a value any script (or a stale activation) can
+   * write on the device. That was the paywall bypass: an email with no
+   * authoritative paid record answered `unpaid` from /api/check-access and was
+   * then flipped to paid here, in the browser, before the guard read it.
+   *
+   * The verdict is now exactly what the cloud said. Only /api/check-access can
+   * produce a pass.
+   */
+  const status: CloudAccess = cached.status;
 
   // DEVICE BINDING — from the answer the cloud already gave for this device
   // (or this device's own memoised read). An unreadable binding fails OPEN,
@@ -733,21 +738,9 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
     const ttl =
       cached.status === "paid" || cached.status === "admin" ? CACHE_TTL_MS : UNPAID_CACHE_TTL_MS;
     if (age < ttl) {
-      // The dashboard may have just marked this email paid from another device.
-      // A stale "unpaid"/"revoked" here is the exact bug where a freshly-marked
-      // paid account still sees the plan screen, so before returning a refusal
-      // from cache we re-check the record the dashboard writes to. If it has
-      // gone paid since this entry was stored, refresh it instead of answering
-      // with the stale refusal.
-      if (cached.status !== "paid" && cached.status !== "admin") {
-        const local = paymentStatusForEmail(clean);
-        if (local === "paid" || local === "admin") {
-          const pay: CloudAccess = local === "admin" ? "admin" : "paid";
-          const upgraded: Resolution = { ...cached, status: pay, at: Date.now() };
-          cache.set(clean, upgraded);
-          return { status: pay, binding: upgraded.binding, bindingKnown: upgraded.bindingKnown };
-        }
-      }
+      // The cloud's own answer, unmodified — see the note in peekAccessVerdict.
+      // The old local-storage upgrade lived here too, and it is exactly what
+      // let a device-side record override an authoritative `unpaid`.
       return { status: cached.status, binding: cached.binding, bindingKnown: cached.bindingKnown };
     }
     // STALE-WHILE-REVALIDATE — a CONFIRMED PAID answer the server gave this
@@ -791,10 +784,22 @@ async function readBundle(clean: string, fresh: boolean): Promise<Bundle> {
     // key, a cold network) the server's verdict is kept. Treating that failed
     // read as "undecided" would send every ordinary unpaid customer to a retry
     // screen instead of the plans.
+    /**
+     * THE SERVER'S REFUSAL STANDS.
+     *
+     * This branch used to re-read the portal payment row IN THE BROWSER and
+     * flip an authoritative `unpaid` to `paid`. That is a second, weaker
+     * authority deciding access — and the endpoint already read that exact
+     * table with the service role before answering. Nothing here may upgrade
+     * the verdict; the read is kept only so an unexpected disagreement shows
+     * up in the console instead of silently reopening the app.
+     */
     if (status === "unpaid") {
       const portal = await readPortalPayment(clean);
       if (portal.state === "paid") {
-        status = "paid";
+        console.warn(
+          "[payment-gate] portal record disagrees with the access endpoint — the endpoint's unpaid verdict stands",
+        );
       } else if (portal.state === "unavailable") {
         console.warn(`[payment-gate] paid-record source unavailable: ${portal.detail}`);
       }

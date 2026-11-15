@@ -178,7 +178,7 @@ const seedMentor: Account = {
  * Web and Android share this code path (the Android wrapper loads the same
  * bundle), so one bump covers both at once.
  */
-export const AUTH_EPOCH = "v5_activation_code_20261004";
+export const AUTH_EPOCH = "v6_paywall_bank_transfer_20261115";
 
 /** localStorage key that records the epoch this device has already applied. */
 export const AUTH_EPOCH_KEY = "app_epoch";

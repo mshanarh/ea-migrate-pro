@@ -149,13 +149,27 @@ describe("check-access — the gate's decision rules", () => {
     expect(body["isPaid"]).toBe(true);
   });
 
-  it("does NOT downgrade a users-table paid flag because KV says unpaid", async () => {
+  it("does NOT treat a users-table is_paid flag as a paid record", async () => {
+    // `users.is_paid` is written by several flows and is not a receipt. The
+    // console's KV record saying unpaid is the authoritative answer, so this
+    // must come back as a refusal — the exact case an unpaid account used to
+    // win with.
     store.kv = JSON.stringify({ email: CLIENT, isPaid: false, paidAt: null, status: "approved" });
     store.users = { is_paid: true, is_admin: false, license_key: null, device_id: null };
 
     const { body } = await ask(CLIENT);
 
-    expect(body["status"]).toBe("paid");
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("revoked");
+  });
+
+  it("does NOT treat a licence key alone as a paid record", async () => {
+    store.users = { is_paid: false, is_admin: false, license_key: "EMP-AAAA-BBBB-CCCC", device_id: null };
+
+    const { body } = await ask(CLIENT);
+
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("unpaid");
   });
 
   it("answers UNPAID only when every store answered and none is paid", async () => {

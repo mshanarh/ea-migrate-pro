@@ -1,21 +1,25 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 /**
- * A CLAIMED LICENCE KEY IS PROOF OF ACCESS.
+ * A LICENCE KEY IS NOT A RECEIPT.
  *
- * `/api/check-access` used to answer "paid" only from the Upstash registration
- * record or the Supabase `paid_emails` ledger. A customer who had just entered
- * a working licence key was therefore answered "unpaid" — their money lives in
- * the key, not in the ledger — and the guard bounced them back to the email +
- * code form. These tests drive the real handler against a scripted store and
- * scripted database:
+ * `/api/check-access` used to answer "paid" for a `users` row that merely held
+ * a `license_key` (or a `license_keys` row, or mentor approval), with no
+ * payment record anywhere. That is the paywall bypass: an email that never
+ * paid — olwammakoki70@gmail.com was the report — got into the app because a
+ * key had been issued or claimed for it.
  *
- *   • no KV record, no ledger row, `users.license_key` set → paid;
- *   • KV unreachable (timeout/error) behaves the same — a failed read is NOT a
- *     verdict;
- *   • an explicit revoked record still wins, even with a key on the row;
- *   • a key holder bound to ANOTHER device is answered unpaid (activated on a
- *     different phone), exactly as before.
+ * The only authoritative sources of payment are now the paid ledger
+ * (`paid_emails`), the KV paid record, the portal payment table and Whop
+ * verification with a `paid_at`, plus the sole admin. These tests drive the
+ * real handler against a scripted store and database:
+ *
+ *   • no KV record, no ledger row, `users.license_key` set → UNPAID;
+ *   • an explicit revoked record still wins;
+ *   • a key holder bound to ANOTHER device is answered unpaid, with the
+ *     binding riding along;
+ *   • a real paid ledger row still passes;
+ *   • the sole admin still passes.
  */
 
 const db = vi.hoisted(() => ({
@@ -35,7 +39,22 @@ vi.mock("@supabase/supabase-js", () => ({
         ilike: () => chain,
         neq: () => chain,
         order: () => chain,
-        limit: () => chain,
+        /**
+         * `limit()` ends up AWAITED directly in the ledger read, and also feeds
+         * `.maybeSingle()` in the licence-key read — so the stub is both
+         * thenable and chainable.
+         */
+        limit: () => ({
+          maybeSingle: async () => ({
+            data: table === "users" ? db.users : null,
+            error: table === "users" ? db.userError : null,
+          }),
+          then: (resolve: (value: unknown) => unknown) =>
+            Promise.resolve({
+              data: table === "paid_emails" && db.paid ? [db.paid] : [],
+              error: null,
+            }).then(resolve),
+        }),
         maybeSingle: async () => ({
           data: table === "users" ? db.users : null,
           error: table === "users" ? db.userError : null,
@@ -47,7 +66,8 @@ vi.mock("@supabase/supabase-js", () => ({
   }),
 }));
 
-const EMAIL = "client@example.com";
+const EMAIL = "olwammakoki70@gmail.com";
+const ADMIN_EMAIL = "biyasentobeko222@gmail.com";
 const DEVICE = "this-phone";
 const OTHER_DEVICE = "someone-elses-phone";
 
@@ -70,7 +90,7 @@ function stubFetch(): void {
   );
 }
 
-async function callCheckAccess(deviceId: string | null = DEVICE) {
+async function callCheckAccess(deviceId: string | null = DEVICE, email = EMAIL) {
   vi.resetModules();
   vi.stubEnv("KV_REST_API_URL", "https://kv.example.com");
   vi.stubEnv("KV_REST_API_TOKEN", "kv-token");
@@ -92,7 +112,7 @@ async function callCheckAccess(deviceId: string | null = DEVICE) {
     },
   };
   await handler(
-    { method: "POST", body: JSON.stringify({ email: EMAIL, deviceId }) },
+    { method: "POST", body: JSON.stringify({ email, deviceId }) },
     response,
   );
   return { status, body };
@@ -112,45 +132,47 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-describe("check-access — a claimed licence key is proof of access", () => {
-  it("answers PAID for a licence key holder when KV has no record and no ledger row", async () => {
+describe("check-access — payment comes from a paid record, never a licence key", () => {
+  it("answers UNPAID for a licence key holder with no ledger row and no KV paid record", async () => {
     db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
 
     const { status, body } = await callCheckAccess();
 
     expect(status).toBe(200);
     expect(body["ok"]).toBe(true);
-    expect(body["isPaid"]).toBe(true);
-    expect(body["status"]).toBe("paid");
-    // The binding still rides along exactly as before.
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("unpaid");
+    // The binding still rides along, so the device rule is unchanged.
     expect(body["deviceBinding"]).toEqual({ deviceEmail: EMAIL, deviceId: DEVICE });
     expect(body["deviceMatches"]).toBe(true);
   });
 
-  it("treats an UNREACHABLE KV store the same way — a failed read is not a verdict", async () => {
+  it("answers UNPAID even when KV is unreachable — a key still is not a payment", async () => {
     kvDown = true;
     db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
 
     const { status, body } = await callCheckAccess();
 
+    // KV could not be read, so the answer is undecided (never paid, never a
+    // plan chooser) — a failed read is not a verdict.
     expect(status).toBe(200);
-    expect(body["status"]).toBe("paid");
-    expect(body["isPaid"]).toBe(true);
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).not.toBe("paid");
   });
 
-  it("ANY paid mark wins — one store's disagreement never downgrades another's", async () => {
-    // The console record says unpaid, the `users` row holds a claimed key.
-    // The owner's rule is explicit: if EVEN ONE authoritative store marks the
-    // address paid, the account passes. A revocation therefore stands only
-    // when nothing else marks the address paid.
-    kvRecord = { email: EMAIL, isPaid: false, paidAt: null, status: "approved" };
-    db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
+  it("does not let a users row's is_paid flag or bare mentorship stand in for the ledger", async () => {
+    db.users = {
+      license_key: "",
+      is_paid: true,
+      is_admin: false,
+      device_id: null,
+      device_email: null,
+    };
 
-    const { status, body } = await callCheckAccess();
+    const { body } = await callCheckAccess();
 
-    expect(status).toBe(200);
-    expect(body["status"]).toBe("paid");
-    expect(body["isPaid"]).toBe(true);
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("unpaid");
   });
 
   it("keeps REVOKED when no store marks the address paid", async () => {
@@ -164,7 +186,7 @@ describe("check-access — a claimed licence key is proof of access", () => {
     expect(body["isPaid"]).toBe(false);
   });
 
-  it("answers UNPAID when the claimed key is bound to a DIFFERENT device", async () => {
+  it("answers UNPAID when the key is bound to a DIFFERENT device", async () => {
     db.users = {
       license_key: "EMP-AAAA-BBBB-CCCC",
       device_id: OTHER_DEVICE,
@@ -177,6 +199,22 @@ describe("check-access — a claimed licence key is proof of access", () => {
     expect(body["status"]).toBe("unpaid");
     expect(body["isPaid"]).toBe(false);
     expect(body["deviceMatches"]).toBe(false);
+  });
+
+  it("still passes a real PAID LEDGER row", async () => {
+    db.paid = { paid_at: "2026-11-01T10:00:00.000Z" };
+
+    const { body } = await callCheckAccess();
+
+    expect(body["isPaid"]).toBe(true);
+    expect(body["status"]).toBe("paid");
+  });
+
+  it("still passes the sole ADMIN", async () => {
+    const { body } = await callCheckAccess(DEVICE, ADMIN_EMAIL);
+
+    expect(body["isPaid"]).toBe(true);
+    expect(body["status"]).toBe("admin");
   });
 
   it("does not invent access from an empty license_key", async () => {
