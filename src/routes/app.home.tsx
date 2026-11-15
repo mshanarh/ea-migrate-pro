@@ -540,6 +540,10 @@ function AppHome() {
       return;
     }
     toast.success(`${result.robot?.name ?? "Robot"} activated on this device`);
+    // The key is redeemed, so the server now has it as this account's paid
+    // record — drop the cached verdict so the next guard (and the mid-session
+    // poll) reads that instead of a refusal cached before activation.
+    invalidateAccessCache(app.email);
     setModalOpen(false);
   };
 

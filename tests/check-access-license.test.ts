@@ -75,17 +75,46 @@ const OTHER_DEVICE = "someone-elses-phone";
 let kvRecord: Record<string, unknown> | null = null;
 /** TRUE makes the KV call fail the way a timeout does. */
 let kvDown = false;
+/** Keys this account has REDEEMED (the server-written activation record). */
+let redeemedKeys: string[] = [];
+/** When the first of them was redeemed. */
+let redeemedAt: string | null = null;
+/** Keys ASSIGNED to the account (`eamp:license-by-client:<email>`). */
+let assignedKeys: string[] = [];
+/** Full key records, as `eamp:license-keys` holds them. */
+let keyRecords: Record<string, Record<string, unknown>> = {};
 
+/**
+ * A COMMAND-AWARE KV STUB.
+ *
+ * The real store is Redis-over-HTTP: the body IS the command array and the
+ * answer carries `result`. Answering every command with the registration
+ * record hid a whole class of bug — a wrongly parsed SCARD used to look like a
+ * paid mark — so this stub reads the command and answers the way Redis would.
+ */
 function stubFetch(): void {
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () => {
+    vi.fn(async (_url: unknown, init?: { body?: unknown }) => {
       if (kvDown) return { ok: false, status: 503, json: async () => ({ error: "timeout" }) };
-      return {
-        ok: true,
-        status: 200,
-        json: async () => ({ result: kvRecord ? JSON.stringify(kvRecord) : null }),
-      };
+      let command: unknown[] = [];
+      try {
+        command = JSON.parse(String(init?.body ?? "[]")) as unknown[];
+      } catch {
+        command = [];
+      }
+      const verb = String(command[0] ?? "").toUpperCase();
+      const key = String(command[1] ?? "");
+      const result = (value: unknown) => ({ ok: true, status: 200, json: async () => ({ result: value }) });
+      if (verb === "SCARD" && key === `eamp:key-activated:${EMAIL}`) return result(redeemedKeys.length);
+      if (verb === "GET" && key === `eamp:key-activated-at:${EMAIL}`) return result(redeemedAt);
+      if (verb === "SMEMBERS" && key === `eamp:license-by-client:${EMAIL}`) return result(assignedKeys);
+      if (verb === "HGET" && key === "eamp:license-keys") {
+        const code = String(command[2] ?? "");
+        const record = keyRecords[code];
+        return result(record ? JSON.stringify(record) : null);
+      }
+      return result(kvRecord ? JSON.stringify(kvRecord) : null);
     }),
   );
 }
@@ -124,6 +153,10 @@ beforeEach(() => {
   db.userError = null;
   kvRecord = null;
   kvDown = false;
+  redeemedKeys = [];
+  redeemedAt = null;
+  assignedKeys = [];
+  keyRecords = {};
   stubFetch();
 });
 
@@ -199,6 +232,82 @@ describe("check-access — payment comes from a paid record, never a licence key
     expect(body["status"]).toBe("unpaid");
     expect(body["isPaid"]).toBe(false);
     expect(body["deviceMatches"]).toBe(false);
+  });
+
+  it("passes an account that REDEEMED its licence key, even with no paid record", async () => {
+    // The bug this covers: a customer entered their key, the app said "key
+    // activated", showed the home screen and then threw them back to the first
+    // page because no store held a subscription for their address. A redeemed
+    // key IS the record — written by the server at claim time.
+    redeemedKeys = ["EMP-AAAA-BBBB-CCCC"];
+    redeemedAt = "2026-11-15T09:00:00.000Z";
+    db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
+
+    const { status, body } = await callCheckAccess();
+
+    expect(status).toBe(200);
+    expect(body["isPaid"]).toBe(true);
+    expect(body["status"]).toBe("paid");
+    expect(body["paidAt"]).toBe("2026-11-15T09:00:00.000Z");
+  });
+
+  it("still REFUSES when the console revoked the account, redeemed key or not", async () => {
+    // "Mark unpaid" must always win — otherwise a key became a way to outvote
+    // the owner.
+    redeemedKeys = ["EMP-AAAA-BBBB-CCCC"];
+    redeemedAt = "2026-11-15T09:00:00.000Z";
+    kvRecord = { email: EMAIL, isPaid: false, paidAt: null, status: "approved" };
+
+    const { body } = await callCheckAccess();
+
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("revoked");
+  });
+
+  it("passes a key this account ACTIVATED before the redemption record existed", async () => {
+    // Already-activated customers could not re-enter their key (the claim lock
+    // says it is in use), so the key record's own `claimedBy` has to count.
+    assignedKeys = ["EMP-AAAA-BBBB-CCCC"];
+    keyRecords["EMP-AAAA-BBBB-CCCC"] = {
+      key: "EMP-AAAA-BBBB-CCCC",
+      mentorEmail: "mentor@example.com",
+      clientEmail: EMAIL,
+      claimedBy: EMAIL.toUpperCase(),
+      claimedAt: "2026-11-10T08:00:00.000Z",
+    };
+
+    const { body } = await callCheckAccess();
+
+    expect(body["isPaid"]).toBe(true);
+    expect(body["status"]).toBe("paid");
+    expect(body["paidAt"]).toBe("2026-11-10T08:00:00.000Z");
+  });
+
+  it("does NOT count a key claimed by SOMEBODY ELSE", async () => {
+    assignedKeys = ["EMP-AAAA-BBBB-CCCC"];
+    keyRecords["EMP-AAAA-BBBB-CCCC"] = {
+      key: "EMP-AAAA-BBBB-CCCC",
+      mentorEmail: "mentor@example.com",
+      clientEmail: EMAIL,
+      claimedBy: "another-client@example.com",
+      claimedAt: "2026-11-10T08:00:00.000Z",
+    };
+
+    const { body } = await callCheckAccess();
+
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("unpaid");
+  });
+
+  it("does NOT count a key that was only ASSIGNED, never redeemed", async () => {
+    // `eamp:license-by-client` says 2 keys are assigned to this address. That is
+    // an issue record, not an activation — it must still resolve unpaid.
+    db.users = { license_key: "", device_id: null, device_email: null };
+
+    const { body } = await callCheckAccess();
+
+    expect(body["isPaid"]).toBe(false);
+    expect(body["status"]).toBe("unpaid");
   });
 
   it("still passes a real PAID LEDGER row", async () => {

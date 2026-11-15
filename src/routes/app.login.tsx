@@ -1617,15 +1617,15 @@ function AppAccess() {
        *
        * This screen polls the cloud while the person is still typing their key,
        * so an "unpaid"/"revoked" answer from BEFORE the activation can be
-       * sitting in the gate's cache. /app/home re-checks the database, and it
-       * must read it afresh: a cached refusal is what turned "the key is in"
-       * into "you were signed out and asked for your email and code again".
-       * We no longer invalidate the access cache here because markEmailPaid()
-       * inside activateKey() already set the local paid flag, and the home
-       * screen's peekAccessVerdict will read it instantly on the next navigation.
-       * Invalidating would force a cloud round-trip that may not have propagated
-       * yet, sending the user back to the plan chooser instead of straight in.
+       * sitting in the gate's cache. /app/home prefers that cached answer, and
+       * a cached refusal is exactly what turned "the key is in" into "back to
+       * the first page of the app". The local paid flag cannot rescue it —
+       * local storage is never allowed to outvote the cloud — so the cache is
+       * dropped here and the guard asks once, against a server that has now
+       * recorded this key's redemption (see `recordKeyRedemption` in
+       * api/_handlers/licenses.ts).
        */
+      invalidateAccessCache(getAppState().email);
       /**
        * GO STRAIGHT IN — IN THIS PAGE LOAD, NOT VIA A RELOAD.
        *

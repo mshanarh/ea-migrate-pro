@@ -589,6 +589,90 @@ async function readLicenceKeys(email: string): Promise<StoreVerdict> {
 }
 
 /**
+ * THE ACTIVATION RECORD — a key this account REDEEMED (see
+ * `recordKeyRedemption` in ./licenses.ts).
+ *
+ * THIS IS THE ONE PLACE A LICENCE KEY COUNTS, and only in its redeemed form.
+ * A key that is merely assigned to an address is never evidence of payment (it
+ * can be issued and never used, and `readLicenceKeys` says so explicitly), but
+ * the moment that key is claimed the server records the redemption here — that
+ * is the customer opening the licence they bought, and it is written by the
+ * serverless function, never by a browser.
+ *
+ * It is deliberately NOT part of the "any paid mark wins" group: a console
+ * "mark unpaid" (an explicit revocation) and a rejection still beat it, so an
+ * owner who revokes an account really does lock it out. It only rescues the
+ * case this record exists for — an activated customer whose subscription was
+ * never written to the platform ledger (a mentor's client, or a deployment
+ * whose database is unreachable), who used to be thrown back to the first page
+ * the instant their key said "activated".
+ */
+async function readKeyActivation(email: string): Promise<StoreVerdict> {
+  try {
+    const { kvRead } = await import("./_registry.js");
+    const count = Number(await kvRead(["SCARD", `eamp:key-activated:${email}`])) || 0;
+    if (count > 0) {
+      const at = await kvRead(["GET", `eamp:key-activated-at:${email}`]);
+      const paidAt = typeof at === "string" && at.trim() ? at.trim() : undefined;
+      return {
+        paid: true,
+        paidAt: paidAt ?? null,
+        readable: true,
+        detail: `licence key redeemed${paidAt ? ` at ${paidAt}` : ""} (${count} key${count === 1 ? "" : "s"} activated)`,
+      };
+    }
+    /**
+     * KEYS ACTIVATED BEFORE THIS RECORD EXISTED still count — read from the
+     * key records themselves.
+     *
+     * `claimedBy`/`claimedAt` are written by the same server-side claim, so a
+     * key whose record names THIS address was activated by it, whatever the
+     * release was. Without this read, every customer who activated before the
+     * fix shipped would keep being bounced after their key said "activated",
+     * and re-entering the key cannot help them: the claim lock correctly says
+     * the key is already in use.
+     *
+     * ONLY keys ASSIGNED to this address are examined (SCARD first, then at
+     * most a few HGETs), and assignment on its own is still not payment — the
+     * `claimedBy` match is the whole test.
+     */
+    const assigned = await kvRead(["SMEMBERS", `eamp:license-by-client:${email}`]);
+    const codes = (Array.isArray(assigned) ? assigned : [])
+      .map((value) => String(value).trim().toUpperCase())
+      .filter(Boolean)
+      .slice(0, 5);
+    for (const code of codes) {
+      const raw = await kvRead(["HGET", "eamp:license-keys", code]);
+      if (typeof raw !== "string" || !raw) continue;
+      let record: { claimedBy?: string | null; claimedAt?: string | null };
+      try {
+        record = JSON.parse(raw) as { claimedBy?: string | null; claimedAt?: string | null };
+      } catch {
+        continue;
+      }
+      const claimedBy = typeof record.claimedBy === "string" ? normalizeForCompare(record.claimedBy) : "";
+      if (claimedBy && claimedBy === email) {
+        const paidAt = typeof record.claimedAt === "string" && record.claimedAt ? record.claimedAt : null;
+        return {
+          paid: true,
+          paidAt,
+          readable: true,
+          detail: `licence key activated by this account${paidAt ? ` at ${paidAt}` : ""}`,
+        };
+      }
+    }
+    return { paid: false, readable: true, detail: "no licence key activated" };
+  } catch (error) {
+    return noAnswer(`key activation → ${errorText(error)}`);
+  }
+}
+
+/** The email comparison used everywhere in this file: trimmed, lower case. */
+function normalizeForCompare(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/**
  * THE DECISION — every store is read, then one rule decides:
  *
  *   1. ADMIN passes first, before any store is consulted.
@@ -620,6 +704,7 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
       "paid ledger": "admin — not consulted",
       "portal accounts": "admin — not consulted",
       "licence keys": "admin — not consulted",
+      "key activation": "admin — not consulted",
       "cloud access gate": "admin",
     };
     console.info(diagnosticLine(email, stores, "admin"));
@@ -640,12 +725,13 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   }
 
   // ── 2. EVERY STORE, IN PARALLEL, EACH INSIDE ITS OWN GUARD ───────────────
-  const [kv, users, ledger, portal, keys] = await Promise.all([
+  const [kv, users, ledger, portal, keys, activation] = await Promise.all([
     readKvRegistrations(email),
     readUsersStore(email, deviceId),
     readPaidLedger(email),
     readPortalAccounts(email),
     readLicenceKeys(email),
+    readKeyActivation(email),
   ]);
 
   // ── EVERY STORE, LOGGED — reachable yes/no, and paid / null / error ────────
@@ -660,6 +746,7 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   logStore(email, "paid ledger", ledger);
   logStore(email, "portal accounts", portal);
   logStore(email, "licence keys", keys);
+  logStore(email, "key activation", activation);
 
   const verdicts: Array<[string, StoreVerdict]> = [
     ["users table", users],
@@ -670,6 +757,7 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
   ];
   const stores: Record<string, string> = {};
   for (const [name, verdict] of verdicts) stores[name] = verdict.detail;
+  stores["key activation"] = activation.detail;
 
   // ── 3. ANY PAID MARK IS ENOUGH ───────────────────────────────────────────
   const paidBy = verdicts.find(([, verdict]) => verdict.paid);
@@ -695,8 +783,22 @@ async function resolveAccess(email: string, deviceId: string | null): Promise<Ac
     stores["cloud access gate"] = "rejected";
     console.info(diagnosticLine(email, stores, "rejected"));
     decided = { ok: true, isPaid: false, status: "rejected", stores };
+  } else if (activation.paid) {
+    // A REDEEMED KEY IS THIS ACCOUNT'S PAID RECORD — checked AFTER revocation
+    // and rejection, so the owner's "mark unpaid" still ends the session.
+    stores["cloud access gate"] = "paid via key activation";
+    console.info(diagnosticLine(email, stores, "paid (key activation)"));
+    decided = {
+      ok: true,
+      isPaid: true,
+      status: "paid",
+      ...(activation.paidAt ? { paidAt: activation.paidAt } : {}),
+      stores,
+    };
   } else {
-    const unreadable = verdicts.filter(([, verdict]) => !verdict.readable).map(([, verdict]) => verdict.detail);
+    const unreadable = [...verdicts, ["key activation", activation] as [string, StoreVerdict]]
+      .filter(([, verdict]) => !verdict.readable)
+      .map(([, verdict]) => verdict.detail);
     if (unreadable.length > 0) {
       // A SOURCE WE COULD NOT READ COULD BE THE ONE THAT KNOWS THIS EMAIL.
       stores["cloud access gate"] = "undecided — unreachable source";
