@@ -264,32 +264,16 @@ describe("check-access — payment comes from a paid record, never a licence key
     expect(body["status"]).toBe("revoked");
   });
 
-  it("passes a key this account ACTIVATED before the redemption record existed", async () => {
-    // Already-activated customers could not re-enter their key (the claim lock
-    // says it is in use), so the key record's own `claimedBy` has to count.
+  it("does NOT let an issue record or a claimedBy field grant access on its own", async () => {
+    // A key record that names this address as its client — even one that says
+    // it was claimed — is not the redemption ledger. Only a claim made through
+    // the fixed code writes that, so a handed-out key still proves nothing.
     assignedKeys = ["EMP-AAAA-BBBB-CCCC"];
     keyRecords["EMP-AAAA-BBBB-CCCC"] = {
       key: "EMP-AAAA-BBBB-CCCC",
       mentorEmail: "mentor@example.com",
       clientEmail: EMAIL,
       claimedBy: EMAIL.toUpperCase(),
-      claimedAt: "2026-11-10T08:00:00.000Z",
-    };
-
-    const { body } = await callCheckAccess();
-
-    expect(body["isPaid"]).toBe(true);
-    expect(body["status"]).toBe("paid");
-    expect(body["paidAt"]).toBe("2026-11-10T08:00:00.000Z");
-  });
-
-  it("does NOT count a key claimed by SOMEBODY ELSE", async () => {
-    assignedKeys = ["EMP-AAAA-BBBB-CCCC"];
-    keyRecords["EMP-AAAA-BBBB-CCCC"] = {
-      key: "EMP-AAAA-BBBB-CCCC",
-      mentorEmail: "mentor@example.com",
-      clientEmail: EMAIL,
-      claimedBy: "another-client@example.com",
       claimedAt: "2026-11-10T08:00:00.000Z",
     };
 

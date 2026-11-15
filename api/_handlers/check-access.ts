@@ -622,55 +622,21 @@ async function readKeyActivation(email: string): Promise<StoreVerdict> {
       };
     }
     /**
-     * KEYS ACTIVATED BEFORE THIS RECORD EXISTED still count — read from the
-     * key records themselves.
+     * NO GENERAL FALLBACK TO "THIS ACCOUNT HOLDS A KEY".
      *
-     * `claimedBy`/`claimedAt` are written by the same server-side claim, so a
-     * key whose record names THIS address was activated by it, whatever the
-     * release was. Without this read, every customer who activated before the
-     * fix shipped would keep being bounced after their key said "activated",
-     * and re-entering the key cannot help them: the claim lock correctly says
-     * the key is already in use.
-     *
-     * ONLY keys ASSIGNED to this address are examined (SCARD first, then at
-     * most a few HGETs), and assignment on its own is still not payment — the
-     * `claimedBy` match is the whole test.
+     * A key that was merely issued or assigned to an address proves nothing
+     * about money received — that rule is what keeps an account which never
+     * paid from walking in on a handed-out key, and it is not relaxed here.
+     * Only a REDEMPTION recorded by the claim above counts, which is why the
+     * record is written on every successful claim (a fresh activation today,
+     * or the same account re-entering its own key after a reinstall).
      */
-    const assigned = await kvRead(["SMEMBERS", `eamp:license-by-client:${email}`]);
-    const codes = (Array.isArray(assigned) ? assigned : [])
-      .map((value) => String(value).trim().toUpperCase())
-      .filter(Boolean)
-      .slice(0, 5);
-    for (const code of codes) {
-      const raw = await kvRead(["HGET", "eamp:license-keys", code]);
-      if (typeof raw !== "string" || !raw) continue;
-      let record: { claimedBy?: string | null; claimedAt?: string | null };
-      try {
-        record = JSON.parse(raw) as { claimedBy?: string | null; claimedAt?: string | null };
-      } catch {
-        continue;
-      }
-      const claimedBy = typeof record.claimedBy === "string" ? normalizeForCompare(record.claimedBy) : "";
-      if (claimedBy && claimedBy === email) {
-        const paidAt = typeof record.claimedAt === "string" && record.claimedAt ? record.claimedAt : null;
-        return {
-          paid: true,
-          paidAt,
-          readable: true,
-          detail: `licence key activated by this account${paidAt ? ` at ${paidAt}` : ""}`,
-        };
-      }
-    }
-    return { paid: false, readable: true, detail: "no licence key activated" };
+    return { paid: false, readable: true, detail: "no licence key redeemed" };
   } catch (error) {
     return noAnswer(`key activation → ${errorText(error)}`);
   }
 }
 
-/** The email comparison used everywhere in this file: trimmed, lower case. */
-function normalizeForCompare(value: string): string {
-  return value.trim().toLowerCase();
-}
 
 /**
  * THE DECISION — every store is read, then one rule decides:
