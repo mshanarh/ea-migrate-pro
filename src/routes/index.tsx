@@ -822,92 +822,133 @@ function Home() {
               email paid in the console. */}
             <section
               id="pay"
-              className="border-t border-border/60 bg-[linear-gradient(180deg,rgba(0,245,160,.05),transparent_70%)]"
+              className="border-t border-border/60 bg-[linear-gradient(180deg,rgba(0,245,160,.06),transparent_75%)]"
             >
               <div className="mx-auto max-w-2xl px-5 py-12">
-                <h2 className="text-center text-2xl font-black tracking-tight text-white sm:text-3xl">
-                  Pay here
+                <p className="text-center text-[11px] font-bold tracking-[0.2em] text-primary uppercase">
+                  💳 Bank transfer only — no card, no checkout page
+                </p>
+                <h2 className="mt-2 text-center text-2xl font-black tracking-tight text-white sm:text-3xl">
+                  Pay here 🏦
                 </h2>
-                <p className="mx-auto mt-2 max-w-lg text-center text-xs text-muted-foreground">
-                  Transfer the fee to the Standard Bank account below.
+                <p className="mx-auto mt-3 max-w-lg text-center text-sm leading-relaxed text-muted-foreground">
+                  Pay from your banking app with the Standard Bank details below, then email your
+                  proof of payment. Your account is switched on as soon as it is confirmed — usually
+                  the same day.
                 </p>
 
                 {/* PLAN PRICES */}
-                <div className="mt-6 grid gap-4 sm:grid-cols-2">
+                <div className="mt-7 grid gap-4 sm:grid-cols-2">
                   {[
                     {
-                      plan: "Monthly",
-                      price: "ZAR 350 / month",
-                      note: "Recurring — billed every month. Cancel anytime.",
+                      emoji: "📅",
+                      plan: "Monthly plan",
+                      price: "ZAR 350",
+                      note: "per month",
+                      detail: "Recurring access. Pay again each month to keep your EAs running.",
                     },
                     {
-                      plan: "Lifetime",
-                      price: "ZAR 500 once",
-                      note: "One payment, lifetime access. No recurring fees.",
+                      emoji: "♾️",
+                      plan: "Lifetime plan",
+                      price: "ZAR 500",
+                      note: "one-time",
+                      detail: "Pay once, own it for life. No monthly payments, ever.",
                     },
-                  ].map(({ plan, price, note }) => (
+                  ].map(({ emoji, plan, price, note, detail }) => (
                     <div
                       key={plan}
-                      className="panel rounded-2xl border border-border/60 p-5"
+                      className="panel rounded-2xl border border-primary/35 bg-primary/[0.04] p-5"
                     >
-                      <p className="text-xs font-semibold tracking-[0.18em] text-primary uppercase">
-                        {plan} plan
+                      <p className="text-xs font-bold tracking-[0.18em] text-primary uppercase">
+                        {emoji} {plan}
                       </p>
-                      <p className="mt-2 text-3xl font-black tracking-tight text-white">
+                      <p className="mt-2 flex items-baseline gap-2 text-3xl font-black tracking-tight text-white">
                         {price}
+                        <span className="text-xs font-semibold text-muted-foreground">{note}</span>
                       </p>
-                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                        {note}
-                      </p>
+                      <p className="mt-2 text-sm leading-relaxed text-muted-foreground">{detail}</p>
                     </div>
                   ))}
                 </div>
 
                 {/* BANK ACCOUNT DETAILS */}
                 <div className="mt-6 rounded-2xl border border-border/60 bg-black/40 px-5 py-5">
-                  <h3 className="text-sm font-semibold tracking-wider text-muted-foreground uppercase">
-                    Bank account details
+                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                    🏦 Account details
                   </h3>
-                  <dl className="mt-4 grid gap-x-5 gap-y-3 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground">Bank name</dt>
-                      <dd className="font-semibold text-white">Standard Bank</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Branch code</dt>
-                      <dd className="font-semibold text-white">927</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Account holder</dt>
-                      <dd className="font-semibold text-white">Ea migrate</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Account number</dt>
-                      <dd className="font-semibold text-white">10 23 913 954 0</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">Account type</dt>
-                      <dd className="font-semibold text-white">CURRENT</dd>
-                    </div>
+                  <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                    {[
+                      ["🏛️", "Bank name", "Standard Bank"],
+                      ["🔢", "Branch code", "927"],
+                      ["👤", "Account holder", "Ea migrate"],
+                      ["💳", "Account number", "10 23 913 954 0"],
+                      ["📋", "Account type", "CURRENT"],
+                      ["📝", "Reference", "Your account email"],
+                    ].map(([emoji, label, value]) => (
+                      <div
+                        key={label}
+                        className="flex items-center justify-between gap-3 rounded-xl border border-border/40 bg-white/[0.02] px-3 py-2"
+                      >
+                        <dt className="text-xs text-muted-foreground">
+                          <span aria-hidden className="mr-1.5">
+                            {emoji}
+                          </span>
+                          {label}
+                        </dt>
+                        <dd className="text-right font-mono text-sm font-semibold text-white select-all">
+                          {value}
+                        </dd>
+                      </div>
+                    ))}
                   </dl>
+                  <p className="mt-3 text-[11px] leading-relaxed text-muted-foreground">
+                    💡 Tap and hold a value to copy it. Use the exact email you sign in with as the
+                    reference so your payment is matched faster.
+                  </p>
+                </div>
+
+                {/* WHAT HAPPENS NEXT */}
+                <div className="mt-6 rounded-2xl border border-border/60 bg-black/30 px-5 py-5">
+                  <h3 className="text-sm font-bold tracking-wider text-white uppercase">
+                    ✉️ After you pay
+                  </h3>
+                  <ol className="mt-4 space-y-3 text-sm leading-relaxed text-muted-foreground">
+                    {[
+                      "1️⃣ Transfer the amount for the plan you want (ZAR 350 monthly or ZAR 500 lifetime).",
+                      "2️⃣ Screenshot or save the proof of payment from your bank.",
+                      "3️⃣ Email the proof, your account email and the plan you chose to eamigratepro@gmail.com.",
+                      "4️⃣ Your mentor confirms it and marks your account paid — then sign in and the app opens for you.",
+                    ].map((step) => (
+                      <li key={step}>{step}</li>
+                    ))}
+                  </ol>
+
+                  <a
+                    href={`mailto:eamigratepro@gmail.com?subject=${encodeURIComponent("EA Migrate — proof of payment")}&body=${encodeURIComponent("Hi EA Migrate,\n\nI have paid for the plan below. Proof of payment is attached.\n\nAccount email: \nPlan (Monthly ZAR 350 / Lifetime ZAR 500): \nAmount paid: \nDate paid: \nReference used: \n\nThank you.")}`}
+                    className="mt-5 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-sm font-bold text-[#021810] shadow-[0_10px_30px_rgba(0,245,160,.3)] transition hover:brightness-110"
+                  >
+                    ✉️ Email my proof of payment
+                  </a>
+                  <p className="mt-3 text-center text-xs text-muted-foreground">
+                    Send it to{" "}
+                    <a
+                      href="mailto:eamigratepro@gmail.com"
+                      className="font-semibold text-primary underline"
+                    >
+                      eamigratepro@gmail.com
+                    </a>{" "}
+                    — the platform email, monitored every day.
+                  </p>
                 </div>
 
                 <p className="mt-5 text-xs leading-relaxed text-muted-foreground">
-                  When you pay, pay here. Send the proof of payment to{" "}
-                  <a
-                    href="mailto:eamigratepro@gmail.com"
-                    className="font-semibold text-primary underline"
-                  >
-                    eamigratepro@gmail.com
-                  </a>
-                  {
-                    " "
-                  }
-                  with your account email and chosen plan (Monthly or Lifetime).
-                  The mentor marks your account paid, and the app opens the next
-                  time you sign in with that email. Both the monthly subscription
-                  and the lifetime access pay into the same Standard Bank account
-                  — then your mentor activates whichever plan you chose.
+                  Both plans pay into the same Standard Bank account. Nothing is charged
+                  automatically: you choose the plan, you make the transfer, and the mentor activates
+                  that plan on your email. Need help before paying?{" "}
+                  <Link to="/support" className="font-semibold text-primary hover:underline">
+                    Talk to support
+                  </Link>
+                  .
                 </p>
               </div>
             </section>

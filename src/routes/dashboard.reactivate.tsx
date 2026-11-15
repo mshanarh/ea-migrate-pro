@@ -5,7 +5,7 @@ import {
   Check,
   Coins,
   Copy,
-  ExternalLink,
+  Mail,
   Lock,
   PlusCircle,
   RefreshCcw,
@@ -24,9 +24,20 @@ export const Route = createFileRoute("/dashboard/reactivate")({
   component: ReactivateClientPage,
 });
 
-// Configure your Whop checkout link for tokens here — set the
-// VITE_TOKEN_CHECKOUT_URL env var in Vercel (or edit the fallback below).
-const TOKEN_CHECKOUT_URL = (import.meta.env["VITE_TOKEN_CHECKOUT_URL"] as string | undefined) || "https://whop.com/checkout/plan_pAzDfC1tIC9p3";
+/*
+ * TOKENS ARE PAID BY BANK TRANSFER — there is no checkout provider any more.
+ * The mentor transfers to the same Standard Bank account as every other plan
+ * and emails the proof; the owner adds the tokens once it is confirmed.
+ */
+const TOKEN_BANK = {
+  bank: "Standard Bank",
+  branch: "927",
+  holder: "Ea migrate",
+  account: "10 23 913 954 0",
+  type: "CURRENT",
+} as const;
+/** The platform email that proof of payment goes to. */
+const PAYMENT_PROOF_EMAIL = "eamigratepro@gmail.com";
 const TOKEN_PRICE_ZAR = 100;
 /** Admins never run out: their balance is pinned to 1,000,000 tokens. */
 const ADMIN_TOKEN_BALANCE = 1_000_000;
@@ -146,7 +157,18 @@ function ReactivateClientPage() {
   };
 
   const handleBuyTokens = () => {
-    window.open(TOKEN_CHECKOUT_URL, "_blank");
+    const subject = encodeURIComponent("EA Migrate — reactivation tokens payment");
+    const body = encodeURIComponent(
+      `Hi EA Migrate,\n\n` +
+        `I have paid for ${selectedTokens} reactivation token(s) ` +
+        `(R${selectedTokens * TOKEN_PRICE_ZAR}). Proof of payment is attached.\n\n` +
+        `My account email: ${account.email}\n` +
+        `Tokens: ${selectedTokens}\n` +
+        `Amount paid: R${selectedTokens * TOKEN_PRICE_ZAR}\n\n` +
+        `Bank used: ${TOKEN_BANK.bank} · ${TOKEN_BANK.type} · ` +
+        `acct ${TOKEN_BANK.account}\n\nThank you.`,
+    );
+    window.location.href = `mailto:${PAYMENT_PROOF_EMAIL}?subject=${subject}&body=${body}`;
   };
 
   const handleClaimTokens = (amountToAdd: number) => {
@@ -300,13 +322,47 @@ function ReactivateClientPage() {
             ))}
           </div>
 
+          <div className="mt-4 rounded-2xl border border-white/10 bg-black/30 p-4">
+            <p className="text-[11px] font-bold uppercase tracking-[0.18em] text-primary">
+              🏦 Pay by bank transfer
+            </p>
+            <dl className="mt-2 grid gap-1 text-xs text-muted-foreground">
+              <div className="flex justify-between gap-3">
+                <dt>Bank / type</dt>
+                <dd className="font-mono font-semibold text-white">
+                  {TOKEN_BANK.bank} · {TOKEN_BANK.type}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Branch code</dt>
+                <dd className="font-mono font-semibold text-white">{TOKEN_BANK.branch}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Account holder</dt>
+                <dd className="font-mono font-semibold text-white">{TOKEN_BANK.holder}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt>Account number</dt>
+                <dd className="font-mono font-semibold text-white select-all">{TOKEN_BANK.account}</dd>
+              </div>
+            </dl>
+            <p className="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+              Transfer R{selectedTokens * TOKEN_PRICE_ZAR}, then email the proof to{" "}
+              <a href={`mailto:${PAYMENT_PROOF_EMAIL}`} className="font-semibold text-primary underline">
+                {PAYMENT_PROOF_EMAIL}
+              </a>{" "}
+              — tokens are added to your balance once it is confirmed.
+            </p>
+          </div>
+
           <div className="mt-4 flex flex-wrap items-center gap-3">
             <Button
               type="button"
               onClick={handleBuyTokens}
               className="gap-2 rounded-xl bg-primary font-bold text-black hover:bg-primary/90"
             >
-              <ExternalLink className="size-4" /> Pay R{selectedTokens * TOKEN_PRICE_ZAR} on Whop
+              <Mail className="size-4" /> Email proof for {selectedTokens} token
+              {selectedTokens === 1 ? "" : "s"} · R{selectedTokens * TOKEN_PRICE_ZAR}
             </Button>
             {isAdmin && (
               <Button
