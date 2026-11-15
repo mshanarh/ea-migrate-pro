@@ -887,7 +887,7 @@ function Home() {
                     </div>
                     <div>
                       <dt className="text-muted-foreground">Account type</dt>
-                      <dd className="font-semibold text-white">Current</dd>
+                      <dd className="font-semibold text-white">CURRENT</dd>
                     </div>
                   </dl>
                 </div>
