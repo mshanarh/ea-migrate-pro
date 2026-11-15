@@ -770,15 +770,12 @@ async function claimKey(client: SupabaseClient, key: string, email: string): Pro
       /**
        * THE SAME ACCOUNT RE-ENTERING ITS OWN KEY — accepted.
        *
-       * This is the licence we sold them: a reinstall, a new phone after a
-       * factory reset, or a key activated before this build shipped that the
-       * redemption record never saw. Refusing it told the customer "that key is
-       * already in use" about their OWN key, after which the access gate found
-       * no paid record and threw them back to the first page — the whole bug.
-       * Single use is still absolute for a key held by a DIFFERENT account: that
-       * branch above is unchanged and answers ALREADY_IN_USE. The device rule
-       * also still applies at the gate, so this accepts the account, not a
-       * second phone.
+       * A reinstall or a new phone after a factory reset used to be told "that
+       * key is already in use" about the customer's OWN key, which is a dead
+       * end with no way out. Single use is still absolute for a key held by a
+       * DIFFERENT account: that branch above is unchanged and answers
+       * ALREADY_IN_USE. This only settles who OWNS the key — it grants no app
+       * access, which still requires a paid record at the gate.
        */
       return { ok: true };
     }

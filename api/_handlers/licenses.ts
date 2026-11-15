@@ -107,45 +107,6 @@ const KEYS_HASH = "eamp:license-keys";
 const MENTOR_PREFIX = "eamp:license-by-mentor:";
 const CLIENT_PREFIX = "eamp:license-by-client:";
 const CLAIM_PREFIX = "eamp:license-claim:";
-/**
- * THE ACTIVATION LEDGER — keyed by the ACCOUNT, written only by the claim.
- *
- * `eamp:license-claim:<KEY>` answers "who redeemed this key", which is one
- * lookup per key and useless when the question is "is this EMAIL entitled".
- * These two keys answer it the other way round:
- *
- *   eamp:key-activated:<email>      SET   every key this account has redeemed
- *   eamp:key-activated-at:<email>   STR   when the first one was redeemed
- *
- * WHY THIS EXISTS: /api/check-access reads it as proof of payment for an
- * ACTIVATED key (see `readKeyActivation` there). A key merely assigned to an
- * address proves nothing — it can be issued and never used, or issued to an
- * account that has not paid — but a key that has been REDEEMED is the customer
- * opening the licence they bought. Without this, activating a key printed
- * "key activated" and then the home guard, finding no paid record, threw the
- * customer back to the first page of the app.
- *
- * Written only here, server-side, from the atomic claim that already decides
- * single use: a browser cannot write it, and it cannot be cleared by the
- * customer. A console "mark unpaid" still wins — revocation is checked ahead
- * of this record in check-access.
- */
-const ACTIVATED_PREFIX = "eamp:key-activated:";
-const ACTIVATED_AT_PREFIX = "eamp:key-activated-at:";
-
-/** Remember that `email` redeemed `key` (idempotent; never throws upward). */
-async function recordKeyRedemption(email: string, key: string): Promise<void> {
-  try {
-    await kvCommand(["SADD", `${ACTIVATED_PREFIX}${email}`, key]);
-    await kvCommand(["SET", `${ACTIVATED_AT_PREFIX}${email}`, new Date().toISOString(), "NX"]);
-  } catch (error) {
-    // A failed bookkeeping write must never refuse a key that was just claimed:
-    // the claim lock itself is already durable, and the money is not in doubt.
-    console.warn(
-      `[licenses] activation record for ${email} failed: ${error instanceof Error ? error.message : error}`,
-    );
-  }
-}
 
 /**
  * A HARD CAP ON THE INLINE EA PICTURE.
@@ -414,16 +375,11 @@ export async function claimLicenceKeyForEmail(
         JSON.stringify({ ...record, claimedBy: email, claimedAt: new Date().toISOString() }),
       ]);
     }
-    await recordKeyRedemption(email, key);
     return { ok: true };
   }
 
   const holder = await kvCommand(["GET", claimKey(key)]);
   const heldBy = typeof holder === "string" ? normalizeEmail(holder) : "";
-  // THE SAME ACCOUNT RE-ENTERING ITS OWN KEY (a reinstall, a dropped answer on
-  // a mobile network) is still a redeemed key — record it so the access gate
-  // agrees with the activation screen instead of bouncing the customer.
-  if (heldBy && heldBy === email) await recordKeyRedemption(email, key);
   return { ok: false, alreadyInUse: true, heldBy: heldBy || null, error: "License key already in use" };
 }
 

@@ -234,11 +234,10 @@ describe("check-access — payment comes from a paid record, never a licence key
     expect(body["deviceMatches"]).toBe(false);
   });
 
-  it("passes an account that REDEEMED its licence key, even with no paid record", async () => {
-    // The bug this covers: a customer entered their key, the app said "key
-    // activated", showed the home screen and then threw them back to the first
-    // page because no store held a subscription for their address. A redeemed
-    // key IS the record — written by the server at claim time.
+  it("keeps REFUSING an account whose key was activated but which has no paid record", async () => {
+    // THE REPORTED LEAK. Activating a key is not paying, and it must never be
+    // read as a paid record: an account that never paid was opening the app
+    // because a key had been redeemed on it.
     redeemedKeys = ["EMP-AAAA-BBBB-CCCC"];
     redeemedAt = "2026-11-15T09:00:00.000Z";
     db.users = { license_key: "EMP-AAAA-BBBB-CCCC", device_id: DEVICE, device_email: EMAIL };
@@ -246,22 +245,8 @@ describe("check-access — payment comes from a paid record, never a licence key
     const { status, body } = await callCheckAccess();
 
     expect(status).toBe(200);
-    expect(body["isPaid"]).toBe(true);
-    expect(body["status"]).toBe("paid");
-    expect(body["paidAt"]).toBe("2026-11-15T09:00:00.000Z");
-  });
-
-  it("still REFUSES when the console revoked the account, redeemed key or not", async () => {
-    // "Mark unpaid" must always win — otherwise a key became a way to outvote
-    // the owner.
-    redeemedKeys = ["EMP-AAAA-BBBB-CCCC"];
-    redeemedAt = "2026-11-15T09:00:00.000Z";
-    kvRecord = { email: EMAIL, isPaid: false, paidAt: null, status: "approved" };
-
-    const { body } = await callCheckAccess();
-
     expect(body["isPaid"]).toBe(false);
-    expect(body["status"]).toBe("revoked");
+    expect(body["status"]).toBe("unpaid");
   });
 
   it("does NOT let an issue record or a claimedBy field grant access on its own", async () => {
