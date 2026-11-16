@@ -60,6 +60,10 @@ export const Route = createFileRoute("/")({
       { property: "og:url", content: "https://eamigratepro.vercel.app/" },
       { property: "og:site_name", content: "EA Migrate" },
       {
+        name: "google-site-verification",
+        content: "Esn1A0ZxxRa8u19Awb2qk0qvS6LLV6wKrP7iFBLN74A",
+      },
+      {
         property: "og:description",
         content:
           "Seamless VPS hosting for your EA on the go. MT4 & MT5, 24/7 uptime and low-latency execution from your phone.",
@@ -70,6 +74,7 @@ export const Route = createFileRoute("/")({
       { property: "og:image:alt", content: "EA Migrate logo" },
       { name: "twitter:card", content: "summary_large_image" },
       { name: "twitter:title", content: "EA Migrate — Mobile VPS on the go" },
+      { name: "google-site-verification", content: "Esn1A0ZxxRa8u19Awb2qk0qvS6LLV6wKrP7iFBLN74A" },
     ],
   }),
   component: Home,
