@@ -1,4 +1,5 @@
 import { BrandLogo } from "@/components/BrandLogo";
+import { BlackFridayPromoPopup } from "@/components/BlackFridayPromoPopup";
 import { START } from "@/lib/startup-timing";
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
@@ -1721,6 +1722,10 @@ function AppAccess() {
           />
         )}
       </main>
+      {/* BLACK FRIDAY — the same 50% off offer the landing page shows, so a
+          visitor who comes straight to sign-in still sees the deal. It grants
+          nothing: the CTA opens WhatsApp. */}
+      <BlackFridayPromoPopup />
     </div>
   );
 }

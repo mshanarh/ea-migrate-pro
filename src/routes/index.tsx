@@ -34,6 +34,7 @@ import {
 import { BrandLogo } from "@/components/BrandLogo";
 import { SiteHeader } from "@/components/SiteHeader";
 import { BrokerPromoPopup } from "@/components/BrokerPromoPopup";
+import { BlackFridayPromoPopup } from "@/components/BlackFridayPromoPopup";
 import heroPhone from "/ea-migrate-hero.jpg";
 
 /**
@@ -1089,6 +1090,7 @@ function Home() {
       </a>
 
       <LandingChatbot />
+      <BlackFridayPromoPopup />
       <BrokerPromoPopup />
     </div>
   );

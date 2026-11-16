@@ -9,6 +9,7 @@ import {
 } from "@/components/ui/dialog";
 import { buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { isBlackFridayPromoShowing } from "@/components/BlackFridayPromoPopup";
 
 /**
  * Broker promo popup for the landing page: celebrates the visitor's arrival
@@ -45,7 +46,16 @@ export function BrokerPromoPopup() {
   const [open, setOpen] = useState(false);
 
   useEffect(() => {
-    const timer = window.setTimeout(() => setOpen(true), 900);
+    /**
+     * ONE PROMO AT A TIME. The Black Friday popup opens at 800ms; two dialogs
+     * stacking on top of each other hides one of them behind the other's
+     * overlay. When the deal is on screen, the broker recommendation waits
+     * (it is the lower-value message) instead of opening underneath it.
+     */
+    const timer = window.setTimeout(() => {
+      if (isBlackFridayPromoShowing()) return;
+      setOpen(true);
+    }, 900);
     return () => window.clearTimeout(timer);
   }, []);
 
