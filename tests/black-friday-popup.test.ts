@@ -29,8 +29,10 @@ function render() {
 }
 
 function click(label: string) {
-  const target = [...document.querySelectorAll("button, a")].find((element) =>
-    (element.textContent ?? "").includes(label),
+  const target = [...document.querySelectorAll("button, a")].find(
+    (element) =>
+      (element.textContent ?? "").includes(label) ||
+      (element.getAttribute("aria-label") ?? "").includes(label),
   );
   if (!target) throw new Error(`No control matching "${label}" on screen`);
   act(() => {
@@ -74,7 +76,7 @@ describe("Black Friday popup", () => {
     expect(document.body.textContent).not.toContain("Black Friday Exclusive");
   });
 
-  it("prices Android at ZAR 175 / ZAR 250 and links WhatsApp with the platform", () => {
+  it("prices Android at ZAR 175 / ZAR 250 and opens the bank details", () => {
     vi.useFakeTimers();
     render();
     act(() => {
@@ -92,13 +94,48 @@ describe("Black Friday popup", () => {
     expect(text).toContain("ZAR 350");
     expect(text).toContain("ZAR 500");
 
-    const links = [...document.querySelectorAll("a")].map((anchor) => anchor.getAttribute("href") ?? "");
-    const monthly = links.find((href) => href.startsWith("https://wa.me/27704950612")) ?? "";
-    expect(decodeURIComponent(monthly)).toContain("Android - Monthly");
-    expect(links.some((href) => decodeURIComponent(href).includes("Android - Lifetime"))).toBe(true);
+    // The plan tap no longer leaves the popup — it shows where to pay.
+    click("Get Monthly at ZAR 175");
+    const bank = document.body.textContent ?? "";
+    expect(bank).toContain("Pay via Bank Transfer");
+    expect(bank).toContain("Standard Bank");
+    expect(bank).toContain("10 23 913 954 0");
+    expect(bank).toContain("927");
+    expect(bank).toContain("Ea migrate");
+    expect(bank).toContain("Current");
+    expect(bank).toContain("ZAR 175");
+    expect(bank).toContain("reference");
   });
 
-  it("prices iOS the same and can go back to change platform", () => {
+  it("states the amount, plan and platform in the proof-of-payment link", () => {
+    vi.useFakeTimers();
+    render();
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+
+    click("Claim 50% Off Access");
+    click("Android App / APK");
+    click("Get Lifetime at ZAR 250");
+
+    const proof = [...document.querySelectorAll("a")]
+      .map((anchor) => anchor.getAttribute("href") ?? "")
+      .find((href) => href.startsWith("https://wa.me/27704950612"));
+    expect(proof).toBeTruthy();
+    const decoded = decodeURIComponent(proof!);
+    expect(decoded).toContain("I have paid ZAR 250");
+    expect(decoded).toContain("Lifetime");
+    expect(decoded).toContain("Android");
+    expect(decoded).toContain("proof of payment");
+
+    // A CTA must be labelled as the place the receipt goes.
+    const cta = [...document.querySelectorAll("a")].find((anchor) =>
+      (anchor.textContent ?? "").includes("Send proof of payment to WhatsApp"),
+    );
+    expect(cta).toBeTruthy();
+  });
+
+  it("switches between the plans with the back buttons", () => {
     vi.useFakeTimers();
     render();
     act(() => {
@@ -109,11 +146,21 @@ describe("Black Friday popup", () => {
     click("iOS / iPhone & iPad");
     expect(document.body.textContent).toContain("Selected: iOS");
 
-    click("Change");
-    expect(document.body.textContent).toContain("Select your mobile platform");
+    click("Get Monthly at ZAR 175");
+    expect(document.body.textContent).toContain("ZAR 175");
 
-    click("Android App / APK");
-    const links = [...document.querySelectorAll("a")].map((href) => decodeURIComponent(href.getAttribute("href") ?? ""));
-    expect(links.some((href) => href.includes("Android - Lifetime"))).toBe(true);
+    click("Back to plans");
+    expect(document.body.textContent).toContain("Get Lifetime at ZAR 250");
+
+    click("Get Lifetime at ZAR 250");
+    const bank = document.body.textContent ?? "";
+    expect(bank).toContain("Pay via Bank Transfer");
+    expect(bank).toContain("ZAR 250");
+
+    // The header arrow walks back one step at a time: 4 → 3 → 2 → 1.
+    click("Back to the previous step");
+    expect(document.body.textContent).toContain("Selected: iOS");
+    click("Back to the previous step");
+    expect(document.body.textContent).toContain("Select your mobile platform");
   });
 });

@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { Apple, ArrowLeft, ChevronRight, Flame, Smartphone, Tag } from "lucide-react";
+import {
+  Apple,
+  ArrowLeft,
+  Check,
+  ChevronRight,
+  Copy,
+  Flame,
+  Landmark,
+  MessageCircle,
+  Smartphone,
+  Tag,
+} from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -85,6 +96,17 @@ function useCountdown() {
   return splitRemaining(remaining);
 }
 
+function BankRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 px-3.5 py-2">
+      <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </dt>
+      <dd className="text-sm font-bold text-white">{value}</dd>
+    </div>
+  );
+}
+
 function TimePill({ value, label }: { value: string; label: string }) {
   return (
     <div className="flex flex-col items-center gap-1">
@@ -98,16 +120,42 @@ function TimePill({ value, label }: { value: string; label: string }) {
   );
 }
 
-function whatsappLink(platform: PlatformId, plan: "Monthly" | "Lifetime") {
-  const name = platform === "ios" ? "iOS" : "Android";
-  const text = `Hi Ntobeko, I want the Black Friday 50% Off deal for ${name} - ${plan}`;
+/**
+ * THE MONEY GOES TO THE BANK, AND THE PROOF GOES TO WHATSAPP.
+ *
+ * The plan taps used to open a chat asking for the deal, which meant the
+ * customer had to be told the account details by hand before anything could be
+ * paid. The details are shown here instead, and WhatsApp is only the envelope
+ * for the receipt — the message already states the amount and what it buys.
+ */
+const BANK_DETAILS = {
+  bankName: "Standard Bank",
+  branchCode: "927",
+  holder: "Ea migrate",
+  accountNumber: "10 23 913 954 0",
+  accountType: "CURRENT",
+} as const;
+
+const PLAN_INFO = {
+  Monthly: { price: "175", badge: "ZAR 175", note: "/ month" },
+  Lifetime: { price: "250", badge: "ZAR 250", note: "one-time" },
+} as const;
+
+type Plan = keyof typeof PLAN_INFO;
+
+function whatsappLink(platform: PlatformId, plan: Plan) {
+  const platformName = platform === "ios" ? "iOS" : "Android";
+  const { price } = PLAN_INFO[plan];
+  const text = `Hi Ntobeko, I have paid ZAR ${price} for the Black Friday 50% Off ${plan} plan (${platformName}). Here is my proof of payment:`;
   return `https://wa.me/${WHATSAPP_NUMBER}?text=${encodeURIComponent(text)}`;
 }
 
 export function BlackFridayPromoPopup() {
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<1 | 2 | 3>(1);
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
   const [platform, setPlatform] = useState<PlatformId | null>(null);
+  const [selectedPlan, setSelectedPlan] = useState<Plan | null>(null);
+  const [copied, setCopied] = useState(false);
   const countdown = useCountdown();
 
   // Shows once per load, after the page has settled.
@@ -130,6 +178,26 @@ export function BlackFridayPromoPopup() {
     setStep(3);
   };
 
+  /**
+   * A PLAN TAP SHOWS HOW TO PAY. Nothing navigates away: the customer reads the
+   * bank details, pays from their banking app, and only then opens WhatsApp.
+   */
+  const choosePlan = (plan: Plan) => {
+    setSelectedPlan(plan);
+    setStep(4);
+  };
+
+  /** Copy the account number; the confirmation clears itself after a moment. */
+  const copyAccountNumber = async () => {
+    try {
+      await navigator.clipboard.writeText(BANK_DETAILS.accountNumber);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2_000);
+    } catch {
+      /* clipboard blocked — the number is on screen to read and type */
+    }
+  };
+
   const platformLabel = platform === "ios" ? "iOS" : platform === "android" ? "Android" : "";
 
   return (
@@ -141,7 +209,7 @@ export function BlackFridayPromoPopup() {
             {step > 1 ? (
               <button
                 type="button"
-                onClick={() => setStep(step === 3 ? 2 : 1)}
+                onClick={() => setStep(step === 4 ? 3 : step === 3 ? 2 : 1)}
                 aria-label="Back to the previous step"
                 className="mr-1 flex size-7 items-center justify-center rounded-lg border border-border/60 bg-background/60 text-muted-foreground transition-colors hover:text-primary"
               >
@@ -162,9 +230,13 @@ export function BlackFridayPromoPopup() {
                 </>
               ) : step === 2 ? (
                 "Select your mobile platform"
-              ) : (
+              ) : step === 3 ? (
                 <>
                   {platformLabel} · <span className="text-primary">50% off applied</span>
+                </>
+              ) : (
+                <>
+                  Pay via <span className="text-primary">bank transfer</span>
                 </>
               )}
             </DialogTitle>
@@ -173,7 +245,9 @@ export function BlackFridayPromoPopup() {
                 ? "Half-price cloud VPS & mobile app access for both Monthly (PM) and Lifetime plans."
                 : step === 2
                   ? "Choose where you will trade with EA Migrate Pro:"
-                  : "Lock in the Black Friday price before the timer runs out."}
+                  : step === 3
+                    ? "Lock in the Black Friday price before the timer runs out."
+                    : "Pay with the Standard Bank details below, then send your proof of payment."}
             </DialogDescription>
           </DialogHeader>
         </div>
@@ -273,14 +347,13 @@ export function BlackFridayPromoPopup() {
                 <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
                   Cancel anytime • Up to 3 EAs • 24/7 Cloud VPS
                 </p>
-                <a
-                  href={whatsappLink(platform, "Monthly")}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => choosePlan("Monthly")}
                   className="mt-2.5 flex h-10 w-full items-center justify-center rounded-full bg-primary text-xs font-black text-primary-foreground transition hover:brightness-110"
                 >
                   Get Monthly at ZAR 175
-                </a>
+                </button>
               </div>
 
               {/* Lifetime */}
@@ -304,19 +377,96 @@ export function BlackFridayPromoPopup() {
                 <p className="mt-1 text-[10px] leading-relaxed text-muted-foreground">
                   Pay once, trade forever • Unlimited EAs • 24/7 Cloud VPS
                 </p>
-                <a
-                  href={whatsappLink(platform, "Lifetime")}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                <button
+                  type="button"
+                  onClick={() => choosePlan("Lifetime")}
                   className="mt-2.5 flex h-10 w-full items-center justify-center rounded-full bg-gradient-to-r from-[#00F5A0] to-[#10B981] text-xs font-black text-[#021810] transition hover:brightness-110"
                 >
                   Get Lifetime at ZAR 250
-                </a>
+                </button>
               </div>
             </div>
 
             <p className="mt-3 text-center text-[10px] leading-relaxed text-muted-foreground">
               ⚡ Instant setup after payment. Offer expires midnight 18 November.
+            </p>
+          </div>
+        ) : null}
+
+        {/* ── Step 4: the bank details, then the receipt ── */}
+        {step === 4 && platform && selectedPlan ? (
+          <div className="px-5 py-4">
+            <div className="overflow-hidden rounded-2xl border border-border/60 bg-card/50">
+              <div className="flex items-center justify-between gap-2 border-b border-border/60 bg-primary/5 px-3.5 py-2.5">
+                <p className="flex items-center gap-1.5 text-xs font-black uppercase tracking-wide">
+                  <Landmark className="size-3.5 text-primary" aria-hidden="true" />
+                  Pay via Bank Transfer
+                </p>
+                <span className="shrink-0 rounded-full bg-primary/15 px-2.5 py-1 text-[11px] font-black text-primary">
+                  {PLAN_INFO[selectedPlan].badge}
+                </span>
+              </div>
+
+              <dl className="divide-y divide-border/50">
+                <BankRow label="Bank" value={BANK_DETAILS.bankName} />
+                <BankRow label="Account holder" value={BANK_DETAILS.holder} />
+                <div className="flex items-center justify-between gap-3 px-3.5 py-2">
+                  <dt className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                    Account number
+                  </dt>
+                  <dd className="flex items-center gap-2">
+                    <span className="font-mono text-sm font-black tracking-wide text-white">
+                      {BANK_DETAILS.accountNumber}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void copyAccountNumber()}
+                      className="flex items-center gap-1 rounded-lg border border-border/60 bg-background/60 px-2 py-1 text-[10px] font-black uppercase text-muted-foreground transition-colors hover:text-primary"
+                    >
+                      {copied ? (
+                        <>
+                          <Check className="size-3 text-primary" aria-hidden="true" />
+                          Copied
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-3" aria-hidden="true" />
+                          Copy
+                        </>
+                      )}
+                    </button>
+                  </dd>
+                </div>
+                <BankRow label="Branch code" value={BANK_DETAILS.branchCode} />
+                <BankRow label="Account type" value="Current" />
+              </dl>
+
+              <p className="border-t border-border/60 px-3.5 py-2 text-[10px] leading-relaxed text-muted-foreground">
+                Reference: use your email or phone number as reference.
+              </p>
+            </div>
+
+            <a
+              href={whatsappLink(platform, selectedPlan)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-3 flex h-12 w-full items-center justify-center gap-2 rounded-full bg-[#25D366] text-sm font-black text-black shadow-[0_10px_25px_rgba(37,211,102,.25)] transition hover:brightness-110"
+            >
+              <MessageCircle className="size-4" />
+              Send proof of payment to WhatsApp
+            </a>
+
+            <button
+              type="button"
+              onClick={() => setStep(3)}
+              className="mt-2 flex h-9 w-full items-center justify-center gap-1 rounded-full border border-border/60 text-[11px] font-bold text-muted-foreground transition-colors hover:text-primary"
+            >
+              <ArrowLeft className="size-3.5" aria-hidden="true" />
+              Back to plans
+            </button>
+
+            <p className="mt-2 text-center text-[10px] leading-relaxed text-muted-foreground">
+              ⚡ Access is switched on once your proof of payment is confirmed. Offer expires midnight 18 November.
             </p>
           </div>
         ) : null}
