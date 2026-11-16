@@ -265,10 +265,14 @@ export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenA
   const image = robot?.image || "/logo.png";
 
   return (
-    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-center px-4 pb-8 pt-8 text-white">
-      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4">
+    /* TOP-ANCHORED, like every other interface style. Centring the column put
+       the card in the middle of the viewport, which on a phone reads as "pushed
+       down into the bottom dock" — the content now starts under the header and
+       the extra bottom padding keeps it clear of the nav. */
+    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-24 pt-6 text-white sm:pt-8">
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-5">
         {/* Main card with the top-overlapping avatar */}
-        <div className="relative mt-10 w-full">
+        <div className="relative mt-12 w-full">
           {/* The avatar is a sibling of the card, so its border is not clipped
               by the card's rounded glass and its shadow falls on the card. */}
           <div
@@ -335,19 +339,30 @@ export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenA
           </div>
         </div>
 
-        {/* Host Robot capsule */}
+        {/* Host Robot capsule — the label says what it opens, the row says
+            where it leads. */}
         <button
           type="button"
           onClick={onOpenAdd}
-          className="flex w-full items-center justify-center gap-3 rounded-[28px] border border-white/15 bg-black/75 px-5 py-4 shadow-lg backdrop-blur-xl transition-all hover:bg-white/10 active:scale-[0.98]"
+          className="flex w-full items-center justify-between rounded-[28px] border border-white/15 bg-black/75 px-6 py-4 shadow-lg backdrop-blur-xl transition-all hover:bg-white/10 active:scale-[0.98]"
         >
-          <span
-            className="flex size-9 items-center justify-center rounded-full border border-white/20 bg-white/10"
-            style={{ borderColor: accent }}
-          >
-            <Plus className="size-5 text-white" strokeWidth={2.8} />
+          <div className="flex items-center gap-4">
+            <span
+              className="flex size-9 items-center justify-center rounded-full border border-white/20 bg-white/10"
+              style={{ borderColor: accent }}
+            >
+              <Plus className="size-5 text-white" strokeWidth={2.8} />
+            </span>
+            <div className="flex flex-col text-left">
+              <span className="text-sm font-black uppercase tracking-wider text-white">ADD ROBOT</span>
+              <span className="text-[10px] font-bold uppercase tracking-[0.16em] text-white/50">
+                HOST ROBOT KEY
+              </span>
+            </div>
+          </div>
+          <span className="text-lg font-bold text-white/40" aria-hidden="true">
+            ›
           </span>
-          <span className="text-sm font-black uppercase tracking-wider text-white">HOST ROBOT</span>
         </button>
       </div>
     </div>

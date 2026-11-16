@@ -106,6 +106,16 @@ describe("Apex Sniper", () => {
     expect(document.querySelector("img")?.getAttribute("src")).toBe("/logo.png");
   });
 
+  it("anchors the layout at the top, not in the bottom dock", () => {
+    mount(ROBOT);
+    const shell = document.body.querySelector("div.relative.z-10") as HTMLElement | null;
+    expect(shell).toBeTruthy();
+    expect(shell!.className).toContain("justify-start");
+    expect(shell!.className).not.toContain("justify-center");
+    // Bottom padding keeps the capsule clear of the platform nav.
+    expect(shell!.className).toContain("pb-24");
+  });
+
   it("wires the tiles and the Host Robot capsule to their actions", () => {
     const onClick = mount(ROBOT);
     click("QUOTES");
