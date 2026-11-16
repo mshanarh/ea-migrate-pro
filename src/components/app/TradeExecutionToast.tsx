@@ -17,6 +17,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useCustomization } from "@/lib/app-customization";
+import { useExecutionState } from "@/lib/execution-state";
 
 type Side = "BUY" | "SELL";
 
@@ -58,6 +59,10 @@ export function TradeExecutionToast({
 }: Props) {
   const { appearanceMode } = useCustomization();
   const isDark = appearanceMode !== "white";
+  // The running plan already knows the side as soon as the candles are read, so
+  // the card can show it without waiting for the first fill.
+  const executionState = useExecutionState();
+  const planSide = executionState.plan?.direction;
 
   const [stage, setStage] = useState<Stage>(0);
   const [confirmed, setConfirmed] = useState(false);
@@ -102,16 +107,35 @@ export function TradeExecutionToast({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen]);
 
-  // The run's own plan can arrive after the card is already open.
+  /**
+   * THE SIDE ARRIVES WHEN THE MARKET HAS BEEN READ.
+   *
+   * It can come from the caller (the scanner already knows it) or from the
+   * running plan (Home learns it the moment the candles are analysed). Only a
+   * real BUY or SELL is accepted — "BOTH" and an unknown plan say nothing about
+   * the order that is about to be sent.
+   */
   useEffect(() => {
-    if (!isOpen || !direction) return;
-    setSide(direction);
-  }, [isOpen, direction]);
+    if (!isOpen) return;
+    const candidate = direction ?? (planSide === "BUY" || planSide === "SELL" ? planSide : null);
+    if (candidate === "BUY" || candidate === "SELL") setSide(candidate);
+  }, [isOpen, direction, planSide]);
 
-  // Pacing: Connect → Terminal → Execute — and it stops there. The card waits
-  // for the bridge to say what actually happened.
+  const hasSignal = side === "BUY" || side === "SELL";
+
+  /**
+   * PACING — AND IT WAITS FOR A SIGNAL.
+   *
+   * A run that has not found a direction yet must not walk itself to Execute:
+   * that is the card claiming a trade that does not exist. It sits on Connect
+   * saying it is analysing, and only starts moving once a side is known.
+   */
   useEffect(() => {
     if (!isOpen) return undefined;
+    if (!hasSignal) {
+      setStage(0);
+      return undefined;
+    }
     if (stage === 0) {
       const timer = setTimeout(() => setStage(1), CONNECT_MS);
       timers.current.push(timer);
@@ -123,7 +147,7 @@ export function TradeExecutionToast({
       return () => clearTimeout(timer);
     }
     return undefined;
-  }, [isOpen, stage]);
+  }, [isOpen, stage, hasSignal]);
 
   // The bridge's real answer, broadcast on the app event bus.
   useEffect(() => {
@@ -136,6 +160,7 @@ export function TradeExecutionToast({
           side?: string;
           index?: number;
           total?: number;
+          status?: string;
         }>).detail ?? {};
 
       // DIRECTION AND COUNT come from the payload, not from a guess here.
@@ -149,6 +174,13 @@ export function TradeExecutionToast({
       }
 
       const message = typeof detail.message === "string" ? detail.message : "";
+      const status = typeof detail.status === "string" ? detail.status : "";
+      /**
+       * NARRATION IS NOT AN OUTCOME. "info" and "reanalysed" lines report what
+       * the engine is thinking; confirming on them ended the card in the middle
+       * of a run and closed it before the trade it was describing.
+       */
+      if (status === "info" || status === "reanalysed") return;
       if (detail.ok === true) {
         playExecuteSound();
         setStage(2);
@@ -162,7 +194,7 @@ export function TradeExecutionToast({
        * "CONNECTING TO BROKER…" on this same channel and treating that as a
        * result is how the old card announced a finish before an order existed.
        */
-      if (/refus|failed|error|could not|no saved|not (?:found|sent)/i.test(message)) {
+      if (/refus|failed|error|could not|no saved|not (?:found|sent)|no trade/i.test(message)) {
         setStage(2);
         setConfirmed(false);
         setOutcome(message || "Execution was refused");
@@ -189,7 +221,9 @@ export function TradeExecutionToast({
           : "Executing trades to MetaTrader"
         : stage === 1
           ? "Linking broker terminal"
-          : "Loading symbol";
+          : hasSignal
+            ? "Loading symbol"
+            : "Analyzing market signal";
 
   const orderType = side === "SELL" ? "Sell order" : side === "BUY" ? "Buy order" : "Market order";
   const progress = stage === 0 ? "0%" : stage === 1 ? "50%" : "100%";

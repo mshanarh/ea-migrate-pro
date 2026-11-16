@@ -74,7 +74,7 @@ describe("TradeExecutionToast (execution card)", () => {
     expect(text()).toContain("READY");
     expect(text()).toContain("ANALYZING");
     expect(text()).toContain("Market order");
-    expect(text()).toContain("Loading symbol");
+    expect(text()).toContain("Analyzing market signal");
     expect(text()).toContain("Connect");
     expect(text()).toContain("Terminal");
     expect(text()).toContain("Execute");
@@ -101,8 +101,68 @@ describe("TradeExecutionToast (execution card)", () => {
     expect(text()).toContain("Sell order");
   });
 
+  it("holds on Connect while no BUY or SELL exists, however long it is open", () => {
+    render({ direction: null, totalTrades: 3 });
+    expect(text()).toContain("ANALYZING");
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("0");
+
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+
+    // Still analysing: no "Linking broker terminal", no "Executing …".
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("0");
+    expect(text()).not.toContain("Linking broker terminal");
+    expect(text()).not.toContain("Executing");
+    expect(text()).toContain("ANALYZING");
+  });
+
+  it("starts moving the moment a signal arrives on the event bus", () => {
+    render({ direction: null, totalTrades: 3 });
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("0");
+
+    emit({ status: "info", message: "scanning", side: "BUY" });
+    expect(text()).toContain("BUY");
+    expect(text()).toContain("Buy order");
+
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("1");
+    expect(text()).toContain("Linking broker terminal");
+
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("2");
+    expect(text()).toContain("Executing 1 of 3");
+  });
+
+  it("ignores narration so an info line cannot confirm the run", () => {
+    render({ direction: "BUY" });
+    act(() => {
+      vi.advanceTimersByTime(800);
+    });
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+
+    emit({ ok: true, status: "reanalysed", message: "re-analysed: direction now BUY", side: "BUY" });
+    expect(text()).not.toContain("Confirmed on MetaTrader");
+    expect(document.querySelector("[data-stage]")?.getAttribute("data-stage")).toBe("2");
+  });
+
   it("walks Connect → Terminal → Execute and counts the real fills", () => {
-    render();
+    render({ direction: "BUY" });
     act(() => {
       vi.advanceTimersByTime(800);
     });
@@ -119,7 +179,7 @@ describe("TradeExecutionToast (execution card)", () => {
   });
 
   it("says Executing trades to MetaTrader for a single-trade run", () => {
-    render({ totalTrades: 1 });
+    render({ totalTrades: 1, direction: "BUY" });
     act(() => {
       vi.advanceTimersByTime(800);
     });
@@ -131,7 +191,7 @@ describe("TradeExecutionToast (execution card)", () => {
 
   it("confirms on the bridge's answer and then closes itself", () => {
     const onClose = vi.fn();
-    render({ onClose });
+    render({ onClose, direction: "SELL" });
     act(() => {
       vi.advanceTimersByTime(800);
     });
@@ -149,7 +209,7 @@ describe("TradeExecutionToast (execution card)", () => {
   });
 
   it("reports a refusal but ignores in-flight progress", () => {
-    render();
+    render({ direction: "SELL" });
     act(() => {
       vi.advanceTimersByTime(800);
     });

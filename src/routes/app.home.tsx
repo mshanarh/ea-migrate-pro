@@ -671,6 +671,13 @@ function AppHome() {
         // The analysed direction and levels are now KNOWN — the card shows
         // them until the broker's confirmed fill replaces them.
         const pairLot = Number(pair.lotSize);
+        // THE CARD LEARNS THE SIGNAL HERE, not from a guess: the moment the
+        // candles are analysed the symbol and side go straight to the stepper,
+        // which is what lets it leave Connect.
+        setToastSymbol(analysis.symbol);
+        if (direction.type === "BUY" || direction.type === "SELL") {
+          setToastDirection(direction.type);
+        }
         updateExecutionPlan({
           symbol: analysis.symbol,
           direction: direction.type,
