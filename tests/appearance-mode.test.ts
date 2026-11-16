@@ -43,12 +43,14 @@ describe("appearance mode", () => {
     expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("white");
   });
 
-  it("sets white mode without changing interface styling or native control colors", () => {
+  it("sets white mode without changing interface styling, and lets native controls go light", () => {
     setAppearanceMode("white");
 
     const root = document.documentElement;
     expect(root.getAttribute("data-appearance")).toBe("white");
-    expect(root.style.colorScheme).toBe("dark");
+    // White mode means light native controls too: scrollbars, date pickers and
+    // autofill were still dark because color-scheme was pinned to "dark".
+    expect(root.style.colorScheme).toBe("light");
     expect(root.style.getPropertyValue("--if-surface")).toBe("");
     expect(root.style.getPropertyValue("--if-text")).toBe("");
     expect(root.style.getPropertyValue("--if-bg")).toBe("");

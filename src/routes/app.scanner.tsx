@@ -7,7 +7,6 @@ import ChartScanner from "@/components/app/ChartScanner";
 import type { ExecutionOutcome, ExecutionPlan } from "@/components/app/ChartScanner";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
-import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useAppState } from "@/lib/app-store";
 import { getAppState, leaveForCheckout, refreshRobotConfigs } from "@/lib/app-store";
@@ -70,12 +69,11 @@ function AppScanner() {
   const accent = accentColorValue(color);
   const [limitOpen, setLimitOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
-  // The AI trade analysis card has its OWN open flag: the execution toast
-  // closes itself when its sequence ends, but the analysis card stays on
-  // screen with the confirmed trade until the trader dismisses it.
-  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
+  // The direction the scanner analysed for this run — the stepper's badge and
+  // "Buy order" / "Sell order" line read it, and it is only ever a real side.
+  const [toastDirection, setToastDirection] = useState<"BUY" | "SELL" | null>(null);
   const unlimited = isUnlimitedScanner(app.email);
   const scansLeft = unlimited ? Infinity : DAILY_LIMIT - getScanCount(app.email ?? "guest-device");
 
@@ -140,10 +138,8 @@ function AppScanner() {
     });
     setToastTrades(Math.max(1, Math.min(trades, 20)));
     setToastSymbol(symbol);
-    // THE STEPPER OPENS FIRST; it reveals the analysis card through onComplete
-    // when its line reaches Execute, so the signal detail never covers the
-    // pipeline before the trader has seen it move.
-    setAnalysisOpen(false);
+    setToastDirection(direction === "BUY" || direction === "SELL" ? direction : null);
+    // ONE CARD, NOT TWO: the stepper is the run's only popup.
     setToastOpen(true);
     startExecution({
       symbol,
@@ -629,13 +625,7 @@ function AppScanner() {
         />
       </div>
       <FixedBottomNav />
-      <DraggableBotPopup />        <TradeAnalysisPopup
-          isOpen={analysisOpen}
-          onClose={() => setAnalysisOpen(false)}
-          robot={robot}
-          scannerMode={true}
-          activeRobotId={app.activeRobotId ?? ""}
-        />
+      <DraggableBotPopup />
       <TradeExecutionToast
         isOpen={toastOpen}
         onClose={() => setToastOpen(false)}
@@ -644,7 +634,7 @@ function AppScanner() {
         totalTrades={toastTrades}
         mode="scanner"
         symbol={toastSymbol}
-        onComplete={() => setAnalysisOpen(true)}
+        direction={toastDirection}
       />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="if-card max-w-sm rounded-3xl border p-6 text-center sm:max-w-sm">

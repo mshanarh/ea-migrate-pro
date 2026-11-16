@@ -455,8 +455,19 @@ export type AppearanceMode = "black" | "white";
 export function applyAppearanceMode(mode: AppearanceMode = "black"): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
+  const white = mode === "white";
   root.setAttribute("data-appearance", mode);
-  root.style.colorScheme = "dark";
+  /**
+   * `color-scheme` IS PART OF THE MODE, not a constant.
+   *
+   * It was pinned to "dark" whatever the trader picked, so white mode still got
+   * dark native scrollbars, dark form controls and dark autofill text — the
+   * page was light and everything the browser drew itself was not.
+   */
+  root.style.colorScheme = white ? "light" : "dark";
+  // The theme's canvas colour, so the browser paints the same white/black the
+  // stylesheet does instead of flashing the other one on first paint.
+  root.style.backgroundColor = white ? "#f8fafc" : "#050508";
 }
 
 /** The Home hero decoration values for one definition. */

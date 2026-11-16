@@ -13,7 +13,6 @@ import { ThemeContent } from "@/components/app/ThemeContent";
 import { CustomizationDrawer } from "@/components/app/CustomizationDrawer";
 import { DraggableBotPopup } from "@/components/app/DraggableBotPopup";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
-import { TradeAnalysisPopup } from "@/components/app/TradeAnalysisPopup";
 
 import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { invalidateAccessCache, peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
@@ -377,12 +376,12 @@ function AppHome() {
   const [modalOpen, setModalOpen] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [toastOpen, setToastOpen] = useState(false);
-  // The AI trade analysis card has its OWN open flag — the execution toast
-  // closes itself when its sequence ends, the analysis card stays with the
-  // confirmed trade until the trader dismisses it.
-  const [analysisOpen, setAnalysisOpen] = useState(false);
   const [toastTrades, setToastTrades] = useState(0);
   const [toastSymbol, setToastSymbol] = useState("");
+  // The direction the run is taking. Only a real BUY/SELL is passed on — a
+  // pair set to BOTH says nothing about the order that is about to be sent, and
+  // the stepper must not claim one.
+  const [toastDirection, setToastDirection] = useState<"BUY" | "SELL" | null>(null);
   // START offers the four strategies; the last one chosen is the remembered
   // default and is highlighted when the chooser opens again.
   const [strategyOpen, setStrategyOpen] = useState(false);
@@ -570,15 +569,14 @@ function AppHome() {
     const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
     setToastTrades(totalTrades);
     setToastSymbol(pairs[0]?.symbol ?? "");
+    setToastDirection(
+      pairs[0]?.direction === "BUY" || pairs[0]?.direction === "SELL" ? pairs[0].direction : null,
+    );
     /**
-     * THE STEPPER FIRST, THE ANALYSIS SECOND.
-     *
-     * Opening the analysis card on the same tick as the stepper put a wall of
-     * signal detail on screen before the trader saw the run start. The stepper
-     * asks for the analysis itself through onComplete, once its line reaches
-     * Execute.
+     * ONE CARD, NOT TWO. The stepper is the only popup: it carries the symbol,
+     * the direction and the live stage, so a second analysis card on top of it
+     * only repeated the same facts and covered the pipeline.
      */
-    setAnalysisOpen(false);
     setToastOpen(true);
     const firstLot = Number(pairs[0]?.lotSize);
     startExecution({
@@ -792,7 +790,6 @@ function AppHome() {
     // lines the native engine still had queued from the last batch.
     stopBotVoice();
     stopExecution();
-    setAnalysisOpen(false);
     if (kind === "scalper") {
       // THE BUTTON DOES NOT WAIT ON THE TUNNEL. The stop request is already on
       // its way, so the run is shown as stopping immediately; a refusal puts it
@@ -884,10 +881,12 @@ function AppHome() {
     // and the run continues (Scalper re-analyses and opens again, Normal lets
     // the broker's SL/TP manage each trade) until STOP.
     setExecutionStage(`Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}`);
-    // THE STEPPER OPENS IMMEDIATELY and hands over to the analysis card when
-    // its line reaches Execute — one at a time, in that order.
-    setAnalysisOpen(false);
+    // THE STEPPER OPENS IMMEDIATELY and IS the run's card — there is no
+    // second popup behind it any more.
     setToastSymbol(pairs[0]?.symbol?.trim() ?? "");
+    setToastDirection(
+      pairs[0]?.direction === "BUY" || pairs[0]?.direction === "SELL" ? pairs[0].direction : null,
+    );
     setToastTrades(totalTrades);
     setToastOpen(true);
     console.info("[bot] STEP 4 opening the AI TRADE card and starting the loop");
@@ -1069,13 +1068,7 @@ function AppHome() {
       <AddRobotModal open={modalOpen} onOpenChange={setModalOpen} onSubmit={handleSubmit} />
 
       <WelcomeMaster />
-      <DraggableBotPopup />        <TradeAnalysisPopup
-          isOpen={analysisOpen}
-          onClose={() => setAnalysisOpen(false)}
-          robot={robot}
-          scannerMode={false}
-          activeRobotId={app.activeRobotId ?? ""}
-        />
+      <DraggableBotPopup />
       <CustomizationDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
       <FixedBottomNav />
 
@@ -1088,7 +1081,7 @@ function AppHome() {
         totalTrades={toastTrades}
         mode="auto"
         symbol={toastSymbol}
-        onComplete={() => setAnalysisOpen(true)}
+        direction={toastDirection}
       />
     </div>
   );

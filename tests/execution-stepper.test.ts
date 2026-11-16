@@ -5,15 +5,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { TradeExecutionToast } from "@/components/app/TradeExecutionToast";
 
 /**
- * THE STEPPER RUNS BEFORE THE ANALYSIS.
+ * THE EXECUTION CARD — one popup that names the order.
  *
- * These tests hold the card to its contract: READY + symbol on arrival, the
- * line moving Connect → Terminal → Execute on its own clock, `onComplete`
- * fired exactly once (the parent opens the Signal Analysis card there), and a
- * real bridge answer flipping the last line to "Confirmed on MetaTrader".
+ * These tests hold it to what the card promises: the side is READ, never
+ * assumed (prop first, then the bridge's payload), the "Executing X of Y" line
+ * counts real fills, and the three stepper stages advance on their own clock.
  */
 
-// React only flushes `act()` work when it knows it is in a test environment.
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 let root: Root | null = null;
@@ -29,9 +27,10 @@ function render(props: Partial<Parameters<typeof TradeExecutionToast>[0]> = {}) 
         isOpen: true,
         onClose: () => {},
         botName: "MOE V2+",
-        totalTrades: 2,
+        totalTrades: 3,
         mode: "auto",
         symbol: "XAUUSD.m",
+        direction: null,
         ...props,
       }),
     );
@@ -39,6 +38,22 @@ function render(props: Partial<Parameters<typeof TradeExecutionToast>[0]> = {}) 
 }
 
 const text = () => document.body.textContent ?? "";
+
+function emit(detail: Record<string, unknown>) {
+  act(() => {
+    window.dispatchEvent(new CustomEvent("eamp:execution-result", { detail }));
+  });
+}
+
+function clickLabel(label: string) {
+  const target = [...document.querySelectorAll("button")].find((element) =>
+    (element.getAttribute("aria-label") ?? "").includes(label),
+  );
+  if (!target) throw new Error(`No button "${label}"`);
+  act(() => {
+    target.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
 
 beforeEach(() => {
   vi.useFakeTimers();
@@ -52,48 +67,69 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("TradeExecutionToast (stepper)", () => {
-  it("shows READY, the robot's symbol and the first stage on arrival", () => {
+describe("TradeExecutionToast (execution card)", () => {
+  it("shows the symbol, READY, a neutral ANALYZING badge and the first stage", () => {
     render();
-    expect(text()).toContain("READY");
     expect(text()).toContain("XAUUSD.m");
-    expect(text()).toContain("Chart scan");
+    expect(text()).toContain("READY");
+    expect(text()).toContain("ANALYZING");
+    expect(text()).toContain("Market order");
     expect(text()).toContain("Loading symbol");
     expect(text()).toContain("Connect");
     expect(text()).toContain("Terminal");
     expect(text()).toContain("Execute");
   });
 
-  it("falls back to XAUUSD.m when no symbol is passed", () => {
-    render({ symbol: "" });
-    expect(text()).toContain("XAUUSD.m");
+  it("renders the SELL badge and a sell order when the plan says SELL", () => {
+    render({ direction: "SELL" });
+    expect(text()).toContain("SELL");
+    expect(text()).toContain("Sell order");
+    expect(text()).not.toContain("ANALYZING");
   });
 
-  it("moves to Terminal after 0.8s and to Execute after another 1.2s", () => {
-    const onComplete = vi.fn();
-    render({ onComplete });
+  it("renders the BUY badge and a buy order when the plan says BUY", () => {
+    render({ direction: "BUY" });
+    expect(text()).toContain("BUY");
+    expect(text()).toContain("Buy order");
+  });
 
+  it("takes the side from the bridge when the plan had not resolved it", () => {
+    render({ direction: null });
+    expect(text()).toContain("ANALYZING");
+    emit({ ok: false, message: "CONNECTING TO BROKER...", side: "SELL" });
+    expect(text()).toContain("SELL");
+    expect(text()).toContain("Sell order");
+  });
+
+  it("walks Connect → Terminal → Execute and counts the real fills", () => {
+    render();
     act(() => {
       vi.advanceTimersByTime(800);
     });
     expect(text()).toContain("Linking broker terminal");
-    expect(onComplete).not.toHaveBeenCalled();
 
     act(() => {
       vi.advanceTimersByTime(1200);
     });
-    expect(text()).toContain("Executing trades to MetaTrader");
-    expect(onComplete).toHaveBeenCalledTimes(1);
+    expect(text()).toContain("Executing 1 of 3");
 
-    // Nothing re-fires the hand-over: the analysis card must not be opened
-    // again on every later tick.
+    emit({ ok: false, message: "TRADE 2 EXECUTED", index: 2, total: 3, side: "BUY" });
+    expect(text()).toContain("Executing 2 of 3");
+    expect(text()).toContain("BUY");
+  });
+
+  it("says Executing trades to MetaTrader for a single-trade run", () => {
+    render({ totalTrades: 1 });
     act(() => {
       vi.advanceTimersByTime(800);
     });
-    expect(onComplete).toHaveBeenCalledTimes(1);
+    act(() => {
+      vi.advanceTimersByTime(1200);
+    });
+    expect(text()).toContain("Executing trades to MetaTrader");
   });
 
-  it("confirms on the bridge's real answer and then closes itself", () => {
+  it("confirms on the bridge's answer and then closes itself", () => {
     const onClose = vi.fn();
     render({ onClose });
     act(() => {
@@ -103,13 +139,7 @@ describe("TradeExecutionToast (stepper)", () => {
       vi.advanceTimersByTime(1200);
     });
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("eamp:execution-result", {
-          detail: { ok: true, message: "TRADE 1/2 EXECUTED" },
-        }),
-      );
-    });
+    emit({ ok: true, message: "TRADE 1/3 EXECUTED", index: 1, total: 3, side: "SELL" });
     expect(text()).toContain("Confirmed on MetaTrader");
 
     act(() => {
@@ -118,7 +148,7 @@ describe("TradeExecutionToast (stepper)", () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  it("ignores in-flight progress but reports a refusal", () => {
+  it("reports a refusal but ignores in-flight progress", () => {
     render();
     act(() => {
       vi.advanceTimersByTime(800);
@@ -127,39 +157,22 @@ describe("TradeExecutionToast (stepper)", () => {
       vi.advanceTimersByTime(1200);
     });
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("eamp:execution-result", {
-          detail: { ok: false, message: "CONNECTING TO BROKER..." },
-        }),
-      );
-    });
-    expect(text()).toContain("Executing trades to MetaTrader");
+    emit({ ok: false, message: "CONNECTING TO BROKER..." });
+    expect(text()).toContain("Executing 1 of 3");
 
-    act(() => {
-      window.dispatchEvent(
-        new CustomEvent("eamp:execution-result", {
-          detail: { ok: false, message: "TRADE 1 REFUSED — no margin" },
-        }),
-      );
-    });
+    emit({ ok: false, message: "TRADE 1 REFUSED — no margin" });
     expect(text()).toContain("TRADE 1 REFUSED — no margin");
   });
 
-  it("closes from the ✕ button", () => {
+  it("closes from the ✕ button and renders nothing when closed", () => {
     const onClose = vi.fn();
     render({ onClose });
-    const close = [...document.querySelectorAll("button")].find((button) =>
-      (button.getAttribute("aria-label") ?? "").includes("Close execution"),
-    );
-    expect(close).toBeTruthy();
-    act(() => {
-      close!.dispatchEvent(new MouseEvent("click", { bubbles: true }));
-    });
+    clickLabel("Close execution");
     expect(onClose).toHaveBeenCalled();
-  });
 
-  it("renders nothing when closed", () => {
+    act(() => root?.unmount());
+    root = null;
+    host?.remove();
     render({ isOpen: false });
     expect(text()).toBe("");
   });
