@@ -50,13 +50,15 @@ import heroPhone from "/ea-migrate-hero.jpg";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "EA Migrate — Mobile VPS for your EA" },
+      { title: "EA Migrate" },
       {
         name: "description",
         content:
           "Host your Expert Advisor on the EA Migrate cloud VPS and trade from your phone. MT4 & MT5, 24/7 execution, news event trading and access plans from $39/month.",
       },
       { property: "og:title", content: "EA Migrate — Mobile VPS on the go" },
+      { property: "og:url", content: "https://eamigratepro.vercel.app/" },
+      { property: "og:site_name", content: "EA Migrate" },
       {
         property: "og:description",
         content:
@@ -507,17 +509,18 @@ function Home() {
               </span>
             </motion.div>
 
-            <motion.h1
+                          <motion.h1
               initial={{ opacity: 0, y: 22 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.55, delay: 0.06, ease: [0.22, 1, 0.36, 1] }}
               className="mt-7 text-[2.55rem] leading-[0.95] font-black tracking-tight text-white uppercase sm:text-6xl lg:text-7xl"
             >
-              Mobile VPS
+              EA Migrate
               <br />
-              <span className="text-[#00F5A0] [text-shadow:0_0_38px_rgba(0,245,160,.45)]">
-                on the go
-              </span>
+              <span className="text-[#00F5A0] [text-shadow:0_0_38px_rgba(0,245,160,.45)]"
+                >
+                  Mobile VPS on the go
+                </span>
             </motion.h1>
 
             <motion.p
