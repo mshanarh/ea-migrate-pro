@@ -263,7 +263,7 @@ function normalizeBridgeCandles(raw: readonly BrokerCandle[]): BrokerCandle[] {
   return ascending.slice(0, -1);
 }
 
-const CANDLES_TIMEOUT_MS = 8000;
+const CANDLES_TIMEOUT_MS = 4000;
 
 /**
  * WHAT THE BRIDGE ACTUALLY ANSWERED — one diagnostic per request.
@@ -319,7 +319,7 @@ export function describeCandleAttempt(summary: CandleResponseSummary): string {
 }
 
 /** One retry only, after this pause, when the bridge hands back no candles. */
-export const CANDLE_RETRY_DELAY_MS = 2000;
+export const CANDLE_RETRY_DELAY_MS = 800;
 
 /** Candle array locations a bridge may use — the app accepts all of them. */
 const CANDLE_CONTAINER_KEYS = ["candles", "rates", "bars", "history", "ohlc", "data", "result", "payload"];
@@ -403,6 +403,7 @@ async function fetchBridgeCandlesResult(
 ): Promise<CandleFetch> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CANDLES_TIMEOUT_MS);
+  timer.unref();
   const summary: CandleResponseSummary = {
     sentSymbol: symbol,
     timeframe,
@@ -2443,7 +2444,7 @@ async function resolveFixtureDirection(
 // repository's bridge key.
 // ============================================================================
 
-const QUOTE_TIMEOUT_MS = 15000;
+const QUOTE_TIMEOUT_MS = 4000;
 const ORDER_TIMEOUT_MS = 30000;
 
 /** Just enough of the saved MT5 account to sign a bridge request. */
@@ -3095,7 +3096,7 @@ export async function executeAutoTrade(
       // 7. Space out consecutive orders by 2 seconds
       if (i < maxTrades - 1) {
         console.log(`[auto-trade] Waiting 2s before next trade...`);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
+        await new Promise((resolve) => setTimeout(resolve, 800));
       }
     } catch (error) {
       console.error(`[auto-trade] ${symbol} trade ${i + 1}: Error -`, error);
@@ -3217,6 +3218,7 @@ async function fetchSignalAccount(
 ): Promise<{ freeMargin: number; equity: number } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
+  timer.unref();
   try {
     const response = await fetch(`${getBridgeUrl()}/account/verify`, {
       method: "POST",

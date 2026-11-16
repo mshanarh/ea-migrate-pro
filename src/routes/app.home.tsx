@@ -598,13 +598,11 @@ function AppHome() {
         ...(first.direction ? { direction: first.direction } : {}),
       });
     }
-    // Calm pacing: hold for 1.5s so the analysis steps finish on screen
-    // before the first order is sent.
+    // The card has moved to Execute and the bridge is answering now — no
+    // artificial pacing between the analysis read and the first order.
     if (totalTrades > 0) {
-      await new Promise((r) => setTimeout(r, 1500));
+      console.log("[START DEBUG] Auto-trade starting for:", pairs[0]?.symbol ?? "", "trades:", totalTrades, "pairs:", pairs.map(p => ({sym: p.symbol, trades: p.maxTrades})));
     }
-
-    console.log("[START DEBUG] Auto-trade starting for:", pairs[0]?.symbol ?? "", "trades:", totalTrades, "pairs:", pairs.map(p => ({sym: p.symbol, trades: p.maxTrades})));
 
     let opened = 0;
     let blocked = 0;

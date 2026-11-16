@@ -74,7 +74,7 @@ describe("TradeExecutionToast (execution card)", () => {
     expect(text()).toContain("READY");
     expect(text()).toContain("ANALYZING");
     expect(text()).toContain("Market order");
-    expect(text()).toContain("Analyzing market signal");
+    expect(text()).toContain("Reading broker candles...");
     expect(text()).toContain("Connect");
     expect(text()).toContain("Terminal");
     expect(text()).toContain("Execute");

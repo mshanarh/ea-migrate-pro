@@ -37,8 +37,8 @@ type Props = {
 };
 
 /** How long each of the first two stages is held before the line moves on. */
-const CONNECT_MS = 800;
-const TERMINAL_MS = 1_200;
+const CONNECT_MS = 300;
+const TERMINAL_MS = 400;
 /** How long the confirmed card stays on screen before it closes itself. */
 const CONFIRMED_MS = 2_800;
 
@@ -182,6 +182,8 @@ export function TradeExecutionToast({
        */
       if (status === "info" || status === "reanalysed") return;
       if (detail.ok === true) {
+        // Only a real fill confirms — not narration.
+        if (detail.status === "info" || detail.status === "reanalysed") return;
         playExecuteSound();
         setStage(2);
         setConfirmed(true);
@@ -223,7 +225,7 @@ export function TradeExecutionToast({
           ? "Linking broker terminal"
           : hasSignal
             ? "Loading symbol"
-            : "Analyzing market signal";
+            : "Reading broker candles...";
 
   const orderType = side === "SELL" ? "Sell order" : side === "BUY" ? "Buy order" : "Market order";
   const progress = stage === 0 ? "0%" : stage === 1 ? "50%" : "100%";
