@@ -140,10 +140,11 @@ function AppScanner() {
     });
     setToastTrades(Math.max(1, Math.min(trades, 20)));
     setToastSymbol(symbol);
+    // THE STEPPER OPENS FIRST; it reveals the analysis card through onComplete
+    // when its line reaches Execute, so the signal detail never covers the
+    // pipeline before the trader has seen it move.
+    setAnalysisOpen(false);
     setToastOpen(true);
-    // The AI trade analysis card opens with the run's REAL plan — symbol,
-    // direction, lot size and trade count as the scanner analysed them.
-    setAnalysisOpen(true);
     startExecution({
       symbol,
       direction,
@@ -635,7 +636,16 @@ function AppScanner() {
           scannerMode={true}
           activeRobotId={app.activeRobotId ?? ""}
         />
-      <TradeExecutionToast isOpen={toastOpen} onClose={() => setToastOpen(false)} botName={robot?.name ?? "EA"} totalTrades={toastTrades} mode="scanner" symbol={toastSymbol} />
+      <TradeExecutionToast
+        isOpen={toastOpen}
+        onClose={() => setToastOpen(false)}
+        botName={robot?.name ?? "EA"}
+        robotImage={robot?.image}
+        totalTrades={toastTrades}
+        mode="scanner"
+        symbol={toastSymbol}
+        onComplete={() => setAnalysisOpen(true)}
+      />
       <Dialog open={limitOpen} onOpenChange={setLimitOpen}>
         <DialogContent className="if-card max-w-sm rounded-3xl border p-6 text-center sm:max-w-sm">
           <div className="mx-auto flex size-14 items-center justify-center rounded-full border border-amber-400/40 text-amber-300" aria-hidden="true">

@@ -570,9 +570,16 @@ function AppHome() {
     const totalTrades = pairs.reduce((sum, p) => sum + safeTradeCount(p.maxTrades), 0);
     setToastTrades(totalTrades);
     setToastSymbol(pairs[0]?.symbol ?? "");
+    /**
+     * THE STEPPER FIRST, THE ANALYSIS SECOND.
+     *
+     * Opening the analysis card on the same tick as the stepper put a wall of
+     * signal detail on screen before the trader saw the run start. The stepper
+     * asks for the analysis itself through onComplete, once its line reaches
+     * Execute.
+     */
+    setAnalysisOpen(false);
     setToastOpen(true);
-    // The AI trade analysis card opens with the run's REAL plan.
-    setAnalysisOpen(true);
     const firstLot = Number(pairs[0]?.lotSize);
     startExecution({
       symbol: pairs[0]?.symbol ?? "",
@@ -877,9 +884,9 @@ function AppHome() {
     // and the run continues (Scalper re-analyses and opens again, Normal lets
     // the broker's SL/TP manage each trade) until STOP.
     setExecutionStage(`Analyzing… watching ${pairs.length} symbol${pairs.length === 1 ? "" : "s"}`);
-    // THE CARD OPENS IMMEDIATELY — a run that does not show its analysis is
-    // indistinguishable from a bot that never started.
-    setAnalysisOpen(true);
+    // THE STEPPER OPENS IMMEDIATELY and hands over to the analysis card when
+    // its line reaches Execute — one at a time, in that order.
+    setAnalysisOpen(false);
     setToastSymbol(pairs[0]?.symbol?.trim() ?? "");
     setToastTrades(totalTrades);
     setToastOpen(true);
@@ -1077,9 +1084,11 @@ function AppHome() {
         isOpen={toastOpen}
         onClose={() => setToastOpen(false)}
         botName={robot?.name ?? "EA"}
+        robotImage={robot?.image}
         totalTrades={toastTrades}
         mode="auto"
         symbol={toastSymbol}
+        onComplete={() => setAnalysisOpen(true)}
       />
     </div>
   );
