@@ -199,6 +199,8 @@ const INTERFACE_STYLE_IDS = new Set([
   "supreme_equinox",
   "ultron_mega",
   "ea_cloud",
+  "apex_sniper",
+  "APEX SNIPER",
 ]);
 
 const initial: AppState = {
@@ -230,6 +232,10 @@ const LAYOUT_ALIASES: Record<string, string> = {
   layout_sniper_circle: "crimson_navigator",
   layout_sniper_full: "navigator_plus",
   layout_sniper_vertical: "pablo_elite",
+  // Apex Sniper is stored as `apex_sniper`; the display name is accepted too so
+  // a record written from the Settings label still loads the right layout.
+  "APEX SNIPER": "apex_sniper",
+  apex_sniper: "apex_sniper",
 };function load() {
   bootLog("load-start");
   START.start("app-store-load-start");

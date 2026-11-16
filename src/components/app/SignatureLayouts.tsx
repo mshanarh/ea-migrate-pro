@@ -247,3 +247,109 @@ export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
     </div>
   );
 }
+
+/**
+ * APEX SNIPER — the avatar breaks the top edge of an obsidian glass card.
+ *
+ * The circle is deliberately NOT inside the card's clip: it is anchored
+ * top-centre and lifted above it, so the robot's face sits on the card's
+ * border instead of inside a box. The three controls are squircle glass tiles
+ * (start/stop, quotes, remove) and the Host Robot capsule is the same glass.
+ *
+ * Background: nothing is drawn here. The robot's own picture/video arrives as
+ * `robot.image` / `robot.video` through RobotMedia — no static asset is
+ * hardcoded, so any EA the trader hosts gets its own face on this screen.
+ */
+export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
+  const running = Boolean(robot?.running);
+  const image = robot?.image || "/logo.png";
+
+  return (
+    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-center px-4 pb-8 pt-8 text-white">
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4">
+        {/* Main card with the top-overlapping avatar */}
+        <div className="relative mt-10 w-full">
+          {/* The avatar is a sibling of the card, so its border is not clipped
+              by the card's rounded glass and its shadow falls on the card. */}
+          <div
+            className="absolute -top-12 left-1/2 z-20 size-24 -translate-x-1/2 overflow-hidden rounded-full border-[3px] border-white/80 bg-black/90 shadow-[0_12px_28px_rgba(0,0,0,0.8)] sm:size-28"
+            style={{ borderColor: accent }}
+          >
+            <RobotMedia
+              image={image}
+              video={robot?.video}
+              variant="avatar"
+              preferImage
+              className="size-full object-cover"
+            />
+          </div>
+
+          {/* Dark glass card body */}
+          <div className="relative rounded-[32px] border border-white/15 bg-black/75 px-5 pb-6 pt-16 text-center shadow-[0_20px_50px_rgba(0,0,0,0.65)] backdrop-blur-xl">
+            <h1
+              className="max-w-full break-words text-2xl font-black uppercase tracking-tight text-white sm:text-3xl"
+              style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)" }}
+            >
+              {robot?.name ?? "YOUR ROBOT"}
+            </h1>
+
+            {/* Three squircle glass tiles */}
+            <div className="mt-6 grid grid-cols-3 gap-2.5">
+              <button
+                type="button"
+                onClick={onStart}
+                className="flex flex-col items-center justify-center gap-2 rounded-[20px] border border-white/10 bg-white/[0.06] p-3.5 transition-all hover:bg-white/10 active:scale-95"
+              >
+                {running ? (
+                  <Square className="size-6 text-white" fill="currentColor" />
+                ) : (
+                  <Play className="size-6 text-white" fill="currentColor" />
+                )}
+                <span className="text-[11px] font-black uppercase tracking-wider text-white">
+                  {running ? "STOP" : "START"}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onQuotes}
+                className="flex flex-col items-center justify-center gap-2 rounded-[20px] border border-white/10 bg-white/[0.06] p-3.5 transition-all hover:bg-white/10 active:scale-95"
+              >
+                <LineChart className="size-6 text-white" />
+                <span className="text-[11px] font-black uppercase tracking-wider text-white">
+                  QUOTES
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={onRemove}
+                className="flex flex-col items-center justify-center gap-2 rounded-[20px] border border-white/10 bg-white/[0.06] p-3.5 transition-all hover:bg-white/10 active:scale-95"
+              >
+                <Trash2 className="size-6 text-white" />
+                <span className="text-[11px] font-black uppercase tracking-wider text-white">
+                  REMOVE
+                </span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* Host Robot capsule */}
+        <button
+          type="button"
+          onClick={onOpenAdd}
+          className="flex w-full items-center justify-center gap-3 rounded-[28px] border border-white/15 bg-black/75 px-5 py-4 shadow-lg backdrop-blur-xl transition-all hover:bg-white/10 active:scale-[0.98]"
+        >
+          <span
+            className="flex size-9 items-center justify-center rounded-full border border-white/20 bg-white/10"
+            style={{ borderColor: accent }}
+          >
+            <Plus className="size-5 text-white" strokeWidth={2.8} />
+          </span>
+          <span className="text-sm font-black uppercase tracking-wider text-white">HOST ROBOT</span>
+        </button>
+      </div>
+    </div>
+  );
+}

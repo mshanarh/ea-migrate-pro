@@ -7,7 +7,7 @@ import type { Robot } from "@/lib/app-store";
 import { BlueprintEdge } from "@/components/app/BlueprintEdge";
 import { RobotMedia, VideoBackdrop } from "@/components/app/RobotMedia";
 import { useMediaDim } from "@/lib/use-media-dim";
-import { Sniper, Phoenix, Vortex } from "@/components/app/SignatureLayouts";
+import { Sniper, Phoenix, Vortex, ApexSniper } from "@/components/app/SignatureLayouts";
 import { InterfaceConsole } from "@/components/app/InterfaceConsole";
 import { interfaceDefinitionFor } from "@/lib/interface-themes";
 
@@ -402,7 +402,9 @@ export function ThemeContent(props: ThemeContentProps) {
         video={props.robot?.video}
         accent={accentColorValue(color)}
         mediaDim={mediaDim}
-        showImageWhenInactive={theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1"}
+        showImageWhenInactive={
+          theme === "SNIFFER" || theme === "PHOENIX" || theme === "VORTEX 1" || theme === "APEX SNIPER"
+        }
         // Signature layouts use their robot media as the full background.
         // The other big-screen themes play video inside their hero card.
         videoWhenActive
@@ -474,6 +476,9 @@ function ThemeContentInner(props: ThemeContentProps) {
   }
   if (theme === "PHOENIX") {
     return <Phoenix robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
+  }
+  if (theme === "APEX SNIPER") {
+    return <ApexSniper robot={props.robot} accent={accent} onStart={props.onStart} onQuotes={props.onQuotes} onRemove={props.onRemove} onOpenScanner={props.onOpenScanner} onOpenAdd={props.onOpenAdd} />;
   }
   if (theme === "BLUEPRINT EDGE") {
     return (
