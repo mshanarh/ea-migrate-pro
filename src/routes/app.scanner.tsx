@@ -15,7 +15,14 @@ import { usePullToRefresh } from "@/lib/use-pull-to-refresh";
 import { peekAccessVerdict, requireVerifiedAccess, type AppAccessCheck } from "@/lib/payment-gate";
 import { DAILY_LIMIT, getScanCount, isUnlimitedScanner, registerScan } from "@/lib/trading-pairs-store";
 import { friendlyRetcode, friendlyTradeError } from "@/lib/trade-errors";
-import { BRIDGE_KEY, bridgeSymbolCandidates, bridgeUnreachableMessage, getBridgeUrl } from "@/lib/bridge-client";
+import {
+  BRIDGE_KEY,
+  BRIDGE_COMMAND_TIMEOUT_MS,
+  BRIDGE_TRADE_TIMEOUT_MS,
+  bridgeSymbolCandidates,
+  bridgeUnreachableMessage,
+  getBridgeUrl,
+} from "@/lib/bridge-client";
 import { recordTrade } from "@/lib/trade-history";
 import { setExecutionStage, startExecution, updateExecutionPlan } from "@/lib/execution-state";
 import { verifyDirectionAgainstTrend } from "@/lib/auto-trade";
@@ -160,10 +167,19 @@ function AppScanner() {
       // there. The bridge accepts CORS'd browser requests, and the MT5
       // password lives on this device (stored when the user saves their
       // details on the MetaTrader page).
+      // THE THREE THINGS THE BRIDGE NEEDS, CHECKED BEFORE THE CALL.
+      // A missing account number or server used to go out as an empty field,
+      // the bridge answered FastAPI's bare 422, and the screen showed a
+      // connection error for what is really a settings problem.
       const password = window.localStorage.getItem("mt_password") ?? "";
-      if (!password) {
-        const message =
-          "MT5 password not found on this device — re-save your MT5 details on the MetaTrader page.";
+      const loginNumber = Number(app.mt?.loginId);
+      const serverName = (app.mt?.server ?? "").trim();
+      const missing: string[] = [];
+      if (!password.trim()) missing.push("password");
+      if (!Number.isFinite(loginNumber) || loginNumber <= 0) missing.push("account number");
+      if (!serverName) missing.push("server name");
+      if (missing.length > 0) {
+        const message = `MT5 ${missing.join(" and ")} missing on this device — open the MetaTrader page, save your login, password and server, then try again.`;
         window.dispatchEvent(
           new CustomEvent("eamp:execution-result", {
             detail: { ok: false, message, status: "failed" },
@@ -171,12 +187,7 @@ function AppScanner() {
         );
         return { ok: false, message };
       }
-      const loginNumber = Number(app.mt.loginId);
-      const credentials = {
-        login: Number.isFinite(loginNumber) && loginNumber > 0 ? loginNumber : app.mt.loginId,
-        password,
-        server: app.mt.server,
-      };
+      const credentials = { login: loginNumber, password, server: serverName };
       // DIRECTION GUARD — the side about to be sent must agree with the
       // broker's OWN 1h candles (newest close vs the close five bars ago).
       // A mismatch is refused with the real closes instead of sending a
@@ -226,6 +237,8 @@ function AppScanner() {
             method: "POST",
             headers: { "Content-Type": "application/json", "x-bridge-key": BRIDGE_KEY },
             body: JSON.stringify({ credentials, symbol }),
+            // The bridge may be logging the terminal in on this very request.
+            signal: AbortSignal.timeout(BRIDGE_COMMAND_TIMEOUT_MS),
           });
           const pricePayload = (await priceResponse.json().catch(() => ({}))) as Record<string, unknown>;
           const bid = typeof pricePayload["bid"] === "number" ? pricePayload["bid"] : 0;
@@ -293,6 +306,10 @@ function AppScanner() {
             // uses to stamp the MT5 comment.
             ea_name: orderComment,
           }),
+          // NEVER AN UNBOUNDED HANG. A stalled order used to end in the
+          // WebView's own timeout — a bare TypeError reported as "could not
+          // reach the trading server" — instead of a timeout that says so.
+          signal: AbortSignal.timeout(BRIDGE_TRADE_TIMEOUT_MS),
         });
         const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
         if (!response.ok) {
@@ -484,9 +501,9 @@ function AppScanner() {
             // The FIRST trade is the probe — if it never fills, abort with
             // one clear error instead of firing N identical failures.
             lastError =
-              error instanceof TypeError
-                ? bridgeUnreachableMessage()
-                : (error instanceof Error ? error.message : "Execution failed.");
+              error instanceof Error && !(error instanceof TypeError)
+                ? error.message
+                : bridgeUnreachableMessage(error);
             window.dispatchEvent(
               new CustomEvent("eamp:execution-result", {
                 detail: {
@@ -594,9 +611,9 @@ function AppScanner() {
       return { ok: true, message: finalMessage };
     } catch (error) {
       const message =
-        error instanceof TypeError
-          ? bridgeUnreachableMessage()
-          : (error instanceof Error ? error.message : "Could not reach the execution service.");
+        error instanceof Error && !(error instanceof TypeError)
+          ? error.message
+          : bridgeUnreachableMessage(error);
       window.dispatchEvent(
         new CustomEvent("eamp:execution-result", {
           detail: { ok: false, message, status: "failed" },

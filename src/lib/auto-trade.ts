@@ -263,7 +263,14 @@ function normalizeBridgeCandles(raw: readonly BrokerCandle[]): BrokerCandle[] {
   return ascending.slice(0, -1);
 }
 
-const CANDLES_TIMEOUT_MS = 4000;
+/**
+ * 20 s, not 4. The FIRST bridge call after a restart has to log the MT5
+ * terminal in before it can read history, and giving up early abandoned the
+ * request while the bridge still held its MT5 lock — so the order that followed
+ * waited behind a call whose answer nobody was listening for. Once the session
+ * is warm this is milliseconds; the bound only matters on that first call.
+ */
+const CANDLES_TIMEOUT_MS = 20000;
 
 /**
  * WHAT THE BRIDGE ACTUALLY ANSWERED — one diagnostic per request.

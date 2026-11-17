@@ -37,7 +37,7 @@ import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import MetaTrader5 as mt5
 from fastapi import FastAPI, Header, HTTPException
@@ -136,24 +136,119 @@ def _order_comment(ea_name, comment, limit: int = 31) -> str:
 
 
 class Credentials(BaseModel):
-    login: int
-    password: str
-    server: str
+    """MT5 login details, as TOLERANT as the app that sends them.
+
+    `login` used to be a strict `int`, so a device whose saved login was blank
+    (or a login number sent as text) was answered with FastAPI's bare
+    HTTP 422 "Unprocessable Entity" — a response that names no problem the
+    trader can act on, and that the app can only report as a failure. The
+    fields are now accepted in any form and validated in `_connect`, which
+    answers with a plain-English message instead.
+    """
+
+    login: Union[int, str] = ""
+    password: str = ""
+    server: str = ""
+
+
+def _login_number(creds: Credentials) -> Optional[int]:
+    """The account number as an int, or None when it is missing/not digits."""
+    raw = str(creds.login).strip()
+    if raw.endswith(".0"):
+        raw = raw[:-2]
+    return int(raw) if raw.isdigit() else None
+
+
+# ── ONE MT5 SESSION, SERIALISED, KEPT WARM ─────────────────────────────────
+#
+# WHY THIS EXISTS (the "bridge is running but nothing executes" failure):
+#
+# Every endpoint used to run `initialize()` + `login()` and then `shutdown()`.
+# FastAPI serves these sync endpoints from a THREADPOOL, so two requests run at
+# the same time — and the app really does fire several: it polls
+# /scalper/status, asks /symbol/price for the live quote, then posts
+# /trade/execute. When one request's `shutdown()` landed while another was
+# inside `order_send()`, MT5's session vanished mid-order. The order request
+# then hung until cloudflared gave up ("failed to proxy HTTP: Incoming request
+# ended abruptly: context canceled"), the app's fetch ended in a bare
+# `TypeError`, and the screen showed "Could not reach the trading server —
+# check the connection and that the bridge is running" while the bridge was
+# demonstrably running.
+#
+# The fix: EVERY MT5 call is serialised behind one re-entrant lock, and the
+# terminal is logged in ONCE and left connected. `_disconnect()` only releases
+# the lock — it never tears the session down. A trade therefore never waits on
+# a 10–30 s cold terminal start, and can never have its session pulled out from
+# under it by a status poll.
+_MT5_LOCK = threading.RLock()
+_LOCK_DEPTH = threading.local()
+_SESSION = {"key": None}
+
+
+def _session_key(creds: Credentials, login: int) -> str:
+    return f"{login}|{(creds.server or '').strip().lower()}"
 
 
 def _connect(creds: Credentials):
-    """Open an MT5 terminal session; returns (account_info|None, error|None)."""
-    if not mt5.initialize(login=creds.login, password=creds.password, server=creds.server):
-        return None, mt5.last_error()
-    if not mt5.login(login=creds.login, password=creds.password, server=creds.server):
-        error = mt5.last_error()
-        mt5.shutdown()
-        return None, error
-    return mt5.account_info(), None
+    """Serialise MT5 access and keep one logged-in session.
+
+    Returns (account_info|None, error|None). The caller MUST pair it with
+    `_disconnect()` (every endpoint already does, on success and on failure) —
+    that releases the lock and leaves the terminal connected.
+    """
+    _MT5_LOCK.acquire()
+    _LOCK_DEPTH.depth = getattr(_LOCK_DEPTH, "depth", 0) + 1
+
+    login = _login_number(creds)
+    if login is None:
+        return None, (-1, "MT5 account number is missing on this device — open the MetaTrader page, save your login and server, then try again.")
+    if not (creds.password or "").strip():
+        return None, (-1, "MT5 password is missing on this device — open the MetaTrader page, save your details, then try again.")
+    if not (creds.server or "").strip():
+        return None, (-1, "MT5 server name is missing on this device — open the MetaTrader page, save your login and server, then try again.")
+
+    key = _session_key(creds, login)
+    try:
+        # Already logged into THIS account? Reuse it — no re-login per request.
+        if _SESSION["key"] == key:
+            info = mt5.account_info()
+            if info is not None:
+                return info, None
+            _SESSION["key"] = None
+        if not mt5.initialize(login=login, password=creds.password, server=creds.server):
+            return None, mt5.last_error()
+        if not mt5.login(login=login, password=creds.password, server=creds.server):
+            error = mt5.last_error()
+            mt5.shutdown()
+            _SESSION["key"] = None
+            return None, error
+        account = mt5.account_info()
+        if account is None:
+            error = mt5.last_error()
+            mt5.shutdown()
+            _SESSION["key"] = None
+            return None, error
+        _SESSION["key"] = key
+        return account, None
+    except Exception as exc:  # MT5 is an IPC/COM bridge — never let it 500
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        _SESSION["key"] = None
+        return None, (-1, f"MT5 terminal error: {exc}")
 
 
 def _disconnect() -> None:
-    mt5.shutdown()
+    """Release the MT5 lock. THE TERMINAL STAYS LOGGED IN (see above)."""
+    depth = getattr(_LOCK_DEPTH, "depth", 0)
+    if depth <= 0:
+        return
+    _LOCK_DEPTH.depth = depth - 1
+    try:
+        _MT5_LOCK.release()
+    except RuntimeError:
+        pass
 
 
 _SYMBOL_GLUE = re.compile(r"[^A-Z0-9]+")

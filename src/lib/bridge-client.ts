@@ -45,6 +45,15 @@ export function bridgeHost(url: string = BRIDGE_URL): string {
 export const BRIDGE_PROBE_TIMEOUT_MS = 10_000;
 /** Start/stop wait for the daemon to answer — still bounded, never a freeze. */
 export const BRIDGE_COMMAND_TIMEOUT_MS = 30_000;
+/**
+ * AN ORDER IS A SLOW JOB, NOT A PROBE. The first call after a bridge restart
+ * logs the MT5 terminal in before it can send; that can take tens of seconds
+ * on Windows. Without a bound the app's fetch simply hangs, the Android WebView
+ * eventually kills it with a bare `TypeError`, and the trader is told the
+ * server is unreachable while it is in fact working. 60 s gives the login room
+ * and still ends in a message that names the real cause.
+ */
+export const BRIDGE_TRADE_TIMEOUT_MS = 60_000;
 
 /**
  * THE REAL REASON A BRIDGE CALL FAILED — in the user's terms.

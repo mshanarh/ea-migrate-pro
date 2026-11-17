@@ -1,38 +1,53 @@
-"""
-MT5 Execution Bridge — v0.3
+# MT5 Execution Bridge — v1.1
+#
+# v1.1 — /symbol/candles:
+#   * fixed `name 'n' is not defined` in _resolve_symbol (the base-hits sort
+#     named `n` instead of `name`), which crashed EVERY fresh-candle fetch for
+#     a symbol the broker serves under a different name;
+#   * a crash now answers HTTP 500 with the message instead of HTTP 200 with
+#     an error payload, so a failure can never read as a normal refusal;
+#   * per-symbol series are cached for 60 s, so repeated analyses of the same
+#     symbol/timeframe reuse the candles instead of re-reading MT5 history.
+#
+# Runs on the user's VPS next to the MetaTrader 5 terminal.
+#
+#     pip install fastapi uvicorn MetaTrader5
+#     uvicorn bridge:app --host 0.0.0.0 --port 8000
+#
+# Endpoints (all POSTs require header `x-bridge-key`; every response is JSON):
+#     GET  /health              → liveness probe
+#     POST /account/verify      → login + live account info (balance/equity/margin)
+#     POST /symbol/price        → LIVE bid/ask/digits for a symbol
+#     POST /trade/execute       → place a market order with filling-mode fallback
+#     POST /positions/list      → open positions, optionally filtered by magic
+#     POST /positions/close     → close ONE position by ticket
+#     POST /scalper/start       → start (or restart) the scalper daemon
+#     POST /scalper/stop        → stop the scalper daemon
+#     GET  /scalper/status      → daemon state file + event log
+#
+# IMPORTANT: the scalping loop itself lives in scalper_daemon.py, a separate
+# standalone Python process that the bridge merely starts and stops. This file
+# only owns the web surface and delegates the loop to the daemon; the daemon
+# runs 24/7 independently of Uvicorn and of the web app, and survives a VPS
+# reboot or a bridge crash.
 
-Runs on the user's VPS next to the MetaTrader 5 terminal.
-
-    pip install fastapi uvicorn MetaTrader5
-    uvicorn bridge:app --host 0.0.0.0 --port 8000
-
-Endpoints (all POSTs require header `x-bridge-key`):
-    GET  /health           → liveness probe
-    POST /account/verify   → login + live account info (balance/equity/margin)
-    POST /symbol/price     → LIVE bid/ask/digits for a symbol
-    POST /trade/execute    → place a market order with filling-mode fallback
-
-v0.3: symbol resolution against the BROKER'S OWN symbol list. Brokers brand
-the same market differently (BTCUSDm on Exness, BTCUSD.i elsewhere, glued
-XAUUSDM, broker-only US30Cash…) — every endpoint now maps the requested name
-onto a real, selectable broker symbol before trading.
-"""
-
-import json
 import os
 import re
+import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Union
 
 import MetaTrader5 as mt5
 from fastapi import FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 BRIDGE_KEY = os.getenv("MT5_BRIDGE_KEY", "my_secret_bridge_key_2026")
 
-app = FastAPI(title="MT5 Execution Bridge", version="0.3.0")
+app = FastAPI(title="MT5 Execution Bridge", version="1.1.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # the web app is served from multiple hosts
@@ -40,31 +55,200 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# ── helpers the scalper endpoints share ───────────────────────────────────────────
+_SCALPER_DIR = Path(__file__).resolve().parent
+_STATE_FILE = _SCALPER_DIR / "scalper.state.json"
+_LOG_FILE = _SCALPER_DIR / "scalper-events.log"
 
-def check_key(x_bridge_key: Optional[str]) -> None:
+_daemon_thread = None
+_daemon_stop = threading.Event()
+
+
+def _read_state() -> dict:
+    try:
+        return __import__("json").loads(_STATE_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        return {
+            "running": False, "symbol": None, "lot": None, "trade_count": None,
+            "next_trade_number": 1, "started_at": None, "stopped_at": None,
+            "positions": {}, "log": [],
+        }
+
+
+def _write_state(state: dict) -> None:
+    _STATE_FILE.write_text(__import__("json").dumps(state, indent=2), encoding="utf-8")
+
+
+def _append_log(line: str) -> None:
+    _LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with _LOG_FILE.open("a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+
+
+def _read_log() -> list:
+    try:
+        return _LOG_FILE.read_text(encoding="utf-8").splitlines()
+    except Exception:
+        return []
+
+
+def _current_positions() -> dict:
+    """Pass-through: the daemon owns MT5; this keeps the route surface clean."""
+    return _read_state().get("positions", {})
+
+
+def _stop_daemon() -> None:
+    """Signal the daemon and wait at most 2 s for its current pass to end.
+
+    THE STATE FILE IS THE DAEMON'S REAL STOP SWITCH — it re-reads it on every
+    pass — so /scalper/stop writes `running: false` BEFORE calling this. The
+    join used to be 8 s and burned all of it every single time, because the
+    daemon idled forever instead of leaving its loop; that is what made the
+    Stop button feel stuck. A pass is ~1 s, so 2 s is already generous, and a
+    thread that outlives it keeps its reference so the next start can drain it.
+    """
+    _daemon_stop.set()
+    global _daemon_thread
+    if _daemon_thread is not None:
+        _daemon_thread.join(timeout=2)
+        if not _daemon_thread.is_alive():
+            _daemon_thread = None
+
+
+# ── the existing broker surface (unchanged in intent) ─────────────────────────────
+def _check_key(x_bridge_key: Optional[str]) -> None:
     if x_bridge_key != BRIDGE_KEY:
         raise HTTPException(status_code=401, detail="Invalid bridge key")
 
 
+def _order_comment(ea_name, comment, limit: int = 31) -> str:
+    """THE MT5 ORDER COMMENT, in the order the app asked for it.
+
+    `ea_name` is the selected robot's exact name — the field every trade
+    request now carries. `comment` is the entry point's own stamp ("Ea migrate
+    news" for a release trade). Neither → "EA Migrate": a real fallback, never
+    a generic batch string. MT5 caps a comment at 31 characters.
+    """
+    for value in (ea_name, comment):
+        if value is not None and str(value).strip():
+            return str(value)[:limit]
+    return "EA Migrate"
+
+
 class Credentials(BaseModel):
-    login: int
-    password: str
-    server: str
+    """MT5 login details, as TOLERANT as the app that sends them.
+
+    `login` used to be a strict `int`, so a device whose saved login was blank
+    (or a login number sent as text) was answered with FastAPI's bare
+    HTTP 422 "Unprocessable Entity" — a response that names no problem the
+    trader can act on, and that the app can only report as a failure. The
+    fields are now accepted in any form and validated in `_connect`, which
+    answers with a plain-English message instead.
+    """
+
+    login: Union[int, str] = ""
+    password: str = ""
+    server: str = ""
 
 
-def connect(creds: Credentials):
-    """Open an MT5 terminal session; returns (account_info|None, error|None)."""
-    if not mt5.initialize(login=creds.login, password=creds.password, server=creds.server):
-        return None, mt5.last_error()
-    if not mt5.login(login=creds.login, password=creds.password, server=creds.server):
-        error = mt5.last_error()
-        mt5.shutdown()
-        return None, error
-    return mt5.account_info(), None
+def _login_number(creds: Credentials) -> Optional[int]:
+    """The account number as an int, or None when it is missing/not digits."""
+    raw = str(creds.login).strip()
+    if raw.endswith(".0"):
+        raw = raw[:-2]
+    return int(raw) if raw.isdigit() else None
 
 
-def disconnect() -> None:
-    mt5.shutdown()
+# ── ONE MT5 SESSION, SERIALISED, KEPT WARM ─────────────────────────────────
+#
+# WHY THIS EXISTS (the "bridge is running but nothing executes" failure):
+#
+# Every endpoint used to run `initialize()` + `login()` and then `shutdown()`.
+# FastAPI serves these sync endpoints from a THREADPOOL, so two requests run at
+# the same time — and the app really does fire several: it polls
+# /scalper/status, asks /symbol/price for the live quote, then posts
+# /trade/execute. When one request's `shutdown()` landed while another was
+# inside `order_send()`, MT5's session vanished mid-order. The order request
+# then hung until cloudflared gave up ("failed to proxy HTTP: Incoming request
+# ended abruptly: context canceled"), the app's fetch ended in a bare
+# `TypeError`, and the screen showed "Could not reach the trading server —
+# check the connection and that the bridge is running" while the bridge was
+# demonstrably running.
+#
+# The fix: EVERY MT5 call is serialised behind one re-entrant lock, and the
+# terminal is logged in ONCE and left connected. `_disconnect()` only releases
+# the lock — it never tears the session down. A trade therefore never waits on
+# a 10–30 s cold terminal start, and can never have its session pulled out from
+# under it by a status poll.
+_MT5_LOCK = threading.RLock()
+_LOCK_DEPTH = threading.local()
+_SESSION = {"key": None}
+
+
+def _session_key(creds: Credentials, login: int) -> str:
+    return f"{login}|{(creds.server or '').strip().lower()}"
+
+
+def _connect(creds: Credentials):
+    """Serialise MT5 access and keep one logged-in session.
+
+    Returns (account_info|None, error|None). The caller MUST pair it with
+    `_disconnect()` (every endpoint already does, on success and on failure) —
+    that releases the lock and leaves the terminal connected.
+    """
+    _MT5_LOCK.acquire()
+    _LOCK_DEPTH.depth = getattr(_LOCK_DEPTH, "depth", 0) + 1
+
+    login = _login_number(creds)
+    if login is None:
+        return None, (-1, "MT5 account number is missing on this device — open the MetaTrader page, save your login and server, then try again.")
+    if not (creds.password or "").strip():
+        return None, (-1, "MT5 password is missing on this device — open the MetaTrader page, save your details, then try again.")
+    if not (creds.server or "").strip():
+        return None, (-1, "MT5 server name is missing on this device — open the MetaTrader page, save your login and server, then try again.")
+
+    key = _session_key(creds, login)
+    try:
+        # Already logged into THIS account? Reuse it — no re-login per request.
+        if _SESSION["key"] == key:
+            info = mt5.account_info()
+            if info is not None:
+                return info, None
+            _SESSION["key"] = None
+        if not mt5.initialize(login=login, password=creds.password, server=creds.server):
+            return None, mt5.last_error()
+        if not mt5.login(login=login, password=creds.password, server=creds.server):
+            error = mt5.last_error()
+            mt5.shutdown()
+            _SESSION["key"] = None
+            return None, error
+        account = mt5.account_info()
+        if account is None:
+            error = mt5.last_error()
+            mt5.shutdown()
+            _SESSION["key"] = None
+            return None, error
+        _SESSION["key"] = key
+        return account, None
+    except Exception as exc:  # MT5 is an IPC/COM bridge — never let it 500
+        try:
+            mt5.shutdown()
+        except Exception:
+            pass
+        _SESSION["key"] = None
+        return None, (-1, f"MT5 terminal error: {exc}")
+
+
+def _disconnect() -> None:
+    """Release the MT5 lock. THE TERMINAL STAYS LOGGED IN (see above)."""
+    depth = getattr(_LOCK_DEPTH, "depth", 0)
+    if depth <= 0:
+        return
+    _LOCK_DEPTH.depth = depth - 1
+    try:
+        _MT5_LOCK.release()
+    except RuntimeError:
+        pass
 
 
 _SYMBOL_GLUE = re.compile(r"[^A-Z0-9]+")
@@ -76,7 +260,7 @@ def _norm(symbol: str) -> str:
     return _SYMBOL_GLUE.sub("", (symbol or "").upper())
 
 
-def resolve_symbol(requested: str) -> Optional[str]:
+def _resolve_symbol(requested: str) -> Optional[str]:
     """Map a requested symbol onto a REAL symbol this broker lists.
 
     Tries, in order: exact name, case-insensitive, punctuation-insensitive
@@ -119,6 +303,10 @@ def resolve_symbol(requested: str) -> Optional[str]:
         if req.startswith(norm) and 0 < len(req) - len(norm) <= 3:
             base_hits.append(name)
     if base_hits:
+        # `name` — NOT `n`: a leftover rename raised NameError here, and this
+        # branch sits on the candle path (_select_broker_symbol), so every
+        # fresh-candle fetch for such a symbol died with
+        # "Error fetching candles: name 'n' is not defined".
         return sorted(base_hits, key=lambda name: (-len(_norm(name)), len(name)))[0]
     contains = [name for name in names if req in _norm(name) or _norm(name) in req]
     if contains:
@@ -126,70 +314,78 @@ def resolve_symbol(requested: str) -> Optional[str]:
     return None
 
 
-def select_broker_symbol(requested: str):
+def _select_broker_symbol(requested: str):
     """symbol_select the best real match for `requested`; returns (name, error)."""
-    resolved = resolve_symbol(requested)
+    resolved = _resolve_symbol(requested)
     trade_symbol = resolved or requested
     if not mt5.symbol_select(trade_symbol, True):
         return None, f"Symbol {requested} not found on this broker"
     return trade_symbol, None
 
 
+class _HealthResponse(BaseModel):
+    status: str
+    message: str
+
+
 @app.get("/health")
 def health():
-    return {"status": "online", "message": "MT5 bridge is active"}
+    return _HealthResponse(status="online", message="MT5 bridge is active")
+
+
+class _VerifyResponse(BaseModel):
+    success: bool
+    account: dict
 
 
 @app.post("/account/verify")
 def verify_account(creds: Credentials, x_bridge_key: Optional[str] = Header(None)):
-    check_key(x_bridge_key)
-    account, error = connect(creds)
+    _check_key(x_bridge_key)
+    account, error = _connect(creds)
     if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
-    # `company` is the BROKER'S OWN name from MT5's account_info — the app
-    # shows it (and derives the broker logo from it) instead of guessing from
-    # the server string or hardcoding one broker. `name` is the account
-    # holder's name and travels too so the client can be identified.
-    data = {
-        "success": True,
-        "account": {
-            "login": account.login,
-            "name": getattr(account, "name", ""),
-            "company": getattr(account, "company", ""),
-            "server": account.server,
-            "currency": account.currency,
-            "balance": account.balance,
-            "equity": account.equity,
-            "margin_free": account.margin_free,
-            "leverage": account.leverage,
-        },
-    }
-    disconnect()
-    return data
+        _disconnect()
+        return _VerifyResponse(success=False, account={})
+    try:
+        data = {
+            "success": True,
+            "account": {
+                "login": account.login,
+                "name": getattr(account, "name", ""),
+                "company": getattr(account, "company", ""),
+                "server": account.server,
+                "currency": account.currency,
+                "balance": account.balance,
+                "equity": account.equity,
+                "margin_free": account.margin_free,
+                "leverage": account.leverage,
+            },
+        }
+        return data
+    finally:
+        _disconnect()
 
 
-class PriceRequest(BaseModel):
+class _PriceRequest(BaseModel):
     credentials: Credentials
     symbol: str
 
 
 @app.post("/symbol/price")
-def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
+def symbol_price(req: _PriceRequest, x_bridge_key: Optional[str] = Header(None)):
     """LIVE quote for one symbol — used to anchor SL/TP to real prices."""
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
+    _check_key(x_bridge_key)
+    account, error = _connect(req.credentials)
     if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+        _disconnect()
+        return {"success": False, "message": f"Terminal: {error}"}
     try:
-        trade_symbol, select_error = select_broker_symbol(req.symbol)
+        trade_symbol, select_error = _select_broker_symbol(req.symbol)
         if trade_symbol is None:
             return {"success": False, "message": select_error}
         tick = mt5.symbol_info_tick(trade_symbol)
         info = mt5.symbol_info(trade_symbol)
         if tick is None or info is None:
-            return {"success": False, "message": f"No live price for {req.symbol} right now"}
+            return {"success": False, "message": f"No live price for {req.symbol}"}
         return {
             "success": True,
             "symbol": trade_symbol,
@@ -200,103 +396,163 @@ def symbol_price(req: PriceRequest, x_bridge_key: Optional[str] = Header(None)):
             "stops_level": info.trade_stops_level,
         }
     finally:
-        disconnect()
+        _disconnect()
 
 
-class CandlesRequest(BaseModel):
+class _CandlesRequest(BaseModel):
     credentials: Credentials
     symbol: str
     timeframe: str  # 1m | 5m | 15m | 30m | 1h | 4h | 1d (MT5 spellings too)
-    count: int = 100  # number of candles to retrieve
+    count: int = 100
+
+
+# ── candle cache ────────────────────────────────────────────────────────────────
+# One analysis fires several /symbol/candles calls in a row (direction, filter,
+# retry). Re-reading MT5 history each time is slow and re-hits the terminal, so
+# a successful series is reused for 60 s. NEVER longer: analysis must not act on
+# candles older than a minute, so an entry is dropped the moment it turns 60 s.
+_CANDLE_CACHE_TTL_S = 60
+candle_cache: dict = {}       # (symbol, timeframe, count) → (fetched_at, payload)
+_candle_cache_lock = threading.Lock()
+
+
+def _candle_cache_key(req: "_CandlesRequest") -> tuple:
+    # Keyed on the REQUESTED name (normalised), the timeframe and the count —
+    # two different requests must never share one entry.
+    return (_norm(req.symbol), req.timeframe, int(req.count))
+
+
+def _candle_cache_get(key: tuple):
+    """(payload, age_seconds) when the entry is younger than 60 s, else None.
+
+    An expired entry is deleted on the spot, so stale candles can never be
+    served by a later lookup.
+    """
+    with _candle_cache_lock:
+        entry = candle_cache.get(key)
+        if entry is None:
+            return None
+        fetched_at, payload = entry
+        age = time.monotonic() - fetched_at
+        if age >= _CANDLE_CACHE_TTL_S:
+            candle_cache.pop(key, None)
+            return None
+        return payload, age
+
+
+def _candle_cache_put(key: tuple, payload: dict) -> None:
+    with _candle_cache_lock:
+        now = time.monotonic()
+        candle_cache[key] = (now, payload)
+        # Prune everything already older than the TTL so the map stays small.
+        for stale in [k for k, (t, _) in candle_cache.items() if now - t >= _CANDLE_CACHE_TTL_S]:
+            candle_cache.pop(stale, None)
 
 
 @app.post("/symbol/candles")
-def symbol_candles(req: CandlesRequest, x_bridge_key: Optional[str] = Header(None)):
-    """Historical candle data for one symbol — used for RSI, momentum and other technical analysis."""
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
-    if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+def symbol_candles(req: _CandlesRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Historical candle data for one symbol — used for RSI, momentum and other technical analysis.
+
+    Failure contract (v1.1): a CRASH answers HTTP 500 with the message — never
+    a 200 carrying an error payload — while an ordinary refusal (symbol unknown,
+    no history, unsupported timeframe) still answers 200 with `success:false`
+    and the broker's own explanation.
+    """
+    _check_key(x_bridge_key)
+
+    # CACHE HIT → answer straight away; no terminal session, no history read.
+    cached = _candle_cache_get(_candle_cache_key(req))
+    if cached is not None:
+        payload, age = cached
+        return {**payload, "cached": True, "cacheAgeSeconds": round(age, 3)}
+
     try:
-        trade_symbol, select_error = select_broker_symbol(req.symbol)
-        if trade_symbol is None:
-            return {"success": False, "message": select_error}
-        # Map every timeframe spelling the app can send to its MT5 constant.
-        timeframe_map = {
-            "1m": mt5.TIMEFRAME_M1,
-            "m1": mt5.TIMEFRAME_M1,
-            "5m": mt5.TIMEFRAME_M5,
-            "m5": mt5.TIMEFRAME_M5,
-            "15m": mt5.TIMEFRAME_M15,
-            "m15": mt5.TIMEFRAME_M15,
-            "30m": mt5.TIMEFRAME_M30,
-            "m30": mt5.TIMEFRAME_M30,
-            "1h": mt5.TIMEFRAME_H1,
-            "h1": mt5.TIMEFRAME_H1,
-            "4h": mt5.TIMEFRAME_H4,
-            "h4": mt5.TIMEFRAME_H4,
-            "1d": mt5.TIMEFRAME_D1,
-            "d1": mt5.TIMEFRAME_D1,
-        }
-        mt5_tf = timeframe_map.get(str(req.timeframe or "").strip().lower())
-        if mt5_tf is None:
-            disconnect()
-            return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
-        # Fetch candles from MT5
-        rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
-        # A 200 with an EMPTY series hides the real cause (symbol not in Market
-        # Watch, no history downloaded yet, market closed). Report it as a
-        # refusal with the broker's own names instead of `candles: []`.
-        if rates is None or len(rates) == 0:
-            disconnect()
-            return {
+        account, error = _connect(req.credentials)
+        if account is None:
+            _disconnect()
+            return {"success": False, "message": f"Terminal: {error}"}
+        try:
+            trade_symbol, select_error = _select_broker_symbol(req.symbol)
+            if trade_symbol is None:
+                return {"success": False, "message": select_error}
+            # Every timeframe spelling the app can send (1m…1d).
+            timeframe_map = {
+                "1m": mt5.TIMEFRAME_M1,
+                "m1": mt5.TIMEFRAME_M1,
+                "5m": mt5.TIMEFRAME_M5,
+                "m5": mt5.TIMEFRAME_M5,
+                "15m": mt5.TIMEFRAME_M15,
+                "m15": mt5.TIMEFRAME_M15,
+                "30m": mt5.TIMEFRAME_M30,
+                "m30": mt5.TIMEFRAME_M30,
+                "1h": mt5.TIMEFRAME_H1,
+                "h1": mt5.TIMEFRAME_H1,
+                "4h": mt5.TIMEFRAME_H4,
+                "h4": mt5.TIMEFRAME_H4,
+                "1d": mt5.TIMEFRAME_D1,
+                "d1": mt5.TIMEFRAME_D1,
+            }
+            mt5_tf = timeframe_map.get(str(req.timeframe or "").strip().lower())
+            if mt5_tf is None:
+                return {"success": False, "message": f"Unsupported timeframe: {req.timeframe}"}
+            rates = mt5.copy_rates_from_pos(trade_symbol, mt5_tf, 0, req.count)
+            if rates is None or len(rates) == 0:
+                return {
+                    "success": False,
+                    "message": (
+                        f"bridge returned 0 candles: MT5 has no {req.timeframe} history for "
+                        f"{trade_symbol} (requested {req.symbol}). Select the symbol in "
+                        f"Market Watch and let the terminal download its history."
+                    ),
+                }
+            candles = []
+            for row in rates:
+                candles.append({
+                    "time": int(row[0]),
+                    "open": float(row[1]),
+                    "high": float(row[2]),
+                    "low": float(row[3]),
+                    "close": float(row[4]),
+                    "volume": int(row[5]),
+                    "spread": int(row[6]) if len(row) > 6 else 0,
+                })
+            payload = {
+                "ok": True,
+                "success": True,
+                "requestedSymbol": req.symbol,
+                "symbol": trade_symbol,
+                "timeframe": req.timeframe,
+                "count": len(candles),
+                "serverTime": datetime.now(timezone.utc).isoformat(),
+                "candles": candles,
+            }
+            # ONLY a clean, non-empty series is ever cached.
+            _candle_cache_put(_candle_cache_key(req), payload)
+            return payload
+        finally:
+            _disconnect()
+    except Exception as exc:
+        # A crash is unmistakable: HTTP 500 + the real message, and nothing is
+        # cached, so the next call retries from scratch.
+        try:
+            _disconnect()
+        except Exception:
+            pass
+        message = f"Error fetching candles: {exc}"
+        print(f"[/symbol/candles] HTTP 500 {type(exc).__name__}: {exc}", flush=True)
+        return JSONResponse(
+            status_code=500,
+            content={
+                "ok": False,
                 "success": False,
-                "error_code": mt5.last_error()[0] if mt5.last_error() else 0,
-                "message": (
-                    f"bridge returned 0 candles: MT5 has no {req.timeframe} history for "
-                    f"{trade_symbol} (requested {req.symbol}). Select the symbol in "
-                    f"Market Watch and let the terminal download its history."
-                ),
-            }
-        # Convert to list of dicts, ORDERED OLDEST-FIRST exactly as MT5 returns
-        # them (copy_rates_from_pos: index 0 = oldest bar, last = forming bar).
-        # Do NOT reverse this: the app normalises the series to oldest→newest
-        # and reads the LAST entry as the latest close.
-        candles = []
-        for i, row in enumerate(rates):
-            candle_time = int(row[0])  # timestamp in seconds
-            candle = {
-                "time": candle_time,
-                "open": float(row[1]),
-                "high": float(row[2]),
-                "low": float(row[3]),
-                "close": float(row[4]),
-                "volume": int(row[5]),
-                "spread": int(row[6]) if len(row) > 6 else 0,
-            }
-            candles.append(candle)
-        # Build response — BOTH success markers are set so every app version
-        # (which may check `ok` or `success`) reads the same answer, and the
-        # requested name is echoed so the app can prove how it was resolved.
-        result = {
-            "ok": True,
-            "success": True,
-            "requestedSymbol": req.symbol,
-            "symbol": trade_symbol,
-            "timeframe": req.timeframe,
-            "count": len(candles),
-            "serverTime": __import__("datetime").datetime.utcnow().isoformat(),
-            "candles": candles,
-        }
-        disconnect()
-        return result
-    except Exception as e:
-        disconnect()
-        return {"success": False, "message": f"Error fetching candles: {str(e)}"}
+                "error": message,
+                "message": message,
+                "exception": type(exc).__name__,
+            },
+        )
 
 
-class TradeRequest(BaseModel):
+class _TradeRequest(BaseModel):
     credentials: Credentials
     symbol: str
     action: str
@@ -305,41 +561,20 @@ class TradeRequest(BaseModel):
     take_profit: float = 0
     slippage: int = 20
     comment: Optional[str] = None
-    # The selected robot's exact name — used as the MT5 order comment.
+    # The selected robot's exact name — the bridge stamps this on the order.
     ea_name: Optional[str] = None
-    # Every order carries a magic number so the app can later find and close
-    # ONLY the positions it opened itself — never manual trades, never another
-    # EA's positions.
     magic: int = 0
 
 
-class ScalperStartRequest(BaseModel):
-    credentials: Credentials
-    symbol: str
-    lot: float = 0.01
-    trade_count: int = 1
-    ea_name: str = ""
-    # Optional direction tag appended to the EA name in the trade comment.
-    direction: str = ""
-    # Comma-separated symbol list, e.g. "BTCUSDm,ETHUSDm"
-    symbols: str = "BTCUSDm"
-    # Chart the daemon reads: 1m | 5m | 15m | 30m | 1h | 4h | 1d.
-    timeframe: str = ""
-
-
-class ScalperStopRequest(BaseModel):
-    pass
-
-
 @app.post("/trade/execute")
-def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None)):
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
+def trade_execute(req: _TradeRequest, x_bridge_key: Optional[str] = Header(None)):
+    _check_key(x_bridge_key)
+    account, error = _connect(req.credentials)
     if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
+        _disconnect()
+        return {"success": False, "message": f"MT5 init failed: {error}"}
     try:
-        trade_symbol, select_error = select_broker_symbol(req.symbol)
+        trade_symbol, select_error = _select_broker_symbol(req.symbol)
         if trade_symbol is None:
             return {"success": False, "message": select_error}
         tick = mt5.symbol_info_tick(trade_symbol)
@@ -358,8 +593,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "price": price,
             "deviation": req.slippage,
             "magic": req.magic,
-            "comment": ((req.ea_name if req.ea_name and req.ea_name.strip() else None)
-                        or req.comment or "EA Migrate")[:31],
+            "comment": _order_comment(req.ea_name, req.comment),
             "type_time": mt5.ORDER_TIME_GTC,
         }
         if req.stop_loss:
@@ -367,9 +601,6 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
         if req.take_profit:
             request["tp"] = req.take_profit
 
-        # Filling-mode fallback: brokers differ (FOK / IOC / RETURN). If live
-        # price movement makes the supplied SL/TP invalid, retry the same market
-        # order once without stops rather than refusing the trade altogether.
         last_result = None
         stops_removed = False
         for attempt in range(2):
@@ -379,7 +610,7 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
                 if result is None:
                     return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
                 last_result = result
-                if result.retcode == 10030:  # unsupported filling mode — try the next
+                if result.retcode == 10030:
                     continue
                 break
             if last_result is None or last_result.retcode != 10016 or stops_removed:
@@ -389,7 +620,6 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             stops_removed = True
         if last_result is None:
             return {"success": False, "message": "Order was not sent"}
-
         filled = last_result.retcode in (10008, 10009, 10010)
         return {
             "success": filled,
@@ -403,96 +633,15 @@ def trade_execute(req: TradeRequest, x_bridge_key: Optional[str] = Header(None))
             "stops_removed": stops_removed,
         }
     finally:
-        disconnect()
+        _disconnect()
 
 
-@app.post("/scalper/start")
-def scalper_start(req: ScalperStartRequest, x_bridge_key: Optional[str] = Header(None)):
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
-    if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"MT5 init failed: {error}"}
-    try:
-        # Build the EA comment: use the provided name, append direction if needed
-        ea_name = req.ea_name.strip() if req.ea_name.strip() else "EA Migrate"
-        # If direction is provided or can be inferred, append it
-        direction = req.direction.strip() if req.direction and req.direction.strip() else None
-        if direction and ea_name:
-            comment = f"{ea_name} {direction}"
-        elif ea_name:
-            comment = ea_name
-        else:
-            comment = "EA Migrate"
-        # Ensure comment fits MT5's 31-char limit
-        comment = comment[:31]
-        # Write the state file so the daemon reads it immediately
-        state = {
-            "running": True,
-            "symbol": req.symbol,
-            "lot": req.lot,
-            "trade_count": req.trade_count,
-            "ea_name": req.ea_name,
-            "symbols": req.symbols,
-            "timeframe": (req.timeframe or "").strip().lower() or "15m",
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "positions": {},
-        }
-        STATE_FILE = Path("./scalper.state.json")
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        # Return the analysis data for the AI Trade Analysis card
-        return {
-            "success": True,
-            "analysis": {
-                "symbol": req.symbol,
-                "direction": direction or "SELL",
-                "entry": None,  # will be filled by the daemon's first trade
-                "sl": None,  # will be filled by the daemon's first trade
-                "tp1": None,  # will be filled by the daemon's first trade
-                "lot": req.lot,
-                "trade_count": req.trade_count,
-                "timeframe": state["timeframe"].upper(),
-                "status": "Analyzing…",
-            },
-            "comment": comment,
-            # The app's start flow reads these three: a start only counts as
-            # started when the bridge says the daemon is running.
-            "ok": True,
-            "running": True,
-            "message": "Scalper daemon started",
-        }
-    finally:
-        disconnect()
-
-
-@app.post("/scalper/stop")
-def scalper_stop(req: ScalperStopRequest, x_bridge_key: Optional[str] = Header(None)):
-    check_key(x_bridge_key)
-    # Acknowledge immediately - the daemon will stop on its next loop iteration
-    state = {
-        "running": False,
-        "stopped_at": datetime.now(timezone.utc).isoformat(),
-        "positions": {},
-    }
-    STATE_FILE = Path("./scalper.state.json")
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-    return {
-        "success": True,
-        "acknowledged": True,
-        "ok": True,
-        "running": False,
-        "message": "Scalper daemon stopped",
-    }
-
-
-class PositionsRequest(BaseModel):
+class _PositionsRequest(BaseModel):
     credentials: Credentials
     magic: Optional[int] = None
 
 
-class CloseRequest(BaseModel):
+class _CloseRequest(BaseModel):
     credentials: Credentials
     ticket: int
     slippage: int = 30
@@ -516,13 +665,13 @@ def _position_row(position) -> dict:
 
 
 @app.post("/positions/list")
-def positions_list(req: PositionsRequest, x_bridge_key: Optional[str] = Header(None)):
+def positions_list(req: _PositionsRequest, x_bridge_key: Optional[str] = Header(None)):
     """Open positions, optionally limited to one magic number (the app's own)."""
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
+    _check_key(x_bridge_key)
+    account, error = _connect(req.credentials)
     if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+        _disconnect()
+        return {"success": False, "message": f"Terminal: {error}"}
     try:
         positions = mt5.positions_get()
         if positions is None:
@@ -534,17 +683,17 @@ def positions_list(req: PositionsRequest, x_bridge_key: Optional[str] = Header(N
         ]
         return {"success": True, "positions": rows, "total": len(rows)}
     finally:
-        disconnect()
+        _disconnect()
 
 
 @app.post("/positions/close")
-def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None)):
+def positions_close(req: _CloseRequest, x_bridge_key: Optional[str] = Header(None)):
     """Close ONE position by ticket, in its own opposite direction."""
-    check_key(x_bridge_key)
-    account, error = connect(req.credentials)
+    _check_key(x_bridge_key)
+    account, error = _connect(req.credentials)
     if account is None:
-        disconnect()
-        return {"success": False, "error_code": error[0], "message": f"Terminal: {error[1]}"}
+        _disconnect()
+        return {"success": False, "message": f"Terminal: {error}"}
     try:
         found = mt5.positions_get(ticket=req.ticket)
         if not found:
@@ -558,7 +707,6 @@ def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None
             return {"success": False, "message": f"No live price for {symbol} to close it"}
 
         is_buy = position.type == mt5.POSITION_TYPE_BUY
-        # Closing a BUY means selling it back, and the other way round.
         order_type = mt5.ORDER_TYPE_SELL if is_buy else mt5.ORDER_TYPE_BUY
         price = tick.bid if is_buy else tick.ask
 
@@ -582,7 +730,7 @@ def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None
             if result is None:
                 return {"success": False, "message": f"OrderSend returned None: {mt5.last_error()}"}
             last_result = result
-            if result.retcode == 10030:  # unsupported filling mode — try the next
+            if result.retcode == 10030:
                 continue
             break
         if last_result is None:
@@ -601,4 +749,138 @@ def positions_close(req: CloseRequest, x_bridge_key: Optional[str] = Header(None
             "message": "" if closed else f"Close rejected (retcode {last_result.retcode})",
         }
     finally:
-        disconnect()
+        _disconnect()
+
+
+# ── scalper endpoints (only the web surface — the loop lives in scalper_daemon.py) ─
+class _ScalperStartRequest(BaseModel):
+    symbol: str
+    lot: float
+    trade_count: int
+    # The selected robot's exact name — written straight into the daemon's
+    # state file, where scalper_daemon.py reads it for every order comment.
+    ea_name: Optional[str] = None
+    # The chart the daemon reads: 1m | 5m | 15m | 30m | 1h | 4h | 1d.
+    timeframe: Optional[str] = None
+
+
+@app.post("/scalper/start")
+def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Start (idempotent) or RESTART the scalper daemon.
+
+    Writes the daemon's state file. A second start while it is already running
+    restarts it (fresh run, keeps open positions from the state log).
+    """
+    _check_key(x_bridge_key)
+    state = _read_state()
+    # THE ROBOT'S NAME IS PART OF THE RUN STATE. The daemon reads it from
+    # here; without it every order fell back to a generic comment.
+    ea_name = (req.ea_name or "").strip() or state.get("ea_name") or "EA Migrate"
+    # THE DAEMON READS THIS TIMEFRAME for every candle fetch and every
+    # "wait for the next bar" boundary.
+    timeframe = (req.timeframe or "").strip().lower() or state.get("timeframe") or "15m"
+    if state.get("running"):
+        state["next_trade_number"] = int(state.get("next_trade_number", 1)) + 1
+        state["started_at"] = datetime.now(timezone.utc).isoformat()
+        state["symbol"] = req.symbol
+        state["lot"] = req.lot
+        state["trade_count"] = req.trade_count
+        state["ea_name"] = ea_name
+        state["timeframe"] = timeframe
+        _write_state(state)
+        _append_log(f"POST /scalper/start -> daemon RESTARTED "
+                    f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, "
+                    f"timeframe={timeframe}, ea={ea_name})")
+        return {"ok": True, "running": True,
+                "message": "Scalper daemon restarted — open positions kept and "
+                           "re-analysed on the next event tick"}
+    # NO TWO LOOPS MAY TRADE THE SAME ACCOUNT. `running` is false right now, so
+    # a thread left over from an earlier run leaves its loop within one pass;
+    # drain it before this start switches trading back on.
+    _stop_daemon()
+    _daemon_stop.clear()
+    state.update({
+        "running": True,
+        "symbol": req.symbol,
+        "lot": req.lot,
+        "trade_count": req.trade_count,
+        "ea_name": ea_name,
+        "timeframe": timeframe,
+        "next_trade_number": 1,
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "stopped_at": None,
+        "positions": {},
+        "log": _read_log(),
+    })
+    _write_state(state)
+    _daemon_stop.clear()
+    global _daemon_thread
+    _daemon_thread = threading.Thread(
+        target=_scalper_daemon_worker, name="scalper-daemon",
+        daemon=True,
+    )
+    _daemon_thread.start()
+    _append_log(f"POST /scalper/start -> daemon STARTED "
+                f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, ea={ea_name})")
+    return {"ok": True, "running": True,
+            "message": "Scalper daemon started (24/7, independent of Uvicorn)"}
+
+
+class _ScalperStopRequest(BaseModel):
+    pass
+
+
+@app.post("/scalper/stop")
+def scalper_stop(req: _ScalperStopRequest, x_bridge_key: Optional[str] = Header(None)):
+    """Stop the scalper daemon. State file and event log are preserved.
+
+    THE ANSWER IS NOT HELD UP BY THE DAEMON: `running: false` is written first
+    (the loop re-reads it every second and leaves), then the thread is given a
+    short, bounded join. A stop used to wait the old 8 s join on every press.
+    """
+    _check_key(x_bridge_key)
+    state = _read_state()
+    state["running"] = False
+    state["stopped_at"] = datetime.now(timezone.utc).isoformat()
+    _write_state(state)
+    _stop_daemon()
+    _append_log(f"POST /scalper/stop -> daemon STOPPED "
+                f"(running={state.get('running')})")
+    return {"ok": True, "running": False,
+            "message": "Scalper daemon stopped — state and history preserved"}
+
+
+@app.get("/scalper/status")
+def scalper_status(x_bridge_key: Optional[str] = Header(None)):
+    """Return the daemon's run state and its event log."""
+    _check_key(x_bridge_key)
+    state = _read_state()
+    return {
+        "ok": True,
+        "running": state.get("running", False),
+        "symbol": state.get("symbol"),
+        "lot": state.get("lot"),
+        "trade_count": state.get("trade_count"),
+        "next_trade_number": state.get("next_trade_number", 1),
+        "started_at": state.get("started_at"),
+        "stopped_at": state.get("stopped_at"),
+        "positions_managed": len(state.get("positions", {})),
+        # WHAT IS REALLY ON THE BOOK — the daemon writes each live leg's ticket,
+        # side, volume, entry, stop and target here. The app shows them exactly
+        # like a normal-mode fill; they are never a claimed number.
+        "positions": state.get("positions") or {},
+        "batches": state.get("batches") or {},
+        "log": _read_log(),
+    }
+
+
+def _scalper_daemon_worker() -> None:
+    """NOT the scalping loop — this file only schedules the thread. The loop
+    itself lives in scalper_daemon.py, which the worker imports and runs."""
+    try:
+        import scalper_daemon  # runs independently of Uvicorn and the app
+        scalper_daemon.run()
+    except Exception as exc:  # pragma: no cover - last resort
+        _append_log(f"daemon thread died before handing off to scalper_daemon: {exc}")
+    finally:
+        _daemon_thread = None
