@@ -11,6 +11,22 @@ import { friendlyRetcode, friendlyTradeError } from "./trade-errors";
 import { recordTrade } from "./trade-history";
 import { mt5OrderComment } from "./utils";
 
+/**
+ * DETACH A TIMER ONLY WHERE THE RUNTIME HAS ONE.
+ *
+ * `unref()` belongs to Node's `Timeout`. In the browser and in the Android/iOS
+ * WebView `setTimeout` returns a plain NUMBER, so calling `timer.unref()`
+ * threw `TypeError: s.unref is not a function` — and it did so on the FIRST
+ * bridge call of an execution (the direction guard's candle fetch), which the
+ * scanner can only report as a failed order. That is the "bridge is running but
+ * nothing executes" report. Node keeps its non-blocking timer; the browser now
+ * simply skips the call instead of throwing.
+ */
+function unrefTimer(timer: unknown): void {
+  const maybe = timer as { unref?: () => void } | null | undefined;
+  if (maybe && typeof maybe.unref === "function") maybe.unref();
+}
+
 // ============================================================================
 // SAFETY CRITICAL: No default BUY/SELL - explicit decision or NO TRADE
 // ============================================================================
@@ -410,7 +426,7 @@ async function fetchBridgeCandlesResult(
 ): Promise<CandleFetch> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), CANDLES_TIMEOUT_MS);
-  timer.unref();
+  unrefTimer(timer);
   const summary: CandleResponseSummary = {
     sentSymbol: symbol,
     timeframe,
@@ -3225,7 +3241,7 @@ async function fetchSignalAccount(
 ): Promise<{ freeMargin: number; equity: number } | null> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), QUOTE_TIMEOUT_MS);
-  timer.unref();
+  unrefTimer(timer);
   try {
     const response = await fetch(`${getBridgeUrl()}/account/verify`, {
       method: "POST",
