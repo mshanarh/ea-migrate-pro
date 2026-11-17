@@ -8,6 +8,18 @@
  * There is deliberately NO second "analysis" popup. It repeated the symbol and
  * direction this card already shows and covered the pipeline while it ran.
  *
+ * THE CARD DOES NOT CLOSE ITSELF. It used to walk off screen 2.8 s after the
+ * fill (and 4 s after a refusal), so a trader who looked away came back to an
+ * empty screen with no ticket and no reason. It now stays exactly where it is
+ * until the X in the top-right corner is pressed — the person running the
+ * trade is the one who decides when the report is finished.
+ *
+ * ITS COLOURS COME FROM THE THEME. The surfaces, ink, muted copy and borders
+ * read the interface's own `--if-*` tokens (which White mode repaints to light
+ * surfaces with dark ink — see lib/interface-themes.ts), and the progress bar,
+ * stage dots and ring use the selected ACCENT. Nothing here is hardcoded white
+ * or hardcoded black, so the card belongs to whichever theme is chosen.
+ *
  * The direction is read, never assumed: it comes from the run's own plan (the
  * `direction` prop) and is corrected by the bridge's `eamp:execution-result`
  * payload (`side`), which is the only authority on what was really sent.
@@ -15,8 +27,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Bot, X } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { useCustomization } from "@/lib/app-customization";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 import { useExecutionState } from "@/lib/execution-state";
 
 type Side = "BUY" | "SELL";
@@ -39,8 +50,6 @@ type Props = {
 /** How long each of the first two stages is held before the line moves on. */
 const CONNECT_MS = 300;
 const TERMINAL_MS = 400;
-/** How long the confirmed card stays on screen before it closes itself. */
-const CONFIRMED_MS = 2_800;
 
 const NODES = ["Connect", "Terminal", "Execute"] as const;
 
@@ -57,8 +66,9 @@ export function TradeExecutionToast({
   direction = null,
   currentTrade = 0,
 }: Props) {
-  const { appearanceMode } = useCustomization();
-  const isDark = appearanceMode !== "white";
+  // THE THEME IN USE — accent for the progress treatment, tokens for surfaces.
+  const { color } = useCustomization();
+  const accent = accentColorValue(color);
   // The running plan already knows the side as soon as the candles are read, so
   // the card can show it without waiting for the first fill.
   const executionState = useExecutionState();
@@ -78,10 +88,6 @@ export function TradeExecutionToast({
     timers.current = [];
   };
 
-  const later = (fn: () => void, ms: number) => {
-    timers.current.push(setTimeout(fn, ms));
-  };
-
   const playExecuteSound = () => {
     try {
       if (!audioRef.current) audioRef.current = new Audio("/sounds/execute.mp3");
@@ -94,7 +100,8 @@ export function TradeExecutionToast({
     }
   };
 
-  // A fresh run every time the card opens.
+  // A fresh run every time the card opens. Nothing here schedules a close:
+  // the only thing that ends this card is the X (or the caller's own state).
   useEffect(() => {
     if (!isOpen) return undefined;
     setStage(0);
@@ -188,7 +195,6 @@ export function TradeExecutionToast({
         setStage(2);
         setConfirmed(true);
         setOutcome(null);
-        later(onClose, CONFIRMED_MS);
         return;
       }
       /**
@@ -200,7 +206,6 @@ export function TradeExecutionToast({
         setStage(2);
         setConfirmed(false);
         setOutcome(message || "Execution was refused");
-        later(onClose, CONFIRMED_MS + 1_200);
       }
     };
     window.addEventListener("eamp:execution-result", handler);
@@ -229,6 +234,7 @@ export function TradeExecutionToast({
 
   const orderType = side === "SELL" ? "Sell order" : side === "BUY" ? "Buy order" : "Market order";
   const progress = stage === 0 ? "0%" : stage === 1 ? "50%" : "100%";
+  const tone = outcome ? "#f87171" : confirmed ? "#34d399" : accent;
 
   return (
     <div
@@ -240,16 +246,19 @@ export function TradeExecutionToast({
       data-stage={stage}
       data-side={side ?? "none"}
       data-eamp-exec-card=""
-      className={cn(
-        // `dark` on the card itself activates the dark: variants below without
-        // repainting the rest of the app for the sake of one popup.
-        "fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md rounded-[24px] border p-4 shadow-2xl backdrop-blur-2xl transition-all",
-        "bg-white/95 text-slate-900 border-slate-200/80 shadow-[0_20px_50px_rgba(0,0,0,0.12)]",
-        "dark:bg-[#15171c]/95 dark:text-white dark:border-white/10 dark:shadow-[0_20px_50px_rgba(0,0,0,0.65)]",
-        "animate-[slideDown_0.3s_ease-out]",
-        isDark && "dark",
-      )}
-      style={{ marginTop: "var(--sa-top)" }}
+      className="if-card animate-[slideDown_0.3s_ease-out] fixed inset-x-0 top-3 z-[9999] mx-auto w-[95%] max-w-md rounded-[24px] border p-4 transition-all"
+      style={{
+        // THE THEME'S OWN PANEL: a light card in White mode, obsidian glass in
+        // Black mode. `.if-card` (when the interface is styled) refines this
+        // with the theme's radius, border, blur and shadow.
+        backgroundColor: "var(--if-surface, rgba(18, 20, 26, 0.94))",
+        borderColor: "var(--if-border, rgba(255, 255, 255, 0.12))",
+        color: "var(--if-text, #f8fafc)",
+        backdropFilter: "blur(22px) saturate(1.45)",
+        WebkitBackdropFilter: "blur(22px) saturate(1.45)",
+        boxShadow: "0 20px 50px rgba(0, 0, 0, 0.45)",
+        marginTop: "var(--sa-top)",
+      }}
     >
       {/* ── Row 1: side · READY · close ── */}
       <div className="flex items-center justify-between gap-2">
@@ -263,16 +272,30 @@ export function TradeExecutionToast({
               <span aria-hidden="true">↑</span> BUY
             </span>
           ) : (
-            <span className="inline-flex items-center gap-1 rounded-full bg-slate-200 px-2.5 py-1 text-[11px] font-bold text-slate-700 dark:bg-white/10 dark:text-slate-300">
+            <span
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-[11px] font-bold"
+              style={{
+                backgroundColor: "var(--if-surface-alt, rgba(255,255,255,0.08))",
+                color: "var(--if-muted, rgba(226,232,240,0.75))",
+              }}
+            >
               ANALYZING
             </span>
           )}
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-slate-200 bg-slate-100 px-3 py-1 text-[11px] font-bold text-slate-700 dark:border-white/15 dark:bg-white/10 dark:text-slate-200">
+          <span
+            className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[11px] font-bold"
+            style={{
+              borderColor: "var(--if-border, rgba(255,255,255,0.14))",
+              backgroundColor: "var(--if-surface-alt, rgba(255,255,255,0.06))",
+              color: "var(--if-text, #f8fafc)",
+            }}
+          >
             <span
               aria-hidden="true"
-              className="size-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_#3b82f6]"
+              className="size-1.5 rounded-full"
+              style={{ backgroundColor: tone, boxShadow: `0 0 8px ${tone}` }}
             />
-            READY
+            {outcome ? "FAILED" : confirmed ? "FILLED" : "READY"}
           </span>
         </div>
         <button
@@ -282,7 +305,12 @@ export function TradeExecutionToast({
             clearTimers();
             onClose();
           }}
-          className="flex size-7 shrink-0 items-center justify-center rounded-full border border-slate-200 bg-slate-100 text-slate-600 transition-colors hover:text-slate-900 dark:border-white/15 dark:bg-white/10 dark:text-slate-300 dark:hover:text-white"
+          className="flex size-7 shrink-0 items-center justify-center rounded-full border transition-colors hover:opacity-80"
+          style={{
+            borderColor: "var(--if-border, rgba(255,255,255,0.16))",
+            backgroundColor: "var(--if-surface-alt, rgba(255,255,255,0.08))",
+            color: "var(--if-text, #f8fafc)",
+          }}
         >
           <X className="size-3.5" aria-hidden="true" />
         </button>
@@ -291,20 +319,32 @@ export function TradeExecutionToast({
       {/* ── Row 2: symbol · order type · status | avatar ── */}
       <div className="mt-3 flex items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
-          <p className="truncate text-2xl font-black tracking-tight text-slate-900 dark:text-white">
+          <p
+            className="truncate text-2xl font-black tracking-tight"
+            style={{ color: "var(--if-text, #ffffff)" }}
+          >
             {activeSymbol}
           </p>
-          <p className="mt-0.5 text-xs font-semibold text-slate-500 dark:text-slate-400">
+          <p className="mt-0.5 text-xs font-semibold" style={{ color: "var(--if-muted, rgba(226,232,240,0.65))" }}>
             {orderType}
           </p>
-          <p className="mt-2 flex items-center gap-1.5 text-xs font-bold text-slate-800 dark:text-slate-200">
-            <span className="font-black text-emerald-500" aria-hidden="true">
-              ✓
+          <p
+            className="mt-2 flex items-center gap-1.5 text-xs font-bold"
+            style={{ color: outcome ? "#f87171" : "var(--if-text, #e2e8f0)" }}
+          >
+            <span className="font-black" style={{ color: tone }} aria-hidden="true">
+              {outcome ? "!" : "✓"}
             </span>
             <span className="min-w-0 truncate">{statusText}</span>
           </p>
         </div>
-        <div className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 border-slate-200 bg-slate-100 shadow-sm dark:border-white/15 dark:bg-white/10">
+        <div
+          className="flex size-12 shrink-0 items-center justify-center overflow-hidden rounded-full border-2 shadow-sm"
+          style={{
+            borderColor: `${accent}66`,
+            backgroundColor: "var(--if-surface-alt, rgba(255,255,255,0.08))",
+          }}
+        >
           {robotImage ? (
             <img
               src={robotImage}
@@ -313,7 +353,7 @@ export function TradeExecutionToast({
               loading="lazy"
             />
           ) : (
-            <Bot className="size-5 text-slate-500 dark:text-white/70" aria-hidden="true" />
+            <Bot className="size-5" style={{ color: "var(--if-muted, rgba(255,255,255,0.7))" }} aria-hidden="true" />
           )}
         </div>
       </div>
@@ -322,12 +362,13 @@ export function TradeExecutionToast({
       <div className="mt-5 mb-1 px-1">
         <div className="relative">
           <div
-            className="absolute left-2 right-2 top-[5px] h-[2px] rounded-full bg-slate-200 dark:bg-white/10"
+            className="absolute left-2 right-2 top-[5px] h-[2px] rounded-full"
+            style={{ backgroundColor: "var(--if-border, rgba(255,255,255,0.14))" }}
             aria-hidden="true"
           >
             <div
-              className="h-full rounded-full bg-blue-600 shadow-[0_0_8px_#2563eb] transition-all duration-700 ease-out"
-              style={{ width: progress }}
+              className="h-full rounded-full transition-all duration-700 ease-out"
+              style={{ width: progress, backgroundColor: accent, boxShadow: `0 0 8px ${accent}` }}
             />
           </div>
           <ol className="relative flex items-start justify-between">
@@ -337,13 +378,20 @@ export function TradeExecutionToast({
                 <li key={label} className="flex flex-1 flex-col items-center gap-2">
                   <span
                     aria-hidden="true"
-                    className={
+                    className="size-2.5 rounded-full border"
+                    style={
                       reached
-                        ? "size-2.5 rounded-full bg-blue-600 shadow-[0_0_10px_#2563eb]"
-                        : "size-2.5 rounded-full border border-slate-300 bg-slate-100 dark:border-white/25 dark:bg-[#1a1a1f]"
+                        ? { backgroundColor: accent, borderColor: accent, boxShadow: `0 0 10px ${accent}` }
+                        : {
+                            backgroundColor: "var(--if-surface-alt, rgba(255,255,255,0.08))",
+                            borderColor: "var(--if-border, rgba(255,255,255,0.25))",
+                          }
                     }
                   />
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
+                  <span
+                    className="text-[10px] font-bold uppercase tracking-wider"
+                    style={{ color: reached ? "var(--if-text, #e2e8f0)" : "var(--if-muted, rgba(226,232,240,0.55))" }}
+                  >
                     {label}
                   </span>
                 </li>

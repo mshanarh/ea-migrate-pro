@@ -123,12 +123,15 @@ const THEME_KEY = "ea_migrate_theme";
 const FONT_KEY = "ea_migrate_font";
 
 /**
- * APPEARANCE MODE — BLACK or WHITE Home canvas; selected interface unchanged.
+ * APPEARANCE MODE — BLACK or WHITE.
  *
- * BLACK: black Home background.
+ * BLACK: obsidian canvas with the selected interface's own dark surfaces.
  *
- * WHITE: white Home background. The selected interface's layout, colors,
- * cards, controls, text and navigation remain exactly as chosen.
+ * WHITE: white canvas AND light surfaces with dark ink (the light tokens are
+ * published by applyAppearanceMode, see WHITE_SURFACE_TOKENS in
+ * lib/interface-themes.ts). The interface's layout, accent, radii and controls
+ * are unchanged — only the base palette flips, so every card, dialog and the
+ * bottom dock stay readable instead of white text on a pale card.
  */
 export const APPEARANCE_KEY = "eamp.appearanceMode";
 export const DEFAULT_APPEARANCE_MODE: AppearanceMode = "black";
@@ -147,7 +150,7 @@ export const APPEARANCE_CHOICES: ReadonlyArray<{
   {
     mode: "white",
     title: "White / Light",
-    body: "Changes only the Home background; your selected interface stays unchanged.",
+    body: "White canvas with light cards and dark text. Your interface's layout, accent and controls stay.",
   },
 ];
 

@@ -1457,3 +1457,81 @@ html[data-appearance="white"] .if-screen .text-white\/60 {
 html[data-appearance="white"] [data-eamp-exec-card] {
   color: #0f172a;
 }
+
+/* ── WHITE MODE — INK AND UTILITIES OUTSIDE THE SCREEN ────────────────────
+   The rules above turn the canvas white and the app's `.if-` surfaces light
+   (see WHITE_SURFACE_TOKENS in lib/interface-themes.ts). Two things sat
+   outside that fix and made text vanish in White mode:
+
+     • DIALOGS AND SHEETS are portalled to <body>, so they are not inside
+       `.if-screen` and the ink rule never reached them — a light `if-card`
+       with white copy;
+     • components that hardcode white-alpha surfaces (`bg-white/10`, a white
+       chip on a dark card) stayed white on a white card.
+
+   Both are pinned to the light palette here, so every popup, sheet, drawer and
+   Settings row keeps its text readable whichever interface is selected. */
+html[data-appearance="white"] [role="dialog"],
+html[data-appearance="white"] [data-radix-popper-content-wrapper] {
+  color: #0f172a;
+}
+
+html[data-appearance="white"] [role="dialog"] h1,
+html[data-appearance="white"] [role="dialog"] h2,
+html[data-appearance="white"] [role="dialog"] h3,
+html[data-appearance="white"] [role="dialog"] p,
+html[data-appearance="white"] [role="dialog"] [class*="text-white"],
+html[data-appearance="white"] .if-card [class*="text-white"],
+html[data-appearance="white"] .if-well [class*="text-white"],
+html[data-appearance="white"] .if-field [class*="text-white"],
+html[data-appearance="white"] .if-chip [class*="text-white"] {
+  color: #0f172a !important;
+  text-shadow: none !important;
+}
+
+/* The muted steps of the same utilities, on the same surfaces. */
+html[data-appearance="white"] [role="dialog"] [class*="text-white/"],
+html[data-appearance="white"] .if-card [class*="text-white/"],
+html[data-appearance="white"] .if-well [class*="text-white/"],
+html[data-appearance="white"] .if-field [class*="text-white/"] {
+  color: #64748b !important;
+}
+
+/* White-alpha utility surfaces become hairline greys instead of disappearing. */
+html[data-appearance="white"] .if-screen [class*="bg-white/"],
+html[data-appearance="white"] [role="dialog"] [class*="bg-white/"],
+html[data-appearance="white"] .if-card [class*="bg-white/"],
+html[data-appearance="white"] .if-well [class*="bg-white/"] {
+  background-color: rgba(15, 23, 42, 0.06) !important;
+}
+
+html[data-appearance="white"] .if-screen [class*="border-white/"],
+html[data-appearance="white"] [role="dialog"] [class*="border-white/"],
+html[data-appearance="white"] .if-card [class*="border-white/"],
+html[data-appearance="white"] .if-well [class*="border-white/"] {
+  border-color: rgba(15, 23, 42, 0.14) !important;
+}
+
+/* Slate utilities written for a dark plate are too pale on a white one. */
+html[data-appearance="white"] .if-screen .text-slate-100,
+html[data-appearance="white"] .if-screen .text-slate-200,
+html[data-appearance="white"] .if-screen .text-slate-300,
+html[data-appearance="white"] [role="dialog"] .text-slate-100,
+html[data-appearance="white"] [role="dialog"] .text-slate-200,
+html[data-appearance="white"] [role="dialog"] .text-slate-300 {
+  color: #1e293b !important;
+}
+
+html[data-appearance="white"] .if-screen .text-slate-400,
+html[data-appearance="white"] .if-screen .text-slate-500,
+html[data-appearance="white"] [role="dialog"] .text-slate-400,
+html[data-appearance="white"] [role="dialog"] .text-slate-500 {
+  color: #475569 !important;
+}
+
+/* The execution card is themed (surface/ink/accent tokens) in both modes; it
+   only needs its own shadow so it lifts off a white page as well as a black. */
+html[data-appearance="white"] [data-eamp-exec-card] {
+  color: #0f172a;
+  box-shadow: 0 18px 40px rgba(15, 23, 42, 0.16) !important;
+}

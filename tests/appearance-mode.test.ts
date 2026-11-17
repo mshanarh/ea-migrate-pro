@@ -43,7 +43,7 @@ describe("appearance mode", () => {
     expect(window.localStorage.getItem(APPEARANCE_KEY)).toBe("white");
   });
 
-  it("sets white mode without changing interface styling, and lets native controls go light", () => {
+  it("paints light surfaces for white mode and lets native controls go light", () => {
     setAppearanceMode("white");
 
     const root = document.documentElement;
@@ -51,23 +51,28 @@ describe("appearance mode", () => {
     // White mode means light native controls too: scrollbars, date pickers and
     // autofill were still dark because color-scheme was pinned to "dark".
     expect(root.style.colorScheme).toBe("light");
-    expect(root.style.getPropertyValue("--if-surface")).toBe("");
-    expect(root.style.getPropertyValue("--if-text")).toBe("");
-    expect(root.style.getPropertyValue("--if-bg")).toBe("");
+    // SURFACES FOLLOW THE MODE. Leaving the interface's obsidian surface tokens
+    // in place while forcing dark ink on every paragraph is what made cards and
+    // Settings unreadable: dark text on a dark card.
+    expect(root.style.getPropertyValue("--if-surface")).toBe("rgba(255,255,255,0.94)");
+    expect(root.style.getPropertyValue("--if-text")).toBe("#0f172a");
+    expect(root.style.getPropertyValue("--if-border")).toBe("rgba(15,23,42,0.12)");
   });
 
-  it("sets black mode and keeps native controls dark", () => {
+  it("sets black mode and puts the dark surfaces back", () => {
+    setAppearanceMode("white");
     setAppearanceMode("black");
 
     const root = document.documentElement;
     expect(root.getAttribute("data-appearance")).toBe("black");
     expect(root.style.colorScheme).toBe("dark");
-    expect(root.style.getPropertyValue("--if-surface")).toBe("");
-    expect(root.style.getPropertyValue("--if-text")).toBe("");
-    expect(root.style.getPropertyValue("--if-bg")).toBe("");
+    // No styled interface was published here, so the neutral obsidian tokens
+    // are what must be live again — never the light ones white mode left.
+    expect(root.style.getPropertyValue("--if-surface")).toBe("rgba(255,255,255,0.03)");
+    expect(root.style.getPropertyValue("--if-text")).toBe("#ffffff");
   });
 
-  it("keeps the selected interface unchanged in both background modes", () => {
+  it("keeps the interface's layout and accent, flipping only the surface palette", () => {
     const definition = interfaceDefinitionFor("CRIMSON NAVIGATOR");
     if (!definition) throw new Error("Crimson Navigator interface definition is missing");
     applyInterfaceDefinition(definition);
@@ -77,13 +82,20 @@ describe("appearance mode", () => {
       surface: root.style.getPropertyValue("--if-surface"),
       text: root.style.getPropertyValue("--if-text"),
       background: root.style.getPropertyValue("--if-bg"),
+      accent: root.style.getPropertyValue("--if-signature"),
+      radius: root.style.getPropertyValue("--if-radius"),
     };
 
+    // White: light surfaces + dark ink, while the interface's own canvas
+    // colour, accent and geometry stay exactly as the trader chose them.
     setAppearanceMode("white");
-    expect(root.style.getPropertyValue("--if-surface")).toBe(original.surface);
-    expect(root.style.getPropertyValue("--if-text")).toBe(original.text);
+    expect(root.style.getPropertyValue("--if-surface")).toBe("rgba(255,255,255,0.94)");
+    expect(root.style.getPropertyValue("--if-text")).toBe("#0f172a");
     expect(root.style.getPropertyValue("--if-bg")).toBe(original.background);
+    expect(root.style.getPropertyValue("--if-signature")).toBe(original.accent);
+    expect(root.style.getPropertyValue("--if-radius")).toBe(original.radius);
 
+    // Black: the definition's own tokens come back, not a leftover light card.
     setAppearanceMode("black");
     expect(root.style.getPropertyValue("--if-surface")).toBe(original.surface);
     expect(root.style.getPropertyValue("--if-text")).toBe(original.text);

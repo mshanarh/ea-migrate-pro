@@ -189,7 +189,7 @@ describe("TradeExecutionToast (execution card)", () => {
     expect(text()).toContain("Executing trades to MetaTrader");
   });
 
-  it("confirms on the bridge's answer and then closes itself", () => {
+  it("confirms on the bridge's answer and STAYS OPEN until the ✕ is pressed", () => {
     const onClose = vi.fn();
     render({ onClose, direction: "SELL" });
     act(() => {
@@ -202,10 +202,16 @@ describe("TradeExecutionToast (execution card)", () => {
     emit({ ok: true, message: "TRADE 1/3 EXECUTED", index: 1, total: 3, side: "SELL" });
     expect(text()).toContain("Confirmed on MetaTrader");
 
+    // The trader is the one who dismisses the report — a full minute of real
+    // time must not take the ticket away.
     act(() => {
-      vi.advanceTimersByTime(2800);
+      vi.advanceTimersByTime(60_000);
     });
-    expect(onClose).toHaveBeenCalled();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(text()).toContain("Confirmed on MetaTrader");
+
+    clickLabel("Close execution");
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("reports a refusal but ignores in-flight progress", () => {

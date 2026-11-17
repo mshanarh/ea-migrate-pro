@@ -349,8 +349,20 @@ export function interfaceDefinitionFor(id: string): InterfaceDefinition | null {
  * Synchronous and idempotent — the sync component calls it on every change,
  * which is what makes a selection visible immediately, without a reload.
  */
+/**
+ * THE DEFINITION LAST PUBLISHED — kept so a mode switch can rebuild the tokens
+ * it owns.
+ *
+ * White mode replaces the interface's surface/ink variables (see
+ * WHITE_SURFACE_TOKENS). Without this, switching back to Black left those light
+ * values in place and every card stayed pale with dark ink. `setAppearanceMode`
+ * alone cannot re-run the definition, so the definition is remembered here.
+ */
+let lastDefinition: InterfaceDefinition | null = null;
+
 export function applyInterfaceDefinition(definition: InterfaceDefinition | null): void {
   if (typeof document === "undefined") return;
+  lastDefinition = definition;
   const root = document.documentElement;
 
   if (!definition) {
@@ -452,6 +464,31 @@ export type AppearanceMode = "black" | "white";
  * WHITE: stamps `data-appearance="white"`; Home reads this preference for its
  * background only. The rest of the app keeps its selected interface styling.
  */
+/**
+ * LIGHT SURFACES FOR WHITE MODE.
+ *
+ * White mode used to repaint ONLY the canvas and then force dark ink on every
+ * heading/paragraph — including copy sitting on the interface's obsidian cards.
+ * Dark ink on a dark card is why Settings (and every other card screen) went
+ * unreadable in White mode. The surfaces are repainted here instead, so a card
+ * is a light card, its border is a hairline and its ink is dark: one change
+ * that covers every `.if-*` surface in the app, dialogs and popups included.
+ *
+ * The navigation chrome is in the list because it is a surface too — a dark
+ * dock floating on a white page was the other half of the same report.
+ */
+const WHITE_SURFACE_TOKENS: Record<string, string> = {
+  "--if-surface": "rgba(255,255,255,0.94)",
+  "--if-surface-alt": "rgba(15,23,42,0.05)",
+  "--if-well": "rgba(15,23,42,0.04)",
+  "--if-text": "#0f172a",
+  "--if-muted": "rgba(15,23,42,0.62)",
+  "--if-border": "rgba(15,23,42,0.12)",
+  "--if-nav-bg": "rgba(255,255,255,0.94)",
+  "--if-nav-border": "rgba(15,23,42,0.12)",
+  "--if-nav-shadow": "0 16px 40px rgba(15,23,42,0.14)",
+};
+
 export function applyAppearanceMode(mode: AppearanceMode = "black"): void {
   if (typeof document === "undefined") return;
   const root = document.documentElement;
@@ -468,6 +505,17 @@ export function applyAppearanceMode(mode: AppearanceMode = "black"): void {
   // The theme's canvas colour, so the browser paints the same white/black the
   // stylesheet does instead of flashing the other one on first paint.
   root.style.backgroundColor = white ? "#f8fafc" : "#050508";
+
+  // SURFACES FOLLOW THE MODE. In White the light tokens go on top of whatever
+  // the interface published (that is why this runs after the definition); in
+  // Black the definition is rebuilt so its own obsidian tokens come back.
+  if (white) {
+    for (const [name, value] of Object.entries(WHITE_SURFACE_TOKENS)) {
+      root.style.setProperty(name, value);
+    }
+  } else {
+    applyInterfaceDefinition(lastDefinition);
+  }
 }
 
 /** The Home hero decoration values for one definition. */
