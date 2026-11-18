@@ -26,11 +26,8 @@ function PoweredBadge({ accent }: { accent: string }) {
 
 function RobotPortrait({ robot, accent }: { robot: Robot | undefined; accent: string }) {
   return (
-    /* A phone has ~700px between the header and the dock: a fixed large
-       portrait pushed the tiles and the robot list past the fold, so the
-       circle clamps with the viewport instead of owning it. */
     <div
-      className="app-portrait size-32 shrink-0 overflow-hidden rounded-full border-[5px] bg-black sm:size-40"
+      className="app-portrait overflow-hidden rounded-full border-[5px] bg-black"
       style={{ borderColor: accent, boxShadow: `0 0 34px ${accent}55` }}
     >
       <RobotMedia
@@ -117,8 +114,8 @@ export function Sniper({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-20 pt-2 text-white sm:px-5 sm:pb-24 sm:pt-4">
-      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-3 sm:gap-5">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:px-5 sm:pt-6">
+      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
@@ -169,8 +166,8 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
   const running = Boolean(robot?.running);
   const image = robot?.image || "/logo.png";
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-20 pt-2 text-white sm:pb-24 sm:pt-4">
-      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-3 sm:gap-5">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] overflow-hidden px-4 pb-6 pt-4 text-white sm:pt-6">
+      <div className="relative mx-auto flex w-full max-w-md flex-col items-center gap-4 sm:gap-6">
         <RobotPortrait robot={robot} accent={accent} />
         <RobotHeading robot={robot} accent={accent} />
         <PoweredBadge accent={accent} />
@@ -213,15 +210,15 @@ export function Phoenix({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd 
 export function Vortex({ robot, accent, onStart, onQuotes, onRemove, onOpenAdd }: SignatureLayoutProps) {
   const running = Boolean(robot?.running);
   return (
-    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-20 pt-2 text-white sm:pb-24 sm:pt-4">
-      <div className="mx-auto flex w-full max-w-md flex-col gap-3 sm:gap-5">
+    <div className="relative z-10 min-h-[calc(100dvh-var(--plat-nav-h))] px-4 pb-6 pt-4 text-white">
+      <div className="mx-auto flex w-full max-w-md flex-col gap-5">
         {/* Obsidian glass card with the accent as AMBIENT LIGHT: the surface
             stays dark, the light blooms around it in the halo behind. */}
         <div className="relative">
         <span aria-hidden className="ambient-glow-halo rounded-[40px]" />
         <div className="ambient-glow-dynamic relative flex flex-col items-center rounded-[40px] px-5 pb-7 pt-7">
           <span className="absolute right-6 top-6 size-3.5 rounded-full" style={{ backgroundColor: running ? "#22C55E" : "#FF1744", boxShadow: `0 0 10px ${running ? "#22C55E" : "#FF1744"}` }} />
-          <div className="size-28 shrink-0 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl sm:size-36">
+          <div className="size-32 overflow-hidden rounded-full border-4 border-white/85 bg-black shadow-2xl sm:size-36">
             <RobotMedia image={robot?.image || "/logo.png"} video={robot?.video} variant="avatar" preferImage className="size-full object-cover" />
           </div>
           <h1 className="mt-6 max-w-full break-words text-center text-2xl font-black uppercase leading-none sm:text-3xl" style={{ textShadow: "0 2px 6px rgba(0,0,0,.6)" }}>
@@ -278,14 +275,14 @@ export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenA
        the card in the middle of the viewport, which on a phone reads as "pushed
        down into the bottom dock" — the content now starts under the header and
        the extra bottom padding keeps it clear of the nav. */
-    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-20 pt-2 text-white sm:pb-24 sm:pt-4">
-      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-3 sm:gap-4">
+    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-24 pt-6 text-white sm:pt-8">
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-5">
         {/* Main card with the top-overlapping avatar */}
-        <div className="relative mt-8 w-full">
+        <div className="relative mt-12 w-full">
           {/* The avatar is a sibling of the card, so its border is not clipped
               by the card's rounded glass and its shadow falls on the card. */}
           <div
-            className="absolute -top-10 left-1/2 z-20 size-20 -translate-x-1/2 overflow-hidden rounded-full border-[3px] border-white/80 bg-black/90 shadow-[0_12px_28px_rgba(0,0,0,0.8)] sm:size-24"
+            className="absolute -top-12 left-1/2 z-20 size-24 -translate-x-1/2 overflow-hidden rounded-full border-[3px] border-white/80 bg-black/90 shadow-[0_12px_28px_rgba(0,0,0,0.8)] sm:size-28"
             style={{ borderColor: accent }}
           >
             <RobotMedia
@@ -298,9 +295,9 @@ export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenA
           </div>
 
           {/* Dark glass card body */}
-          <div className="relative rounded-[32px] border border-white/15 bg-black/75 px-5 pb-5 pt-12 text-center shadow-[0_20px_50px_rgba(0,0,0,0.65)] backdrop-blur-xl">
+          <div className="relative rounded-[32px] border border-white/15 bg-black/75 px-5 pb-6 pt-16 text-center shadow-[0_20px_50px_rgba(0,0,0,0.65)] backdrop-blur-xl">
             <h1
-              className="max-w-full break-words text-xl font-black uppercase tracking-tight text-white sm:text-2xl"
+              className="max-w-full break-words text-2xl font-black uppercase tracking-tight text-white sm:text-3xl"
               style={{ textShadow: "0 2px 10px rgba(0,0,0,0.8)" }}
             >
               {robot?.name ?? "YOUR ROBOT"}
@@ -430,7 +427,7 @@ export function UnlimitedBull({
         className="flex min-w-0 flex-1 flex-col items-center gap-2 transition-transform active:scale-95"
       >
         <span
-          className="flex size-13 items-center justify-center rounded-full sm:size-14"
+          className="flex size-16 items-center justify-center rounded-full"
           style={{
             border: `1.5px solid ${ring}`,
             boxShadow: `0 0 18px ${options.glow ?? `${accent}33`}`,
@@ -438,13 +435,13 @@ export function UnlimitedBull({
           }}
         >
           <Icon
-            className="size-5 sm:size-6"
+            className="size-6"
             style={{ color: iconColor }}
             fill={options.fill ? "currentColor" : "none"}
           />
         </span>
         <span
-          className="text-[10px] font-black uppercase tracking-[0.12em] sm:text-[11px] sm:tracking-[0.14em]"
+          className="text-[11px] font-black uppercase tracking-[0.14em]"
           style={{ color: options.color ?? title }}
         >
           {label}
@@ -454,8 +451,8 @@ export function UnlimitedBull({
   };
 
   return (
-    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-20 pt-2 text-white sm:pb-24 sm:pt-4">
-      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-2.5 sm:gap-3.5">
+    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-28 pt-4 text-white sm:pt-6">
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4">
         {/* THE NOTE — the layout's own voice, in the trader's accent. */}
         <p
           className="text-center text-[11px] font-black uppercase tracking-[0.22em]"
@@ -471,12 +468,10 @@ export function UnlimitedBull({
             style={{ background: `radial-gradient(ellipse at 50% 40%, ${accent}55, transparent 70%)` }}
             aria-hidden="true"
           />
-          {/* A 4:5 frame is 480px tall on a 384px phone screen, which pushed
-              the capsules under the dock. The frame now clamps to the viewport
-              and the portrait fills it edge-to-edge — no floating badge on
-              top, so the picture is the whole card. */}
+          {/* The portrait fills the frame edge-to-edge — the floating badge is
+              gone, so the picture is the whole card. */}
           <div
-            className="relative aspect-[4/3.3] max-h-[34vh] min-h-[220px] w-full overflow-hidden rounded-[32px]"
+            className="relative aspect-[4/5] w-full overflow-hidden rounded-[32px]"
             style={{
               border: `1.5px solid ${accent}66`,
               boxShadow: `0 24px 60px rgba(0,0,0,${isDark ? "0.65" : "0.25"}), inset 0 0 0 1px ${accent}22`,
@@ -498,7 +493,7 @@ export function UnlimitedBull({
             instead of being clipped, and there is no shadow in white mode (a
             light page would only smear the glyphs). */}
         <h1
-          className="max-w-full whitespace-normal break-words text-center text-xl font-black uppercase leading-tight sm:text-2xl"
+          className="max-w-full whitespace-normal break-words text-center text-2xl font-black uppercase leading-tight sm:text-3xl"
           style={{ color: title, textShadow: isDark ? "0 2px 10px rgba(0,0,0,0.8)" : "none" }}
         >
           {name}
@@ -506,7 +501,7 @@ export function UnlimitedBull({
 
         {/* ACTION BAR — one stadium pill holding the three controls. */}
         <div
-          className="flex w-full items-center justify-between gap-1.5 rounded-full px-4 py-2.5 shadow-xl backdrop-blur-xl sm:gap-2 sm:px-6 sm:py-3.5"
+          className="flex w-full items-center justify-between gap-2 rounded-full px-6 py-4 shadow-xl backdrop-blur-xl"
           style={{ background: glass, border: `1px solid ${glassBorder}` }}
         >
           {arcButton("DELETE", Trash2, onRemove, {
@@ -527,11 +522,11 @@ export function UnlimitedBull({
 
         {/* CONNECTED EA — the face and the name of the running robot. */}
         <div
-          className="flex w-full items-center gap-3 rounded-full px-4 py-2.5 backdrop-blur-xl sm:gap-4 sm:px-5 sm:py-3"
+          className="flex w-full items-center gap-4 rounded-full px-5 py-3.5 backdrop-blur-xl"
           style={{ background: glass, border: `1px solid ${glassBorder}` }}
         >
           <span
-            className="size-9 shrink-0 overflow-hidden rounded-full sm:size-10"
+            className="size-11 shrink-0 overflow-hidden rounded-full"
             style={{ border: `2px solid ${accent}`, background: isDark ? "#0B0B0C" : "#FFFFFF" }}
           >
             <RobotMedia
@@ -545,7 +540,7 @@ export function UnlimitedBull({
           {/* A long EA name wraps onto a second line instead of being
               truncated — the configured name is never shortened here. */}
           <span
-            className="line-clamp-2 min-w-0 flex-1 break-words text-left text-[13px] font-black uppercase leading-tight tracking-wide sm:text-[14px]"
+            className="line-clamp-2 min-w-0 flex-1 break-words text-left text-[15px] font-black uppercase leading-tight tracking-wide"
             style={{ color: title }}
           >
             {name}
@@ -557,11 +552,11 @@ export function UnlimitedBull({
         <button
           type="button"
           onClick={onOpenAdd}
-          className="flex w-full items-center gap-3 rounded-full px-4 py-2.5 backdrop-blur-xl transition-transform active:scale-[0.98] sm:gap-4 sm:px-5 sm:py-3.5"
+          className="flex w-full items-center gap-4 rounded-full px-5 py-4 backdrop-blur-xl transition-transform active:scale-[0.98]"
           style={{ background: glass, border: `1px solid ${glassBorder}` }}
         >
           <span
-            className="flex size-9 shrink-0 items-center justify-center rounded-full sm:size-10"
+            className="flex size-11 shrink-0 items-center justify-center rounded-full"
             style={{ border: `2px solid ${accent}`, boxShadow: `0 0 16px ${accent}44` }}
           >
             <Plus className="size-5" style={{ color: title }} strokeWidth={2.6} />

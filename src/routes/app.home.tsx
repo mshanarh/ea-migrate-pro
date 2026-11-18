@@ -395,14 +395,12 @@ function AppHome() {
   const touchStartX = useRef<number | null>(null);
   const robot = app.robots.find((candidate) => candidate.id === app.activeRobotId) ?? app.robots[0];
   // THE DAEMON'S REAL STATE — polled every 10 s and on focus, and it corrects
-  // the START/STOP button when the VPS disagrees. The home screen only shows a
-  // tiny pill; the full detail lives on the MetaTrader screen.
-  // The daemon poll stays mounted so the scalper's live state is synced for the
-  // Metatrader tab; Home itself no longer shows a pill or a version badge.
+  // the START/STOP button when the VPS disagrees. The poll stays mounted for the
+  // MetaTrader screen; Home itself no longer shows a pill or a version badge.
   const { refresh: refreshDaemon } = useScalperDaemonStatus();
   // THE CLIP WAITS FOR A YES. Entering the app never starts the robot video; a
-  // trader who wants it taps PLAY VIDEO here (a HOME double-press and the
-  // Settings switch do the same thing).
+  // HOME double-press and the Settings switch do that now that the top row's
+  // PLAY VIDEO button is gone.
 
   useEffect(() => {
     // The mentor's LOCAL store (empty on a client phone) and the REAL server

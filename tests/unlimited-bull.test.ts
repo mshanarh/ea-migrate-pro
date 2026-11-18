@@ -175,11 +175,13 @@ describe("Unlimited Bull mobile fit", () => {
     expect(portraits.length).toBe(2);
   });
 
-  it("clamps the hero frame and keeps the capsules above the dock", () => {
+  it("keeps the full-height portrait frame and the original spacing", () => {
     mount(ROBOT);
     const html = document.body.innerHTML;
-    expect(html).toContain("max-h-[34vh]");
-    expect(html).toContain("min-h-[220px]");
-    expect(html).toContain("pb-20");
+    expect(html).toContain("aspect-[4/5]");
+    expect(html).toContain("pb-28");
+    // The mobile clamp was reverted — the frame owns its aspect ratio again.
+    expect(html).not.toContain("max-h-[34vh]");
+    expect(html).not.toContain("min-h-[220px]");
   });
 });
