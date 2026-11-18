@@ -478,11 +478,19 @@ def _ema(closes: list[float], period: int) -> float | None:
 
 
 def _trend_read(bars: list[dict], price: float) -> dict:
-    """EMA 20/50/200 read on the completed series — informational only.
+    """EMA 20/50/200 read on the completed series — THE structural trend.
 
-    The trend filter (EMA veto + exhaustion) has been removed. This function
-    now only reports the EMA levels and structure for the log line; it never
-    vetoes a side.
+    The net move of five closes says what happened in the last few hours; the
+    EMA stack says what the market IS. Selling a rally because the last five
+    closes ticked down is exactly the failure this read exists to stop:
+
+      UPTREND   — price above EMA50 AND EMA20 above EMA50 (or EMA50 above
+                  EMA200 when the long series is available);
+      DOWNTREND — price below EMA50 AND EMA20 below EMA50 (or EMA50 below
+                  EMA200).
+
+    `trend` is None when the series is too short to measure EMA50 or when
+    price straddles it — an unconfirmed market never vetoes a side.
     """
     closes = [bar["close"] for bar in bars]
     ema20 = _ema(closes, EMA_FAST)
@@ -495,11 +503,25 @@ def _trend_read(bars: list[dict], price: float) -> dict:
                         f"needs {EMA_SLOW}")
         return read
 
+    stack_up = ema20 is not None and ema20 > ema50
+    stack_down = ema20 is not None and ema20 < ema50
+    macro_up = ema200 is not None and ema50 > ema200
+    macro_down = ema200 is not None and ema50 < ema200
+    uptrend = price > ema50 and (stack_up or macro_up)
+    downtrend = price < ema50 and (stack_down or macro_down)
+    trend = "UP" if uptrend and not downtrend else "DOWN" if downtrend and not uptrend else None
+    read["trend"] = trend
+    read["bias"] = "BUY" if trend == "UP" else "SELL" if trend == "DOWN" else None
+
     parts = [f"price {price:.5f} {'above' if price > ema50 else 'below'} EMA50 {ema50:.5f}"]
     if ema20 is not None:
         parts.append(f"EMA20 {ema20:.5f} {'above' if ema20 > ema50 else 'below'} EMA50")
     if ema200 is not None:
         parts.append(f"EMA50 {'above' if ema50 > ema200 else 'below'} EMA200 {ema200:.5f}")
+    if trend is None:
+        parts.append("trend unconfirmed")
+    else:
+        parts.append(f"confirmed {trend}TREND — {'BUY' if trend == 'UP' else 'SELL'} only")
     read["note"] = ", ".join(parts)
     return read
 
@@ -514,8 +536,13 @@ def _direction(
     quote points nowhere there is no direction to trade, so the side is None
     (a hard block, never a default).
 
-    `context` is the longer completed series (unused now that the EMA veto is
-    removed, kept for signature parity).
+    `context` is the longer completed series used for the EMA trend read when
+    the caller has it (falls back to `bars`).
+
+    THE TREND VETO IS BACK, and it is a HARD BLOCK: a 5-bar net move can point
+    down inside a confirmed uptrend, and acting on it is how this bot kept
+    shorting rallies. `None` (no side) is returned when the chosen side fights
+    the confirmed EMA structure.
     """
     if len(bars) <= DIRECTION_LOOKBACK:
         return None, f"only {len(bars)} completed candles — no direction readable"
@@ -534,7 +561,13 @@ def _direction(
         side, basis = ("BUY" if move_now > 0 else "SELL"), f"flat closes, live quote {move_now:+.5f}"
 
     trend = _trend_read(context or bars, price)
-    return side, f"{basis} · {trend['note']}"
+    note = f"{basis} · {trend['note']}"
+    # THE HARD BLOCK — no order against confirmed structure, whatever the five
+    # closes said.
+    if trend["trend"] is not None and trend["bias"] != side:
+        return None, (f"BLOCK {side}: the 5-bar move disagrees with the confirmed "
+                      f"{trend['trend']}TREND — {note}")
+    return side, note
 
 
 def _sl_for(creds, symbol: str, bars: list[dict], side: str) -> float | None:

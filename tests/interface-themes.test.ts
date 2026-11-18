@@ -17,7 +17,7 @@ import { getBottomNavStyle, setBottomNavStyle } from "@/lib/bottom-nav-style";
  * Settings and the popups repaint together.
  */
 
-const EIGHT = [
+const STYLED = [
   "CRIMSON NAVIGATOR",
   "NAVIGATOR PLUS",
   "PABLO CRIMSON",
@@ -26,14 +26,17 @@ const EIGHT = [
   "DARKWEB AI",
   "SUPREME EQUINOX",
   "ULTRON MEGA",
+  // Unlimited Bull is a styled interface too: its definition carries the page
+  // wash, the 34px card radius, the glass surfaces and its circle-dock nav.
+  "UNLIMITED BULL",
 ] as const;
 
 const root = () => document.documentElement;
 
 describe("interface definitions", () => {
-  it("defines all eight Main Interfaces and nothing else", () => {
-    expect(STYLED_INTERFACE_IDS.sort()).toEqual([...EIGHT].sort());
-    for (const id of EIGHT) {
+  it("defines every styled Main Interface and nothing else", () => {
+    expect(STYLED_INTERFACE_IDS.sort()).toEqual([...STYLED].sort());
+    for (const id of STYLED) {
       const definition = interfaceDefinitionFor(id);
       expect(definition, `${id} must have a real definition`).not.toBeNull();
       // Every id in the picker is offered, with its brief as the design brief.
@@ -48,7 +51,7 @@ describe("interface definitions", () => {
     const radii = new Set<string>();
     const backgrounds = new Set<string>();
 
-    for (const id of EIGHT) {
+    for (const id of STYLED) {
       const definition = interfaceDefinitionFor(id)!;
       signatures.add(definition.signature);
       radii.add(definition.radius);
@@ -69,9 +72,9 @@ describe("interface definitions", () => {
     }
 
     // Clearly distinct, not eight copies of one skin.
-    expect(signatures.size).toBe(EIGHT.length);
+    expect(signatures.size).toBe(STYLED.length);
     expect(radii.size).toBeGreaterThanOrEqual(6);
-    expect(backgrounds.size).toBe(EIGHT.length);
+    expect(backgrounds.size).toBe(STYLED.length);
   });
 
   it("ships the nav the briefs ask for", () => {
@@ -131,7 +134,7 @@ describe("applying an interface", () => {
     const texts = new Set<string>();
     const wells = new Set<string>();
     const navBgs = new Set<string>();
-    for (const id of EIGHT) {
+    for (const id of STYLED) {
       const definition = interfaceDefinitionFor(id)!;
       expect(definition.text).toMatch(/^#[0-9A-Fa-f]{6}$/);
       expect(definition.muted.length).toBeGreaterThan(6);
@@ -146,7 +149,7 @@ describe("applying an interface", () => {
     // Not one shared skin: the text, the wells and the nav all move.
     expect(texts.size).toBeGreaterThanOrEqual(7);
     expect(wells.size).toBeGreaterThanOrEqual(7);
-    expect(navBgs.size).toBe(EIGHT.length);
+    expect(navBgs.size).toBe(STYLED.length);
   });
 
   it("puts the tokens back when a legacy layout is selected", () => {
@@ -187,7 +190,7 @@ describe("applying an interface", () => {
   it("keeps the user's colour authoritative on every interface", () => {
     // The definitions carry a signature hue for the chrome, but the
     // interactive accent stays `--accent` (Select Colour / colour cycle).
-    for (const id of EIGHT) {
+    for (const id of STYLED) {
       const definition = INTERFACE_DEFINITIONS[id]!;
       expect(definition.signature).not.toBe("var(--accent)");
       expect(definition.navCentre ?? "var(--accent)").not.toBe(definition.signature);

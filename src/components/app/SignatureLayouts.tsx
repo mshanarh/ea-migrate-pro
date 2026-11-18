@@ -1,6 +1,7 @@
-import { Square, LineChart, BarChart3, DollarSign, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Square, LineChart, BarChart3, DollarSign, Pause, Play, Plus, Settings, Trash2 } from "lucide-react";
 import type { Robot } from "@/lib/app-store";
 import { RobotMedia } from "@/components/app/RobotMedia";
+import { accentColorValue, useCustomization } from "@/lib/app-customization";
 
 type SignatureLayoutProps = {
   robot: Robot | undefined;
@@ -363,6 +364,212 @@ export function ApexSniper({ robot, accent, onStart, onQuotes, onRemove, onOpenA
           <span className="text-lg font-bold text-white/40" aria-hidden="true">
             ›
           </span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * UNLIMITED BULL — a portrait led dashboard with a bull-market swagger.
+ *
+ * The robot's own picture is the hero (a rounded squircle, never a bundled
+ * asset), the face repeats as a floating badge on its bottom edge, and the
+ * face repeats once more on the connected-EA capsule. Everything that is
+ * colour in this layout comes from the trader's accent and the current
+ * appearance mode — there is no gold/brown literal in the file, so the same
+ * screen works in dark and white mode with any accent the trader picks.
+ */
+export function UnlimitedBull({
+  robot,
+  accent: accentProp,
+  onStart,
+  onQuotes,
+  onRemove,
+  onOpenAdd,
+  onOpenScanner,
+}: SignatureLayoutProps) {
+  const { color, appearanceMode } = useCustomization();
+  // The prop is the theme's own accent; the setting is the trader's. Read the
+  // live one first so a colour change repaints this screen immediately.
+  const accent = accentProp || accentColorValue(color);
+  const isDark = appearanceMode !== "white";
+  const name = robot?.name ?? "UNLIMITED BULL";
+  const image = robot?.image || "/logo.png";
+  const running = Boolean(robot?.running);
+
+  /** Text/surface colours flip with the mode — nothing is pinned to black. */
+  const title = isDark ? "#FFFFFF" : "#0B0B0C";
+  const muted = isDark ? "rgba(255,255,255,0.55)" : "rgba(11,11,12,0.55)";
+  const glass = isDark ? "rgba(0,0,0,0.80)" : "rgba(255,255,255,0.85)";
+  const glassBorder = isDark ? "rgba(255,255,255,0.15)" : "rgba(11,11,12,0.12)";
+
+  const arcButton = (
+    label: string,
+    Icon: typeof Play,
+    onClick: () => void,
+    options: { color?: string; fill?: boolean } = {},
+  ) => {
+    const iconColor = options.color ?? title;
+    return (
+      <button
+        type="button"
+        onClick={onClick}
+        className="flex min-w-0 flex-1 flex-col items-center gap-2 transition-transform active:scale-95"
+      >
+        <span
+          className="flex size-16 items-center justify-center rounded-full"
+          style={{
+            border: `1.5px solid ${accent}70`,
+            boxShadow: `0 0 18px ${accent}33`,
+            background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
+          }}
+        >
+          <Icon
+            className="size-6"
+            style={{ color: iconColor }}
+            fill={options.fill ? "currentColor" : "none"}
+          />
+        </span>
+        <span
+          className="text-[11px] font-black uppercase tracking-[0.14em]"
+          style={{ color: options.color ?? title }}
+        >
+          {label}
+        </span>
+      </button>
+    );
+  };
+
+  return (
+    <div className="relative z-10 flex min-h-[calc(100dvh-var(--plat-nav-h))] flex-col items-center justify-start px-4 pb-28 pt-4 text-white sm:pt-6">
+      <div className="mx-auto flex w-full max-w-sm flex-col items-center gap-4">
+        {/* THE NOTE — the layout's own voice, in the trader's accent. */}
+        <p
+          className="text-center text-[11px] font-black uppercase tracking-[0.22em]"
+          style={{ color: accent }}
+        >
+          its time for a change
+        </p>
+
+        {/* HERO CARD — the robot's own media in a tall squircle with a halo. */}
+        <div className="relative w-full">
+          <div
+            className="pointer-events-none absolute -inset-3 rounded-[44px] blur-2xl"
+            style={{ background: `radial-gradient(ellipse at 50% 40%, ${accent}55, transparent 70%)` }}
+            aria-hidden="true"
+          />
+          <div
+            className="relative aspect-[4/5] w-full overflow-hidden rounded-[34px]"
+            style={{
+              border: `1.5px solid ${accent}66`,
+              boxShadow: `0 24px 60px rgba(0,0,0,${isDark ? "0.65" : "0.25"}), inset 0 0 0 1px ${accent}22`,
+              background: isDark ? "#0B0B0C" : "#F4F4F5",
+            }}
+          >
+            <RobotMedia
+              image={image}
+              video={robot?.video}
+              variant="avatar"
+              preferImage
+              className="size-full object-cover"
+            />
+            {/* Floating avatar badge — its ring is the accent, its centre the
+                same face, so the card reads as one portrait, not two. */}
+            <div
+              className="absolute bottom-3 left-1/2 z-20 size-16 -translate-x-1/2 overflow-hidden rounded-full"
+              style={{
+                border: `3px solid ${accent}`,
+                boxShadow: `0 6px 18px rgba(0,0,0,0.55)`,
+                background: isDark ? "#0B0B0C" : "#FFFFFF",
+              }}
+            >
+              <RobotMedia
+                image={image}
+                video={robot?.video}
+                variant="avatar"
+                preferImage
+                className="size-full object-cover"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* HEADING */}
+        <h1
+          className="max-w-full break-words text-center text-2xl font-black uppercase tracking-tight sm:text-3xl"
+          style={{ color: title, textShadow: isDark ? "0 2px 10px rgba(0,0,0,0.8)" : "none" }}
+        >
+          {name}
+        </h1>
+
+        {/* ACTION BAR — one stadium pill holding the three controls. */}
+        <div
+          className="flex w-full items-center justify-between gap-2 rounded-full px-6 py-4 shadow-xl backdrop-blur-xl"
+          style={{ background: glass, border: `1px solid ${glassBorder}` }}
+        >
+          {arcButton("DELETE", Trash2, onRemove, {
+            color: isDark ? "#F87171" : "#DC2626",
+          })}
+          {arcButton(
+            running ? "STOP" : "START",
+            running ? Pause : Play,
+            onStart,
+            { fill: true, color: accent },
+          )}
+          {/* SYMBOLS — a symbol picker and the scanner are the same intent:
+              the window opens when one is wired, otherwise the scanner. */}
+          {arcButton("SYMBOLS", BarChart3, onQuotes ?? onOpenScanner, { color: accent })}
+        </div>
+
+        {/* CONNECTED EA — the face and the name of the running robot. */}
+        <div
+          className="flex w-full items-center gap-4 rounded-full px-5 py-3.5 backdrop-blur-xl"
+          style={{ background: glass, border: `1px solid ${glassBorder}` }}
+        >
+          <span
+            className="size-11 shrink-0 overflow-hidden rounded-full"
+            style={{ border: `2px solid ${accent}`, background: isDark ? "#0B0B0C" : "#FFFFFF" }}
+          >
+            <RobotMedia
+              image={image}
+              video={robot?.video}
+              variant="avatar"
+              preferImage
+              className="size-full object-cover"
+            />
+          </span>
+          <span
+            className="min-w-0 truncate text-[15px] font-black uppercase tracking-wide"
+            style={{ color: title }}
+          >
+            {name}
+          </span>
+        </div>
+
+        {/* CONNECT EA — plus in an accent ring, the label, and the settings
+            gear on the right. */}
+        <button
+          type="button"
+          onClick={onOpenAdd}
+          className="flex w-full items-center gap-4 rounded-full px-5 py-4 backdrop-blur-xl transition-transform active:scale-[0.98]"
+          style={{ background: glass, border: `1px solid ${glassBorder}` }}
+        >
+          <span
+            className="flex size-11 shrink-0 items-center justify-center rounded-full"
+            style={{ border: `2px solid ${accent}`, boxShadow: `0 0 16px ${accent}44` }}
+          >
+            <Plus className="size-5" style={{ color: title }} strokeWidth={2.6} />
+          </span>
+          <div className="flex min-w-0 flex-1 flex-col text-left">
+            <span className="text-[15px] font-black uppercase tracking-wide" style={{ color: title }}>
+              Connect EA
+            </span>
+            <span className="text-[11px] font-semibold" style={{ color: muted }}>
+              Connect New License Key
+            </span>
+          </div>
+          <Settings className="size-5 shrink-0" style={{ color: muted }} />
         </button>
       </div>
     </div>

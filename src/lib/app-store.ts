@@ -201,6 +201,8 @@ const INTERFACE_STYLE_IDS = new Set([
   "ea_cloud",
   "apex_sniper",
   "APEX SNIPER",
+  "unlimited_bull",
+  "UNLIMITED BULL",
 ]);
 
 const initial: AppState = {
@@ -236,6 +238,10 @@ const LAYOUT_ALIASES: Record<string, string> = {
   // a record written from the Settings label still loads the right layout.
   "APEX SNIPER": "apex_sniper",
   apex_sniper: "apex_sniper",
+  // Unlimited Bull keeps its full name as the stored id (it is a theme id as
+  // well as a layout); the alias accepts the same name from older records.
+  "UNLIMITED BULL": "UNLIMITED BULL",
+  unlimited_bull: "UNLIMITED BULL",
 };function load() {
   bootLog("load-start");
   START.start("app-store-load-start");

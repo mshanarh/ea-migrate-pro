@@ -948,15 +948,45 @@ export function fiveBarTrendSign(candles: ReadonlyArray<{ close: number }>): -1 
 export type DirectionGuardVerdict = { ok: true } | { ok: false; reason: string };
 
 /**
- * THE DIRECTION GUARD — a chosen side must agree with the last six CLOSED
- * candles (newest close vs the close five bars earlier). The refusal names the
- * real closes so the trader sees WHY instead of a wrong-way entry.
+ * THE DIRECTION GUARD — a chosen side must agree with the CONFIRMED structure
+ * of the completed series, not with a 5-bar wiggle.
+ *
+ * The 5-bar close comparison this guard used to be alone is exactly how the
+ * bot kept shorting a rally: three or four strong bullish bars inside a
+ * confirmed uptrend were still a positive net move in the wrong direction for
+ * a SELL, and a pullback's lower close was enough to justify one. The EMA read
+ * runs FIRST now:
+ *
+ *   • price above EMA50 and EMA20 above EMA50 (confirmed uptrend) → EVERY
+ *     SELL is a hard block;
+ *   • price below EMA50 and EMA20 below EMA50 (confirmed downtrend) → EVERY
+ *     BUY is a hard block;
+ *   • confirmed trend and the side agrees with it → allowed;
+ *   • no confirmed trend (short series, price straddling EMA50) → the older
+ *     5-bar agreement check still applies.
+ *
+ * The refusal names the measured levels so the trader sees WHY instead of a
+ * silent wrong-way entry.
  */
-function checkDirectionAgainstCandles(
+export function checkDirectionAgainstCandles(
   side: "BUY" | "SELL",
   candles: ReadonlyArray<BrokerCandle>,
 ): DirectionGuardVerdict {
   const recent = candles.slice(-6);
+  const structural = candles.length >= 6 ? readTrend(candles, candles[candles.length - 1]!.close) : null;
+  if (structural && structural.trend) {
+    const withTrend = structural.trend === "UP" ? "BUY" : "SELL";
+    if (side !== withTrend) {
+      return {
+        ok: false,
+        reason:
+          `Direction guard: ${side} blocked — the market is in a confirmed ` +
+          `${structural.trend === "UP" ? "UPTREND" : "DOWNTREND"} (${structural.summary}). ` +
+          `${withTrend} is the only side the structure allows.`,
+      };
+    }
+    return { ok: true };
+  }
   const trendSign = fiveBarTrendSign(recent);
   if (trendSign === null || trendSign === 0) return { ok: true };
   const agrees = side === "BUY" ? trendSign > 0 : trendSign < 0;

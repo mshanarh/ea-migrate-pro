@@ -77,6 +77,7 @@ export const INTERFACE_THEMES = [
   { id: "PHOENIX", name: "Phoenix", description: "Split control robot list" },
   { id: "VORTEX 1", name: "Vortex 1", description: "Glowing robot card" },
   { id: "APEX SNIPER", name: "Apex Sniper", description: "Floating avatar & dark glass tiles" },
+  { id: "UNLIMITED BULL", name: "Unlimited Bull", description: "Portrait hero & stadium controls" },
 ] as const;
 
 export const FONT_OPTIONS = [
