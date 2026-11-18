@@ -915,15 +915,63 @@ html[data-appearance="white"] body [data-eamp-appearance="white"] .app-scroll-ar
   color: #0f172a !important;
 }
 
-/* White mode turns the interface ink black instead of crisp white. */
-html[data-appearance="white"] [data-eamp-appearance="white"] h1,
-html[data-appearance="white"] [data-eamp-appearance="white"] h2,
+/* ── WHITE MODE INK — PER SURFACE, NEVER ONE BLANKET RULE ─────────────────
+   The old rule forced every h1/p/.text-white inside Home to dark slate. That
+   is right on the white canvas and WRONG on the obsidian glass cards and
+   picture heroes the same screen draws, where it made the EA name and every
+   caption disappear. Ink is a variable now:
+
+     `--eamp-ink`        primary text
+     `--eamp-ink-muted`  captions / helper lines
+     `--eamp-ink-shadow` the shadow that text needs over a picture
+
+   A LIGHT surface inherits the canvas values; a DARK surface (a bg-black card,
+   the ambient glass, a hero over a photo) declares its own. Components keep
+   their own inline/accent colours, so accents, statuses and neon are
+   untouched. */
+html[data-appearance="white"] [data-eamp-appearance="white"],
+html[data-appearance="white"] .if-screen {
+  --eamp-ink: #0f172a;
+  --eamp-ink-muted: #475569;
+  --eamp-ink-shadow: none;
+}
+
+/* DARK SURFACES — the glass cards, pills, portrait frames and picture heroes.
+   Their ink is light (it is a dark board in both modes) and their text keeps a
+   shadow so a photo behind it cannot wash it out. */
+html[data-appearance="white"] [data-eamp-appearance="white"] :is([class*="bg-black"], .ambient-glow-dynamic, .app-hero-bleed, [data-eamp-dark-surface]),
+html[data-appearance="white"] .if-screen :is([class*="bg-black"], .ambient-glow-dynamic, .app-hero-bleed, [data-eamp-dark-surface]) {
+  --eamp-ink: #ffffff;
+  --eamp-ink-muted: rgba(255, 255, 255, 0.78);
+  --eamp-ink-shadow: 0 2px 10px rgba(0, 0, 0, 0.75);
+  color: #ffffff;
+}
+
+/* Headings and copy follow their surface's ink. */
+html[data-appearance="white"] [data-eamp-appearance="white"] :is(h1, h2, h3),
+html[data-appearance="white"] .if-screen :is(h1, h2, h3) {
+  color: var(--eamp-ink, #0f172a) !important;
+  text-shadow: var(--eamp-ink-shadow, none) !important;
+}
+
 html[data-appearance="white"] [data-eamp-appearance="white"] p,
+html[data-appearance="white"] .if-screen p {
+  color: var(--eamp-ink, #0f172a) !important;
+  text-shadow: var(--eamp-ink-shadow, none) !important;
+}
+
+/* The white-alpha utilities: solid ink where the utility was white, muted ink
+   where it was a white alpha step. On a dark surface both resolve light. */
 html[data-appearance="white"] [data-eamp-appearance="white"] .text-white,
-html[data-appearance="white"] [data-eamp-appearance="white"] .text-white\/65,
-html[data-appearance="white"] [data-eamp-appearance="white"] .text-white\/80 {
-  color: #0f172a !important;
-  text-shadow: none !important;
+html[data-appearance="white"] .if-screen .text-white {
+  color: var(--eamp-ink, #0f172a) !important;
+  text-shadow: var(--eamp-ink-shadow, none) !important;
+}
+
+html[data-appearance="white"] [data-eamp-appearance="white"] [class*="text-white/"],
+html[data-appearance="white"] .if-screen [class*="text-white/"] {
+  color: var(--eamp-ink-muted, #475569) !important;
+  text-shadow: var(--eamp-ink-shadow, none) !important;
 }
 
 /* Cards, sheets and the popup shells. */
@@ -1430,31 +1478,19 @@ html[data-appearance="white"] body .app-scroll-area {
   color: #0f172a !important;
 }
 
-/* Ink: headings and body copy on the canvas go dark slate. */
-html[data-appearance="white"] .if-screen h1,
-html[data-appearance="white"] .if-screen h2,
-html[data-appearance="white"] .if-screen h3,
-html[data-appearance="white"] .if-screen p,
-html[data-appearance="white"] .if-screen .text-white,
-html[data-appearance="white"] .if-screen .text-white\/65,
-html[data-appearance="white"] .if-screen .text-white\/70,
-html[data-appearance="white"] .if-screen .text-white\/80,
-html[data-appearance="white"] .if-screen .text-white\/85 {
-  color: #0f172a !important;
-  text-shadow: none !important;
-}
+/* Ink is decided per surface above (--eamp-ink). Nothing else here repaints
+   headings wholesale: the dark glass cards keep light copy on their own ink. */
 
-/* Subtitles and helper lines. */
-html[data-appearance="white"] .if-screen .text-white\/40,
-html[data-appearance="white"] .if-screen .text-white\/50,
-html[data-appearance="white"] .if-screen .text-white\/55,
-html[data-appearance="white"] .if-screen .text-white\/60 {
-  color: #64748b !important;
-}
-
-/* The execution card is glass, not part of the canvas: it keeps its own light
-   surface and its dark ink (see TradeExecutionToast). */
+/* The execution card is a LIGHT panel in White mode, whatever interface is
+   selected. Its own tokens are set here so the fallbacks in the component (a
+   dark glass panel) can never leave dark ink on a dark card again. */
 html[data-appearance="white"] [data-eamp-exec-card] {
+  --if-surface: rgba(255, 255, 255, 0.96);
+  --if-surface-alt: rgba(15, 23, 42, 0.06);
+  --if-well: rgba(15, 23, 42, 0.04);
+  --if-text: #0f172a;
+  --if-muted: rgba(15, 23, 42, 0.66);
+  --if-border: rgba(15, 23, 42, 0.14);
   color: #0f172a;
 }
 
@@ -1495,6 +1531,15 @@ html[data-appearance="white"] .if-card [class*="text-white/"],
 html[data-appearance="white"] .if-well [class*="text-white/"],
 html[data-appearance="white"] .if-field [class*="text-white/"] {
   color: #64748b !important;
+}
+
+/* TEXT ON A SOLID FILL (the BUY / SELL badges): white ink stays white, because
+   the surface behind it did not become light — the badge IS the colour. */
+html[data-appearance="white"] [data-eamp-on-solid],
+html[data-appearance="white"] .if-card [data-eamp-on-solid],
+html[data-appearance="white"] [role="dialog"] [data-eamp-on-solid] {
+  color: #ffffff !important;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.28) !important;
 }
 
 /* White-alpha utility surfaces become hairline greys instead of disappearing. */

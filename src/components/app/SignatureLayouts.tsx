@@ -97,7 +97,12 @@ function WideRobotCard({ robot, accent, image, crop = "50% 35%" }: { robot: Robo
         style={{ objectPosition: crop }}
       />
       <div className="absolute inset-0 bg-black/25" />
-      <span className="absolute inset-0 flex items-center justify-center px-10 text-center text-lg font-black uppercase tracking-wide" style={{ color: accent, textShadow: "0 2px 8px black" }}>
+      {/* The name is the point of this card, so it wraps to two lines and the
+          accent stays readable over whatever picture is behind it. */}
+      <span
+        className="absolute inset-0 line-clamp-2 flex items-center justify-center break-words px-8 text-center text-base font-black uppercase leading-tight tracking-wide"
+        style={{ color: accent, textShadow: "0 2px 8px black, 0 0 14px rgba(0,0,0,.65)" }}
+      >
         {robot?.name ?? "YOUR ROBOT"}
       </span>
     </div>
@@ -404,13 +409,17 @@ export function UnlimitedBull({
   const glass = isDark ? "rgba(0,0,0,0.80)" : "rgba(255,255,255,0.85)";
   const glassBorder = isDark ? "rgba(255,255,255,0.15)" : "rgba(11,11,12,0.12)";
 
+  /** One round control: ring, icon and caption each own their colour, so
+   *  DELETE can be red while STOP/SYMBOLS follow the accent — all of it from
+   *  the mode, never a fixed literal on the component. */
   const arcButton = (
     label: string,
     Icon: typeof Play,
     onClick: () => void,
-    options: { color?: string; fill?: boolean } = {},
+    options: { color?: string; ring?: string; glow?: string; fill?: boolean } = {},
   ) => {
     const iconColor = options.color ?? title;
+    const ring = options.ring ?? `${accent}70`;
     return (
       <button
         type="button"
@@ -420,9 +429,9 @@ export function UnlimitedBull({
         <span
           className="flex size-16 items-center justify-center rounded-full"
           style={{
-            border: `1.5px solid ${accent}70`,
-            boxShadow: `0 0 18px ${accent}33`,
-            background: isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
+            border: `1.5px solid ${ring}`,
+            boxShadow: `0 0 18px ${options.glow ?? `${accent}33`}`,
+            background: isDark ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.75)",
           }}
         >
           <Icon
@@ -455,12 +464,12 @@ export function UnlimitedBull({
         {/* HERO CARD — the robot's own media in a tall squircle with a halo. */}
         <div className="relative w-full">
           <div
-            className="pointer-events-none absolute -inset-3 rounded-[44px] blur-2xl"
+                          className="pointer-events-none absolute -inset-3 rounded-[42px] blur-2xl"
             style={{ background: `radial-gradient(ellipse at 50% 40%, ${accent}55, transparent 70%)` }}
             aria-hidden="true"
           />
           <div
-            className="relative aspect-[4/5] w-full overflow-hidden rounded-[34px]"
+            className="relative aspect-[4/5] w-full overflow-hidden rounded-[32px]"
             style={{
               border: `1.5px solid ${accent}66`,
               boxShadow: `0 24px 60px rgba(0,0,0,${isDark ? "0.65" : "0.25"}), inset 0 0 0 1px ${accent}22`,
@@ -496,8 +505,11 @@ export function UnlimitedBull({
         </div>
 
         {/* HEADING */}
+        {/* The configured name, verbatim — long names wrap on word boundaries
+            instead of being clipped, and there is no shadow in white mode (a
+            light page would only smear the glyphs). */}
         <h1
-          className="max-w-full break-words text-center text-2xl font-black uppercase tracking-tight sm:text-3xl"
+          className="max-w-full whitespace-normal break-words text-center text-2xl font-black uppercase leading-tight sm:text-3xl"
           style={{ color: title, textShadow: isDark ? "0 2px 10px rgba(0,0,0,0.8)" : "none" }}
         >
           {name}
@@ -510,6 +522,8 @@ export function UnlimitedBull({
         >
           {arcButton("DELETE", Trash2, onRemove, {
             color: isDark ? "#F87171" : "#DC2626",
+            ring: isDark ? "rgba(248,113,113,0.55)" : "rgba(220,38,38,0.45)",
+            glow: isDark ? "rgba(248,113,113,0.18)" : "rgba(220,38,38,0.12)",
           })}
           {arcButton(
             running ? "STOP" : "START",
@@ -539,8 +553,10 @@ export function UnlimitedBull({
               className="size-full object-cover"
             />
           </span>
+          {/* A long EA name wraps onto a second line instead of being
+              truncated — the configured name is never shortened here. */}
           <span
-            className="min-w-0 truncate text-[15px] font-black uppercase tracking-wide"
+            className="line-clamp-2 min-w-0 break-words text-left text-[15px] font-black uppercase leading-tight tracking-wide"
             style={{ color: title }}
           >
             {name}

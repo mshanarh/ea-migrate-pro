@@ -108,6 +108,22 @@ SYMBOLS_FILE = Path(os.getenv("SCALPER_SYMBOLS_FILE", Path(__file__).resolve().p
 EVENT_LOG = Path(os.getenv("SCALPER_EVENT_LOG", Path(__file__).resolve().parent / "scalper-events.log"))
 MAGIC = 98765                        # only this EA's orders are ever touched
 
+# ── THE STRADDLE BREAKOUT ENGINE ─────────────────────────────────────────────
+# No side is predicted any more. A tight BIDIRECTIONAL bracket is placed around
+# the live price — BUY STOP above the ask, SELL STOP below the bid — and the
+# market picks the direction. The first stop to trigger becomes the position,
+# the opposite stop is cancelled at once, and the position is banked as soon as
+# its floating profit turns positive.
+STRADDLE_ENGINE = "straddle"         # default engine; "batch" keeps the old loop
+STRADDLE_OFFSET_SPREAD = 1.5         # breakout offset = spread × this
+STRADDLE_MIN_OFFSET_POINTS = 15      # …but never tighter than this many points
+STRADDLE_MIN_OFFSET_XAU = 20         # gold moves in bigger ticks: 20 points
+STRADDLE_STALE_SECONDS = 25          # an untriggered bracket is re-anchored
+STRADDLE_PROFIT_TARGET = 0.10        # bank the position at +$0.10 (spread cover)
+STRADDLE_POLL_SECONDS = 0.5          # trigger / profit monitoring cadence
+STRADDLE_PENDING_RETRY = 3           # filling-mode attempts per pending order
+CANDLE_LIKE_XAU = ("XAU", "GOLD")
+
 # ── TIMEFRAMES ──────────────────────────────────────────────────────────────
 # The app writes its selected chart into the state file. Every candle fetch,
 # the staleness window and the "wait for the next bar" boundary follow it, so a
@@ -162,7 +178,7 @@ CANDLE_LAG_SLACK_SECONDS = 60
 # A sanity ceiling on the configured Number of Trades. It is NOT a strategy
 # setting: it exists so a typo in the settings cannot fire a thousand orders.
 TRADE_COUNT_CEILING = 200
-DAEMON_VERSION = "3.1"
+DAEMON_VERSION = "3.2"  # 3.2 = the straddle breakout engine (default)
 
 _log_lines: list[str] = []
 
@@ -746,6 +762,227 @@ def _realized_profit(ticket: int, fallback: float) -> float:
 # `_close_ticket_confirmed`, driven by `_sweep_close_symbol`. Two close paths
 # is how a leg could be "closed" by one and still be open to the other.
 
+# ── STRADDLE BREAKOUT — pending orders, no prediction ────────────────────────
+
+def _pending_orders(creds, symbol: str) -> list[dict] | None:
+    """Every PENDING order this daemon owns on the symbol, or None when the
+    book cannot be read (callers never guess)."""
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"pending list failed: {error}")
+        return None
+    try:
+        orders = mt5.orders_get(symbol=symbol)
+        if orders is None:
+            return []
+        out = []
+        for order in orders:
+            if int(getattr(order, "magic", 0)) != MAGIC:
+                continue
+            kind = "BUY_STOP" if order.type == mt5.ORDER_TYPE_BUY_STOP else (
+                "SELL_STOP" if order.type == mt5.ORDER_TYPE_SELL_STOP else "OTHER")
+            if kind == "OTHER":
+                continue
+            out.append({
+                "ticket": int(order.ticket),
+                "symbol": order.symbol,
+                "kind": kind,
+                "volume": float(order.volume_current),
+                "price": float(order.price_open),
+            })
+        return out
+    finally:
+        _disconnect()
+
+
+def _place_stop(creds, symbol: str, kind: str, lot: float, price: float, comment: str) -> dict | None:
+    """Place ONE resting stop order at `price` (already anchored outside the
+    broker's stops level by the caller)."""
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"[STRADDLE] {kind} {symbol}: MT5 init failed: {error}")
+        return None
+    try:
+        if not mt5.symbol_select(symbol, True):
+            _log(f"[STRADDLE] {kind} {symbol}: symbol not available")
+            return None
+        order_type = mt5.ORDER_TYPE_BUY_STOP if kind == "BUY_STOP" else mt5.ORDER_TYPE_SELL_STOP
+        request = {
+            "action": mt5.TRADE_ACTION_PENDING,
+            "symbol": symbol,
+            "volume": lot,
+            "type": order_type,
+            "price": float(price),
+            "sl": 0.0,
+            "tp": 0.0,
+            "deviation": 20,
+            "magic": MAGIC,
+            "comment": comment,
+            "type_time": mt5.ORDER_TIME_GTC,
+            # Resting orders are RETURN-only on most brokers; 10030 means the
+            # broker disagreed, and the loop retries rather than giving up.
+            "type_filling": mt5.ORDER_FILLING_RETURN,
+        }
+        result = None
+        for _ in range(STRADDLE_PENDING_RETRY):
+            result = mt5.order_send(request)
+            if result is None:
+                _log(f"[STRADDLE] {kind} {symbol} @ {price:.5f}: order_send returned None "
+                     f"({mt5.last_error()})")
+                return None
+            if result.retcode != 10030:
+                break
+        if result is None:
+            return None
+        if result.retcode not in (10008, 10009, 10010):
+            _log(f"[STRADDLE] {kind} {symbol} @ {price:.5f}: MT5 refused "
+                 f"(retcode {result.retcode})")
+            return None
+        return {"ticket": int(getattr(result, "order", 0) or 0),
+                "kind": kind, "price": float(price)}
+    finally:
+        _disconnect()
+
+
+def _remove_pending(creds, ticket: int) -> bool:
+    """TRADE_ACTION_REMOVE on a resting stop."""
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"[STRADDLE] remove {ticket}: MT5 init failed: {error}")
+        return False
+    try:
+        result = mt5.order_send({"action": mt5.TRADE_ACTION_REMOVE, "order": int(ticket)})
+        if result is None:
+            _log(f"[STRADDLE] remove {ticket}: order_send returned None ({mt5.last_error()})")
+            return False
+        return result.retcode in (10008, 10009, 10010)
+    finally:
+        _disconnect()
+
+
+def _straddle_offset(info, tick) -> float:
+    """How far outside the market each stop sits: 1.5× spread, never tighter
+    than the symbol's stops level, with a wider floor on gold."""
+    point = float(getattr(info, "point", 0) or 0) or 0.00001
+    spread = max(float(tick.ask) - float(tick.bid), 0.0)
+    name = str(getattr(info, "name", "")).upper()
+    floor_points = (STRADDLE_MIN_OFFSET_XAU
+                    if any(token in name for token in CANDLE_LIKE_XAU)
+                    else STRADDLE_MIN_OFFSET_POINTS)
+    stops_level = float(getattr(info, "trade_stops_level", 0) or 0) * point
+    return max(spread * STRADDLE_OFFSET_SPREAD, floor_points * point, stops_level * 1.2)
+
+
+def _open_straddle(creds, symbol: str, plan: dict, state: dict) -> dict | None:
+    """Anchor BOTH stops around the live price and return the bracket record.
+
+    BUY STOP  at Ask + offset
+    SELL STOP at Bid − offset
+
+    Same volume, same magic, the robot's own name as the comment. One leg
+    filling cancels the other, so a cycle can never be long and short at once.
+    """
+    account, error = _connect(creds)
+    if account is None:
+        _log(f"[STRADDLE] {symbol}: MT5 init failed: {error}")
+        return None
+    try:
+        info = mt5.symbol_info(symbol)
+        tick = mt5.symbol_info_tick(symbol)
+    finally:
+        _disconnect()
+    if info is None or tick is None or tick.bid <= 0 or tick.ask <= 0:
+        _log(f"[STRADDLE] {symbol}: no live Bid/Ask — no bracket placed")
+        return None
+
+    offset = _straddle_offset(info, tick)
+    buy_price = float(tick.ask) + offset
+    sell_price = float(tick.bid) - offset
+    lot = float(plan["lots"])
+    comment = _trade_comment(state, "")
+
+    buy = _place_stop(creds, symbol, "BUY_STOP", lot, buy_price, comment)
+    sell = _place_stop(creds, symbol, "SELL_STOP", lot, sell_price, comment)
+    if buy is None or sell is None:
+        # NEVER LEAVE HALF A BRACKET RESTING: a lone stop is a one-way bet.
+        for leg in (buy, sell):
+            if leg is not None:
+                _remove_pending(creds, leg["ticket"])
+        _log(f"[STRADDLE] {symbol}: bracket incomplete (buy placed={buy is not None}, "
+             f"sell placed={sell is not None}) — both legs withdrawn")
+        return None
+
+    digits = int(getattr(info, "digits", 2) or 2)
+    point = float(getattr(info, "point", 0) or 0) or 0.00001
+    _log(f"[STRADDLE] Placed BUY_STOP @ {buy_price:.{digits}f} and "
+         f"SELL_STOP @ {sell_price:.{digits}f} ({symbol}, {lot} lots, "
+         f"offset {offset / point:.0f} points)")
+    return {
+        "symbol": symbol,
+        "opened_at": time.time(),
+        "buy_ticket": buy["ticket"],
+        "sell_ticket": sell["ticket"],
+        "buy_price": buy_price,
+        "sell_price": sell_price,
+        "lot": lot,
+    }
+
+
+def _close_straddle_position(creds, position: dict) -> bool:
+    """Bank the triggered position and require a real broker confirmation
+    (retcode 10008/10009/10010 plus a vanished ticket)."""
+    symbol = position["symbol"]
+    ticket = int(position["ticket"])
+    closed = _close_ticket_confirmed(creds, ticket, symbol)
+    if closed is None:
+        _log(f"[STRADDLE] close {ticket} {symbol}: MT5 did not confirm")
+        return False
+    profit = float(closed.get("profit", position.get("profit", 0.0)) or 0.0)
+    _log(f"[CLOSED PROFIT] +${profit:.2f} ({symbol}, ticket {ticket}, "
+         f"retcode {closed.get('retcode')})")
+    return True
+
+
+def _manage_straddle(creds, symbol: str, bracket: dict, plan: dict | None) -> bool:
+    """One monitoring pass. True while the bracket is still this symbol's cycle.
+
+      • position open  → cancel the opposite stop, bank at +$0.10;
+      • both pending   → re-anchor once the bracket goes stale;
+      • neither        → the cycle is over (banked, or stopped out).
+    """
+    positions = _live_symbol_positions(creds, symbol)
+    pending = _pending_orders(creds, symbol)
+    if positions is None or pending is None:
+        return True  # unreadable book: never act on a guess
+
+    if positions:
+        if pending:
+            for order in pending:
+                _remove_pending(creds, int(order["ticket"]))
+                _log(f"[TRIGGERED] {symbol}: {order['kind']} @ {order['price']:.5f} "
+                     f"cancelled — the opposite leg is live")
+        position = max(positions, key=lambda pos: pos["profit"])
+        if float(position["profit"]) >= STRADDLE_PROFIT_TARGET:
+            if _close_straddle_position(creds, position):
+                return False
+        return True
+
+    if pending:
+        age = time.time() - float(bracket.get("opened_at") or 0)
+        if age >= STRADDLE_STALE_SECONDS:
+            for order in pending:
+                _remove_pending(creds, int(order["ticket"]))
+            _log(f"[STRADDLE] {symbol}: bracket stale after {age:.0f}s — both legs "
+                 f"cancelled, re-anchoring on the live price")
+            if plan is not None:
+                fresh = _open_straddle(creds, symbol, plan, _read_state())
+                if fresh is not None:
+                    bracket.update(fresh)
+        return True
+
+    return False
+
+
 def _hard_block(creds, symbol: str, open_on_symbol: int, plan_trades: int) -> tuple[bool, str]:
     """(blocked, reason). A block stops a NEW batch from opening and never
     stops the management of a batch that is already open."""
@@ -1175,11 +1412,14 @@ def run() -> None:
     state["started_at"] = _time_now()
     state["daemon_version"] = DAEMON_VERSION
     _write_state(state)
-    _log(f"CLOSE PATH: symbol-wide sweep v{DAEMON_VERSION} — every pass re-queries "
-         f"mt5.positions_get(symbol=…), closes each ticket, and the cycle advances "
-         f"only after 'SYMBOL CLEAN — 0 positions remain'")
+    _log(f"ENGINE: {(state.get('engine') or STRADDLE_ENGINE).upper()} — v{DAEMON_VERSION}. "
+         f"Straddle places BUY_STOP above the ask and SELL_STOP below the bid, "
+         f"cancels the loser on a trigger and banks at +${STRADDLE_PROFIT_TARGET:.2f}; "
+         f"a bracket untriggered after {STRADDLE_STALE_SECONDS}s is re-anchored")
 
     batches: dict[str, dict] = {}
+    # ── THE STRADDLE BRACKETS — one record per symbol's current cycle ──────
+    straddles: dict[str, dict] = {}
     waiting: dict[str, float] = {
         symbol: float(until) for symbol, until in (state.get("wait_until") or {}).items()
     }
@@ -1240,6 +1480,45 @@ def run() -> None:
                          f"the batch and NOT opening anything")
                     continue
                 shown.extend(positions)
+
+                # ── THE STRADDLE ENGINE ────────────────────────────────────
+                # No side is predicted: a BUY STOP and a SELL STOP bracket the
+                # live price, the market picks the direction, the loser is
+                # cancelled and the winner is banked at +$0.10. The batch
+                # engine below is only reached when the state file asks for it.
+                engine = str(step_state.get("engine") or STRADDLE_ENGINE).lower()
+                if engine == STRADDLE_ENGINE:
+                    bracket = straddles.get(symbol)
+                    if bracket is not None:
+                        if not _manage_straddle(creds, symbol, bracket, plan):
+                            straddles.pop(symbol, None)
+                            _log(f"[STRADDLE] {symbol}: cycle complete — next bracket "
+                                 f"on the following pass")
+                        continue
+                    if positions or plan is None:
+                        continue
+                    resting = _pending_orders(creds, symbol)
+                    if resting is None:
+                        continue
+                    if resting:
+                        # Orders from an earlier run: adopt rather than stack.
+                        straddles[symbol] = {
+                            "symbol": symbol, "opened_at": time.time(),
+                            "buy_ticket": 0, "sell_ticket": 0,
+                            "buy_price": 0.0, "sell_price": 0.0,
+                            "lot": float(plan["lots"]),
+                        }
+                        _log(f"[STRADDLE] {symbol}: adopted {len(resting)} resting "
+                             f"order(s) from an earlier run")
+                        continue
+                    blocked, reason = _hard_block(creds, symbol, 0, int(plan["trades"]))
+                    if blocked:
+                        _log(f"[STRADDLE] held — {symbol}: {reason}")
+                        continue
+                    placed = _open_straddle(creds, symbol, plan, step_state)
+                    if placed is not None:
+                        straddles[symbol] = placed
+                    continue
 
                 # ── nothing known about these positions yet (restart) ──────
                 if batch is None and positions:
@@ -1329,7 +1608,9 @@ def run() -> None:
             _log(f"LOOP ERROR (v{DAEMON_VERSION}): {exc!r}")
             time.sleep(POLL_SECONDS)
 
-        time.sleep(POLL_SECONDS)
+        # The straddle monitors triggers and profit: a slower pass would let a
+        # triggered leg run past its target before the opposite stop is pulled.
+        time.sleep(STRADDLE_POLL_SECONDS)
 
 
 if __name__ == "__main__":

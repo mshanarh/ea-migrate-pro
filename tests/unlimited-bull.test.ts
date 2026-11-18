@@ -4,6 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 
 import { UnlimitedBull } from "@/components/app/SignatureLayouts";
 import { INTERFACE_THEMES } from "@/lib/app-customization";
+import { interfaceDefinitionFor } from "@/lib/interface-themes";
 import { checkDirectionAgainstCandles } from "@/lib/auto-trade";
 import type { Robot } from "@/lib/app-store";
 
@@ -70,6 +71,13 @@ describe("Unlimited Bull", () => {
     const theme = INTERFACE_THEMES.find((item) => item.id === "UNLIMITED BULL");
     expect(theme).toBeDefined();
     expect(theme!.name).toBe("Unlimited Bull");
+  });
+
+  it("is a signature layout, never an InterfaceConsole definition", () => {
+    // A definition would hand it a fixed palette and let InterfaceConsole
+    // intercept the Home screen; the layout owns the screen instead.
+    expect(interfaceDefinitionFor("UNLIMITED BULL")).toBeNull();
+    expect(interfaceDefinitionFor("APEX SNIPER")).toBeNull();
   });
 
   it("renders the note, the robot's own name and the three controls", () => {

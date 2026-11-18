@@ -266,6 +266,7 @@ function TitanEdge({ robot, accent, font, actions, onOpenScanner }: ThemeContent
       </div>
 
       <div
+        data-eamp-dark-surface=""
         className="mx-1 flex items-center justify-around rounded-[40px] border py-5"
         style={{ borderColor: `${accent}59`, background: `linear-gradient(180deg, ${accent}14, rgba(0,0,0,0.7))` }}
       >
@@ -369,6 +370,7 @@ function PrimeForge({ robot, accent, font, actions, onOpenAdd }: ThemeContentPro
       <button
         type="button"
         onClick={onOpenAdd}
+        data-eamp-on-solid=""
         className="mx-3 mt-3 flex h-24 w-[calc(100%-1.5rem)] items-center gap-5 rounded-[24px] px-7 text-left transition-transform active:scale-[0.98]"
         style={{ background: `linear-gradient(180deg, ${accent}, ${accent}b3)`, boxShadow: `0 14px 44px ${accent}66` }}
       >

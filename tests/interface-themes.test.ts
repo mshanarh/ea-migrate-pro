@@ -26,15 +26,16 @@ const STYLED = [
   "DARKWEB AI",
   "SUPREME EQUINOX",
   "ULTRON MEGA",
-  // Unlimited Bull is a styled interface too: its definition carries the page
-  // wash, the 34px card radius, the glass surfaces and its circle-dock nav.
-  "UNLIMITED BULL",
 ] as const;
+
+// Signature layouts (SNIFFER, PHOENIX, VORTEX 1, APEX SNIPER, UNLIMITED BULL)
+// are deliberately NOT definitions: they own their Home screen instead of a
+// generic InterfaceConsole skin, so they must stay out of this set.
 
 const root = () => document.documentElement;
 
 describe("interface definitions", () => {
-  it("defines every styled Main Interface and nothing else", () => {
+  it("defines all eight Main Interfaces and nothing else", () => {
     expect(STYLED_INTERFACE_IDS.sort()).toEqual([...STYLED].sort());
     for (const id of STYLED) {
       const definition = interfaceDefinitionFor(id);

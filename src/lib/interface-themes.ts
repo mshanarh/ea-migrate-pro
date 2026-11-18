@@ -334,39 +334,10 @@ export const INTERFACE_DEFINITIONS: Record<string, InterfaceDefinition> = {
     navShadow: "inset 0 1px 0 rgba(255,255,255,0.22), 0 -6px 18px rgba(0,0,0,0.6)",
     navBlur: "0px",
   },
-
-  "UNLIMITED BULL": {
-    id: "UNLIMITED BULL",
-    name: "Unlimited Bull",
-    brief: "Portrait hero & stadium controls",
-    // Its signature hue is a bull-market amber; the interactive accent still
-    // comes from the trader's own Colour setting, so this only tints the page
-    // wash, the card surfaces and the rules.
-    signature: "#C9A227",
-    signature2: "#F5D77A",
-    background: "linear-gradient(180deg, #14100a 0%, #0a0a0c 55%, #060607 100%)",
-    surface: "linear-gradient(180deg, rgba(201,162,39,0.16), rgba(245,215,122,0.06))",
-    surfaceAlt: "linear-gradient(180deg, rgba(245,215,122,0.10), rgba(201,162,39,0.12))",
-    well: "rgba(8,8,10,0.72)",
-    border: "rgba(201,162,39,0.38)",
-    borderWidth: "1px",
-    radius: "34px",
-    controlRadius: "999px",
-    shadow: "0 24px 60px rgba(0,0,0,0.65)",
-    glass: true,
-    text: "#FFF8E7",
-    muted: "rgba(255,248,231,0.58)",
-    header: { weight: 900, tracking: "0.02em", transform: "uppercase", size: "1.9rem" },
-    numbers: { font: INHERIT, tabular: true },
-    decor: "circle",
-    navStyle: "circle-dock",
-    navCentre: "#F5D77A",
-    navBg: "linear-gradient(180deg, rgba(20,16,10,0.92), rgba(10,10,12,0.92))",
-    navBorder: "rgba(201,162,39,0.40)",
-    navRadius: "999px",
-    navShadow: "0 16px 40px rgba(0,0,0,0.6)",
-    navBlur: "18px",
-  },
+  // UNLIMITED BULL is deliberately NOT defined here. Like APEX SNIPER, SNIFFER
+  // and PHOENIX it is a standalone signature layout (SignatureLayouts.tsx) with
+  // its own Home screen, not a generic InterfaceConsole skin. A definition here
+  // would hand it a fixed amber palette and let InterfaceConsole intercept it.
 };
 
 /** The ids that carry a real definition (the eight Main Interface styles). */

@@ -264,11 +264,17 @@ export function TradeExecutionToast({
       <div className="flex items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {side === "SELL" ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#ef4444] px-2.5 py-1 text-[11px] font-black tracking-wide text-white shadow-sm">
+            <span
+              data-eamp-on-solid=""
+              className="inline-flex items-center gap-1 rounded-full bg-[#ef4444] px-2.5 py-1 text-[11px] font-black tracking-wide text-white shadow-sm"
+            >
               <span aria-hidden="true">↓</span> SELL
             </span>
           ) : side === "BUY" ? (
-            <span className="inline-flex items-center gap-1 rounded-full bg-[#10b981] px-2.5 py-1 text-[11px] font-black tracking-wide text-white shadow-sm">
+            <span
+              data-eamp-on-solid=""
+              className="inline-flex items-center gap-1 rounded-full bg-[#10b981] px-2.5 py-1 text-[11px] font-black tracking-wide text-white shadow-sm"
+            >
               <span aria-hidden="true">↑</span> BUY
             </span>
           ) : (

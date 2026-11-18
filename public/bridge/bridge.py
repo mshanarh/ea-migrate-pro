@@ -762,6 +762,10 @@ class _ScalperStartRequest(BaseModel):
     ea_name: Optional[str] = None
     # The chart the daemon reads: 1m | 5m | 15m | 30m | 1h | 4h | 1d.
     timeframe: Optional[str] = None
+    # "straddle" (default) places a BUY STOP + SELL STOP bracket around the live
+    # price; "batch" keeps the older directional engine. Written into the
+    # daemon's state file and read on every pass, so switching needs no restart.
+    engine: Optional[str] = None
 
 
 @app.post("/scalper/start")
@@ -779,6 +783,7 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
     # THE DAEMON READS THIS TIMEFRAME for every candle fetch and every
     # "wait for the next bar" boundary.
     timeframe = (req.timeframe or "").strip().lower() or state.get("timeframe") or "15m"
+    engine = (req.engine or "").strip().lower() or state.get("engine") or "straddle"
     if state.get("running"):
         state["next_trade_number"] = int(state.get("next_trade_number", 1)) + 1
         state["started_at"] = datetime.now(timezone.utc).isoformat()
@@ -787,10 +792,11 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         state["trade_count"] = req.trade_count
         state["ea_name"] = ea_name
         state["timeframe"] = timeframe
+        state["engine"] = engine
         _write_state(state)
         _append_log(f"POST /scalper/start -> daemon RESTARTED "
                     f"(symbol={req.symbol}, lot={req.lot}, trade_count={req.trade_count}, "
-                    f"timeframe={timeframe}, ea={ea_name})")
+                    f"timeframe={timeframe}, engine={engine}, ea={ea_name})")
         return {"ok": True, "running": True,
                 "message": "Scalper daemon restarted — open positions kept and "
                            "re-analysed on the next event tick"}
@@ -806,6 +812,7 @@ def scalper_start(req: _ScalperStartRequest, x_bridge_key: Optional[str] = Heade
         "trade_count": req.trade_count,
         "ea_name": ea_name,
         "timeframe": timeframe,
+        "engine": engine,
         "next_trade_number": 1,
         "started_at": datetime.now(timezone.utc).isoformat(),
         "stopped_at": None,

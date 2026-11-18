@@ -49,8 +49,11 @@ function ControlButton({ label, icon: Icon, onClick, accent }: { label: string; 
 }
 
 export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOpenAdd, onSelectRobot }: BlueprintEdgeProps) {
-  const { color } = useCustomization();
+  const { color, appearanceMode } = useCustomization();
   const accent = resolveBlueprintAccent(color);
+  // White mode is a WHITE canvas: this console's viewport-covering picture has
+  // to step aside too, or the page stays a photo while the ink turns dark.
+  const isWhiteMode = appearanceMode === "white";
   // Same persisted Background Picture switch as everywhere else — OFF leaves
   // this console on clean black instead of the robot's picture.
   const mediaDim = useMediaDim();
@@ -64,7 +67,14 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
       {/* The black console's static image background — when the HOME
           double-press starts the video, the universal backdrop in ThemeContent
           plays it, so this layer never runs a second <video> decoder. */}
-      <VideoBackdrop image={eaImage} video={robot?.video} accent={accent} videoWhenActive={false} mediaDim={mediaDim} />
+      <VideoBackdrop
+        image={eaImage}
+        video={robot?.video}
+        accent={accent}
+        videoWhenActive={false}
+        mediaDim={mediaDim}
+        whiteMode={isWhiteMode}
+      />
       <div className="relative z-10 flex flex-col gap-5">
       {/* TOP — circle hero, picture shown big and round like the mockup */}
       <motion.section
@@ -148,6 +158,7 @@ export function BlueprintEdge({ robot, robots, onStart, onQuotes, onRemove, onOp
           <button
             type="button"
             onClick={onOpenAdd}
+            data-eamp-on-solid=""
             className="flex w-full items-center gap-4 rounded-[50px] px-3 py-2.5 text-left transition-transform active:scale-[0.98]"
             style={{ backgroundColor: accent, boxShadow: `0 8px 26px ${accent}59` }}
           >
