@@ -163,3 +163,23 @@ describe("trend guard", () => {
     expect(checkDirectionAgainstCandles("SELL", short).ok).toBe(false);
   });
 });
+
+describe("Unlimited Bull mobile fit", () => {
+  it("has no floating face badge on the hero card", () => {
+    mount(ROBOT);
+    // The hero is one clean squircle: exactly two portraits (hero + capsule),
+    // never a third floating badge over the picture.
+    const portraits = [...document.querySelectorAll("img")].filter(
+      (img) => img.getAttribute("src") === "https://cdn.example.com/bull-face.jpg",
+    );
+    expect(portraits.length).toBe(2);
+  });
+
+  it("clamps the hero frame and keeps the capsules above the dock", () => {
+    mount(ROBOT);
+    const html = document.body.innerHTML;
+    expect(html).toContain("max-h-[34vh]");
+    expect(html).toContain("min-h-[220px]");
+    expect(html).toContain("pb-20");
+  });
+});

@@ -574,6 +574,18 @@ html:not([data-if-styled]) .if-well.if-well {
 .app-hero-fold-min {
   min-height: var(--home-hero-min);
 }
+
+/* MOBILE HERO CAP — 47dvh of a phone screen left the tiles, the broker card
+   and the Add-key button below the fold. On a narrow screen the hero takes at
+   most 32vh, so every interface's controls land above the bottom dock. */
+@media (max-width: 640px) {
+  .app-hero-fold {
+    height: min(32dvh, 15rem);
+  }
+  .app-hero-fold-min {
+    min-height: min(32dvh, 15rem);
+  }
+}
 .app-hero-orb {
   width: var(--home-orb);
   height: var(--home-orb);
