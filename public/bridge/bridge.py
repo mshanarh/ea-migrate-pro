@@ -859,12 +859,34 @@ def scalper_stop(req: _ScalperStopRequest, x_bridge_key: Optional[str] = Header(
 
 @app.get("/scalper/status")
 def scalper_status(x_bridge_key: Optional[str] = Header(None)):
-    """Return the daemon's run state and its event log."""
+    """Return the daemon's run state, its straddle brackets and its event log."""
     _check_key(x_bridge_key)
     state = _read_state()
+    brackets = state.get("straddle") or {}
+    # ONE WORD FOR WHAT THE ENGINE IS DOING RIGHT NOW, derived from the real
+    # bracket records the daemon wrote — never a claimed state.
+    stages = {str(record.get("stage") or "armed") for record in brackets.values()}
+    if "closing" in stages:
+        straddle_state = "closing"
+    elif "triggered" in stages:
+        straddle_state = "triggered"
+    elif "armed" in stages:
+        straddle_state = "armed"
+    elif "banked" in stages:
+        straddle_state = "banked"
+    else:
+        straddle_state = "idle"
     return {
         "ok": True,
         "running": state.get("running", False),
+        "engine": state.get("engine") or "straddle",
+        # ── THE STRADDLE STATE ────────────────────────────────────────────
+        # armed    → both stop orders are resting around the live price
+        # triggered→ a stop filled and the opposite leg is being cancelled
+        # closing  → the position is positive and the close is in flight
+        # banked   → MT5 confirmed the close; the next bracket re-arms
+        "straddle_state": straddle_state,
+        "straddle": brackets,
         "symbol": state.get("symbol"),
         "lot": state.get("lot"),
         "trade_count": state.get("trade_count"),

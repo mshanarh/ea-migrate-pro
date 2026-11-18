@@ -81,16 +81,29 @@ _next_ticket = 5000
 BOOK: dict[int, object] = {}
 
 stub = types.ModuleType("MetaTrader5")
+stub.TIMEFRAME_M1 = 1
+stub.TIMEFRAME_M5 = 5
 stub.TIMEFRAME_M15 = 15
+stub.TIMEFRAME_M30 = 30
+stub.TIMEFRAME_H1 = 16385
+stub.TIMEFRAME_H4 = 16388
+stub.TIMEFRAME_D1 = 16408
 stub.POSITION_TYPE_BUY = 0
 stub.POSITION_TYPE_SELL = 1
 stub.ORDER_TYPE_BUY = 0
 stub.ORDER_TYPE_SELL = 1
+stub.ORDER_TYPE_BUY_STOP = 4
+stub.ORDER_TYPE_SELL_STOP = 5
 stub.ORDER_FILLING_FOK = 0
 stub.ORDER_FILLING_IOC = 1
 stub.ORDER_FILLING_RETURN = 2
 stub.TRADE_ACTION_DEAL = 1
+stub.TRADE_ACTION_PENDING = 5
+stub.TRADE_ACTION_REMOVE = 8
 stub.ORDER_TIME_GTC = 0
+# The daemon imports the straddle engine as well; this book never holds a
+# pending order, and no bracket is placed because the fixture pins engine=batch.
+stub.orders_get = lambda *a, **k: []
 
 
 class Obj:
@@ -274,7 +287,10 @@ SETTINGS = {
     "DISABLED": {"lot": 0.01, "trade_count": 5, "enabled": False},
 }
 STATE = {"running": True, "symbol": "IGNORED", "lot": 0.99, "trade_count": 1,
-         "next_trade_number": 1, "positions": {}, "batches": {}, "wait_until": {}}
+         "next_trade_number": 1, "positions": {}, "batches": {}, "wait_until": {},
+         # This script proves the BATCH engine; the straddle engine has its own
+         # proof in scripts/test-scalper-straddle.py.
+         "engine": "batch"}
 
 tmp = Path(tempfile.mkdtemp(prefix="scalper-sim-"))
 (tmp / "state.json").write_text(json.dumps(STATE), encoding="utf-8")
@@ -420,7 +436,9 @@ check("the state file carries the live book for the status view",
 # 7 — a stop-out waits for the next completed M15 candle
 check("the stopped-out batch is reported as gone",
       "SLTEST GONE — every position was closed by the broker" in JOINED
-      and "aiting for the next completed M15 candle" in JOINED,
+      # The wait line names the ACTIVE timeframe ("15m" by default); asserting
+      # the literal "M15" made this check fail on the daemon's own naming.
+      and "aiting for the next completed 15m candle" in JOINED,
       [line for line in TAIL if "SLTEST GONE" in line][:1] and
       [line for line in TAIL if "SLTEST GONE" in line][0][:150])
 check("the stopped-out symbol did not reopen immediately", len(sl) == 2, f"{len(sl)} SLTEST opens")

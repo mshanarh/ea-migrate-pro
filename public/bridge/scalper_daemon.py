@@ -115,14 +115,11 @@ MAGIC = 98765                        # only this EA's orders are ever touched
 # the opposite stop is cancelled at once, and the position is banked as soon as
 # its floating profit turns positive.
 STRADDLE_ENGINE = "straddle"         # default engine; "batch" keeps the old loop
-STRADDLE_OFFSET_SPREAD = 1.5         # breakout offset = spread × this
-STRADDLE_MIN_OFFSET_POINTS = 15      # …but never tighter than this many points
-STRADDLE_MIN_OFFSET_XAU = 20         # gold moves in bigger ticks: 20 points
-STRADDLE_STALE_SECONDS = 25          # an untriggered bracket is re-anchored
-STRADDLE_PROFIT_TARGET = 0.10        # bank the position at +$0.10 (spread cover)
+STRADDLE_MIN_OFFSET_POINTS = 15      # the bracket's floor: 15 points
+STRADDLE_STALE_SECONDS = 45          # an untriggered bracket is re-anchored
+STRADDLE_PROFIT_TARGET = 0.0         # bank the moment floating profit is > 0
 STRADDLE_POLL_SECONDS = 0.5          # trigger / profit monitoring cadence
 STRADDLE_PENDING_RETRY = 3           # filling-mode attempts per pending order
-CANDLE_LIKE_XAU = ("XAU", "GOLD")
 
 # ── TIMEFRAMES ──────────────────────────────────────────────────────────────
 # The app writes its selected chart into the state file. Every candle fetch,
@@ -861,16 +858,17 @@ def _remove_pending(creds, ticket: int) -> bool:
 
 
 def _straddle_offset(info, tick) -> float:
-    """How far outside the market each stop sits: 1.5× spread, never tighter
-    than the symbol's stops level, with a wider floor on gold."""
+    """THE BRACKET OFFSET — the widest of three real constraints:
+
+        offset = max(spread, stops_level × point, 15 × point)
+
+    The spread keeps both stops outside the current market, the broker's own
+    stops level keeps them legal, and 15 points is the floor that makes the
+    bracket a breakout and not a coin flip."""
     point = float(getattr(info, "point", 0) or 0) or 0.00001
     spread = max(float(tick.ask) - float(tick.bid), 0.0)
-    name = str(getattr(info, "name", "")).upper()
-    floor_points = (STRADDLE_MIN_OFFSET_XAU
-                    if any(token in name for token in CANDLE_LIKE_XAU)
-                    else STRADDLE_MIN_OFFSET_POINTS)
     stops_level = float(getattr(info, "trade_stops_level", 0) or 0) * point
-    return max(spread * STRADDLE_OFFSET_SPREAD, floor_points * point, stops_level * 1.2)
+    return max(spread, stops_level, STRADDLE_MIN_OFFSET_POINTS * point)
 
 
 def _open_straddle(creds, symbol: str, plan: dict, state: dict) -> dict | None:
@@ -895,9 +893,10 @@ def _open_straddle(creds, symbol: str, plan: dict, state: dict) -> dict | None:
         _log(f"[STRADDLE] {symbol}: no live Bid/Ask — no bracket placed")
         return None
 
+    digits = int(getattr(info, "digits", 2) or 2)
     offset = _straddle_offset(info, tick)
-    buy_price = float(tick.ask) + offset
-    sell_price = float(tick.bid) - offset
+    buy_price = round(float(tick.ask) + offset, digits)
+    sell_price = round(float(tick.bid) - offset, digits)
     lot = float(plan["lots"])
     comment = _trade_comment(state, "")
 
@@ -912,13 +911,13 @@ def _open_straddle(creds, symbol: str, plan: dict, state: dict) -> dict | None:
              f"sell placed={sell is not None}) — both legs withdrawn")
         return None
 
-    digits = int(getattr(info, "digits", 2) or 2)
     point = float(getattr(info, "point", 0) or 0) or 0.00001
     _log(f"[STRADDLE] Placed BUY_STOP @ {buy_price:.{digits}f} and "
          f"SELL_STOP @ {sell_price:.{digits}f} ({symbol}, {lot} lots, "
          f"offset {offset / point:.0f} points)")
     return {
         "symbol": symbol,
+        "stage": "armed",
         "opened_at": time.time(),
         "buy_ticket": buy["ticket"],
         "sell_ticket": sell["ticket"],
@@ -956,18 +955,27 @@ def _manage_straddle(creds, symbol: str, bracket: dict, plan: dict | None) -> bo
         return True  # unreadable book: never act on a guess
 
     if positions:
+        # OUR legs carry MAGIC; a position the app or the trader opened by hand
+        # is still managed to a close when it is the only thing on the symbol.
+        ours = [pos for pos in positions if int(pos.get("magic", 0)) == MAGIC] or positions
         if pending:
+            bracket["stage"] = "triggered"
             for order in pending:
                 _remove_pending(creds, int(order["ticket"]))
                 _log(f"[TRIGGERED] {symbol}: {order['kind']} @ {order['price']:.5f} "
                      f"cancelled — the opposite leg is live")
-        position = max(positions, key=lambda pos: pos["profit"])
-        if float(position["profit"]) >= STRADDLE_PROFIT_TARGET:
+        position = max(ours, key=lambda pos: float(pos["profit"]) + float(pos.get("swap", 0.0)))
+        floating = float(position["profit"]) + float(position.get("swap", 0.0))
+        # PROFIT BANK — a strictly positive floating result (profit + swap).
+        if floating > STRADDLE_PROFIT_TARGET:
+            bracket["stage"] = "closing"
             if _close_straddle_position(creds, position):
+                bracket["stage"] = "banked"
                 return False
         return True
 
     if pending:
+        bracket["stage"] = "armed"
         age = time.time() - float(bracket.get("opened_at") or 0)
         if age >= STRADDLE_STALE_SECONDS:
             for order in pending:
@@ -1174,6 +1182,7 @@ def _live_symbol_positions(creds, symbol: str) -> list[dict] | None:
                 "price_current": float(pos.price_current),
                 "sl": float(pos.sl), "tp": float(pos.tp),
                 "profit": float(pos.profit),
+                "swap": float(getattr(pos, "swap", 0.0) or 0.0),
                 "magic": int(getattr(pos, "magic", 0)),
                 "open": True,
             })
@@ -1340,8 +1349,15 @@ def _sweep_close_symbol(creds, symbol: str, batch: dict) -> bool:
 
 
 def _settle_state(state: dict, batches: dict[str, dict], waiting: dict[str, float],
-                  live: list[dict]) -> None:
+                  live: list[dict], straddles: dict[str, dict] | None = None) -> None:
     """Write the metadata the status view reads. Never a claimed fill."""
+    # THE STRADDLE STATE, AS THE APP SEES IT — armed / triggered / closing /
+    # banked, per symbol, with the real bracket prices the daemon placed.
+    if straddles is not None:
+        state["straddle"] = {
+            symbol: {key: value for key, value in bracket.items()}
+            for symbol, bracket in straddles.items()
+        }
     state["batches"] = {
         symbol: {key: value for key, value in batch.items()}
         for symbol, batch in batches.items()
@@ -1603,7 +1619,7 @@ def run() -> None:
                 else:
                     waiting[symbol] = _next_candle_boundary(_timeframe(step_state)[2])
 
-            _settle_state(step_state, batches, waiting, shown or live)
+            _settle_state(step_state, batches, waiting, shown or live, straddles)
         except Exception as exc:  # a thrown pass must never kill a 24/7 loop
             _log(f"LOOP ERROR (v{DAEMON_VERSION}): {exc!r}")
             time.sleep(POLL_SECONDS)
